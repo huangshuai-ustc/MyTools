@@ -60,7 +60,10 @@ struct HomeView: View {
                                 Spacer(minLength: 4)
                                 BankRegionBadge(region: account.region)
                             }
-                            let subtitle = [account.foreignAccountTypeSummary, account.branchName, account.name, account.currency]
+                            let foreignAccountCount = account.region == .overseas && !account.foreignSubaccounts.isEmpty
+                                ? "\(account.foreignSubaccounts.count) 个境外账户"
+                                : ""
+                            let subtitle = [foreignAccountCount, account.accountType, account.branchName, account.name, account.currency]
                                 .filter { !$0.isEmpty }
                                 .joined(separator: " · ")
                             if !subtitle.isEmpty {
@@ -109,7 +112,7 @@ struct HomeView: View {
 
     private var archiveSummary: some View {
         HStack(spacing: 12) {
-            Label("\(store.accounts.count) 个账户", systemImage: "building.columns")
+            Label("\(store.accounts.count) 家银行", systemImage: "building.columns")
             Label("\(store.cards.count) 张卡", systemImage: "creditcard")
         }
         .font(.caption)
@@ -117,12 +120,18 @@ struct HomeView: View {
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
-        [account.region.title, account.foreignAccountTypeSummary, account.bankName, account.branchName, account.name, account.currency, account.accountNumber]
+        let bankMatches = [account.region.title, account.bankName, account.branchName, account.name, account.accountType, account.currency, account.accountNumber, account.swift, account.iban]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
+        let subaccountMatches = account.foreignSubaccounts.contains { subaccount in
+            [subaccount.type.title, subaccount.name, subaccount.accountNumber, subaccount.currencySummary]
+                .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
+        }
+        return bankMatches || subaccountMatches
     }
 
     private func cardMatches(_ card: BankCard, searchTerm: String) -> Bool {
-        [card.bankName, card.branchName, card.cardType, card.status.title, card.holderName, card.cardNumber]
+        let currencyTitles = card.currencies.map(\.title).joined(separator: " ")
+        return [card.bankName, card.branchName, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 }
@@ -153,6 +162,11 @@ struct CardRow: View {
                 Text("•••• " + String(card.cardNumber.suffix(4)))
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
+                if !card.currencySummary.isEmpty {
+                    Text(card.currencySummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)

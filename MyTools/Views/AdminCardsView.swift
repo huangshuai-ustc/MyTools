@@ -29,7 +29,10 @@ struct AdminCardsView: View {
                             Spacer(minLength: 4)
                             BankRegionBadge(region: account.region)
                         }
-                        let subtitle = [account.foreignAccountTypeSummary, account.branchName, account.name]
+                        let foreignAccountCount = account.region == .overseas && !account.foreignSubaccounts.isEmpty
+                            ? "\(account.foreignSubaccounts.count) 个境外账户"
+                            : ""
+                        let subtitle = [foreignAccountCount, account.accountType, account.branchName, account.name]
                             .filter { !$0.isEmpty }
                             .joined(separator: " · ")
                         if !subtitle.isEmpty {
@@ -131,16 +134,30 @@ struct AccountDetailView: View {
                 }
                 LabeledContent("银行", value: account.bankName)
                 LabeledContent("支行", value: account.branchName.isEmpty ? "未填写" : account.branchName)
-                LabeledContent("币种", value: account.currency.isEmpty ? "未填写" : account.currency)
-                if account.region == .overseas {
-                    LabeledContent("账户类型", value: account.foreignAccountTypeSummary.isEmpty ? "未添加" : account.foreignAccountTypeSummary)
-                    LabeledContent("账号", value: account.accountNumber.isEmpty ? "未填写" : account.accountNumber)
+                if !account.name.isEmpty {
+                    LabeledContent("备注名称", value: account.name)
+                }
+                if account.region == .domestic {
+                    LabeledContent("账户类型", value: account.accountType.isEmpty ? "未填写" : account.accountType)
+                    LabeledContent("币种", value: account.currency.isEmpty ? "未填写" : account.currency)
+                } else {
                     LabeledContent("SWIFT", value: account.swift.isEmpty ? "未填写" : account.swift)
                     LabeledContent("IBAN", value: account.iban.isEmpty ? "未填写" : account.iban)
                 }
                 LabeledContent("状态", value: account.status)
                 if auth.isAdmin {
                     Button("编辑银行账户") { editingAccount = account }
+                }
+            }
+
+            if account.region == .overseas {
+                Section("境外账户") {
+                    if account.foreignSubaccounts.isEmpty {
+                        Text("暂无境外账户").foregroundStyle(.secondary)
+                    }
+                    ForEach(account.foreignSubaccounts) { subaccount in
+                        ForeignSubaccountDetailRow(subaccount: subaccount)
+                    }
                 }
             }
 
@@ -184,7 +201,7 @@ private final class AccountEditorDraft: ObservableObject {
 
 struct AccountEditorView: View {
     private enum Field: Hashable {
-        case bankName, branchName, name, currency, accountNumber, swift, iban, status, note
+        case bankName, branchName, name, accountType, currency, swift, iban, status, note
     }
 
     @EnvironmentObject private var store: CardStore
@@ -193,6 +210,7 @@ struct AccountEditorView: View {
     @StateObject private var draft: AccountEditorDraft
     @FocusState private var focusedField: Field?
     @State private var showingAuthentication = false
+    @State private var editingForeignSubaccount: ForeignSubaccount?
     private let navigationTitle: String
 
     init(account: BankAccount, isNew: Bool) {
@@ -213,49 +231,91 @@ struct AccountEditorView: View {
                 }
 
                 Section("账户信息") {
-                    TextField("银行名称", text: $draft.account.bankName)
-                        .focused($focusedField, equals: .bankName)
-                        .onSubmit { focusedField = .branchName }
-                    TextField("支行名称", text: $draft.account.branchName)
-                        .focused($focusedField, equals: .branchName)
-                        .onSubmit { focusedField = .name }
-                    TextField("账户名称", text: $draft.account.name)
-                        .focused($focusedField, equals: .name)
-                        .onSubmit { focusedField = .currency }
-                    TextField("币种", text: $draft.account.currency)
-                        .focused($focusedField, equals: .currency)
-                        .onSubmit {
-                            focusedField = draft.account.region == .overseas ? .accountNumber : .status
+                    LabeledContent("银行名称：") {
+                        TextField("未填写", text: $draft.account.bankName)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .bankName)
+                            .onSubmit { focusedField = .branchName }
+                    }
+                    LabeledContent("支行名称：") {
+                        TextField("未填写", text: $draft.account.branchName)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .branchName)
+                            .onSubmit { focusedField = .name }
+                    }
+                    LabeledContent("备注名称：") {
+                        TextField("可选", text: $draft.account.name)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .name)
+                            .onSubmit {
+                                focusedField = draft.account.region == .domestic ? .accountType : .swift
+                            }
+                    }
+                    if draft.account.region == .domestic {
+                        LabeledContent("账户类型：") {
+                            TextField("例如私人理财", text: $draft.account.accountType)
+                                .multilineTextAlignment(.trailing)
+                                .focused($focusedField, equals: .accountType)
+                                .onSubmit { focusedField = .currency }
                         }
+                        LabeledContent("币种：") {
+                            TextField("未填写", text: $draft.account.currency)
+                                .multilineTextAlignment(.trailing)
+                                .focused($focusedField, equals: .currency)
+                                .onSubmit { focusedField = .status }
+                        }
+                    }
                 }
 
                 if draft.account.region == .overseas {
-                    Section("境外账户类型") {
-                        ForEach(ForeignAccountType.allCases) { type in
-                            Toggle(type.title, isOn: foreignAccountTypeBinding(type))
+                    Section("银行识别信息") {
+                        LabeledContent("SWIFT：") {
+                            TextField("未填写", text: $draft.account.swift)
+                                .multilineTextAlignment(.trailing)
+                                .focused($focusedField, equals: .swift)
+                                .onSubmit { focusedField = .iban }
+                        }
+                        LabeledContent("IBAN：") {
+                            TextField("未填写", text: $draft.account.iban)
+                                .multilineTextAlignment(.trailing)
+                                .focused($focusedField, equals: .iban)
+                                .onSubmit { focusedField = .status }
                         }
                     }
 
-                    Section("境外账户信息") {
-                        TextField("账号", text: $draft.account.accountNumber)
-                            .focused($focusedField, equals: .accountNumber)
-                            .onSubmit { focusedField = .swift }
-                        TextField("SWIFT", text: $draft.account.swift)
-                            .focused($focusedField, equals: .swift)
-                            .onSubmit { focusedField = .iban }
-                        TextField("IBAN", text: $draft.account.iban)
-                            .focused($focusedField, equals: .iban)
-                            .onSubmit { focusedField = .status }
+                    Section("境外账户") {
+                        if draft.account.foreignSubaccounts.isEmpty {
+                            Text("暂无境外账户").foregroundStyle(.secondary)
+                        }
+                        ForEach(draft.account.foreignSubaccounts) { subaccount in
+                            Button { editingForeignSubaccount = subaccount } label: {
+                                ForeignSubaccountRow(subaccount: subaccount)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete(perform: deleteForeignSubaccounts)
+
+                        Button { editingForeignSubaccount = ForeignSubaccount() } label: {
+                            Label("添加境外账户", systemImage: "plus.circle")
+                        }
                     }
                 }
 
                 Section("其他") {
-                    TextField("状态", text: $draft.account.status)
-                        .focused($focusedField, equals: .status)
-                    DatePicker("开户时间", selection: $draft.account.openedAt, displayedComponents: .date)
-                    TextField("备注", text: $draft.account.note, axis: .vertical)
-                        .focused($focusedField, equals: .note)
-                        .lineLimit(3...6)
+                    LabeledContent("状态：") {
+                        TextField("未填写", text: $draft.account.status)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .status)
+                    }
+                    DatePicker("开户时间：", selection: $draft.account.openedAt, displayedComponents: .date)
+                    HStack(alignment: .top, spacing: 4) {
+                        Text("备注：")
+                            .fixedSize(horizontal: true, vertical: true)
+                        TextField("未填写", text: $draft.account.note, axis: .vertical)
+                            .multilineTextAlignment(.leading)
+                            .focused($focusedField, equals: .note)
+                            .lineLimit(3...6)
+                    }
                 }
             }
             .navigationTitle(navigationTitle)
@@ -275,6 +335,11 @@ struct AccountEditorView: View {
                 AuthenticationView()
                     .iOSLargeSheet()
             }
+            .sheet(item: $editingForeignSubaccount) { subaccount in
+                ForeignSubaccountEditorView(subaccount: subaccount, onSave: upsertForeignSubaccount)
+                    .id(subaccount.id)
+                    .iOSLargeSheet()
+            }
         }
     }
 
@@ -286,24 +351,170 @@ struct AccountEditorView: View {
         }
         var account = draft.account
         if account.region == .domestic {
-            account.foreignAccountTypes = []
             account.accountNumber = ""
             account.swift = ""
             account.iban = ""
+        } else {
+            account.currency = ""
+            account.accountNumber = ""
         }
         store.upsertAccount(account)
         dismiss()
     }
 
-    private func foreignAccountTypeBinding(_ type: ForeignAccountType) -> Binding<Bool> {
-        Binding(
-            get: { draft.account.foreignAccountTypes.contains(type) },
-            set: { isSelected in
-                if isSelected {
-                    draft.account.foreignAccountTypes.insert(type)
-                } else {
-                    draft.account.foreignAccountTypes.remove(type)
+    private func upsertForeignSubaccount(_ subaccount: ForeignSubaccount) {
+        if let index = draft.account.foreignSubaccounts.firstIndex(where: { $0.id == subaccount.id }) {
+            draft.account.foreignSubaccounts[index] = subaccount
+        } else {
+            draft.account.foreignSubaccounts.append(subaccount)
+        }
+    }
+
+    private func deleteForeignSubaccounts(at offsets: IndexSet) {
+        draft.account.foreignSubaccounts.remove(atOffsets: offsets)
+    }
+}
+
+private struct ForeignSubaccountRow: View {
+    let subaccount: ForeignSubaccount
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(subaccount.type.title).font(.headline)
+                if !subaccount.name.isEmpty {
+                    Text(subaccount.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+            }
+            Text(subaccount.accountNumber.isEmpty ? "未填写账户号" : subaccount.accountNumber)
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(subaccount.accountNumber.isEmpty ? .secondary : .primary)
+            if !subaccount.currencySummary.isEmpty {
+                Text(subaccount.currencySummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ForeignSubaccountDetailRow: View {
+    let subaccount: ForeignSubaccount
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !subaccount.name.isEmpty {
+                Text(subaccount.name)
+                    .font(.headline)
+            }
+            LabeledContent("账户类型", value: subaccount.type.title)
+            LabeledContent("账户号", value: subaccount.accountNumber.isEmpty ? "未填写" : subaccount.accountNumber)
+            LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private final class ForeignSubaccountDraft: ObservableObject {
+    @Published var subaccount: ForeignSubaccount
+
+    init(subaccount: ForeignSubaccount) {
+        self.subaccount = subaccount
+    }
+}
+
+private struct ForeignSubaccountEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var draft: ForeignSubaccountDraft
+    let onSave: (ForeignSubaccount) -> Void
+
+    init(subaccount: ForeignSubaccount, onSave: @escaping (ForeignSubaccount) -> Void) {
+        _draft = StateObject(wrappedValue: ForeignSubaccountDraft(subaccount: subaccount))
+        self.onSave = onSave
+    }
+
+    private var canSave: Bool {
+        !draft.subaccount.accountNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.subaccount.currencies.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("账户信息") {
+                    Picker("账户类型：", selection: $draft.subaccount.type) {
+                        ForEach(ForeignAccountType.allCases) { type in
+                            Text(type.title).tag(type)
+                        }
+                    }
+                    LabeledContent("备注名称：") {
+                        TextField("可选", text: $draft.subaccount.name)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("账户号：") {
+                        TextField("未填写", text: $draft.subaccount.accountNumber)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                Section {
+                    CurrencySelectionRows(currencies: $draft.subaccount.currencies)
+                } header: {
+                    Text("币种")
+                } footer: {
+                    if draft.subaccount.currencies.isEmpty {
+                        Text("请选择至少一个币种后再保存")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增境外账户" : "编辑境外账户")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        onSave(draft.subaccount)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
+    }
+
+}
+
+private struct CurrencySelectionRows: View {
+    @Binding var currencies: Set<CurrencyCode>
+
+    var body: some View {
+        ForEach(CurrencyCode.allCases) { currency in
+            Toggle(currency.title, isOn: currencyBinding(currency))
+        }
+    }
+
+    private func currencyBinding(_ currency: CurrencyCode) -> Binding<Bool> {
+        Binding(
+            get: { currencies.contains(currency) },
+            set: { isSelected in
+                var updatedCurrencies = currencies
+                if isSelected {
+                    updatedCurrencies.insert(currency)
+                } else {
+                    updatedCurrencies.remove(currency)
+                }
+                currencies = updatedCurrencies
             }
         )
     }
@@ -332,33 +543,59 @@ struct CardEditorView: View {
     private let navigationTitle: String
 
     init(card: BankCard, account: BankAccount) {
-        _draft = StateObject(wrappedValue: CardEditorDraft(card: card))
+        var initialCard = card
+        let isNewCard = card.accountID == nil
+        if isNewCard, account.region == .domestic, initialCard.currencies.isEmpty {
+            initialCard.currencies = [.cny]
+        }
+        _draft = StateObject(wrappedValue: CardEditorDraft(card: initialCard))
         self.account = account
-        navigationTitle = card.cardNumber.isEmpty ? "新增银行卡" : "编辑银行卡"
+        navigationTitle = isNewCard ? "新增银行卡" : "编辑银行卡"
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("银行卡") {
-                    TextField("卡片名称", text: $draft.card.cardType)
-                        .focused($focusedField, equals: .cardType)
-                        .onSubmit { focusedField = .holderName }
-                    Picker("卡片状态", selection: $draft.card.status) {
+                    LabeledContent("卡片名称：") {
+                        TextField("未填写", text: $draft.card.cardType)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .cardType)
+                            .onSubmit { focusedField = .holderName }
+                    }
+                    Picker("卡片状态：", selection: $draft.card.status) {
                         ForEach(CardStatus.allCases) { status in
                             Text(status.title).tag(status)
                         }
                     }
                     .pickerStyle(.segmented)
-                    TextField("持卡人", text: $draft.card.holderName)
-                        .focused($focusedField, equals: .holderName)
-                        .onSubmit { focusedField = .cardNumber }
-                    TextField("完整卡号", text: $draft.card.cardNumber)
-                        .focused($focusedField, equals: .cardNumber)
-                        .onSubmit { focusedField = .cvv }
-                    SecureField("CVV", text: $draft.card.cvv)
-                        .focused($focusedField, equals: .cvv)
-                    Picker("有效期格式", selection: $draft.card.expiryPrecision) {
+                    LabeledContent("持卡人：") {
+                        TextField(
+                            account.region == .overseas ? "拼音，如 HUANG SHUAI" : "未填写",
+                            text: $draft.card.holderName
+                        )
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .holderName)
+                            .onSubmit { focusedField = .cardNumber }
+#if os(iOS)
+                            .textContentType(.name)
+                            .keyboardType(account.region == .overseas ? .asciiCapable : .default)
+                            .textInputAutocapitalization(account.region == .overseas ? .characters : .words)
+                            .autocorrectionDisabled(account.region == .overseas)
+#endif
+                    }
+                    LabeledContent("完整卡号：") {
+                        TextField("未填写", text: $draft.card.cardNumber)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .cardNumber)
+                            .onSubmit { focusedField = .cvv }
+                    }
+                    LabeledContent("CVV：") {
+                        SecureField("未填写", text: $draft.card.cvv)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .cvv)
+                    }
+                    Picker("有效期格式：", selection: $draft.card.expiryPrecision) {
                         ForEach(CardExpiryPrecision.allCases) { precision in
                             Text(precision.title).tag(precision)
                         }
@@ -367,13 +604,29 @@ struct CardEditorView: View {
                     if draft.card.expiryPrecision == .yearMonth {
                         YearMonthPicker(date: $draft.card.expiryDate)
                     } else {
-                        DatePicker("有效期", selection: $draft.card.expiryDate, displayedComponents: .date)
+                        DatePicker("有效期：", selection: $draft.card.expiryDate, displayedComponents: .date)
                     }
                     Toggle("Apple Pay", isOn: $draft.card.applePay)
                     Toggle("默认支付", isOn: $draft.card.defaultPayment)
-                    TextField("备注", text: $draft.card.note, axis: .vertical)
-                        .focused($focusedField, equals: .note)
-                        .lineLimit(3...6)
+                    HStack(alignment: .top, spacing: 4) {
+                        Text("备注：")
+                            .fixedSize(horizontal: true, vertical: true)
+                        TextField("未填写", text: $draft.card.note, axis: .vertical)
+                            .multilineTextAlignment(.leading)
+                            .focused($focusedField, equals: .note)
+                            .lineLimit(3...6)
+                    }
+                }
+
+                Section {
+                    CurrencySelectionRows(currencies: $draft.card.currencies)
+                } header: {
+                    Text("币种")
+                } footer: {
+                    if draft.card.currencies.isEmpty {
+                        Text("请选择至少一个币种后再保存")
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Section {
@@ -393,6 +646,7 @@ struct CardEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
+                        .disabled(draft.card.currencies.isEmpty)
                 }
             }
             .sheet(isPresented: $showingAuthentication) {
@@ -431,7 +685,7 @@ private struct YearMonthPicker: View {
     }
 
     var body: some View {
-        LabeledContent("有效期") {
+        LabeledContent("有效期：") {
             HStack(spacing: 4) {
                 Picker("年份", selection: yearBinding) {
                     ForEach(Array(years), id: \.self) { year in

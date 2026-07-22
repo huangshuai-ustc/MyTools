@@ -71,7 +71,7 @@ private struct ToolboxView: View {
                 Text(module.subtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Text("\(store.accounts.count) 个账户 · \(store.cards.count) 张卡")
+                Text("\(store.accounts.count) 家银行 · \(store.cards.count) 张卡")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

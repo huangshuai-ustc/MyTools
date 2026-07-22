@@ -53,7 +53,20 @@ final class SecureStore {
         let payload = try JSONEncoder().encode(vault)
         UserDefaults.standard.set(payload, forKey: localVaultKey)
         let publicVault = VaultData(
-            accounts: vault.accounts.map { account in var copy = account; copy.accountNumber = ""; copy.swift = ""; copy.iban = ""; return copy },
+            accounts: vault.accounts.map { account in
+                var copy = account
+                copy.accountNumber = ""
+                copy.swift = ""
+                copy.iban = ""
+                copy.foreignSubaccounts = account.foreignSubaccounts.map { subaccount in
+                    var redacted = subaccount
+                    redacted.accountNumber = subaccount.accountNumber.count > 4
+                        ? String(subaccount.accountNumber.suffix(4))
+                        : subaccount.accountNumber
+                    return redacted
+                }
+                return copy
+            },
             cards: vault.cards.map { card in var copy = card; copy.cardNumber = card.cardNumber.count > 4 ? String(card.cardNumber.suffix(4)) : card.cardNumber; copy.cvv = ""; return copy }
         )
         if let publicData = try? JSONEncoder().encode(publicVault) { UserDefaults.standard.set(publicData, forKey: publicDefaultsKey) }
