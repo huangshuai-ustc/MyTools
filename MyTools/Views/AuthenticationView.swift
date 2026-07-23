@@ -10,6 +10,7 @@ struct AuthenticationView: View {
     @State private var password = ""
     @State private var confirm = ""
     @State private var error = ""
+    @State private var didAttemptBiometrics = false
     @FocusState private var focusedField: Field?
     var body: some View {
         NavigationStack {
@@ -35,11 +36,11 @@ struct AuthenticationView: View {
                                 if await auth.unlockWithBiometrics() {
                                     dismiss()
                                 } else {
-                                    error = "Face ID、Touch ID 或设备密码验证失败"
+                                    error = "面容或指纹验证未通过，请输入管理员密码。"
                                 }
                             }
                         } label: {
-                            Label("使用 Face ID / Touch ID / 设备密码", systemImage: "faceid")
+                            Label("重新使用 Face ID / Touch ID", systemImage: "faceid")
                         }
                     }
                 }
@@ -57,6 +58,18 @@ struct AuthenticationView: View {
                     Button("取消") { dismiss() }
                 }
             }
+            .task { await attemptBiometricUnlock() }
+        }
+    }
+
+    private func attemptBiometricUnlock() async {
+        guard auth.hasPassword, !auth.isAdmin, !didAttemptBiometrics else { return }
+        didAttemptBiometrics = true
+        if await auth.unlockWithBiometrics() {
+            dismiss()
+        } else {
+            error = "面容或指纹验证未通过，请输入管理员密码。"
+            focusedField = .password
         }
     }
 

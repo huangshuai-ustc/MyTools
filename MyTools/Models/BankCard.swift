@@ -300,12 +300,27 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var accountNumber = ""
     var swift = ""
     var iban = ""
+    var boundPhoneNumber = ""
+    var loginAccount = ""
+    var loginPassword = ""
+    var correspondenceAddressChinese = ""
+    var correspondenceAddressEnglish = ""
+    var residentialAddressChinese = ""
+    var residentialAddressEnglish = ""
+    var remittanceBankName = ""
+    var remittanceBankAddress = ""
+    var remittanceSwiftCode = ""
+    var remittanceInstructions = ""
     var status = "正常"
     var note = ""
 
     private enum CodingKeys: String, CodingKey {
         case id, region, domesticSubaccounts, foreignSubaccounts, bankName, branchName, openedAt, name, accountType, currency
-        case accountNumber, swift, iban, status, note
+        case accountNumber, swift, iban, boundPhoneNumber, loginAccount, loginPassword
+        case correspondenceAddressChinese, correspondenceAddressEnglish
+        case residentialAddressChinese, residentialAddressEnglish
+        case remittanceBankName, remittanceBankAddress, remittanceSwiftCode, remittanceInstructions
+        case status, note
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -326,6 +341,17 @@ struct BankAccount: Identifiable, Codable, Equatable {
         accountNumber = try values.decodeIfPresent(String.self, forKey: .accountNumber) ?? ""
         swift = try values.decodeIfPresent(String.self, forKey: .swift) ?? ""
         iban = try values.decodeIfPresent(String.self, forKey: .iban) ?? ""
+        boundPhoneNumber = try values.decodeIfPresent(String.self, forKey: .boundPhoneNumber) ?? ""
+        loginAccount = try values.decodeIfPresent(String.self, forKey: .loginAccount) ?? ""
+        loginPassword = try values.decodeIfPresent(String.self, forKey: .loginPassword) ?? ""
+        correspondenceAddressChinese = try values.decodeIfPresent(String.self, forKey: .correspondenceAddressChinese) ?? ""
+        correspondenceAddressEnglish = try values.decodeIfPresent(String.self, forKey: .correspondenceAddressEnglish) ?? ""
+        residentialAddressChinese = try values.decodeIfPresent(String.self, forKey: .residentialAddressChinese) ?? ""
+        residentialAddressEnglish = try values.decodeIfPresent(String.self, forKey: .residentialAddressEnglish) ?? ""
+        remittanceBankName = try values.decodeIfPresent(String.self, forKey: .remittanceBankName) ?? ""
+        remittanceBankAddress = try values.decodeIfPresent(String.self, forKey: .remittanceBankAddress) ?? ""
+        remittanceSwiftCode = try values.decodeIfPresent(String.self, forKey: .remittanceSwiftCode) ?? ""
+        remittanceInstructions = try values.decodeIfPresent(String.self, forKey: .remittanceInstructions) ?? ""
         status = try values.decodeIfPresent(String.self, forKey: .status) ?? "正常"
         note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
 

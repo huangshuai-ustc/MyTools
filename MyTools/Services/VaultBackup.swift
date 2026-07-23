@@ -53,6 +53,7 @@ extension UTType {
 }
 
 enum VaultBackupCrypto {
+    static let defaultPassword = "1.2.3.4."
     private static let format = "mytools-vault"
     private static let version = 2
     private static let saltLength = 16
@@ -67,10 +68,11 @@ enum VaultBackupCrypto {
     }
 
     static func makeBackup(from vault: VaultData, password: String) throws -> Data {
-        guard password.count >= 8 else { throw VaultBackupError.invalidPassword }
+        let effectivePassword = normalizedPassword(password)
+        guard effectivePassword.count >= 8 else { throw VaultBackupError.invalidPassword }
 
         let salt = randomBytes(count: saltLength)
-        let key = try deriveKey(password: password, salt: salt)
+        let key = try deriveKey(password: effectivePassword, salt: salt)
         let payload = try JSONEncoder().encode(vault)
         let sealed = try AES.GCM.seal(payload, using: key)
         guard let combined = sealed.combined else { throw VaultBackupError.invalidFile }
@@ -80,7 +82,8 @@ enum VaultBackupCrypto {
     }
 
     static func restoreVault(from data: Data, password: String) throws -> VaultData {
-        guard password.count >= 8 else { throw VaultBackupError.invalidPassword }
+        let effectivePassword = normalizedPassword(password)
+        guard effectivePassword.count >= 8 else { throw VaultBackupError.invalidPassword }
 
         let envelope: Envelope
         do {
@@ -91,7 +94,7 @@ enum VaultBackupCrypto {
         guard envelope.format == format else { throw VaultBackupError.invalidFile }
         guard (1...version).contains(envelope.version) else { throw VaultBackupError.unsupportedVersion }
 
-        let key = try deriveKey(password: password, salt: envelope.salt)
+        let key = try deriveKey(password: effectivePassword, salt: envelope.salt)
         let sealed: AES.GCM.SealedBox
         do {
             sealed = try AES.GCM.SealedBox(combined: envelope.combined)
@@ -115,6 +118,10 @@ enum VaultBackupCrypto {
 
     private static func randomBytes(count: Int) -> Data {
         Data((0..<count).map { _ in UInt8.random(in: 0...255) })
+    }
+
+    private static func normalizedPassword(_ password: String) -> String {
+        password.isEmpty ? defaultPassword : password
     }
 
     private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {

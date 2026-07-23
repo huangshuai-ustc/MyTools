@@ -2,7 +2,9 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: CardStore
+    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
+    @State private var editingAccount: BankAccount?
     @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
 
     private var filteredAccounts: [BankAccount] {
@@ -45,35 +47,17 @@ struct HomeView: View {
                     ContentUnavailableView(
                         query.isEmpty ? "暂无银行账户" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
-                        description: Text(query.isEmpty ? "请在“我的”中进入管理员模式后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
+                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
                 }
-                ForEach(filteredAccounts) { account in
-                    NavigationLink {
-                        AccountDetailView(account: account, backTitle: "个人金融")
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                BankRegionBadge(region: account.region)
-                            }
-                            let subtitle = [subaccountSummary(for: account), account.branchName, account.name]
-                                .filter { !$0.isEmpty }
-                                .joined(separator: " · ")
-                            if !subtitle.isEmpty {
-                                Text(subtitle)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            Text("\(store.cards(for: account).count) 张银行卡")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 3)
+                if auth.isAdmin {
+                    ForEach(filteredAccounts) { account in
+                        accountLink(account)
+                    }
+                    .onDelete(perform: deleteAccounts)
+                } else {
+                    ForEach(filteredAccounts) { account in
+                        accountLink(account)
                     }
                 }
             }
@@ -82,8 +66,17 @@ struct HomeView: View {
         .iOSLabeledBackButton("工具箱")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 AccountSortMenu(selection: $sortOrderRawValue)
+                AdminEditAccessButton {
+                    editingAccount = BankAccount()
+                }
+                if auth.isAdmin {
+                    Button { editingAccount = BankAccount() } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("添加银行账户")
+                }
             }
         }
 #if os(iOS)
@@ -91,6 +84,46 @@ struct HomeView: View {
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif
+        .sheet(item: $editingAccount) { account in
+            AccountEditorView(account: account, isNew: true)
+                .id(account.id)
+                .iOSLargeSheet()
+        }
+    }
+
+    private func accountLink(_ account: BankAccount) -> some View {
+        NavigationLink {
+            AccountDetailView(account: account, backTitle: "个人金融")
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    BankRegionBadge(region: account.region)
+                }
+                let subtitle = [subaccountSummary(for: account), account.branchName, account.name]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Text("\(store.cards(for: account).count) 张银行卡")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 3)
+        }
+    }
+
+    private func deleteAccounts(at offsets: IndexSet) {
+        let ids = Set(offsets.map { filteredAccounts[$0].id })
+        let originalOffsets = IndexSet(store.accounts.indices.filter { ids.contains(store.accounts[$0].id) })
+        store.deleteAccount(at: originalOffsets)
     }
 
     private var financeTitle: some View {

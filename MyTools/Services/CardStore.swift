@@ -9,14 +9,23 @@ final class CardStore: ObservableObject {
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var quoteErrors: [UUID: String] = [:]
+    @Published private(set) var usdRenminbiBuyingRate: Decimal?
+    @Published private(set) var exchangeRateUpdatedAt: Date?
+    @Published private(set) var exchangeRateError: String?
     private let secureStore = SecureStore()
     private let quoteService = StockQuoteService()
+    private let exchangeRateService = ForeignExchangeRateService()
+    private let defaults = UserDefaults.standard
 
     init() {
         let vault = secureStore.loadVault()
         accounts = vault.accounts
         cards = vault.cards
         stocks = vault.stocks
+        if let savedRate = defaults.string(forKey: "stock-usd-cny-buying-rate-v1") {
+            usdRenminbiBuyingRate = Decimal(string: savedRate, locale: Locale(identifier: "en_US_POSIX"))
+        }
+        exchangeRateUpdatedAt = defaults.object(forKey: "stock-usd-cny-buying-rate-date-v1") as? Date
     }
 
     var currentCardCount: Int {
@@ -121,10 +130,23 @@ final class CardStore: ObservableObject {
     }
 
     func refreshStockQuotes() async {
-        guard !isRefreshingQuotes, !stocks.isEmpty else { return }
+        guard !isRefreshingQuotes else { return }
         isRefreshingQuotes = true
         quoteRefreshError = nil
         defer { isRefreshingQuotes = false }
+
+        do {
+            let exchangeRate = try await exchangeRateService.fetchUSDBuyingRate()
+            usdRenminbiBuyingRate = exchangeRate.renminbiPerUnit
+            exchangeRateUpdatedAt = exchangeRate.updatedAt
+            exchangeRateError = nil
+            defaults.set(NSDecimalNumber(decimal: exchangeRate.renminbiPerUnit).stringValue, forKey: "stock-usd-cny-buying-rate-v1")
+            defaults.set(exchangeRate.updatedAt, forKey: "stock-usd-cny-buying-rate-date-v1")
+        } catch {
+            exchangeRateError = error.localizedDescription
+        }
+
+        guard !stocks.isEmpty else { return }
 
         var failures: [UUID: String] = [:]
         var successCount = 0
@@ -147,7 +169,8 @@ final class CardStore: ObservableObject {
 
         quoteErrors = failures
         if !failures.isEmpty {
-            quoteRefreshError = "\(failures.count) 只股票暂时无法刷新"
+            let firstReason = failures.values.first ?? "行情服务暂时不可用"
+            quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
         }
         if successCount > 0 { persist() }
     }

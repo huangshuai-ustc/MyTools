@@ -5,6 +5,7 @@ struct ToolBoxApp: App {
     @StateObject private var store = CardStore()
     @StateObject private var auth = AuthManager()
     @StateObject private var moduleSettings = ToolModuleSettings()
+    @StateObject private var stockAppearanceSettings = StockAppearanceSettings()
 
     var body: some Scene {
         WindowGroup {
@@ -12,6 +13,7 @@ struct ToolBoxApp: App {
                 .environmentObject(store)
                 .environmentObject(auth)
                 .environmentObject(moduleSettings)
+                .environmentObject(stockAppearanceSettings)
         }
     }
 }

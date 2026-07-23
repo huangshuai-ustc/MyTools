@@ -21,6 +21,24 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum StockRiseFallColorScheme: String, CaseIterable, Identifiable {
+    case redRiseGreenFall
+    case greenRiseRedFall
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .redRiseGreenFall: return "红涨绿跌"
+        case .greenRiseRedFall: return "绿涨红跌"
+        }
+    }
+
+    static func defaultScheme(for market: StockMarket) -> Self {
+        market == .aShare ? .redRiseGreenFall : .greenRiseRedFall
+    }
+}
+
 enum StockTransactionType: String, Codable, CaseIterable, Identifiable, Sendable {
     case buy
     case sell
@@ -86,6 +104,13 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var currentShares: Decimal {
         transactions.reduce(Decimal.zero) { $0 + $1.signedShares }
+    }
+
+    var firstPurchasedAt: Date? {
+        transactions.lazy
+            .filter { $0.type == .buy }
+            .map(\.tradedAt)
+            .min()
     }
 
     var totalBuyCost: Decimal {
@@ -164,6 +189,14 @@ struct StockPortfolioSummary {
 }
 
 enum StockValueFormatter {
+    static func exchangeRate(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 4
+        return formatter.string(from: value as NSDecimalNumber) ?? "--"
+    }
+
     static func money(_ value: Decimal, currencyCode: String) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency

@@ -92,6 +92,8 @@ struct AccountDetailView: View {
     @EnvironmentObject private var auth: AuthManager
     private let accountID: UUID
     @State private var editingAccount: BankAccount?
+    @State private var editingDomesticSubaccount: DomesticSubaccount?
+    @State private var editingForeignSubaccount: ForeignSubaccount?
     @State private var editingCard: BankCard?
     @State private var viewingCard: BankCard?
     @AppStorage("card-sort-order-v1") private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
@@ -132,11 +134,22 @@ struct AccountDetailView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 CardCategoryMenu(selection: $cardCategoryRawValue)
                 CardSortMenu(selection: $cardSortOrderRawValue)
+                AdminEditAccessButton()
             }
         }
         .sheet(item: $editingAccount) { account in
             AccountEditorView(account: account, isNew: false)
                 .id(account.id)
+                .iOSLargeSheet()
+        }
+        .sheet(item: $editingDomesticSubaccount) { subaccount in
+            DomesticSubaccountEditorView(subaccount: subaccount, onSave: upsertDomesticSubaccount)
+                .id(subaccount.id)
+                .iOSLargeSheet()
+        }
+        .sheet(item: $editingForeignSubaccount) { subaccount in
+            ForeignSubaccountEditorView(subaccount: subaccount, onSave: upsertForeignSubaccount)
+                .id(subaccount.id)
                 .iOSLargeSheet()
         }
         .sheet(item: $editingCard) { card in
@@ -171,8 +184,43 @@ struct AccountDetailView: View {
                     LabeledContent("IBAN", value: account.iban.isEmpty ? "未填写" : account.iban)
                 }
                 LabeledContent("状态", value: account.status)
+                if !account.boundPhoneNumber.isEmpty {
+                    LabeledContent("绑定手机号", value: account.boundPhoneNumber)
+                }
+                if !account.loginAccount.isEmpty {
+                    LabeledContent("登录账号", value: account.loginAccount)
+                }
+                if !account.loginPassword.isEmpty {
+                    ProtectedValueRow(title: "登录密码", value: account.loginPassword)
+                }
                 if auth.isAdmin {
                     Button("编辑银行账户") { editingAccount = account }
+                }
+            }
+
+            if account.region == .overseas {
+                if !account.correspondenceAddressChinese.isEmpty
+                    || !account.correspondenceAddressEnglish.isEmpty
+                    || !account.residentialAddressChinese.isEmpty
+                    || !account.residentialAddressEnglish.isEmpty {
+                    Section("地址信息") {
+                        optionalDetail("通讯地址（中文）", account.correspondenceAddressChinese)
+                        optionalDetail("通讯地址（英文）", account.correspondenceAddressEnglish)
+                        optionalDetail("住宅地址（中文）", account.residentialAddressChinese)
+                        optionalDetail("住宅地址（英文）", account.residentialAddressEnglish)
+                    }
+                }
+
+                if !account.remittanceBankName.isEmpty
+                    || !account.remittanceBankAddress.isEmpty
+                    || !account.remittanceSwiftCode.isEmpty
+                    || !account.remittanceInstructions.isEmpty {
+                    Section("汇入汇款资料") {
+                        optionalDetail("收款银行正式名称", account.remittanceBankName)
+                        optionalDetail("收款银行地址", account.remittanceBankAddress)
+                        optionalDetail("收款 SWIFT Code", account.remittanceSwiftCode)
+                        optionalDetail("汇款说明", account.remittanceInstructions)
+                    }
                 }
             }
 
@@ -181,8 +229,25 @@ struct AccountDetailView: View {
                     if account.domesticSubaccounts.isEmpty {
                         Text("暂无境内账户").foregroundStyle(.secondary)
                     }
-                    ForEach(account.domesticSubaccounts) { subaccount in
-                        DomesticSubaccountDetailRow(subaccount: subaccount)
+                    if auth.isAdmin {
+                        ForEach(account.domesticSubaccounts) { subaccount in
+                            Button { editingDomesticSubaccount = subaccount } label: {
+                                DomesticSubaccountDetailRow(subaccount: subaccount)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { offsets in
+                            deleteDomesticSubaccounts(at: offsets, from: account)
+                        }
+                    } else {
+                        ForEach(account.domesticSubaccounts) { subaccount in
+                            DomesticSubaccountDetailRow(subaccount: subaccount)
+                        }
+                    }
+                    if auth.isAdmin {
+                        Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
+                            Label("添加境内账户", systemImage: "plus.circle")
+                        }
                     }
                 }
             }
@@ -192,8 +257,25 @@ struct AccountDetailView: View {
                     if account.foreignSubaccounts.isEmpty {
                         Text("暂无境外账户").foregroundStyle(.secondary)
                     }
-                    ForEach(account.foreignSubaccounts) { subaccount in
-                        ForeignSubaccountDetailRow(subaccount: subaccount)
+                    if auth.isAdmin {
+                        ForEach(account.foreignSubaccounts) { subaccount in
+                            Button { editingForeignSubaccount = subaccount } label: {
+                                ForeignSubaccountDetailRow(subaccount: subaccount)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { offsets in
+                            deleteForeignSubaccounts(at: offsets, from: account)
+                        }
+                    } else {
+                        ForEach(account.foreignSubaccounts) { subaccount in
+                            ForeignSubaccountDetailRow(subaccount: subaccount)
+                        }
+                    }
+                    if auth.isAdmin {
+                        Button { editingForeignSubaccount = ForeignSubaccount() } label: {
+                            Label("添加境外账户", systemImage: "plus.circle")
+                        }
                     }
                 }
             }
@@ -203,13 +285,18 @@ struct AccountDetailView: View {
                     Text(allCards.isEmpty ? "暂无银行卡" : "当前分类暂无银行卡")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(displayedCards) { card in
-                    if auth.isAdmin {
+                if auth.isAdmin {
+                    ForEach(displayedCards) { card in
                         Button { editingCard = card } label: {
                             CardRow(card: card)
                         }
                         .buttonStyle(.plain)
-                    } else {
+                    }
+                    .onDelete { offsets in
+                        deleteCards(at: offsets, from: displayedCards)
+                    }
+                } else {
+                    ForEach(displayedCards) { card in
                         Button { viewingCard = card } label: {
                             CardRow(card: card)
                         }
@@ -226,6 +313,58 @@ struct AccountDetailView: View {
 #if os(iOS)
         .listStyle(.insetGrouped)
 #endif
+    }
+
+    private func upsertDomesticSubaccount(_ subaccount: DomesticSubaccount) {
+        guard var updatedAccount = account else { return }
+        if let index = updatedAccount.domesticSubaccounts.firstIndex(where: { $0.id == subaccount.id }) {
+            updatedAccount.domesticSubaccounts[index] = subaccount
+        } else {
+            updatedAccount.domesticSubaccounts.append(subaccount)
+        }
+        store.upsertAccount(updatedAccount)
+    }
+
+    private func deleteDomesticSubaccounts(at offsets: IndexSet, from account: BankAccount) {
+        guard auth.isAdmin else { return }
+        var updatedAccount = account
+        updatedAccount.domesticSubaccounts.remove(atOffsets: offsets)
+        store.upsertAccount(updatedAccount)
+    }
+
+    @ViewBuilder
+    private func optionalDetail(_ title: String, _ value: String) -> some View {
+        if !value.isEmpty {
+            LabeledContent(title) {
+                Text(value)
+                    .multilineTextAlignment(.trailing)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func upsertForeignSubaccount(_ subaccount: ForeignSubaccount) {
+        guard var updatedAccount = account else { return }
+        if let index = updatedAccount.foreignSubaccounts.firstIndex(where: { $0.id == subaccount.id }) {
+            updatedAccount.foreignSubaccounts[index] = subaccount
+        } else {
+            updatedAccount.foreignSubaccounts.append(subaccount)
+        }
+        store.upsertAccount(updatedAccount)
+    }
+
+    private func deleteForeignSubaccounts(at offsets: IndexSet, from account: BankAccount) {
+        guard auth.isAdmin else { return }
+        var updatedAccount = account
+        updatedAccount.foreignSubaccounts.remove(atOffsets: offsets)
+        store.upsertAccount(updatedAccount)
+    }
+
+    private func deleteCards(at offsets: IndexSet, from displayedCards: [BankCard]) {
+        guard auth.isAdmin else { return }
+        for index in offsets {
+            store.delete(displayedCards[index])
+        }
     }
 }
 
@@ -271,24 +410,26 @@ struct AccountEditorView: View {
 
                 Section("账户信息") {
                     LabeledContent("银行名称：") {
-                        TextField("未填写", text: $draft.account.bankName)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .bankName)
-                            .onSubmit { focusedField = .branchName }
+                        IMESafeTextField(prompt: "未填写", text: $draft.account.bankName, alignment: .trailing)
                     }
                     LabeledContent("支行名称：") {
-                        TextField("未填写", text: $draft.account.branchName)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .branchName)
-                            .onSubmit { focusedField = .name }
+                        IMESafeTextField(prompt: "未填写", text: $draft.account.branchName, alignment: .trailing)
                     }
                     LabeledContent("备注名称：") {
-                        TextField("可选", text: $draft.account.name)
+                        IMESafeTextField(prompt: "可选", text: $draft.account.name, alignment: .trailing)
+                    }
+                }
+
+                Section("登录信息") {
+                    LabeledContent("绑定手机号：") {
+                        IMESafeTextField(prompt: "可选", text: $draft.account.boundPhoneNumber, alignment: .trailing)
+                    }
+                    LabeledContent("登录账号：") {
+                        IMESafeTextField(prompt: "可选", text: $draft.account.loginAccount, alignment: .trailing)
+                    }
+                    LabeledContent("登录密码：") {
+                        SecureField("可选", text: $draft.account.loginPassword)
                             .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .name)
-                            .onSubmit {
-                                focusedField = draft.account.region == .domestic ? .status : .swift
-                            }
                     }
                 }
 
@@ -314,17 +455,27 @@ struct AccountEditorView: View {
                 if draft.account.region == .overseas {
                     Section("银行识别信息") {
                         LabeledContent("SWIFT：") {
-                            TextField("未填写", text: $draft.account.swift)
-                                .multilineTextAlignment(.trailing)
-                                .focused($focusedField, equals: .swift)
-                                .onSubmit { focusedField = .iban }
+                            IMESafeTextField(prompt: "未填写", text: $draft.account.swift, alignment: .trailing, mode: .asciiUppercase)
                         }
                         LabeledContent("IBAN：") {
-                            TextField("未填写", text: $draft.account.iban)
-                                .multilineTextAlignment(.trailing)
-                                .focused($focusedField, equals: .iban)
-                                .onSubmit { focusedField = .status }
+                            IMESafeTextField(prompt: "未填写", text: $draft.account.iban, alignment: .trailing, mode: .asciiUppercase)
                         }
+                    }
+
+                    Section("地址信息") {
+                        multilineField("通讯地址（中文）：", prompt: "可选", text: $draft.account.correspondenceAddressChinese)
+                        multilineField("通讯地址（英文）：", prompt: "可选", text: $draft.account.correspondenceAddressEnglish)
+                        multilineField("住宅地址（中文）：", prompt: "可选", text: $draft.account.residentialAddressChinese)
+                        multilineField("住宅地址（英文）：", prompt: "可选", text: $draft.account.residentialAddressEnglish)
+                    }
+
+                    Section("汇入汇款资料") {
+                        multilineField("收款银行正式名称：", prompt: "例如 Bank of China (Hong Kong) Limited", text: $draft.account.remittanceBankName)
+                        multilineField("收款银行地址：", prompt: "例如 1 Garden Road, Central, Hong Kong", text: $draft.account.remittanceBankAddress)
+                        LabeledContent("收款 SWIFT Code：") {
+                            IMESafeTextField(prompt: "例如 BKCHHKHHXXX", text: $draft.account.remittanceSwiftCode, alignment: .trailing, mode: .asciiUppercase)
+                        }
+                        multilineField("汇款说明：", prompt: "可选", text: $draft.account.remittanceInstructions)
                     }
 
                     Section("境外账户") {
@@ -347,18 +498,13 @@ struct AccountEditorView: View {
 
                 Section("其他") {
                     LabeledContent("状态：") {
-                        TextField("未填写", text: $draft.account.status)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .status)
+                        IMESafeTextField(prompt: "未填写", text: $draft.account.status, alignment: .trailing)
                     }
                     DatePicker("开户时间：", selection: $draft.account.openedAt, displayedComponents: .date)
                     HStack(alignment: .top, spacing: 4) {
                         Text("备注：")
                             .fixedSize(horizontal: true, vertical: true)
-                        TextField("未填写", text: $draft.account.note, axis: .vertical)
-                            .multilineTextAlignment(.leading)
-                            .focused($focusedField, equals: .note)
-                            .lineLimit(3...6)
+                        IMESafeMultilineTextField(prompt: "未填写", text: $draft.account.note)
                     }
                 }
             }
@@ -395,6 +541,13 @@ struct AccountEditorView: View {
     private func requestSave() {
         commitPendingTextInput {
             save()
+        }
+    }
+
+    private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+            IMESafeMultilineTextField(prompt: prompt, text: text)
         }
     }
 
@@ -524,21 +677,13 @@ private struct DomesticSubaccountEditorView: View {
             Form {
                 Section("账户信息") {
                     LabeledContent("账户类型：") {
-                        TextField("例如个人养老金", text: $draft.subaccount.type)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .type)
-                            .onSubmit { focusedField = .name }
+                        IMESafeTextField(prompt: "例如个人养老金", text: $draft.subaccount.type, alignment: .trailing)
                     }
                     LabeledContent("备注名称：") {
-                        TextField("可选", text: $draft.subaccount.name)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .name)
-                            .onSubmit { focusedField = .accountNumber }
+                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.name, alignment: .trailing)
                     }
                     LabeledContent("账户号：") {
-                        TextField("可选", text: $draft.subaccount.accountNumber)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .accountNumber)
+                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
                 }
 
@@ -661,15 +806,10 @@ private struct ForeignSubaccountEditorView: View {
                         }
                     }
                     LabeledContent("备注名称：") {
-                        TextField("可选", text: $draft.subaccount.name)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .name)
-                            .onSubmit { focusedField = .accountNumber }
+                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.name, alignment: .trailing)
                     }
                     LabeledContent("账户号：") {
-                        TextField("未填写", text: $draft.subaccount.accountNumber)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .accountNumber)
+                        IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
                 }
 
@@ -787,10 +927,7 @@ struct CardEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     LabeledContent("卡片名称：") {
-                        TextField("可选，如 Visa 白金卡", text: $draft.card.cardType)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .cardType)
-                            .onSubmit { focusedField = .holderName }
+                        IMESafeTextField(prompt: "可选，如 Visa 白金卡", text: $draft.card.cardType, alignment: .trailing)
                     }
                     Picker("卡片状态：", selection: $draft.card.status) {
                         ForEach(CardStatus.allCases) { status in
@@ -799,25 +936,15 @@ struct CardEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     LabeledContent("持卡人：") {
-                        TextField(
-                            account.region == .overseas ? "拼音，如 HUANG SHUAI" : "未填写",
-                            text: $draft.card.holderName
+                        IMESafeTextField(
+                            prompt: account.region == .overseas ? "拼音，如 HUANG SHUAI" : "未填写",
+                            text: $draft.card.holderName,
+                            alignment: .trailing,
+                            mode: account.region == .overseas ? .asciiUppercase : .text
                         )
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .holderName)
-                            .onSubmit { focusedField = .cardNumber }
-#if os(iOS)
-                            .textContentType(.name)
-                            .keyboardType(account.region == .overseas ? .asciiCapable : .default)
-                            .textInputAutocapitalization(account.region == .overseas ? .characters : .words)
-                            .autocorrectionDisabled(account.region == .overseas)
-#endif
                     }
                     LabeledContent("完整卡号：") {
-                        TextField("未填写", text: $draft.card.cardNumber)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .cardNumber)
-                            .onSubmit { focusedField = .cvv }
+                        IMESafeTextField(prompt: "未填写", text: $draft.card.cardNumber, alignment: .trailing)
                     }
                     LabeledContent("CVV：") {
                         SecureField("未填写", text: $draft.card.cvv)
@@ -841,10 +968,7 @@ struct CardEditorView: View {
                     HStack(alignment: .top, spacing: 4) {
                         Text("备注：")
                             .fixedSize(horizontal: true, vertical: true)
-                        TextField("未填写", text: $draft.card.note, axis: .vertical)
-                            .multilineTextAlignment(.leading)
-                            .focused($focusedField, equals: .note)
-                            .lineLimit(3...6)
+                        IMESafeMultilineTextField(prompt: "未填写", text: $draft.card.note)
                     }
                 }
 

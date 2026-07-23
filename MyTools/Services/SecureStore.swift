@@ -58,6 +58,7 @@ final class SecureStore {
                 copy.accountNumber = ""
                 copy.swift = ""
                 copy.iban = ""
+                copy.loginPassword = ""
                 copy.foreignSubaccounts = account.foreignSubaccounts.map { subaccount in
                     var redacted = subaccount
                     redacted.accountNumber = subaccount.accountNumber.count > 4

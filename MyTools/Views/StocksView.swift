@@ -1,5 +1,18 @@
 import SwiftUI
 
+@MainActor
+private func stockValueColor(
+    _ value: Decimal,
+    market: StockMarket,
+    settings: StockAppearanceSettings
+) -> Color {
+        let scheme = settings.scheme(for: market)
+        switch (value >= 0, scheme) {
+        case (true, .redRiseGreenFall), (false, .greenRiseRedFall): return .red
+        case (true, .greenRiseRedFall), (false, .redRiseGreenFall): return .green
+        }
+}
+
 private enum StockMarketFilter: String, CaseIterable, Identifiable {
     case all
     case aShare
@@ -24,28 +37,87 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private enum StockSortOrder: String, CaseIterable, Identifiable {
+    case nameAscending
+    case firstPurchaseOldest
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .nameAscending: return "名称：A-Z"
+        case .firstPurchaseOldest: return "最早购买时间"
+        }
+    }
+
+    func sorted(_ stocks: [StockHolding]) -> [StockHolding] {
+        stocks.sorted { lhs, rhs in
+            switch self {
+            case .nameAscending:
+                return nameBefore(lhs, rhs)
+            case .firstPurchaseOldest:
+                switch (lhs.firstPurchasedAt, rhs.firstPurchasedAt) {
+                case let (left?, right?) where left != right:
+                    return left < right
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    return nameBefore(lhs, rhs)
+                }
+            }
+        }
+    }
+
+    private func nameBefore(_ lhs: StockHolding, _ rhs: StockHolding) -> Bool {
+        let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+        return comparison == .orderedSame
+            ? lhs.symbol.localizedStandardCompare(rhs.symbol) == .orderedAscending
+            : comparison == .orderedAscending
+    }
+}
+
+private struct StockSortMenu: View {
+    @Binding var selection: String
+
+    var body: some View {
+        Menu {
+            Picker("排序方式", selection: $selection) {
+                ForEach(StockSortOrder.allCases) { order in
+                    Text(order.title).tag(order.rawValue)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("股票排序")
+        .help("股票排序")
+    }
+}
+
 struct StocksView: View {
     @EnvironmentObject private var store: CardStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var editingStock: StockHolding?
+    @AppStorage("stock-sort-order-v1") private var sortOrderRawValue = StockSortOrder.nameAscending.rawValue
+
+    private var selectedSortOrder: StockSortOrder {
+        StockSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
+    }
 
     private var displayedStocks: [StockHolding] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return store.stocks
+        let filtered = store.stocks
             .filter(marketFilter.includes)
             .filter { stock in
                 searchTerm.isEmpty
                     || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
                     || stock.displayName.localizedCaseInsensitiveContains(searchTerm)
             }
-            .sorted { lhs, rhs in
-                let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
-                return comparison == .orderedSame
-                    ? lhs.symbol.localizedStandardCompare(rhs.symbol) == .orderedAscending
-                    : comparison == .orderedAscending
-            }
+        return selectedSortOrder.sorted(filtered)
     }
 
     private var summaryMarkets: [StockMarket] {
@@ -71,6 +143,7 @@ struct StocksView: View {
             }
 
             Section("资产总览") {
+                RenminbiPortfolioSummaryRow(marketFilter: marketFilter)
                 ForEach(summaryMarkets) { market in
                     StockMarketSummaryRow(
                         summary: StockPortfolioSummary(market: market, stocks: store.stocks)
@@ -108,7 +181,7 @@ struct StocksView: View {
                     LabeledContent("最近刷新", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
                 }
             } footer: {
-                Text("行情由东方财富公开接口提供，可能存在延迟，请以交易所和券商数据为准。")
+                Text("行情通过新浪财经及东方财富公开接口获取，可能存在延迟，请以交易所和券商数据为准。")
             }
         }
         .navigationTitle("我的股票")
@@ -119,6 +192,7 @@ struct StocksView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                StockSortMenu(selection: $sortOrderRawValue)
                 Button {
                     Task { await store.refreshStockQuotes() }
                 } label: {
@@ -128,8 +202,12 @@ struct StocksView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(store.isRefreshingQuotes || store.stocks.isEmpty)
+                .disabled(store.isRefreshingQuotes)
                 .accessibilityLabel("刷新股票行情")
+
+                AdminEditAccessButton {
+                    editingStock = StockHolding()
+                }
 
                 if auth.isAdmin {
                     Button { editingStock = StockHolding() } label: {
@@ -152,7 +230,7 @@ struct StocksView: View {
         .task {
             await store.refreshStockQuotes()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                try? await Task.sleep(for: .seconds(300))
                 guard !Task.isCancelled else { return }
                 await store.refreshStockQuotes()
             }
@@ -173,7 +251,119 @@ struct StocksView: View {
     }
 }
 
+private struct RenminbiPortfolioSummaryRow: View {
+    @EnvironmentObject private var store: CardStore
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
+    let marketFilter: StockMarketFilter
+
+    private var includedStocks: [StockHolding] {
+        store.stocks.filter(marketFilter.includes)
+    }
+
+    private var convertedValues: (netInvestment: Decimal, marketValue: Decimal, profitLoss: Decimal?)? {
+        let containsUnitedStatesStock = includedStocks.contains { $0.market == .unitedStates }
+        guard !containsUnitedStatesStock || store.usdRenminbiBuyingRate != nil else { return nil }
+        let rate = store.usdRenminbiBuyingRate ?? 1
+        var netInvestment = Decimal.zero
+        var marketValue = Decimal.zero
+        var missingQuote = false
+        for stock in includedStocks {
+            let multiplier: Decimal = stock.market == .unitedStates ? rate : 1
+            netInvestment += stock.netInvestment * multiplier
+            if let value = stock.marketValue {
+                marketValue += value * multiplier
+            } else if stock.currentShares > 0 {
+                missingQuote = true
+            }
+        }
+        return (netInvestment, marketValue, missingQuote ? nil : marketValue - netInvestment)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("人民币合计", systemImage: "yensign.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.blue)
+                Spacer()
+                Text("CNY")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            if let values = convertedValues {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) {
+                        metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
+                        metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
+                        metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
+                        metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
+                        metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
+                    }
+                }
+            } else {
+                Label("美元买入价待同步", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            if marketFilter != .aShare {
+                if let rate = store.usdRenminbiBuyingRate {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("按中国银行美元现汇买入价换算：1 USD = \(StockValueFormatter.exchangeRate(rate)) CNY")
+                        if let updatedAt = store.exchangeRateUpdatedAt {
+                            Text("牌价时间：\(updatedAt.formatted(date: .abbreviated, time: .standard))")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if let error = store.exchangeRateError {
+                    Text(error).font(.caption).foregroundStyle(.orange)
+                }
+            } else {
+                Text("A 股资产无需换汇。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func metric(_ title: String, value: String, color: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func profitLossText(_ value: Decimal?) -> String {
+        value.map { StockValueFormatter.money($0, currencyCode: "CNY") } ?? "待同步"
+    }
+
+    private func profitLossColor(_ value: Decimal?) -> Color {
+        guard let value else { return .secondary }
+        return aggregateProfitLossColor(value)
+    }
+
+    private func aggregateProfitLossColor(_ value: Decimal) -> Color {
+        switch marketFilter {
+        case .aShare:
+            return stockValueColor(value, market: .aShare, settings: stockAppearanceSettings)
+        case .unitedStates:
+            return stockValueColor(value, market: .unitedStates, settings: stockAppearanceSettings)
+        case .all:
+            return value >= 0 ? .blue : .orange
+        }
+    }
+}
+
 private struct StockMarketSummaryRow: View {
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let summary: StockPortfolioSummary
 
     var body: some View {
@@ -218,7 +408,7 @@ private struct StockMarketSummaryRow: View {
 
     private var profitLossColor: Color {
         guard let profitLoss = summary.profitLoss else { return .secondary }
-        return profitLoss >= 0 ? .green : .red
+        return stockValueColor(profitLoss, market: summary.market, settings: stockAppearanceSettings)
     }
 
     private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
@@ -237,6 +427,7 @@ private struct StockMarketSummaryRow: View {
 }
 
 private struct StockRow: View {
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stock: StockHolding
     let quoteError: String?
 
@@ -262,7 +453,7 @@ private struct StockRow: View {
                         .monospacedDigit()
                     if let changePercent = stock.changePercent {
                         Text(StockValueFormatter.percent(changePercent))
-                            .foregroundStyle(changePercent >= 0 ? .green : .red)
+                            .foregroundStyle(stockValueColor(changePercent, market: stock.market, settings: stockAppearanceSettings))
                             .monospacedDigit()
                     }
                 } else {
@@ -296,7 +487,7 @@ private struct StockRow: View {
 
     private var profitLossColor: Color {
         guard let value = stock.totalProfitLoss else { return .secondary }
-        return value >= 0 ? .green : .red
+        return stockValueColor(value, market: stock.market, settings: stockAppearanceSettings)
     }
 }
 
@@ -304,7 +495,7 @@ struct StockMarketBadge: View {
     let market: StockMarket
 
     private var color: Color {
-        market == .aShare ? .red : .blue
+        market == .aShare ? .purple : .teal
     }
 
     var body: some View {
@@ -320,6 +511,7 @@ struct StockMarketBadge: View {
 private struct StockDetailView: View {
     @EnvironmentObject private var store: CardStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stockID: UUID
     @State private var editingStock: StockHolding?
     @State private var editingTransaction: StockTransaction?
@@ -356,6 +548,8 @@ private struct StockDetailView: View {
                 }
                 .disabled(store.isRefreshingQuotes)
                 .accessibilityLabel("刷新股票行情")
+
+                AdminEditAccessButton()
 
                 if auth.isAdmin, let stock {
                     Button { editingStock = stock } label: {
@@ -401,7 +595,7 @@ private struct StockDetailView: View {
                 if let changePercent = stock.changePercent {
                     LabeledContent("涨跌幅") {
                         Text(StockValueFormatter.percent(changePercent))
-                            .foregroundStyle(changePercent >= 0 ? .green : .red)
+                            .foregroundStyle(stockValueColor(changePercent, market: stock.market, settings: stockAppearanceSettings))
                     }
                 }
                 if let lastQuoteAt = stock.lastQuoteAt {
@@ -422,7 +616,7 @@ private struct StockDetailView: View {
                 LabeledContent("总盈亏") {
                     if let value = stock.totalProfitLoss {
                         Text(StockValueFormatter.money(value, currencyCode: stock.market.currencyCode))
-                            .foregroundStyle(value >= 0 ? .green : .red)
+                            .foregroundStyle(stockValueColor(value, market: stock.market, settings: stockAppearanceSettings))
                     } else {
                         Text("待同步").foregroundStyle(.secondary)
                     }
@@ -555,21 +749,15 @@ private struct StockEditorView: View {
                     .pickerStyle(.segmented)
                     .disabled(!isNew)
                     LabeledContent("股票代码：") {
-                        TextField(draft.stock.market == .aShare ? "例如 600519" : "例如 AAPL", text: $draft.symbolText)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .symbol)
-                            .onSubmit { focusedField = .name }
-#if os(iOS)
-                            .keyboardType(.asciiCapable)
-                            .textInputAutocapitalization(.characters)
-                            .autocorrectionDisabled()
-#endif
+                        IMESafeTextField(
+                            prompt: draft.stock.market == .aShare ? "例如 600519" : "例如 AAPL",
+                            text: $draft.symbolText,
+                            alignment: .trailing,
+                            mode: .asciiUppercase
+                        )
                     }
                     LabeledContent("股票名称：") {
-                        TextField("可选", text: $draft.nameText)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .name)
-                            .onSubmit { if isNew { focusedField = .quantity } }
+                        IMESafeTextField(prompt: "可选", text: $draft.nameText, alignment: .trailing)
                     }
                 }
 

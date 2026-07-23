@@ -14,7 +14,7 @@ struct ProfileView: View {
     @State private var showingBackupMessage = false
     @State private var backupMessage = ""
     @State private var importSucceeded = false
-    @State private var exportFilename = "备份.mytools"
+    @State private var exportFilename = "备份"
 
     var body: some View {
         NavigationStack {
@@ -22,7 +22,6 @@ struct ProfileView: View {
                 Section("管理员") {
                     if auth.isAdmin {
                         Label("管理员模式已开启", systemImage: "checkmark.shield.fill")
-                        NavigationLink("管理银行账户") { AdminCardsView() }
                         Button("退出管理员模式") { auth.lock() }
                     } else {
                         Button { showAuth = true } label: {
@@ -58,6 +57,11 @@ struct ProfileView: View {
                         HomeFeatureSettingsView()
                     } label: {
                         Label("首页功能", systemImage: "switch.2")
+                    }
+                    NavigationLink {
+                        StockAppearanceSettingsView()
+                    } label: {
+                        Label("我的股票", systemImage: "chart.line.uptrend.xyaxis")
                     }
                 }
                 Section("关于") {
@@ -178,7 +182,7 @@ struct ProfileView: View {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyyMMddHHmm"
-        return formatter.string(from: date) + ".mytools"
+        return formatter.string(from: date)
     }
 }
 
@@ -226,6 +230,44 @@ private struct HomeFeatureSettingsView: View {
     }
 }
 
+private struct StockAppearanceSettingsView: View {
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
+
+    var body: some View {
+        List {
+            Section {
+                schemePicker(title: "A 股", market: .aShare)
+                schemePicker(title: "美股", market: .unitedStates)
+            } header: {
+                Text("涨跌颜色")
+            } footer: {
+                Text("默认遵循市场习惯：A 股红涨绿跌，美股绿涨红跌。盈亏颜色会使用对应股票市场的设置。")
+            }
+        }
+        .navigationTitle("我的股票")
+        .iOSLabeledBackButton("我的")
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.insetGrouped)
+#endif
+    }
+
+    private func schemePicker(title: String, market: StockMarket) -> some View {
+        Picker(title, selection: schemeBinding(for: market)) {
+            ForEach(StockRiseFallColorScheme.allCases) { scheme in
+                Text(scheme.title).tag(scheme)
+            }
+        }
+    }
+
+    private func schemeBinding(for market: StockMarket) -> Binding<StockRiseFallColorScheme> {
+        Binding(
+            get: { stockAppearanceSettings.scheme(for: market) },
+            set: { stockAppearanceSettings.setScheme($0, for: market) }
+        )
+    }
+}
+
 enum BackupPasswordMode: Int, Identifiable {
     case export
     case restore
@@ -251,27 +293,30 @@ struct BackupPasswordView: View {
     @Environment(\.dismiss) private var dismiss
     let mode: BackupPasswordMode
     let onSubmit: (String) -> String?
-    @State private var password = ""
-    @State private var confirmation = ""
+    @State private var password = VaultBackupCrypto.defaultPassword
+    @State private var confirmation = VaultBackupCrypto.defaultPassword
     @State private var error = ""
     @FocusState private var inputFocused: Bool
 
     private var canSubmit: Bool {
-        password.count >= 8 && (mode == .restore || password == confirmation)
+        guard password.isEmpty || password.count >= 8 else { return false }
+        return mode == .restore
+            || password.isEmpty
+            || password == confirmation
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("至少 8 位", text: $password)
+                    SecureField("留空时使用默认密码", text: $password)
                         .focused($inputFocused)
                     if mode == .export {
                         SecureField("再次输入", text: $confirmation)
                             .focused($inputFocused)
                     }
                 } footer: {
-                    Text(mode == .export ? "此密码用于加密备份文件，丢失后无法恢复。" : "导入成功后会替换当前全部本地数据。")
+                    Text(mode == .export ? "已填入默认密码 1.2.3.4.；清空后导出也会使用该默认密码。自定义密码至少 8 位。" : "已填入默认密码 1.2.3.4.；清空后导入也会尝试该默认密码。")
                 }
 
                 if !error.isEmpty {

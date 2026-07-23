@@ -25,8 +25,8 @@ final class AuthManager: ObservableObject {
 
     func unlockWithBiometrics() async -> Bool {
         let context = LAContext(); var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
-        do { let success = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "验证本人身份后进入管理员模式")
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else { return false }
+        do { let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "验证本人身份后进入编辑模式")
             if success { isAdmin = true }; return success
         } catch { return false }
     }
