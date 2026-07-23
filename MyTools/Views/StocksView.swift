@@ -357,7 +357,7 @@ private struct RenminbiPortfolioSummaryRow: View {
         case .unitedStates:
             return stockValueColor(value, market: .unitedStates, settings: stockAppearanceSettings)
         case .all:
-            return value >= 0 ? .blue : .orange
+            return stockValueColor(value, market: .aShare, settings: stockAppearanceSettings)
         }
     }
 }

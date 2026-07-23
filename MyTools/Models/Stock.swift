@@ -225,10 +225,10 @@ enum StockValueFormatter {
 
     static func percent(_ value: Decimal) -> String {
         let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
+        formatter.numberStyle = .percent
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
-        let number = formatter.string(from: value as NSDecimalNumber) ?? "0.00"
-        return (value > 0 ? "+" : "") + number + "%"
+        formatter.positivePrefix = "+"
+        return formatter.string(from: value as NSDecimalNumber) ?? "0.00%"
     }
 }

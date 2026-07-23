@@ -9,6 +9,7 @@ final class CardStore: ObservableObject {
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var quoteErrors: [UUID: String] = [:]
+    @Published private(set) var quoteSources: [UUID: String] = [:]
     @Published private(set) var usdRenminbiBuyingRate: Decimal?
     @Published private(set) var exchangeRateUpdatedAt: Date?
     @Published private(set) var exchangeRateError: String?
@@ -104,7 +105,10 @@ final class CardStore: ObservableObject {
 
     func deleteStocks(ids: Set<UUID>) {
         stocks.removeAll { ids.contains($0.id) }
-        for id in ids { quoteErrors[id] = nil }
+        for id in ids {
+            quoteErrors[id] = nil
+            quoteSources[id] = nil
+        }
         persist()
     }
 
@@ -161,6 +165,7 @@ final class CardStore: ObservableObject {
                 stocks[index].previousClose = quote.previousClose
                 stocks[index].changePercent = quote.changePercent
                 stocks[index].lastQuoteAt = quote.updatedAt
+                quoteSources[stock.id] = quote.source
                 successCount += 1
             } catch {
                 failures[stock.id] = error.localizedDescription
@@ -168,6 +173,7 @@ final class CardStore: ObservableObject {
         }
 
         quoteErrors = failures
+        for id in failures.keys { quoteSources[id] = nil }
         if !failures.isEmpty {
             let firstReason = failures.values.first ?? "行情服务暂时不可用"
             quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
@@ -188,6 +194,7 @@ final class CardStore: ObservableObject {
         cards = vault.cards
         stocks = vault.stocks
         quoteErrors = [:]
+        quoteSources = [:]
     }
 
     func delete(at offsets: IndexSet) { cards.remove(atOffsets: offsets); persist() }

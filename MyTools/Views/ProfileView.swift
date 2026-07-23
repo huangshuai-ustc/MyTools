@@ -192,7 +192,7 @@ private struct HomeFeatureSettingsView: View {
     var body: some View {
         List {
             Section("首页功能") {
-                ForEach(ToolModule.allCases) { module in
+                ForEach(moduleSettings.orderedModules) { module in
                     Toggle(isOn: visibilityBinding(for: module)) {
                         HStack(spacing: 12) {
                             Image(systemName: module.systemImage)
@@ -212,11 +212,13 @@ private struct HomeFeatureSettingsView: View {
                         }
                     }
                 }
+                .onMove(perform: moduleSettings.moveModules)
             }
         }
         .navigationTitle("首页功能")
         .iOSLabeledBackButton("我的")
 #if os(iOS)
+        .toolbar { EditButton() }
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
 #endif

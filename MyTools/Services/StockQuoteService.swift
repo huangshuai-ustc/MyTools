@@ -7,6 +7,7 @@ struct StockQuote: Sendable {
     let previousClose: Decimal?
     let changePercent: Decimal?
     let updatedAt: Date
+    let source: String
 }
 
 enum StockQuoteError: LocalizedError, Sendable {
@@ -27,6 +28,58 @@ enum StockQuoteError: LocalizedError, Sendable {
 }
 
 actor StockQuoteService {
+    private struct ShenzhenEnvelope: Decodable {
+        let data: ShenzhenQuote?
+    }
+
+    private struct ShenzhenQuote: Decodable {
+        let name: String
+        let close: String
+        let now: String
+        let deltaPercent: String
+        let marketTime: String
+    }
+
+    private struct NasdaqEnvelope: Decodable {
+        let data: NasdaqQuote?
+    }
+
+    private struct NasdaqQuote: Decodable {
+        let symbol: String
+        let companyName: String
+        let primaryData: NasdaqPriceData?
+        let secondaryData: NasdaqPriceData?
+    }
+
+    private struct NasdaqPriceData: Decodable {
+        let lastSalePrice: String
+        let netChange: String
+        let percentageChange: String
+        let lastTradeTimestamp: String
+        let isRealTime: Bool
+    }
+
+    private struct YahooEnvelope: Decodable {
+        let chart: YahooChart
+    }
+
+    private struct YahooChart: Decodable {
+        let result: [YahooResult]?
+    }
+
+    private struct YahooResult: Decodable {
+        let meta: YahooMeta
+    }
+
+    private struct YahooMeta: Decodable {
+        let symbol: String
+        let longName: String?
+        let shortName: String?
+        let regularMarketPrice: Double?
+        let chartPreviousClose: Double?
+        let regularMarketTime: TimeInterval?
+    }
+
     private struct Envelope: Decodable {
         let data: QuotePayload?
     }
@@ -68,12 +121,27 @@ actor StockQuoteService {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { throw StockQuoteError.invalidSymbol }
 
-        do {
-            if let quote = try await fetchSinaQuote(symbol: symbol, market: stock.market) {
-                return quote
+        switch stock.market {
+        case .aShare:
+            if let officialQuote = await fetchOfficialAShareQuote(symbol: symbol) {
+                return officialQuote
             }
-        } catch {
-            // 新浪不可用时继续尝试东方财富，单个行情源失败不应中断整个回退链。
+            if let tencentQuote = try? await fetchTencentAShareQuote(symbol: symbol) {
+                return tencentQuote
+            }
+            if let sinaQuote = try? await fetchSinaQuote(symbol: symbol, market: stock.market) {
+                return sinaQuote
+            }
+        case .unitedStates:
+            if let nasdaqQuote = try? await fetchNasdaqQuote(symbol: symbol) {
+                return nasdaqQuote
+            }
+            if let yahooQuote = try? await fetchYahooQuote(symbol: symbol) {
+                return yahooQuote
+            }
+            if let sinaQuote = try? await fetchSinaQuote(symbol: symbol, market: stock.market) {
+                return sinaQuote
+            }
         }
 
         for identifier in marketIdentifiers(for: symbol, market: stock.market) {
@@ -86,6 +154,191 @@ actor StockQuoteService {
             }
         }
         throw StockQuoteError.quoteUnavailable
+    }
+
+    private func fetchOfficialAShareQuote(symbol: String) async -> StockQuote? {
+        if symbol.hasPrefix("5") || symbol.hasPrefix("6") || symbol.hasPrefix("9") {
+            return try? await fetchShanghaiQuote(symbol: symbol)
+        }
+        if symbol.hasPrefix("4") || symbol.hasPrefix("8") {
+            return nil
+        }
+        return try? await fetchShenzhenQuote(symbol: symbol)
+    }
+
+    private func fetchShanghaiQuote(symbol: String) async throws -> StockQuote? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "yunhq.sse.com.cn"
+        components.port = 32042
+        components.path = "/v1/sh1/snap/\(symbol)"
+        components.queryItems = [
+            URLQueryItem(name: "select", value: "name,last,prev_close,chg_rate,date,time")
+        ]
+        guard let url = components.url else { throw StockQuoteError.invalidResponse }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.sse.com.cn/", forHTTPHeaderField: "Referer")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let values = root["snap"] as? [Any],
+              values.count > 5,
+              let name = values[0] as? String,
+              let latestPrice = decimal(values[1]),
+              latestPrice > 0 else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        let previousClose = decimal(values[2])
+        let changePercent = decimal(values[3]).map { $0 / 100 }
+        let updatedAt = exchangeDate(date: values[4], time: values[5], timeZoneIdentifier: "Asia/Shanghai") ?? Date()
+        return StockQuote(
+            symbol: symbol,
+            name: name,
+            latestPrice: latestPrice,
+            previousClose: previousClose,
+            changePercent: changePercent,
+            updatedAt: updatedAt,
+            source: "上海证券交易所"
+        )
+    }
+
+    private func fetchShenzhenQuote(symbol: String) async throws -> StockQuote? {
+        var components = URLComponents(string: "https://www.szse.cn/api/market/ssjjhq/getTimeData")
+        components?.queryItems = [
+            URLQueryItem(name: "marketId", value: "1"),
+            URLQueryItem(name: "code", value: symbol)
+        ]
+        guard let url = components?.url else { throw StockQuoteError.invalidResponse }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.szse.cn/", forHTTPHeaderField: "Referer")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let quote = try JSONDecoder().decode(ShenzhenEnvelope.self, from: data).data,
+              let latestPrice = decimal(quote.now),
+              latestPrice > 0 else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        return StockQuote(
+            symbol: symbol,
+            name: quote.name,
+            latestPrice: latestPrice,
+            previousClose: decimal(quote.close),
+            changePercent: decimal(quote.deltaPercent).map { $0 / 100 },
+            updatedAt: quoteDate(quote.marketTime, timeZoneIdentifier: "Asia/Shanghai") ?? Date(),
+            source: "深圳证券交易所"
+        )
+    }
+
+    private func fetchTencentAShareQuote(symbol: String) async throws -> StockQuote? {
+        let identifier = sinaIdentifier(for: symbol, market: .aShare)
+        guard let url = URL(string: "https://qt.gtimg.cn/q=\(identifier)") else {
+            throw StockQuoteError.invalidResponse
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://stockapp.finance.qq.com/", forHTTPHeaderField: "Referer")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let body = decodeGB18030(data),
+              let firstQuote = body.firstIndex(of: "\""),
+              let lastQuote = body.lastIndex(of: "\""),
+              firstQuote < lastQuote else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        let payload = body[body.index(after: firstQuote)..<lastQuote]
+        let fields = payload.split(separator: "~", omittingEmptySubsequences: false).map(String.init)
+        guard fields.count > 32,
+              let latestPrice = decimal(fields[3]),
+              latestPrice > 0 else { return nil }
+
+        return StockQuote(
+            symbol: fields[2].isEmpty ? symbol : fields[2],
+            name: fields[1],
+            latestPrice: latestPrice,
+            previousClose: decimal(fields[4]),
+            changePercent: decimal(fields[32]).map { $0 / 100 },
+            updatedAt: compactQuoteDate(fields[30], timeZoneIdentifier: "Asia/Shanghai") ?? Date(),
+            source: "腾讯证券"
+        )
+    }
+
+    private func fetchNasdaqQuote(symbol: String) async throws -> StockQuote? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.nasdaq.com"
+        components.path = "/api/quote/\(symbol)/info"
+        components.queryItems = [URLQueryItem(name: "assetclass", value: "stocks")]
+        guard let url = components.url else { throw StockQuoteError.invalidResponse }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue("https://www.nasdaq.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.nasdaq.com/market-activity/stocks/\(symbol.lowercased())", forHTTPHeaderField: "Referer")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let quote = try JSONDecoder().decode(NasdaqEnvelope.self, from: data).data else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        let priceData: NasdaqPriceData?
+        if quote.primaryData?.isRealTime == true {
+            priceData = quote.primaryData
+        } else {
+            priceData = quote.secondaryData ?? quote.primaryData
+        }
+        guard let priceData, let latestPrice = decimal(priceData.lastSalePrice), latestPrice > 0 else { return nil }
+        let netChange = decimal(priceData.netChange)
+        return StockQuote(
+            symbol: quote.symbol,
+            name: quote.companyName,
+            latestPrice: latestPrice,
+            previousClose: netChange.map { latestPrice - $0 },
+            changePercent: decimal(priceData.percentageChange).map { $0 / 100 },
+            updatedAt: nasdaqDate(priceData.lastTradeTimestamp) ?? Date(),
+            source: "Nasdaq"
+        )
+    }
+
+    private func fetchYahooQuote(symbol: String) async throws -> StockQuote? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "query1.finance.yahoo.com"
+        components.path = "/v8/finance/chart/\(symbol)"
+        components.queryItems = [
+            URLQueryItem(name: "interval", value: "1d"),
+            URLQueryItem(name: "range", value: "1d")
+        ]
+        guard let url = components.url else { throw StockQuoteError.invalidResponse }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let meta = try JSONDecoder().decode(YahooEnvelope.self, from: data).chart.result?.first?.meta,
+              let rawLatestPrice = meta.regularMarketPrice,
+              rawLatestPrice > 0 else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        let latestPrice = Decimal(rawLatestPrice)
+        let previousClose = meta.chartPreviousClose.map { Decimal($0) }
+        let changePercent = previousClose.flatMap { close in close > 0 ? (latestPrice - close) / close : nil }
+        return StockQuote(
+            symbol: meta.symbol,
+            name: meta.longName ?? meta.shortName ?? "",
+            latestPrice: latestPrice,
+            previousClose: previousClose,
+            changePercent: changePercent,
+            updatedAt: meta.regularMarketTime.map { Date(timeIntervalSince1970: $0) } ?? Date(),
+            source: "Yahoo Finance"
+        )
     }
 
     private func fetchSinaQuote(symbol: String, market: StockMarket) async throws -> StockQuote? {
@@ -140,7 +393,8 @@ actor StockQuoteService {
             latestPrice: latestPrice,
             previousClose: previousClose,
             changePercent: changePercent,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            source: "新浪财经"
         )
     }
 
@@ -154,7 +408,7 @@ actor StockQuoteService {
         let changePercent = decimal(fields[2]).map { $0 / 100 }
         let updatedAt = quoteDate(
             fields[3],
-            timeZoneIdentifier: "Asia/Shanghai"
+            timeZoneIdentifier: "America/New_York"
         ) ?? Date()
 
         return StockQuote(
@@ -163,7 +417,8 @@ actor StockQuoteService {
             latestPrice: latestPrice,
             previousClose: previousClose,
             changePercent: changePercent,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            source: "新浪财经"
         )
     }
 
@@ -203,7 +458,8 @@ actor StockQuoteService {
             latestPrice: latestPrice,
             previousClose: previousClose,
             changePercent: percent,
-            updatedAt: Date()
+            updatedAt: Date(),
+            source: "东方财富"
         )
     }
 
@@ -225,7 +481,23 @@ actor StockQuoteService {
     }
 
     private func decimal(_ value: String) -> Decimal? {
-        Decimal(string: value.trimmingCharacters(in: .whitespacesAndNewlines), locale: Locale(identifier: "en_US_POSIX"))
+        let cleaned = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: "%", with: "")
+            .replacingOccurrences(of: ",", with: "")
+        return Decimal(string: cleaned, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    private func decimal(_ value: Any) -> Decimal? {
+        if let value = value as? NSNumber { return value.decimalValue }
+        if let value = value as? String { return decimal(value) }
+        return nil
+    }
+
+    private func isSuccessful(_ response: URLResponse) -> Bool {
+        guard let response = response as? HTTPURLResponse else { return false }
+        return (200..<300).contains(response.statusCode)
     }
 
     private func quoteDate(_ value: String, timeZoneIdentifier: String) -> Date? {
@@ -237,16 +509,47 @@ actor StockQuoteService {
         return formatter.date(from: value)
     }
 
+    private func compactQuoteDate(_ value: String, timeZoneIdentifier: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: timeZoneIdentifier)
+        formatter.dateFormat = "yyyyMMddHHmmss"
+        return formatter.date(from: value)
+    }
+
+    private func exchangeDate(date: Any, time: Any, timeZoneIdentifier: String) -> Date? {
+        let rawDate = String(describing: date)
+        guard let timeValue = decimal(time) else { return nil }
+        let rawTime = String(format: "%06d", NSDecimalNumber(decimal: timeValue).intValue)
+        return compactQuoteDate(rawDate + rawTime, timeZoneIdentifier: timeZoneIdentifier)
+    }
+
+    private func nasdaqDate(_ value: String) -> Date? {
+        let normalized = value
+            .replacingOccurrences(of: "Closed at ", with: "")
+            .replacingOccurrences(of: " ET", with: "")
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "America/New_York")
+        formatter.dateFormat = "MMM d, yyyy h:mm a"
+        return formatter.date(from: normalized)
+    }
+
     private func decodeSinaResponse(_ data: Data) -> String? {
-        String(data: data, encoding: .utf8)
-            ?? String(
-                data: data,
-                encoding: .init(
-                    rawValue: CFStringConvertEncodingToNSStringEncoding(
-                        CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
-                    )
+        String(data: data, encoding: .utf8) ?? decodeGB18030(data)
+    }
+
+    private func decodeGB18030(_ data: Data) -> String? {
+        String(
+            data: data,
+            encoding: .init(
+                rawValue: CFStringConvertEncodingToNSStringEncoding(
+                    CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
                 )
             )
+        )
     }
 
     private func marketIdentifiers(for symbol: String, market: StockMarket) -> [String] {

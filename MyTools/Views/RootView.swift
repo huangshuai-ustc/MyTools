@@ -305,11 +305,20 @@ enum ToolModule: String, CaseIterable, Identifiable {
 
 @MainActor
 final class ToolModuleSettings: ObservableObject {
+    private static let orderKey = "tool-module-order-v1"
+
     @Published private var visibility: [String: Bool] = [:]
+    @Published private(set) var orderedModules: [ToolModule]
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let savedOrder = defaults.stringArray(forKey: Self.orderKey) ?? []
+        let savedModules = savedOrder.compactMap(ToolModule.init(rawValue:)).reduce(into: [ToolModule]()) { result, module in
+            if !result.contains(module) { result.append(module) }
+        }
+        let missingModules = ToolModule.allCases.filter { !savedModules.contains($0) }
+        orderedModules = savedModules + missingModules
         for module in ToolModule.allCases where defaults.object(forKey: module.visibilityKey) != nil {
             visibility[module.rawValue] = defaults.bool(forKey: module.visibilityKey)
         }
@@ -322,6 +331,11 @@ final class ToolModuleSettings: ObservableObject {
     func setVisible(_ isVisible: Bool, for module: ToolModule) {
         visibility[module.rawValue] = isVisible
         defaults.set(isVisible, forKey: module.visibilityKey)
+    }
+
+    func moveModules(from source: IndexSet, to destination: Int) {
+        orderedModules.move(fromOffsets: source, toOffset: destination)
+        defaults.set(orderedModules.map(\.rawValue), forKey: Self.orderKey)
     }
 }
 
@@ -373,7 +387,7 @@ private struct ToolboxView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
 
     private var visibleModules: [ToolModule] {
-        ToolModule.allCases.filter(moduleSettings.isVisible)
+        moduleSettings.orderedModules.filter(moduleSettings.isVisible)
     }
 
     var body: some View {

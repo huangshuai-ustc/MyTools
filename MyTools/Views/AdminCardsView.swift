@@ -233,6 +233,8 @@ struct AccountDetailView: View {
                         ForEach(account.domesticSubaccounts) { subaccount in
                             Button { editingDomesticSubaccount = subaccount } label: {
                                 DomesticSubaccountDetailRow(subaccount: subaccount)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
@@ -261,6 +263,8 @@ struct AccountDetailView: View {
                         ForEach(account.foreignSubaccounts) { subaccount in
                             Button { editingForeignSubaccount = subaccount } label: {
                                 ForeignSubaccountDetailRow(subaccount: subaccount)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
@@ -641,6 +645,8 @@ private struct DomesticSubaccountDetailRow: View {
             LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -765,6 +771,8 @@ private struct ForeignSubaccountDetailRow: View {
             LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
