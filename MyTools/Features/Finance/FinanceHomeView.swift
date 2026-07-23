@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject private var store: CardStore
+    @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var editingAccount: BankAccount?

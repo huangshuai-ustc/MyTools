@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct ProfileView: View {
     @EnvironmentObject private var auth: AuthManager
-    @EnvironmentObject private var store: CardStore
+    @EnvironmentObject private var store: AppStore
     @State private var showAuth = false
     @State private var backupPasswordMode: BackupPasswordMode?
     @State private var exportDocument: VaultBackupDocument?

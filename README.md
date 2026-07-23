@@ -49,10 +49,13 @@
 - 当前持仓、累计买入、累计卖出和净投入均由交易流水自动计算。
 - A 股使用 CNY、美股使用 USD 分开汇总，不进行隐含汇率换算。
 - 每个市场分别显示净投入、当前持仓市值和总盈亏；缺少行情的持仓会标记为待同步，不会按零估值。
-- 股票页面打开时刷新行情，并在页面可见期间每 60 秒自动刷新；同时支持下拉刷新和工具栏手动刷新。
-- 行情同步当前使用东方财富公开 HTTPS 接口，自动识别常见 A 股代码，并依次匹配 NASDAQ、NYSE 和 AMEX 美股代码。
+- 股票页面打开时刷新行情，并在页面可见期间每 300 秒自动刷新；同时支持下拉刷新和工具栏手动刷新。
+- 行情按股票并发刷新，每只股票的候选来源也并发请求，以最先返回的有效结果更新界面。A 股使用东方财富、上海/深圳证券交易所、腾讯证券和新浪财经；美股使用 Yahoo Finance、Nasdaq 和新浪财经。
+- 美股不再猜测东方财富的 105/106/107 市场编号，避免同一代码在不同市场命中错误证券；Nasdaq 数据优先采用常规交易时段口径。
+- “全部”“A 股”“美股”会只显示对应范围的资产汇总，并按中国银行美元现汇买入价提供人民币折算合计。
 - 公开行情可能延迟或临时不可用，App 会保留最后一次成功价格和更新时间，交易决策应以交易所及券商数据为准。
-- “我的 > 首页功能”可以单独关闭“我的股票”入口。
+- “我的 > 首页功能”可以关闭任一工具入口并拖动调整首页顺序；设置页与工具箱首页始终使用同一顺序。
+- 股票支持按名称 A-Z 或最早购买时间排序。
 
 ### 境内银行账户
 
@@ -100,7 +103,7 @@
 - 管理员可以在境内银行下管理个人养老金、私人理财等可选子账户。
 - 删除银行账户会同时删除与其关联的银行卡。
 
-普通模式目前允许只读查看账户、银行卡和股票完整详情；管理员模式控制的是数据修改和备份操作，并不负责隐藏普通模式中的敏感字段。
+普通模式允许只读查看账户、银行卡和股票详情；登录密码与银行卡 CVV 默认遮罩，验证管理员身份后才能显示。管理员模式负责数据修改、删除和备份操作。
 
 ## 数据存储与安全
 
@@ -130,7 +133,7 @@
 - 保存到 iCloud Drive 只是在多台设备之间同步备份文件，不是 App 数据的自动实时同步。
 - 导入备份会替换当前全部银行账户、银行卡和股票数据。
 - 新导出的备份格式版本为 2；当前版本仍可以导入不含股票数据的版本 1 备份。
-- 备份密码不会保存在 App 中，密码丢失后无法解密备份。
+- 备份界面默认填入 `1.2.3.4.`；留空也会使用这个默认密码。改用自定义密码后，App 不会保存该密码，丢失后无法解密备份。
 
 ## 打开与运行
 
@@ -146,7 +149,7 @@
 
 1. 打开“我的”页面并进入管理员模式。
 2. 首次进入时设置管理员密码。
-3. 进入“管理银行账户”，先创建境内或境外银行账户。
+3. 从“个人金融”页面点编辑按钮，验证管理员身份后创建境内或境外银行账户。
 4. 在银行账户详情中添加所属银行卡。
 5. 根据需要在境内或境外银行下添加独立子账户。
 6. 返回“工具箱”中的“个人金融”，浏览、搜索和排序档案。
@@ -164,38 +167,65 @@ MyTools/
     ├── ToolBoxApp.swift
     ├── Info.plist
     ├── Assets.xcassets/
+    ├── App/
+    │   ├── RootView.swift
+    │   ├── ToolModule.swift
+    │   └── ToolboxView.swift
+    ├── Features/
+    │   ├── Authentication/AuthenticationView.swift
+    │   ├── Finance/
+    │   │   ├── FinanceHomeView.swift
+    │   │   ├── BankAccountViews.swift
+    │   │   ├── SubaccountEditorViews.swift
+    │   │   ├── BankCardEditorView.swift
+    │   │   └── BankCardDetailView.swift
+    │   ├── Profile/ProfileView.swift
+    │   └── Stocks/
+    │       ├── StocksView.swift
+    │       ├── StockEditorView.swift
+    │       └── StockTransactionEditorView.swift
     ├── Models/
     │   ├── BankCard.swift
     │   └── Stock.swift
     ├── Services/
+    │   ├── AppStore.swift
     │   ├── AuthManager.swift
-    │   ├── CardStore.swift
     │   ├── SecureStore.swift
     │   ├── StockQuoteService.swift
+    │   ├── ForeignExchangeRateService.swift
     │   └── VaultBackup.swift
-    └── Views/
-        ├── RootView.swift
-        ├── HomeView.swift
-        ├── AdminCardsView.swift
-        ├── CardDetailView.swift
-        ├── AuthenticationView.swift
-        ├── ProfileView.swift
-        └── StocksView.swift
+    ├── Settings/
+    │   ├── ToolModuleSettings.swift
+    │   └── StockAppearanceSettings.swift
+    └── Shared/
+        ├── DecimalTextParser.swift
+        ├── IMETextInput.swift
+        ├── ProtectedContent.swift
+        └── ViewModifiers.swift
 ```
 
 主要职责：
 
 - `BankCard.swift`：银行地区、账户类型、币种、银行账户、境内/境外子账户、银行卡、当前统计规则和备份数据模型。
 - `Stock.swift`：股票市场、买卖记录、持仓计算、市场汇总和金额格式化。
-- `CardStore.swift`：账户、银行卡与股票的增删改、行情状态和持久化调度。
+- `AppStore.swift`：应用级数据状态，协调账户、银行卡、股票、行情和备份；它取代了职责名称过窄的 `CardStore`。
 - `SecureStore.swift`：当前本地 JSON 存储、脱敏数据和旧版加密数据迁移。
-- `StockQuoteService.swift`：A 股和美股公开行情请求、市场匹配及响应解析。
+- `StockQuoteService.swift`：A 股和美股多行情源并发请求、首个有效结果选择及响应解析。
+- `ForeignExchangeRateService.swift`：读取并解析中国银行美元现汇买入价。
 - `VaultBackup.swift`：`.mytools` 文件格式、密码派生、AES-GCM 加密及解密。
 - `AuthManager.swift`：管理员密码、系统身份认证和管理员会话状态。
-- `RootView.swift`：工具箱模块入口和底部导航。
-- `HomeView.swift`：个人金融浏览、搜索、账户与银行卡排序、卡片分类及列表展示。
-- `AdminCardsView.swift`：银行账户、境内/境外子账户和银行卡的管理表单。
-- `StocksView.swift`：股票总览、行情、股票档案和买卖流水管理。
+- `App/`：应用根导航、工具定义及工具箱首页；新增模块时先扩展 `ToolModule`，再提供目标页面。
+- `Features/Finance/`：个人金融浏览、账户详情、子账户编辑和银行卡编辑；大型表单已按职责拆开。
+- `Features/Stocks/`：股票总览、详情、股票档案编辑和买卖流水编辑。
+- `Features/Profile/`：管理员状态、首页模块开关与排序、股票颜色设置和备份入口。
+- `Settings/`：只负责用户偏好及原有 `UserDefaults` 键的兼容读取。
+- `Shared/`：中文输入法安全控件、十进制文本解析、敏感字段和跨平台视图辅助。
+
+## 重构约束与扩展方式
+
+本轮重构只调整内部结构和命名，不改变界面功能、持久化字段、备份格式或用户偏好键。`VaultData`、银行/银行卡/股票模型的 `Codable` 字段与旧数据迁移逻辑仍然保留，因此已有本地数据和 `.mytools` 文件可以继续读取。
+
+后续新增工具时，建议把完整功能放在 `Features/<功能名>/`，把入口元数据加入 `ToolModule`，把跨模块偏好放在 `Settings/`，只把真正通用的组件放入 `Shared/`。这样首页无需再次承担业务逻辑，现有个人金融与股票代码也不会和新模块相互耦合。
 
 ## 旧数据兼容
 
@@ -212,9 +242,9 @@ MyTools/
 ## 当前限制与后续方向
 
 - 尚未实现 CloudKit 或 iCloud 自动同步。
-- 当前股票行情依赖第三方公开接口，不提供交易所级低延迟保证，也未包含分红、拆股、税费自动调整和汇率换算。
+- 当前股票行情依赖交易所和第三方公开接口，不提供交易所级低延迟保证，也未包含分红、拆股和税费自动调整；美元资产只按中国银行买入价做展示折算。
 - 尚未实现自定义本地加密文件存储，当前只有手动导出的备份文件经过密码加密。
-- 普通模式尚未隐藏完整卡号、CVV 和境外账户号。
+- 登录密码和 CVV 已遮罩；完整卡号与境外账户号仍属于普通详情可见信息。
 - 当前提供“个人金融”和“我的股票”模块，其他工具仍需后续加入。
 - 工程当前没有独立的自动化测试 Target。
 

@@ -27,7 +27,12 @@ enum StockQuoteError: LocalizedError, Sendable {
     }
 }
 
-actor StockQuoteService {
+private enum QuoteAttemptResult: Sendable {
+    case quote(StockQuote)
+    case unavailable
+}
+
+struct StockQuoteService: Sendable {
     private struct ShenzhenEnvelope: Decodable {
         let data: ShenzhenQuote?
     }
@@ -123,37 +128,46 @@ actor StockQuoteService {
 
         switch stock.market {
         case .aShare:
-            if let officialQuote = await fetchOfficialAShareQuote(symbol: symbol) {
-                return officialQuote
-            }
-            if let tencentQuote = try? await fetchTencentAShareQuote(symbol: symbol) {
-                return tencentQuote
-            }
-            if let sinaQuote = try? await fetchSinaQuote(symbol: symbol, market: stock.market) {
-                return sinaQuote
-            }
+            if let quote = await firstQuote(from: [
+                { try await fetchEastmoneyQuote(identifier: eastmoneyIdentifier(for: symbol, market: .aShare), fallbackSymbol: symbol) },
+                { await fetchOfficialAShareQuote(symbol: symbol) },
+                { try await fetchTencentAShareQuote(symbol: symbol) },
+                { try await fetchSinaQuote(symbol: symbol, market: .aShare) }
+            ]) { return quote }
         case .unitedStates:
-            if let nasdaqQuote = try? await fetchNasdaqQuote(symbol: symbol) {
-                return nasdaqQuote
-            }
-            if let yahooQuote = try? await fetchYahooQuote(symbol: symbol) {
-                return yahooQuote
-            }
-            if let sinaQuote = try? await fetchSinaQuote(symbol: symbol, market: stock.market) {
-                return sinaQuote
-            }
-        }
-
-        for identifier in marketIdentifiers(for: symbol, market: stock.market) {
-            do {
-                if let quote = try await fetchEastmoneyQuote(identifier: identifier, fallbackSymbol: symbol) {
-                    return quote
-                }
-            } catch {
-                // 美股代码可能属于不同市场编号，需要继续尝试其余编号。
-            }
+            if let quote = await firstQuote(from: [
+                { try await fetchYahooQuote(symbol: symbol) },
+                { try await fetchNasdaqQuote(symbol: symbol) },
+                { try await fetchSinaQuote(symbol: symbol, market: .unitedStates) }
+            ]) { return quote }
         }
         throw StockQuoteError.quoteUnavailable
+    }
+
+    private func firstQuote(
+        from attempts: [@Sendable () async throws -> StockQuote?]
+    ) async -> StockQuote? {
+        await withTaskGroup(of: QuoteAttemptResult.self) { group in
+            for attempt in attempts {
+                group.addTask {
+                    guard !Task.isCancelled else { return .unavailable }
+                    do {
+                        if let quote = try await attempt() { return .quote(quote) }
+                    } catch {
+                        // 单一行情源失败不应阻塞其他并发来源。
+                    }
+                    return .unavailable
+                }
+            }
+
+            for await result in group {
+                if case let .quote(quote) = result {
+                    group.cancelAll()
+                    return quote
+                }
+            }
+            return nil
+        }
     }
 
     private func fetchOfficialAShareQuote(symbol: String) async -> StockQuote? {
@@ -288,12 +302,9 @@ actor StockQuoteService {
             throw StockQuoteError.invalidResponse
         }
 
-        let priceData: NasdaqPriceData?
-        if quote.primaryData?.isRealTime == true {
-            priceData = quote.primaryData
-        } else {
-            priceData = quote.secondaryData ?? quote.primaryData
-        }
+        // primaryData 是常规交易时段数据；secondaryData 可能是盘前/盘后行情，
+        // 与持仓页的日涨跌口径不一致，因此不再优先采用 secondaryData。
+        let priceData = quote.primaryData ?? quote.secondaryData
         guard let priceData, let latestPrice = decimal(priceData.lastSalePrice), latestPrice > 0 else { return nil }
         let netChange = decimal(priceData.netChange)
         return StockQuote(
@@ -552,81 +563,16 @@ actor StockQuoteService {
         )
     }
 
-    private func marketIdentifiers(for symbol: String, market: StockMarket) -> [String] {
+    private func eastmoneyIdentifier(for symbol: String, market: StockMarket) -> String {
         switch market {
         case .aShare:
-            let marketNumber: String
             if symbol.hasPrefix("5") || symbol.hasPrefix("6") || symbol.hasPrefix("9") {
-                marketNumber = "1"
-            } else if symbol.hasPrefix("4") || symbol.hasPrefix("8") {
-                marketNumber = "0"
-            } else {
-                marketNumber = "0"
+                return "1.\(symbol)"
             }
-            return ["\(marketNumber).\(symbol)"]
+            return "0.\(symbol)"
         case .unitedStates:
-            return ["105.\(symbol)", "106.\(symbol)", "107.\(symbol)"]
+            // 美股不能只凭代码安全判断交易所，避免 105/106/107 猜测命中同名证券。
+            return ""
         }
-    }
-}
-
-struct ForeignExchangeRate: Sendable {
-    let currencyCode: String
-    let renminbiPerUnit: Decimal
-    let updatedAt: Date
-}
-
-enum ForeignExchangeRateError: LocalizedError, Sendable {
-    case invalidResponse
-    case rateUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse: return "中国银行外汇牌价返回了无效数据。"
-        case .rateUnavailable: return "暂时无法取得中国银行美元现汇买入价。"
-        }
-    }
-}
-
-actor ForeignExchangeRateService {
-    func fetchUSDBuyingRate() async throws -> ForeignExchangeRate {
-        guard let url = URL(string: "https://www.boc.cn/sourcedb/whpj/") else {
-            throw ForeignExchangeRateError.invalidResponse
-        }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
-        request.setValue("MyTools/1.0", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode),
-              let html = decodeHTML(data) else {
-            throw ForeignExchangeRateError.invalidResponse
-        }
-
-        let pattern = #"<tr[^>]*data-currency=['\"]美元['\"][^>]*>.*?<td[^>]*>\s*美元\s*</td>\s*<td[^>]*>\s*([0-9.]+)\s*</td>.*?<td[^>]*class=['\"]pjrq['\"][^>]*>\s*([^<]+)\s*</td>"#
-        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
-              let match = expression.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-              let rateRange = Range(match.range(at: 1), in: html),
-              let rawRate = Decimal(string: String(html[rateRange]), locale: Locale(identifier: "en_US_POSIX")) else {
-            throw ForeignExchangeRateError.rateUnavailable
-        }
-
-        let updatedAt: Date
-        if let dateRange = Range(match.range(at: 2), in: html) {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-            formatter.dateFormat = "yyyy/MM/dd HH:mm:ss"
-            updatedAt = formatter.date(from: String(html[dateRange]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? Date()
-        } else {
-            updatedAt = Date()
-        }
-
-        return ForeignExchangeRate(currencyCode: "USD", renminbiPerUnit: rawRate / 100, updatedAt: updatedAt)
-    }
-
-    private func decodeHTML(_ data: Data) -> String? {
-        String(data: data, encoding: .utf8)
-            ?? String(data: data, encoding: .init(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))))
     }
 }

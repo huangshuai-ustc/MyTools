@@ -1,8 +1,14 @@
 import Foundation
 import Combine
 
+private struct QuoteRefreshResult: Sendable {
+    let stockID: UUID
+    let quote: StockQuote?
+    let errorMessage: String?
+}
+
 @MainActor
-final class CardStore: ObservableObject {
+final class AppStore: ObservableObject {
     @Published private(set) var accounts: [BankAccount]
     @Published private(set) var cards: [BankCard]
     @Published private(set) var stocks: [StockHolding]
@@ -17,6 +23,8 @@ final class CardStore: ObservableObject {
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
     private let defaults = UserDefaults.standard
+    private var isRefreshingExchangeRate = false
+    private var lastExchangeRateRequestAt: Date?
 
     init() {
         let vault = secureStore.loadVault()
@@ -139,36 +147,44 @@ final class CardStore: ObservableObject {
         quoteRefreshError = nil
         defer { isRefreshingQuotes = false }
 
-        do {
-            let exchangeRate = try await exchangeRateService.fetchUSDBuyingRate()
-            usdRenminbiBuyingRate = exchangeRate.renminbiPerUnit
-            exchangeRateUpdatedAt = exchangeRate.updatedAt
-            exchangeRateError = nil
-            defaults.set(NSDecimalNumber(decimal: exchangeRate.renminbiPerUnit).stringValue, forKey: "stock-usd-cny-buying-rate-v1")
-            defaults.set(exchangeRate.updatedAt, forKey: "stock-usd-cny-buying-rate-date-v1")
-        } catch {
-            exchangeRateError = error.localizedDescription
-        }
-
+        refreshExchangeRateIfNeeded()
         guard !stocks.isEmpty else { return }
 
         var failures: [UUID: String] = [:]
         var successCount = 0
         let stockSnapshot = stocks
-        for stock in stockSnapshot {
-            do {
-                let quote = try await quoteService.fetchQuote(for: stock)
-                guard let index = stocks.firstIndex(where: { $0.id == stock.id }) else { continue }
+        let quoteService = quoteService
+
+        await withTaskGroup(of: QuoteRefreshResult.self) { group in
+            for stock in stockSnapshot {
+                group.addTask {
+                    do {
+                        let quote = try await quoteService.fetchQuote(for: stock)
+                        return QuoteRefreshResult(stockID: stock.id, quote: quote, errorMessage: nil)
+                    } catch {
+                        return QuoteRefreshResult(
+                            stockID: stock.id,
+                            quote: nil,
+                            errorMessage: error.localizedDescription
+                        )
+                    }
+                }
+            }
+
+            for await result in group {
+                guard let quote = result.quote else {
+                    failures[result.stockID] = result.errorMessage ?? "行情服务暂时不可用"
+                    continue
+                }
+                guard let index = stocks.firstIndex(where: { $0.id == result.stockID }) else { continue }
                 stocks[index].symbol = quote.symbol
                 stocks[index].quoteName = quote.name
                 stocks[index].latestPrice = quote.latestPrice
                 stocks[index].previousClose = quote.previousClose
                 stocks[index].changePercent = quote.changePercent
                 stocks[index].lastQuoteAt = quote.updatedAt
-                quoteSources[stock.id] = quote.source
+                quoteSources[result.stockID] = quote.source
                 successCount += 1
-            } catch {
-                failures[stock.id] = error.localizedDescription
             }
         }
 
@@ -179,6 +195,37 @@ final class CardStore: ObservableObject {
             quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
         }
         if successCount > 0 { persist() }
+    }
+
+    private func refreshExchangeRateIfNeeded() {
+        guard !isRefreshingExchangeRate else { return }
+        if let lastExchangeRateRequestAt {
+            let retryInterval: TimeInterval = exchangeRateError == nil ? 30 * 60 : 5 * 60
+            guard Date().timeIntervalSince(lastExchangeRateRequestAt) >= retryInterval else { return }
+        }
+
+        isRefreshingExchangeRate = true
+        lastExchangeRateRequestAt = Date()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isRefreshingExchangeRate = false }
+            do {
+                let exchangeRate = try await self.exchangeRateService.fetchUSDBuyingRate()
+                self.usdRenminbiBuyingRate = exchangeRate.renminbiPerUnit
+                self.exchangeRateUpdatedAt = exchangeRate.updatedAt
+                self.exchangeRateError = nil
+                self.defaults.set(
+                    NSDecimalNumber(decimal: exchangeRate.renminbiPerUnit).stringValue,
+                    forKey: "stock-usd-cny-buying-rate-v1"
+                )
+                self.defaults.set(
+                    exchangeRate.updatedAt,
+                    forKey: "stock-usd-cny-buying-rate-date-v1"
+                )
+            } catch {
+                self.exchangeRateError = error.localizedDescription
+            }
+        }
     }
 
     func makeBackupDocument(password: String) throws -> VaultBackupDocument {

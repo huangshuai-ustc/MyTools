@@ -10,18 +10,31 @@
 		A00000000000000000000001 /* ToolBoxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* ToolBoxApp.swift */; };
 		A00000000000000000000002 /* BankCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* BankCard.swift */; };
 		A00000000000000000000003 /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* SecureStore.swift */; };
-		A00000000000000000000004 /* CardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* CardStore.swift */; };
+		A00000000000000000000004 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* AppStore.swift */; };
 		A00000000000000000000005 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000005 /* AuthManager.swift */; };
 		A00000000000000000000006 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000006 /* RootView.swift */; };
-		A00000000000000000000007 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* HomeView.swift */; };
-		A00000000000000000000008 /* CardDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* CardDetailView.swift */; };
+		A00000000000000000000007 /* FinanceHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000007 /* FinanceHomeView.swift */; };
+		A00000000000000000000008 /* BankCardDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000008 /* BankCardDetailView.swift */; };
 		A00000000000000000000009 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000009 /* ProfileView.swift */; };
 		A0000000000000000000000A /* AuthenticationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000A /* AuthenticationView.swift */; };
-		A0000000000000000000000B /* AdminCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000B /* AdminCardsView.swift */; };
+		A0000000000000000000000B /* BankAccountViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000B /* BankAccountViews.swift */; };
 		A0000000000000000000000C /* VaultBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000D /* VaultBackup.swift */; };
 		A0000000000000000000000D /* Stock.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000E /* Stock.swift */; };
 		A0000000000000000000000E /* StockQuoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000F /* StockQuoteService.swift */; };
 		A0000000000000000000000F /* StocksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000010 /* StocksView.swift */; };
+		A10000000000000000000001 /* ToolModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* ToolModule.swift */; };
+		A10000000000000000000002 /* ToolboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* ToolboxView.swift */; };
+		A10000000000000000000003 /* ToolModuleSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* ToolModuleSettings.swift */; };
+		A10000000000000000000004 /* StockAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* StockAppearanceSettings.swift */; };
+		A10000000000000000000005 /* IMETextInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* IMETextInput.swift */; };
+		A10000000000000000000006 /* ProtectedContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ProtectedContent.swift */; };
+		A10000000000000000000007 /* ViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* ViewModifiers.swift */; };
+		A10000000000000000000008 /* DecimalTextParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* DecimalTextParser.swift */; };
+		A10000000000000000000009 /* SubaccountEditorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* SubaccountEditorViews.swift */; };
+		A1000000000000000000000A /* BankCardEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* BankCardEditorView.swift */; };
+		A1000000000000000000000B /* StockEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* StockEditorView.swift */; };
+		A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* StockTransactionEditorView.swift */; };
+		A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ForeignExchangeRateService.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -29,19 +42,32 @@
 		B00000000000000000000001 /* ToolBoxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolBoxApp.swift; sourceTree = "<group>"; };
 		B00000000000000000000002 /* BankCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCard.swift; sourceTree = "<group>"; };
 		B00000000000000000000003 /* SecureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStore.swift; sourceTree = "<group>"; };
-		B00000000000000000000004 /* CardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardStore.swift; sourceTree = "<group>"; };
+		B00000000000000000000004 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		B00000000000000000000005 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		B00000000000000000000006 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-		B00000000000000000000007 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
-		B00000000000000000000008 /* CardDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDetailView.swift; sourceTree = "<group>"; };
+		B00000000000000000000007 /* FinanceHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceHomeView.swift; sourceTree = "<group>"; };
+		B00000000000000000000008 /* BankCardDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCardDetailView.swift; sourceTree = "<group>"; };
 		B00000000000000000000009 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		B0000000000000000000000A /* AuthenticationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationView.swift; sourceTree = "<group>"; };
-		B0000000000000000000000B /* AdminCardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminCardsView.swift; sourceTree = "<group>"; };
+		B0000000000000000000000B /* BankAccountViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankAccountViews.swift; sourceTree = "<group>"; };
 		B0000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B0000000000000000000000D /* VaultBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultBackup.swift; sourceTree = "<group>"; };
 		B0000000000000000000000E /* Stock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stock.swift; sourceTree = "<group>"; };
 		B0000000000000000000000F /* StockQuoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteService.swift; sourceTree = "<group>"; };
 		B00000000000000000000010 /* StocksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StocksView.swift; sourceTree = "<group>"; };
+		B10000000000000000000001 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* ToolboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolboxView.swift; sourceTree = "<group>"; };
+		B10000000000000000000003 /* ToolModuleSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModuleSettings.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* StockAppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockAppearanceSettings.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* IMETextInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMETextInput.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* ProtectedContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedContent.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* ViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModifiers.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* DecimalTextParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecimalTextParser.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* SubaccountEditorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubaccountEditorViews.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A /* BankCardEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCardEditorView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* StockEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockEditorView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000C /* StockTransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTransactionEditorView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* ForeignExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForeignExchangeRateService.swift; sourceTree = "<group>"; };
 		C00000000000000000000001 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -55,18 +81,53 @@
 			);
 			sourceTree = "<group>";
 		};
-		D00000000000000000000002 /* Views */ = {
+		D00000000000000000000002 /* Features */ = {
 			isa = PBXGroup;
 			children = (
-				B00000000000000000000006 /* RootView.swift */,
-				B00000000000000000000007 /* HomeView.swift */,
-				B00000000000000000000008 /* CardDetailView.swift */,
-				B00000000000000000000009 /* ProfileView.swift */,
-				B0000000000000000000000A /* AuthenticationView.swift */,
-				B0000000000000000000000B /* AdminCardsView.swift */,
-				B00000000000000000000010 /* StocksView.swift */,
+				D10000000000000000000004 /* Finance */,
+				D10000000000000000000005 /* Stocks */,
+				D10000000000000000000006 /* Profile */,
+				D10000000000000000000007 /* Authentication */,
 			);
-			path = Views;
+			path = Features;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000004 /* Finance */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000007 /* FinanceHomeView.swift */,
+				B00000000000000000000008 /* BankCardDetailView.swift */,
+				B0000000000000000000000B /* BankAccountViews.swift */,
+				B10000000000000000000009 /* SubaccountEditorViews.swift */,
+				B1000000000000000000000A /* BankCardEditorView.swift */,
+			);
+			path = Finance;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000005 /* Stocks */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000010 /* StocksView.swift */,
+				B1000000000000000000000B /* StockEditorView.swift */,
+				B1000000000000000000000C /* StockTransactionEditorView.swift */,
+			);
+			path = Stocks;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000006 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000009 /* ProfileView.swift */,
+			);
+			path = Profile;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000007 /* Authentication */ = {
+			isa = PBXGroup;
+			children = (
+				B0000000000000000000000A /* AuthenticationView.swift */,
+			);
+			path = Authentication;
 			sourceTree = "<group>";
 		};
 		D00000000000000000000003 /* Models */ = {
@@ -82,10 +143,11 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000003 /* SecureStore.swift */,
-				B00000000000000000000004 /* CardStore.swift */,
+				B00000000000000000000004 /* AppStore.swift */,
 				B00000000000000000000005 /* AuthManager.swift */,
 				B0000000000000000000000D /* VaultBackup.swift */,
 				B0000000000000000000000F /* StockQuoteService.swift */,
+				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -98,14 +160,47 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		D10000000000000000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000006 /* RootView.swift */,
+				B10000000000000000000001 /* ToolModule.swift */,
+				B10000000000000000000002 /* ToolboxView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000002 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000003 /* ToolModuleSettings.swift */,
+				B10000000000000000000004 /* StockAppearanceSettings.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000003 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000008 /* DecimalTextParser.swift */,
+				B10000000000000000000005 /* IMETextInput.swift */,
+				B10000000000000000000006 /* ProtectedContent.swift */,
+				B10000000000000000000007 /* ViewModifiers.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		D00000000000000000000006 /* 我的工具箱 */ = {
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
-				D00000000000000000000002 /* Views */,
+				D10000000000000000000001 /* App */,
+				D00000000000000000000002 /* Features */,
 				D00000000000000000000003 /* Models */,
 				D00000000000000000000004 /* Services */,
+				D10000000000000000000002 /* Settings */,
+				D10000000000000000000003 /* Shared */,
 				C63564043010C59600EBCA46 /* Assets.xcassets */,
 			);
 			name = "我的工具箱";
@@ -177,18 +272,31 @@
 				A00000000000000000000001 /* ToolBoxApp.swift in Sources */,
 				A00000000000000000000002 /* BankCard.swift in Sources */,
 				A00000000000000000000003 /* SecureStore.swift in Sources */,
-				A00000000000000000000004 /* CardStore.swift in Sources */,
+				A00000000000000000000004 /* AppStore.swift in Sources */,
 				A00000000000000000000005 /* AuthManager.swift in Sources */,
 				A0000000000000000000000C /* VaultBackup.swift in Sources */,
 				A00000000000000000000006 /* RootView.swift in Sources */,
-				A00000000000000000000007 /* HomeView.swift in Sources */,
-				A00000000000000000000008 /* CardDetailView.swift in Sources */,
+				A00000000000000000000007 /* FinanceHomeView.swift in Sources */,
+				A00000000000000000000008 /* BankCardDetailView.swift in Sources */,
 				A00000000000000000000009 /* ProfileView.swift in Sources */,
 				A0000000000000000000000A /* AuthenticationView.swift in Sources */,
-				A0000000000000000000000B /* AdminCardsView.swift in Sources */,
+				A0000000000000000000000B /* BankAccountViews.swift in Sources */,
 				A0000000000000000000000D /* Stock.swift in Sources */,
 				A0000000000000000000000E /* StockQuoteService.swift in Sources */,
 				A0000000000000000000000F /* StocksView.swift in Sources */,
+				A10000000000000000000001 /* ToolModule.swift in Sources */,
+				A10000000000000000000002 /* ToolboxView.swift in Sources */,
+				A10000000000000000000003 /* ToolModuleSettings.swift in Sources */,
+				A10000000000000000000004 /* StockAppearanceSettings.swift in Sources */,
+				A10000000000000000000005 /* IMETextInput.swift in Sources */,
+				A10000000000000000000006 /* ProtectedContent.swift in Sources */,
+				A10000000000000000000007 /* ViewModifiers.swift in Sources */,
+				A10000000000000000000008 /* DecimalTextParser.swift in Sources */,
+				A10000000000000000000009 /* SubaccountEditorViews.swift in Sources */,
+				A1000000000000000000000A /* BankCardEditorView.swift in Sources */,
+				A1000000000000000000000B /* StockEditorView.swift in Sources */,
+				A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */,
+				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
