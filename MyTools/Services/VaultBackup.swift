@@ -54,7 +54,7 @@ extension UTType {
 
 enum VaultBackupCrypto {
     private static let format = "mytools-vault"
-    private static let version = 1
+    private static let version = 2
     private static let saltLength = 16
     private static let keyLength = 32
     private static let rounds: UInt32 = 210_000
@@ -89,7 +89,7 @@ enum VaultBackupCrypto {
             throw VaultBackupError.invalidFile
         }
         guard envelope.format == format else { throw VaultBackupError.invalidFile }
-        guard envelope.version == version else { throw VaultBackupError.unsupportedVersion }
+        guard (1...version).contains(envelope.version) else { throw VaultBackupError.unsupportedVersion }
 
         let key = try deriveKey(password: password, salt: envelope.salt)
         let sealed: AES.GCM.SealedBox

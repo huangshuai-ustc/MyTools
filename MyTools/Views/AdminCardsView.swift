@@ -3,10 +3,10 @@ import SwiftUI
 struct AdminCardsView: View {
     @EnvironmentObject private var store: CardStore
     @State private var editingAccount: BankAccount?
-    @AppStorage("account-sort-order") private var sortOrderRawValue = AccountSortOrder.added.rawValue
+    @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
 
     private var sortedAccounts: [BankAccount] {
-        (AccountSortOrder(rawValue: sortOrderRawValue) ?? .added).sorted(store.accounts)
+        (AccountSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending).sorted(store.accounts)
     }
 
     var body: some View {
@@ -19,7 +19,7 @@ struct AdminCardsView: View {
 
             ForEach(sortedAccounts) { account in
                 NavigationLink {
-                    AccountDetailView(account: account)
+                    AccountDetailView(account: account, backTitle: "银行账户")
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -29,10 +29,7 @@ struct AdminCardsView: View {
                             Spacer(minLength: 4)
                             BankRegionBadge(region: account.region)
                         }
-                        let foreignAccountCount = account.region == .overseas && !account.foreignSubaccounts.isEmpty
-                            ? "\(account.foreignSubaccounts.count) 个境外账户"
-                            : ""
-                        let subtitle = [foreignAccountCount, account.accountType, account.branchName, account.name]
+                        let subtitle = [subaccountSummary(for: account), account.branchName, account.name]
                             .filter { !$0.isEmpty }
                             .joined(separator: " · ")
                         if !subtitle.isEmpty {
@@ -54,6 +51,7 @@ struct AdminCardsView: View {
             }
         }
         .navigationTitle("银行账户")
+        .iOSLabeledBackButton("我的")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         .listStyle(.insetGrouped)
@@ -78,6 +76,15 @@ struct AdminCardsView: View {
         let originalOffsets = IndexSet(store.accounts.indices.filter { ids.contains(store.accounts[$0].id) })
         store.deleteAccount(at: originalOffsets)
     }
+
+    private func subaccountSummary(for account: BankAccount) -> String {
+        switch account.region {
+        case .domestic:
+            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个境内账户"
+        case .overseas:
+            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个境外账户"
+        }
+    }
 }
 
 struct AccountDetailView: View {
@@ -87,13 +94,25 @@ struct AccountDetailView: View {
     @State private var editingAccount: BankAccount?
     @State private var editingCard: BankCard?
     @State private var viewingCard: BankCard?
+    @AppStorage("card-sort-order-v1") private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
+    @AppStorage("card-category-filter-v1") private var cardCategoryRawValue = CardCategoryFilter.all.rawValue
+    private let backTitle: String
 
-    init(account: BankAccount) {
+    init(account: BankAccount, backTitle: String) {
         accountID = account.id
+        self.backTitle = backTitle
     }
 
     private var account: BankAccount? {
         store.accounts.first { $0.id == accountID }
+    }
+
+    private var selectedCardSortOrder: CardSortOrder {
+        CardSortOrder(rawValue: cardSortOrderRawValue) ?? .nameAscending
+    }
+
+    private var selectedCardCategory: CardCategoryFilter {
+        CardCategoryFilter(rawValue: cardCategoryRawValue) ?? .all
     }
 
     var body: some View {
@@ -105,9 +124,16 @@ struct AccountDetailView: View {
             }
         }
         .navigationTitle(account?.name.isEmpty == false ? account?.name ?? "" : "银行账户详情")
+        .iOSLabeledBackButton(backTitle)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                CardCategoryMenu(selection: $cardCategoryRawValue)
+                CardSortMenu(selection: $cardSortOrderRawValue)
+            }
+        }
         .sheet(item: $editingAccount) { account in
             AccountEditorView(account: account, isNew: false)
                 .id(account.id)
@@ -127,7 +153,10 @@ struct AccountDetailView: View {
     }
 
     private func accountList(_ account: BankAccount) -> some View {
-        List {
+        let allCards = store.cards(for: account)
+        let displayedCards = selectedCardSortOrder.sorted(allCards.filter(selectedCardCategory.includes))
+
+        return List {
             Section("账户信息") {
                 LabeledContent("银行类型") {
                     BankRegionBadge(region: account.region)
@@ -137,16 +166,24 @@ struct AccountDetailView: View {
                 if !account.name.isEmpty {
                     LabeledContent("备注名称", value: account.name)
                 }
-                if account.region == .domestic {
-                    LabeledContent("账户类型", value: account.accountType.isEmpty ? "未填写" : account.accountType)
-                    LabeledContent("币种", value: account.currency.isEmpty ? "未填写" : account.currency)
-                } else {
+                if account.region == .overseas {
                     LabeledContent("SWIFT", value: account.swift.isEmpty ? "未填写" : account.swift)
                     LabeledContent("IBAN", value: account.iban.isEmpty ? "未填写" : account.iban)
                 }
                 LabeledContent("状态", value: account.status)
                 if auth.isAdmin {
                     Button("编辑银行账户") { editingAccount = account }
+                }
+            }
+
+            if account.region == .domestic {
+                Section("境内账户") {
+                    if account.domesticSubaccounts.isEmpty {
+                        Text("暂无境内账户").foregroundStyle(.secondary)
+                    }
+                    ForEach(account.domesticSubaccounts) { subaccount in
+                        DomesticSubaccountDetailRow(subaccount: subaccount)
+                    }
                 }
             }
 
@@ -162,10 +199,11 @@ struct AccountDetailView: View {
             }
 
             Section("银行卡") {
-                if store.cards(for: account).isEmpty {
-                    Text("暂无银行卡").foregroundStyle(.secondary)
+                if displayedCards.isEmpty {
+                    Text(allCards.isEmpty ? "暂无银行卡" : "当前分类暂无银行卡")
+                        .foregroundStyle(.secondary)
                 }
-                ForEach(store.cards(for: account)) { card in
+                ForEach(displayedCards) { card in
                     if auth.isAdmin {
                         Button { editingCard = card } label: {
                             CardRow(card: card)
@@ -201,7 +239,7 @@ private final class AccountEditorDraft: ObservableObject {
 
 struct AccountEditorView: View {
     private enum Field: Hashable {
-        case bankName, branchName, name, accountType, currency, swift, iban, status, note
+        case bankName, branchName, name, swift, iban, status, note
     }
 
     @EnvironmentObject private var store: CardStore
@@ -210,6 +248,7 @@ struct AccountEditorView: View {
     @StateObject private var draft: AccountEditorDraft
     @FocusState private var focusedField: Field?
     @State private var showingAuthentication = false
+    @State private var editingDomesticSubaccount: DomesticSubaccount?
     @State private var editingForeignSubaccount: ForeignSubaccount?
     private let navigationTitle: String
 
@@ -248,21 +287,26 @@ struct AccountEditorView: View {
                             .multilineTextAlignment(.trailing)
                             .focused($focusedField, equals: .name)
                             .onSubmit {
-                                focusedField = draft.account.region == .domestic ? .accountType : .swift
+                                focusedField = draft.account.region == .domestic ? .status : .swift
                             }
                     }
-                    if draft.account.region == .domestic {
-                        LabeledContent("账户类型：") {
-                            TextField("例如私人理财", text: $draft.account.accountType)
-                                .multilineTextAlignment(.trailing)
-                                .focused($focusedField, equals: .accountType)
-                                .onSubmit { focusedField = .currency }
+                }
+
+                if draft.account.region == .domestic {
+                    Section("境内账户") {
+                        if draft.account.domesticSubaccounts.isEmpty {
+                            Text("暂无境内账户").foregroundStyle(.secondary)
                         }
-                        LabeledContent("币种：") {
-                            TextField("未填写", text: $draft.account.currency)
-                                .multilineTextAlignment(.trailing)
-                                .focused($focusedField, equals: .currency)
-                                .onSubmit { focusedField = .status }
+                        ForEach(draft.account.domesticSubaccounts) { subaccount in
+                            Button { editingDomesticSubaccount = subaccount } label: {
+                                DomesticSubaccountRow(subaccount: subaccount)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete(perform: deleteDomesticSubaccounts)
+
+                        Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
+                            Label("添加境内账户", systemImage: "plus.circle")
                         }
                     }
                 }
@@ -328,7 +372,7 @@ struct AccountEditorView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: save)
+                    Button("保存", action: requestSave)
                 }
             }
             .sheet(isPresented: $showingAuthentication) {
@@ -340,26 +384,51 @@ struct AccountEditorView: View {
                     .id(subaccount.id)
                     .iOSLargeSheet()
             }
+            .sheet(item: $editingDomesticSubaccount) { subaccount in
+                DomesticSubaccountEditorView(subaccount: subaccount, onSave: upsertDomesticSubaccount)
+                    .id(subaccount.id)
+                    .iOSLargeSheet()
+            }
+        }
+    }
+
+    private func requestSave() {
+        commitPendingTextInput {
+            save()
         }
     }
 
     private func save() {
-        focusedField = nil
         guard auth.isAdmin else {
             showingAuthentication = true
             return
         }
         var account = draft.account
         if account.region == .domestic {
+            account.accountType = ""
+            account.currency = ""
             account.accountNumber = ""
             account.swift = ""
             account.iban = ""
         } else {
+            account.accountType = ""
             account.currency = ""
             account.accountNumber = ""
         }
         store.upsertAccount(account)
         dismiss()
+    }
+
+    private func upsertDomesticSubaccount(_ subaccount: DomesticSubaccount) {
+        if let index = draft.account.domesticSubaccounts.firstIndex(where: { $0.id == subaccount.id }) {
+            draft.account.domesticSubaccounts[index] = subaccount
+        } else {
+            draft.account.domesticSubaccounts.append(subaccount)
+        }
+    }
+
+    private func deleteDomesticSubaccounts(at offsets: IndexSet) {
+        draft.account.domesticSubaccounts.remove(atOffsets: offsets)
     }
 
     private func upsertForeignSubaccount(_ subaccount: ForeignSubaccount) {
@@ -372,6 +441,140 @@ struct AccountEditorView: View {
 
     private func deleteForeignSubaccounts(at offsets: IndexSet) {
         draft.account.foreignSubaccounts.remove(atOffsets: offsets)
+    }
+}
+
+private struct DomesticSubaccountRow: View {
+    let subaccount: DomesticSubaccount
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(subaccount.type.isEmpty ? "未填写账户类型" : subaccount.type)
+                    .font(.headline)
+                if !subaccount.name.isEmpty {
+                    Text(subaccount.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if !subaccount.accountNumber.isEmpty {
+                Text(subaccount.accountNumber)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text(subaccount.currencySummary.isEmpty ? "未选择币种" : subaccount.currencySummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct DomesticSubaccountDetailRow: View {
+    let subaccount: DomesticSubaccount
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !subaccount.name.isEmpty {
+                Text(subaccount.name).font(.headline)
+            }
+            LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
+            if !subaccount.accountNumber.isEmpty {
+                LabeledContent("账户号", value: subaccount.accountNumber)
+            }
+            LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private final class DomesticSubaccountDraft: ObservableObject {
+    @Published var subaccount: DomesticSubaccount
+
+    init(subaccount: DomesticSubaccount) {
+        self.subaccount = subaccount
+    }
+}
+
+private struct DomesticSubaccountEditorView: View {
+    private enum Field: Hashable {
+        case type, name, accountNumber
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var draft: DomesticSubaccountDraft
+    @FocusState private var focusedField: Field?
+    let onSave: (DomesticSubaccount) -> Void
+
+    init(subaccount: DomesticSubaccount, onSave: @escaping (DomesticSubaccount) -> Void) {
+        _draft = StateObject(wrappedValue: DomesticSubaccountDraft(subaccount: subaccount))
+        self.onSave = onSave
+    }
+
+    private var canSave: Bool {
+        !draft.subaccount.type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.subaccount.currencies.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("账户信息") {
+                    LabeledContent("账户类型：") {
+                        TextField("例如个人养老金", text: $draft.subaccount.type)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .type)
+                            .onSubmit { focusedField = .name }
+                    }
+                    LabeledContent("备注名称：") {
+                        TextField("可选", text: $draft.subaccount.name)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .name)
+                            .onSubmit { focusedField = .accountNumber }
+                    }
+                    LabeledContent("账户号：") {
+                        TextField("可选", text: $draft.subaccount.accountNumber)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .accountNumber)
+                    }
+                }
+
+                Section {
+                    CurrencySelectionRows(currencies: $draft.subaccount.currencies)
+                } header: {
+                    Text("币种")
+                } footer: {
+                    if draft.subaccount.currencies.isEmpty {
+                        Text("请选择至少一个币种后再保存")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle(draft.subaccount.type.isEmpty ? "新增境内账户" : "编辑境内账户")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: requestSave)
+                        .disabled(!canSave)
+                }
+            }
+        }
+    }
+
+    private func requestSave() {
+        commitPendingTextInput {
+            onSave(draft.subaccount)
+            dismiss()
+        }
     }
 }
 
@@ -429,8 +632,13 @@ private final class ForeignSubaccountDraft: ObservableObject {
 }
 
 private struct ForeignSubaccountEditorView: View {
+    private enum Field: Hashable {
+        case name, accountNumber
+    }
+
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: ForeignSubaccountDraft
+    @FocusState private var focusedField: Field?
     let onSave: (ForeignSubaccount) -> Void
 
     init(subaccount: ForeignSubaccount, onSave: @escaping (ForeignSubaccount) -> Void) {
@@ -455,10 +663,13 @@ private struct ForeignSubaccountEditorView: View {
                     LabeledContent("备注名称：") {
                         TextField("可选", text: $draft.subaccount.name)
                             .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .name)
+                            .onSubmit { focusedField = .accountNumber }
                     }
                     LabeledContent("账户号：") {
                         TextField("未填写", text: $draft.subaccount.accountNumber)
                             .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .accountNumber)
                     }
                 }
 
@@ -483,13 +694,17 @@ private struct ForeignSubaccountEditorView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        onSave(draft.subaccount)
-                        dismiss()
-                    }
+                    Button("保存", action: requestSave)
                     .disabled(!canSave)
                 }
             }
+        }
+    }
+
+    private func requestSave() {
+        commitPendingTextInput {
+            onSave(draft.subaccount)
+            dismiss()
         }
     }
 
@@ -500,23 +715,31 @@ private struct CurrencySelectionRows: View {
 
     var body: some View {
         ForEach(CurrencyCode.allCases) { currency in
-            Toggle(currency.title, isOn: currencyBinding(currency))
+            Button {
+                toggle(currency)
+            } label: {
+                HStack {
+                    Text(currency.title)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: currencies.contains(currency) ? "checkmark.square.fill" : "square")
+                        .foregroundStyle(currencies.contains(currency) ? Color.accentColor : Color.secondary)
+                        .font(.title3)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(currency.title)
+            .accessibilityValue(currencies.contains(currency) ? "已选择" : "未选择")
         }
     }
 
-    private func currencyBinding(_ currency: CurrencyCode) -> Binding<Bool> {
-        Binding(
-            get: { currencies.contains(currency) },
-            set: { isSelected in
-                var updatedCurrencies = currencies
-                if isSelected {
-                    updatedCurrencies.insert(currency)
-                } else {
-                    updatedCurrencies.remove(currency)
-                }
-                currencies = updatedCurrencies
-            }
-        )
+    private func toggle(_ currency: CurrencyCode) {
+        if currencies.contains(currency) {
+            currencies.remove(currency)
+        } else {
+            currencies.insert(currency)
+        }
     }
 }
 
@@ -557,8 +780,14 @@ struct CardEditorView: View {
         NavigationStack {
             Form {
                 Section("银行卡") {
+                    Picker("卡片类型：", selection: $draft.card.kind) {
+                        ForEach(BankCardKind.allCases) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                     LabeledContent("卡片名称：") {
-                        TextField("未填写", text: $draft.card.cardType)
+                        TextField("可选，如 Visa 白金卡", text: $draft.card.cardType)
                             .multilineTextAlignment(.trailing)
                             .focused($focusedField, equals: .cardType)
                             .onSubmit { focusedField = .holderName }
@@ -606,6 +835,7 @@ struct CardEditorView: View {
                     } else {
                         DatePicker("有效期：", selection: $draft.card.expiryDate, displayedComponents: .date)
                     }
+                    DatePicker("开户时间：", selection: $draft.card.openedAt, displayedComponents: .date)
                     Toggle("Apple Pay", isOn: $draft.card.applePay)
                     Toggle("默认支付", isOn: $draft.card.defaultPayment)
                     HStack(alignment: .top, spacing: 4) {
@@ -645,7 +875,7 @@ struct CardEditorView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: save)
+                    Button("保存", action: requestSave)
                         .disabled(draft.card.currencies.isEmpty)
                 }
             }
@@ -656,8 +886,13 @@ struct CardEditorView: View {
         }
     }
 
+    private func requestSave() {
+        commitPendingTextInput {
+            save()
+        }
+    }
+
     private func save() {
-        focusedField = nil
         guard auth.isAdmin else {
             showingAuthentication = true
             return

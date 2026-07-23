@@ -14,6 +14,7 @@ struct ProfileView: View {
     @State private var showingBackupMessage = false
     @State private var backupMessage = ""
     @State private var importSucceeded = false
+    @State private var exportFilename = "备份.mytools"
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,13 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Section("设置") {
+                    NavigationLink {
+                        HomeFeatureSettingsView()
+                    } label: {
+                        Label("首页功能", systemImage: "switch.2")
+                    }
+                }
                 Section("关于") {
                     LabeledContent("版本", value: "MVP 1.0")
                 }
@@ -72,7 +80,7 @@ struct ProfileView: View {
                 .iOSLargeSheet()
             }
             .confirmationDialog(
-                "导入会替换当前全部账户和银行卡数据",
+                "导入会替换当前全部银行账户、银行卡和股票数据",
                 isPresented: $showingImportConfirmation,
                 titleVisibility: .visible
             ) {
@@ -85,7 +93,7 @@ struct ProfileView: View {
                 isPresented: $showingExporter,
                 document: exportDocument,
                 contentType: .myToolsBackup,
-                defaultFilename: "我的工具箱备份"
+                defaultFilename: exportFilename
             ) { result in
                 exportDocument = nil
                 switch result {
@@ -121,6 +129,7 @@ struct ProfileView: View {
             switch mode {
             case .export:
                 exportDocument = try store.makeBackupDocument(password: password)
+                exportFilename = backupFilename(for: Date())
             case .restore:
                 guard let pendingImportData else { throw VaultBackupError.invalidFile }
                 try store.restoreBackup(from: pendingImportData, password: password)
@@ -162,6 +171,59 @@ struct ProfileView: View {
         backupMessage = message
         showingBackupMessage = true
     }
+
+    private func backupFilename(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = "yyyyMMddHHmm"
+        return formatter.string(from: date) + ".mytools"
+    }
+}
+
+private struct HomeFeatureSettingsView: View {
+    @EnvironmentObject private var moduleSettings: ToolModuleSettings
+
+    var body: some View {
+        List {
+            Section("首页功能") {
+                ForEach(ToolModule.allCases) { module in
+                    Toggle(isOn: visibilityBinding(for: module)) {
+                        HStack(spacing: 12) {
+                            Image(systemName: module.systemImage)
+                                .foregroundStyle(.white)
+                                .frame(width: 34, height: 34)
+                                .background(
+                                    moduleSettings.isVisible(module) ? module.tint : Color.gray,
+                                    in: RoundedRectangle(cornerRadius: 7)
+                                )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(module.title)
+                                    .foregroundStyle(moduleSettings.isVisible(module) ? .primary : .secondary)
+                                Text(module.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("首页功能")
+        .iOSLabeledBackButton("我的")
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.insetGrouped)
+#endif
+    }
+
+    private func visibilityBinding(for module: ToolModule) -> Binding<Bool> {
+        Binding(
+            get: { moduleSettings.isVisible(module) },
+            set: { moduleSettings.setVisible($0, for: module) }
+        )
+    }
 }
 
 enum BackupPasswordMode: Int, Identifiable {
@@ -192,6 +254,7 @@ struct BackupPasswordView: View {
     @State private var password = ""
     @State private var confirmation = ""
     @State private var error = ""
+    @FocusState private var inputFocused: Bool
 
     private var canSubmit: Bool {
         password.count >= 8 && (mode == .restore || password == confirmation)
@@ -202,8 +265,10 @@ struct BackupPasswordView: View {
             Form {
                 Section {
                     SecureField("至少 8 位", text: $password)
+                        .focused($inputFocused)
                     if mode == .export {
                         SecureField("再次输入", text: $confirmation)
+                            .focused($inputFocused)
                     }
                 } footer: {
                     Text(mode == .export ? "此密码用于加密备份文件，丢失后无法恢复。" : "导入成功后会替换当前全部本地数据。")
@@ -224,15 +289,19 @@ struct BackupPasswordView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(mode.confirmationTitle) {
-                        if let message = onSubmit(password) {
-                            error = message
-                        } else {
-                            dismiss()
-                        }
-                    }
+                    Button(mode.confirmationTitle, action: requestSubmit)
                     .disabled(!canSubmit)
                 }
+            }
+        }
+    }
+
+    private func requestSubmit() {
+        commitPendingTextInput {
+            if let message = onSubmit(password) {
+                error = message
+            } else {
+                dismiss()
             }
         }
     }

@@ -67,7 +67,12 @@ final class SecureStore {
                 }
                 return copy
             },
-            cards: vault.cards.map { card in var copy = card; copy.cardNumber = card.cardNumber.count > 4 ? String(card.cardNumber.suffix(4)) : card.cardNumber; copy.cvv = ""; return copy }
+            cards: vault.cards.map { card in var copy = card; copy.cardNumber = card.cardNumber.count > 4 ? String(card.cardNumber.suffix(4)) : card.cardNumber; copy.cvv = ""; return copy },
+            stocks: vault.stocks.map { stock in
+                var copy = stock
+                copy.transactions = []
+                return copy
+            }
         )
         if let publicData = try? JSONEncoder().encode(publicVault) { UserDefaults.standard.set(publicData, forKey: publicDefaultsKey) }
     }

@@ -137,6 +137,48 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
     }
 }
 
+struct DomesticSubaccount: Identifiable, Codable, Equatable {
+    var id: UUID
+    var type: String
+    var name: String
+    var accountNumber: String
+    var currencies: Set<CurrencyCode>
+
+    private enum CodingKeys: String, CodingKey {
+        case id, type, name, accountNumber, currencies
+    }
+
+    init(
+        id: UUID = UUID(),
+        type: String = "",
+        name: String = "",
+        accountNumber: String = "",
+        currencies: Set<CurrencyCode> = [.cny]
+    ) {
+        self.id = id
+        self.type = type
+        self.name = name
+        self.accountNumber = accountNumber
+        self.currencies = currencies
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        type = try values.decodeIfPresent(String.self, forKey: .type) ?? ""
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        accountNumber = try values.decodeIfPresent(String.self, forKey: .accountNumber) ?? ""
+        currencies = try values.decodeIfPresent(Set<CurrencyCode>.self, forKey: .currencies) ?? [.cny]
+    }
+
+    var currencySummary: String {
+        CurrencyCode.allCases
+            .filter { currencies.contains($0) }
+            .map(\.rawValue)
+            .joined(separator: "、")
+    }
+}
+
 enum CardExpiryPrecision: String, Codable, CaseIterable, Identifiable {
     case yearMonth
     case fullDate
@@ -167,6 +209,20 @@ enum CardStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum BankCardKind: String, Codable, CaseIterable, Identifiable {
+    case debit
+    case credit
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .debit: return "借记卡"
+        case .credit: return "贷记卡"
+        }
+    }
+}
+
 struct BankCard: Identifiable, Codable, Equatable {
     var id = UUID()
     var accountID: UUID? = nil
@@ -177,7 +233,8 @@ struct BankCard: Identifiable, Codable, Equatable {
     var cvv = ""
     var expiryDate = Date()
     var expiryPrecision: CardExpiryPrecision = .yearMonth
-    var cardType = "借记卡"
+    var cardType = ""
+    var kind: BankCardKind = .debit
     var status: CardStatus = .normal
     var currencies: Set<CurrencyCode> = []
     var holderName = ""
@@ -187,7 +244,7 @@ struct BankCard: Identifiable, Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, accountID, bankName, branchName, openedAt, cardNumber, cvv
-        case expiryDate, expiryPrecision, cardType, status, currencies, holderName, applePay, defaultPayment, note
+        case expiryDate, expiryPrecision, cardType, kind, status, currencies, holderName, applePay, defaultPayment, note
     }
 
     init() {}
@@ -203,7 +260,16 @@ struct BankCard: Identifiable, Codable, Equatable {
         cvv = try values.decodeIfPresent(String.self, forKey: .cvv) ?? ""
         expiryDate = try values.decodeIfPresent(Date.self, forKey: .expiryDate) ?? Date()
         expiryPrecision = try values.decodeIfPresent(CardExpiryPrecision.self, forKey: .expiryPrecision) ?? .yearMonth
-        cardType = try values.decodeIfPresent(String.self, forKey: .cardType) ?? "借记卡"
+        cardType = try values.decodeIfPresent(String.self, forKey: .cardType) ?? ""
+        if let savedKind = try values.decodeIfPresent(BankCardKind.self, forKey: .kind) {
+            kind = savedKind
+        } else {
+            let legacyType = cardType.trimmingCharacters(in: .whitespacesAndNewlines)
+            kind = legacyType.contains("贷记") || legacyType.contains("信用") ? .credit : .debit
+            if ["借记卡", "贷记卡", "信用卡"].contains(legacyType) {
+                cardType = ""
+            }
+        }
         status = try values.decodeIfPresent(CardStatus.self, forKey: .status) ?? .normal
         currencies = try values.decodeIfPresent(Set<CurrencyCode>.self, forKey: .currencies) ?? []
         holderName = try values.decodeIfPresent(String.self, forKey: .holderName) ?? ""
@@ -223,6 +289,7 @@ struct BankCard: Identifiable, Codable, Equatable {
 struct BankAccount: Identifiable, Codable, Equatable {
     var id = UUID()
     var region: BankRegion = .domestic
+    var domesticSubaccounts: [DomesticSubaccount] = []
     var foreignSubaccounts: [ForeignSubaccount] = []
     var bankName = ""
     var branchName = ""
@@ -237,7 +304,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var note = ""
 
     private enum CodingKeys: String, CodingKey {
-        case id, region, foreignSubaccounts, bankName, branchName, openedAt, name, accountType, currency
+        case id, region, domesticSubaccounts, foreignSubaccounts, bankName, branchName, openedAt, name, accountType, currency
         case accountNumber, swift, iban, status, note
     }
 
@@ -268,6 +335,23 @@ struct BankAccount: Identifiable, Codable, Equatable {
             region = accountNumber.isEmpty && swift.isEmpty && iban.isEmpty ? .domestic : .overseas
         }
 
+        if values.contains(.domesticSubaccounts) {
+            domesticSubaccounts = try values.decodeIfPresent([DomesticSubaccount].self, forKey: .domesticSubaccounts) ?? []
+        } else if region == .domestic {
+            domesticSubaccounts = Self.migrateLegacyDomesticSubaccounts(
+                accountType: accountType,
+                accountNumber: accountNumber,
+                currency: currency
+            )
+            if !domesticSubaccounts.isEmpty {
+                accountType = ""
+                accountNumber = ""
+                currency = ""
+            }
+        } else {
+            domesticSubaccounts = []
+        }
+
         if values.contains(.foreignSubaccounts) {
             foreignSubaccounts = try values.decodeIfPresent([ForeignSubaccount].self, forKey: .foreignSubaccounts) ?? []
         } else if region == .overseas {
@@ -289,6 +373,20 @@ struct BankAccount: Identifiable, Codable, Equatable {
         for index in foreignSubaccounts.indices {
             foreignSubaccounts[index].legacyIBAN = ""
         }
+    }
+
+    private static func migrateLegacyDomesticSubaccounts(
+        accountType: String,
+        accountNumber: String,
+        currency: String
+    ) -> [DomesticSubaccount] {
+        guard !accountType.isEmpty || !accountNumber.isEmpty || !currency.isEmpty else { return [] }
+        let selectedCurrencies = CurrencyCode.selections(from: currency)
+        return [DomesticSubaccount(
+            type: accountType.isEmpty ? "银行账户" : accountType,
+            accountNumber: accountNumber,
+            currencies: selectedCurrencies.isEmpty ? [.cny] : selectedCurrencies
+        )]
     }
 
     private static func migrateLegacySubaccounts(
@@ -317,4 +415,37 @@ struct BankAccount: Identifiable, Codable, Equatable {
 struct VaultData: Codable {
     var accounts: [BankAccount] = []
     var cards: [BankCard] = []
+    var stocks: [StockHolding] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case accounts, cards, stocks
+    }
+
+    init(
+        accounts: [BankAccount] = [],
+        cards: [BankCard] = [],
+        stocks: [StockHolding] = []
+    ) {
+        self.accounts = accounts
+        self.cards = cards
+        self.stocks = stocks
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try values.decodeIfPresent([BankAccount].self, forKey: .accounts) ?? []
+        cards = try values.decodeIfPresent([BankCard].self, forKey: .cards) ?? []
+        stocks = try values.decodeIfPresent([StockHolding].self, forKey: .stocks) ?? []
+    }
+
+    var currentCardCount: Int {
+        cards.lazy.filter { $0.status != .closed }.count
+    }
+
+    var currentBankCount: Int {
+        accounts.lazy.filter { account in
+            let linkedCards = self.cards.filter { $0.accountID == account.id }
+            return linkedCards.isEmpty || linkedCards.contains { $0.status != .closed }
+        }.count
+    }
 }
