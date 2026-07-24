@@ -36,6 +36,20 @@ struct CardEditorView: View {
                         ForEach(BankCardKind.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    DisclosureGroup("发卡组织（可多选）") {
+                        ForEach(CardNetwork.allCases) { network in
+                            Button { toggleNetwork(network) } label: {
+                                HStack {
+                                    Text(network.title).foregroundStyle(.primary)
+                                    Spacer()
+                                    Image(systemName: draft.card.networks.contains(network) ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(draft.card.networks.contains(network) ? Color.accentColor : Color.secondary)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                     LabeledContent("卡片名称：") {
                         IMESafeTextField(prompt: "可选，如 Visa 白金卡", text: $draft.card.cardType, alignment: .trailing)
                     }
@@ -116,6 +130,14 @@ struct CardEditorView: View {
         }
         store.upsertCard(draft.card, in: account)
         dismiss()
+    }
+
+    private func toggleNetwork(_ network: CardNetwork) {
+        if draft.card.networks.contains(network) {
+            draft.card.networks.remove(network)
+        } else {
+            draft.card.networks.insert(network)
+        }
     }
 }
 

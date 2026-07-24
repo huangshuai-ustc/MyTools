@@ -38,6 +38,35 @@ struct DomesticSubaccountDetailRow: View {
     }
 }
 
+struct DomesticSubaccountReadOnlyView: View {
+    let subaccount: DomesticSubaccount
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("账户信息") {
+                    LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
+                    if !subaccount.name.isEmpty {
+                        LabeledContent("备注名称", value: subaccount.name)
+                    }
+                    CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
+                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                }
+            }
+            .navigationTitle(subaccount.name.isEmpty ? "境内账户详情" : subaccount.name)
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 private final class DomesticSubaccountDraft: ObservableObject {
     @Published var subaccount: DomesticSubaccount
     init(subaccount: DomesticSubaccount) { self.subaccount = subaccount }
@@ -140,6 +169,35 @@ struct ForeignSubaccountDetailRow: View {
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+struct ForeignSubaccountReadOnlyView: View {
+    let subaccount: ForeignSubaccount
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("账户信息") {
+                    LabeledContent("账户类型", value: subaccount.type.title)
+                    if !subaccount.name.isEmpty {
+                        LabeledContent("备注名称", value: subaccount.name)
+                    }
+                    CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
+                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                }
+            }
+            .navigationTitle(subaccount.name.isEmpty ? "境外账户详情" : subaccount.name)
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
     }
 }
 

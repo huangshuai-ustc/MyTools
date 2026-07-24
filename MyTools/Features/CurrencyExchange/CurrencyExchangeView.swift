@@ -157,6 +157,13 @@ private struct CurrencyExchangeRecordRow: View {
             HStack {
                 Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: "arrow.left.arrow.right")
                     .font(.headline)
+                Text(direction.shortTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(directionColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(directionColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+                    .accessibilityLabel(direction.title)
                 Spacer()
                 Text(record.exchangedAt, format: .dateTime.year().month().day())
                     .font(.caption)
@@ -193,6 +200,18 @@ private struct CurrencyExchangeRecordRow: View {
             return "当前损耗 \(amount)"
         }
         return "\(result.title) · 当前损耗 \(amount)（\(CurrencyExchangeValueFormatter.percent(result.displayValue(rate)))）"
+    }
+
+    private var direction: RenminbiExchangeDirection {
+        RenminbiExchangeDirection(record: record)
+    }
+
+    private var directionColor: Color {
+        switch direction {
+        case .sell: return .blue
+        case .buy: return .purple
+        case .crossCurrency: return .secondary
+        }
     }
 
     private var lossColor: Color {

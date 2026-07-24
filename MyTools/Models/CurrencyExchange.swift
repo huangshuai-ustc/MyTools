@@ -186,3 +186,35 @@ enum CurrencyExchangeResult {
         }
     }
 }
+
+enum RenminbiExchangeDirection {
+    case sell
+    case buy
+    case crossCurrency
+
+    init(record: CurrencyExchangeRecord) {
+        if record.soldCurrency == .cny, record.boughtCurrency != .cny {
+            self = .sell
+        } else if record.boughtCurrency == .cny, record.soldCurrency != .cny {
+            self = .buy
+        } else {
+            self = .crossCurrency
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .sell: return "卖出人民币"
+        case .buy: return "买入人民币"
+        case .crossCurrency: return "外币兑换"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .sell: return "卖出"
+        case .buy: return "买入"
+        case .crossCurrency: return "外币兑换"
+        }
+    }
+}

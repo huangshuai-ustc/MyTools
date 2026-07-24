@@ -4,6 +4,7 @@ struct HomeView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
+    @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
     @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
 
@@ -18,7 +19,7 @@ struct HomeView: View {
                     || store.cards(for: account).contains { cardMatches($0, searchTerm: searchTerm) }
             }
         }
-        return selectedSortOrder.sorted(accounts)
+        return selectedSortOrder.sorted(accounts.filter(regionFilter.includes))
     }
 
     private var selectedSortOrder: AccountSortOrder {
@@ -27,6 +28,15 @@ struct HomeView: View {
 
     var body: some View {
         List {
+            Section {
+                Picker("银行地区", selection: $regionFilter) {
+                    ForEach(BankRegionFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
             Section {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
@@ -166,7 +176,8 @@ struct HomeView: View {
 
     private func cardMatches(_ card: BankCard, searchTerm: String) -> Bool {
         let currencyTitles = card.currencies.map(\.title).joined(separator: " ")
-        return [card.bankName, card.branchName, card.kind.title, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles]
+        let networks = card.networks.map(\.title).joined(separator: " " )
+        return [card.bankName, card.branchName, card.kind.title, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles, networks]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 
@@ -208,10 +219,61 @@ struct CardRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if !card.networks.isEmpty {
+                    CardNetworkTags(networks: card.networks)
+                }
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+    }
+}
+
+enum BankRegionFilter: String, CaseIterable, Identifiable {
+    case all
+    case domestic
+    case overseas
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: return "全部"
+        case .domestic: return "境内"
+        case .overseas: return "境外"
+        }
+    }
+
+    func includes(_ account: BankAccount) -> Bool {
+        switch self {
+        case .all: return true
+        case .domestic: return account.region == .domestic
+        case .overseas: return account.region == .overseas
+        }
+    }
+}
+
+struct CardNetworkTags: View {
+    let networks: Set<CardNetwork>
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 5) { tags }
+            VStack(alignment: .leading, spacing: 4) { tags }
+        }
+    }
+
+    @ViewBuilder
+    private var tags: some View {
+        ForEach(CardNetwork.allCases.filter(networks.contains)) { network in
+            Text(network.title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.indigo)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                .copyableText(network.title)
+        }
     }
 }
 

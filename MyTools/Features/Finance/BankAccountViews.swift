@@ -90,12 +90,17 @@ struct AdminCardsView: View {
 struct AccountDetailView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
+    @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
     @State private var editingAccount: BankAccount?
     @State private var editingDomesticSubaccount: DomesticSubaccount?
     @State private var editingForeignSubaccount: ForeignSubaccount?
     @State private var editingCard: BankCard?
     @State private var viewingCard: BankCard?
+    @State private var viewingDomesticSubaccount: DomesticSubaccount?
+    @State private var viewingForeignSubaccount: ForeignSubaccount?
+    @State private var loginPasswordRevealed = false
+    @State private var showingSensitiveAccess = false
     @AppStorage("card-sort-order-v1") private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
     @AppStorage("card-category-filter-v1") private var cardCategoryRawValue = CardCategoryFilter.all.rawValue
     private let backTitle: String
@@ -163,6 +168,21 @@ struct AccountDetailView: View {
             CardDetailView(card: card)
                 .iOSLargeSheet()
         }
+        .sheet(item: $viewingDomesticSubaccount) { subaccount in
+            DomesticSubaccountReadOnlyView(subaccount: subaccount)
+                .iOSLargeSheet()
+        }
+        .sheet(item: $viewingForeignSubaccount) { subaccount in
+            ForeignSubaccountReadOnlyView(subaccount: subaccount)
+                .iOSLargeSheet()
+        }
+        .sheet(isPresented: $showingSensitiveAccess) {
+            SensitiveAccessView { loginPasswordRevealed = true }
+                .iOSLargeSheet()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { loginPasswordRevealed = false }
+        }
     }
 
     private func accountList(_ account: BankAccount) -> some View {
@@ -173,25 +193,46 @@ struct AccountDetailView: View {
             Section("账户信息") {
                 LabeledContent("银行类型") {
                     BankRegionBadge(region: account.region)
+                        .copyableText(account.region.title)
                 }
-                LabeledContent("银行", value: account.bankName)
-                LabeledContent("支行", value: account.branchName.isEmpty ? "未填写" : account.branchName)
+                CopyableValueRow(title: "银行", value: account.bankName)
+                CopyableValueRow(title: "支行", value: account.branchName)
                 if !account.name.isEmpty {
-                    LabeledContent("备注名称", value: account.name)
+                    CopyableValueRow(title: "备注名称", value: account.name)
                 }
                 if account.region == .overseas {
-                    LabeledContent("SWIFT", value: account.swift.isEmpty ? "未填写" : account.swift)
-                    LabeledContent("IBAN", value: account.iban.isEmpty ? "未填写" : account.iban)
+                    CopyableValueRow(title: "SWIFT", value: account.swift)
+                    CopyableValueRow(title: "IBAN", value: account.iban)
                 }
-                LabeledContent("状态", value: account.status)
+                CopyableValueRow(title: "状态", value: account.status)
+                CopyableValueRow(
+                    title: "开户时间",
+                    value: account.openedAt.formatted(date: .numeric, time: .omitted)
+                )
+                if !account.note.isEmpty {
+                    optionalDetail("备注", account.note)
+                }
                 if !account.boundPhoneNumber.isEmpty {
-                    LabeledContent("绑定手机号", value: account.boundPhoneNumber)
+                    CopyableValueRow(title: "绑定手机号", value: account.boundPhoneNumber)
                 }
                 if !account.loginAccount.isEmpty {
-                    LabeledContent("登录账号", value: account.loginAccount)
+                    CopyableValueRow(title: "登录账号", value: account.loginAccount)
                 }
                 if !account.loginPassword.isEmpty {
-                    ProtectedValueRow(title: "登录密码", value: account.loginPassword)
+                    ProtectedValueRow(
+                        title: "登录密码",
+                        value: account.loginPassword,
+                        concealedValue: "••••••••",
+                        isRevealed: auth.isAdmin || loginPasswordRevealed
+                    )
+                    if !auth.isAdmin {
+                        Button { showingSensitiveAccess = true } label: {
+                            Label(
+                                loginPasswordRevealed ? "重新验证身份" : "验证身份后查看登录密码",
+                                systemImage: loginPasswordRevealed ? "lock.open" : "faceid"
+                            )
+                        }
+                    }
                 }
                 if auth.isAdmin {
                     Button("编辑银行账户") { editingAccount = account }
@@ -243,7 +284,12 @@ struct AccountDetailView: View {
                         }
                     } else {
                         ForEach(account.domesticSubaccounts) { subaccount in
-                            DomesticSubaccountDetailRow(subaccount: subaccount)
+                            Button { viewingDomesticSubaccount = subaccount } label: {
+                                DomesticSubaccountDetailRow(subaccount: subaccount)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     if auth.isAdmin {
@@ -273,7 +319,12 @@ struct AccountDetailView: View {
                         }
                     } else {
                         ForEach(account.foreignSubaccounts) { subaccount in
-                            ForeignSubaccountDetailRow(subaccount: subaccount)
+                            Button { viewingForeignSubaccount = subaccount } label: {
+                                ForeignSubaccountDetailRow(subaccount: subaccount)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     if auth.isAdmin {

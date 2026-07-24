@@ -257,6 +257,30 @@ enum BankCardKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum CardNetwork: String, Codable, CaseIterable, Identifiable {
+    case unionPay
+    case visa
+    case mastercard
+    case jcb
+    case americanExpress
+    case dinersClub
+    case discover
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .unionPay: return "银联"
+        case .visa: return "Visa"
+        case .mastercard: return "Mastercard"
+        case .jcb: return "JCB"
+        case .americanExpress: return "美国运通"
+        case .dinersClub: return "大来卡"
+        case .discover: return "Discover"
+        }
+    }
+}
+
 struct BankCard: Identifiable, Codable, Equatable {
     var id = UUID()
     var accountID: UUID? = nil
@@ -269,6 +293,7 @@ struct BankCard: Identifiable, Codable, Equatable {
     var expiryPrecision: CardExpiryPrecision = .yearMonth
     var cardType = ""
     var kind: BankCardKind = .debit
+    var networks: Set<CardNetwork> = []
     var status: CardStatus = .normal
     var currencies: Set<CurrencyCode> = []
     var holderName = ""
@@ -278,7 +303,7 @@ struct BankCard: Identifiable, Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, accountID, bankName, branchName, openedAt, cardNumber, cvv
-        case expiryDate, expiryPrecision, cardType, kind, status, currencies, holderName, applePay, defaultPayment, note
+        case expiryDate, expiryPrecision, cardType, kind, networks, status, currencies, holderName, applePay, defaultPayment, note
     }
 
     init() {}
@@ -304,6 +329,7 @@ struct BankCard: Identifiable, Codable, Equatable {
                 cardType = ""
             }
         }
+        networks = try values.decodeIfPresent(Set<CardNetwork>.self, forKey: .networks) ?? []
         status = try values.decodeIfPresent(CardStatus.self, forKey: .status) ?? .normal
         currencies = try values.decodeIfPresent(Set<CurrencyCode>.self, forKey: .currencies) ?? []
         holderName = try values.decodeIfPresent(String.self, forKey: .holderName) ?? ""

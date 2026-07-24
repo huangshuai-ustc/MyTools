@@ -28,37 +28,56 @@ struct AdminEditAccessButton: View {
 }
 
 struct ProtectedValueRow: View {
-    @EnvironmentObject private var auth: AuthManager
-    @State private var showingAuthentication = false
     let title: String
     let value: String
+    let concealedValue: String
+    let isRevealed: Bool
 
     var body: some View {
         LabeledContent(title) {
             HStack(spacing: 8) {
                 Text(displayValue)
-                    .fontDesign(auth.isAdmin ? .monospaced : .default)
-                    .textSelection(.enabled)
-                Button {
-                    if auth.isAdmin {
-                        auth.lock()
-                    } else {
-                        showingAuthentication = true
-                    }
-                } label: {
-                    Image(systemName: auth.isAdmin ? "eye.slash" : "eye")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(auth.isAdmin ? "隐藏\(title)" : "验证身份后查看\(title)")
+                    .fontDesign(isRevealed ? .monospaced : .default)
+                    .multilineTextAlignment(.trailing)
+                    .copyableText(isRevealed ? value : nil)
             }
-        }
-        .sheet(isPresented: $showingAuthentication) {
-            AuthenticationView().iOSLargeSheet()
         }
     }
 
     private var displayValue: String {
         guard !value.isEmpty else { return "未填写" }
-        return auth.isAdmin ? value : "••••••"
+        return isRevealed ? value : concealedValue
+    }
+}
+
+struct CopyableValueRow: View {
+    let title: String
+    let value: String
+    var emptyValue = "未填写"
+
+    var body: some View {
+        LabeledContent(title) {
+            Text(value.isEmpty ? emptyValue : value)
+                .multilineTextAlignment(.trailing)
+                .copyableText(value.isEmpty ? nil : value)
+        }
+    }
+}
+
+private struct CopyableTextModifier: ViewModifier {
+    let value: String?
+
+    func body(content: Content) -> some View {
+        if let value, !value.isEmpty {
+            content.textSelection(.enabled)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func copyableText(_ value: String?) -> some View {
+        modifier(CopyableTextModifier(value: value))
     }
 }

@@ -38,6 +38,7 @@
 		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
+		A30000000000000000000001 /* SensitiveAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000001 /* SensitiveAccessView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -74,6 +75,7 @@
 		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
+		B30000000000000000000001 /* SensitiveAccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensitiveAccessView.swift; sourceTree = "<group>"; };
 		C00000000000000000000001 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -142,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				B0000000000000000000000A /* AuthenticationView.swift */,
+				B30000000000000000000001 /* SensitiveAccessView.swift */,
 			);
 			path = Authentication;
 			sourceTree = "<group>";
@@ -286,6 +289,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A30000000000000000000001 /* SensitiveAccessView.swift in Sources */,
 				A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */,
 				A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */,
 				A20000000000000000000001 /* CurrencyExchange.swift in Sources */,
