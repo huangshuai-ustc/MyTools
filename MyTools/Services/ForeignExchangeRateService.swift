@@ -28,7 +28,7 @@ actor ForeignExchangeRateService {
             throw ForeignExchangeRateError.invalidResponse
         }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
-        request.setValue("MyTools/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("MyTools/1.3", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode),

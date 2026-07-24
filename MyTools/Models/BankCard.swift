@@ -36,6 +36,34 @@ enum ForeignAccountType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum AccountStatus: String, Codable, CaseIterable, Identifiable {
+    case normal
+    case abnormal
+    case closed
+
+    var id: Self { self }
+
+    init(storedValue: String) {
+        if let value = Self(rawValue: storedValue) {
+            self = value
+            return
+        }
+        switch storedValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "异常": self = .abnormal
+        case "已销户", "销户", "已注销", "注销": self = .closed
+        default: self = .normal
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .normal: return "正常"
+        case .abnormal: return "异常"
+        case .closed: return "已销户"
+        }
+    }
+}
+
 enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
     case cny = "CNY"
     case hkd = "HKD"
@@ -118,10 +146,11 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
     var name: String
     var accountNumber: String
     var currencies: Set<CurrencyCode>
+    var status: AccountStatus
     fileprivate var legacyIBAN: String
 
     private enum CodingKeys: String, CodingKey {
-        case id, type, name, accountNumber, currencies
+        case id, type, name, accountNumber, currencies, status
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
@@ -133,13 +162,15 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
         type: ForeignAccountType = .savings,
         name: String = "",
         accountNumber: String = "",
-        currencies: Set<CurrencyCode> = []
+        currencies: Set<CurrencyCode> = [],
+        status: AccountStatus = .normal
     ) {
         self.id = id
         self.type = type
         self.name = name
         self.accountNumber = accountNumber
         self.currencies = currencies
+        self.status = status
         legacyIBAN = ""
     }
 
@@ -150,6 +181,7 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
         accountNumber = try values.decodeIfPresent(String.self, forKey: .accountNumber) ?? ""
         currencies = try values.decodeIfPresent(Set<CurrencyCode>.self, forKey: .currencies) ?? []
+        status = try values.decodeIfPresent(AccountStatus.self, forKey: .status) ?? .normal
         let legacyValues = try decoder.container(keyedBy: LegacyCodingKeys.self)
         legacyIBAN = try legacyValues.decodeIfPresent(String.self, forKey: .iban) ?? ""
     }
@@ -161,6 +193,7 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
         try values.encode(name, forKey: .name)
         try values.encode(accountNumber, forKey: .accountNumber)
         try values.encode(currencies, forKey: .currencies)
+        try values.encode(status, forKey: .status)
     }
 
     var currencySummary: String {
@@ -177,9 +210,10 @@ struct DomesticSubaccount: Identifiable, Codable, Equatable {
     var name: String
     var accountNumber: String
     var currencies: Set<CurrencyCode>
+    var status: AccountStatus
 
     private enum CodingKeys: String, CodingKey {
-        case id, type, name, accountNumber, currencies
+        case id, type, name, accountNumber, currencies, status
     }
 
     init(
@@ -187,13 +221,15 @@ struct DomesticSubaccount: Identifiable, Codable, Equatable {
         type: String = "",
         name: String = "",
         accountNumber: String = "",
-        currencies: Set<CurrencyCode> = [.cny]
+        currencies: Set<CurrencyCode> = [.cny],
+        status: AccountStatus = .normal
     ) {
         self.id = id
         self.type = type
         self.name = name
         self.accountNumber = accountNumber
         self.currencies = currencies
+        self.status = status
     }
 
     init(from decoder: Decoder) throws {
@@ -203,6 +239,7 @@ struct DomesticSubaccount: Identifiable, Codable, Equatable {
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
         accountNumber = try values.decodeIfPresent(String.self, forKey: .accountNumber) ?? ""
         currencies = try values.decodeIfPresent(Set<CurrencyCode>.self, forKey: .currencies) ?? [.cny]
+        status = try values.decodeIfPresent(AccountStatus.self, forKey: .status) ?? .normal
     }
 
     var currencySummary: String {
@@ -371,7 +408,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var remittanceBankAddress = ""
     var remittanceSwiftCode = ""
     var remittanceInstructions = ""
-    var status = "正常"
+    var status: AccountStatus = .normal
     var note = ""
 
     private enum CodingKeys: String, CodingKey {
@@ -411,8 +448,10 @@ struct BankAccount: Identifiable, Codable, Equatable {
         remittanceBankName = try values.decodeIfPresent(String.self, forKey: .remittanceBankName) ?? ""
         remittanceBankAddress = try values.decodeIfPresent(String.self, forKey: .remittanceBankAddress) ?? ""
         remittanceSwiftCode = try values.decodeIfPresent(String.self, forKey: .remittanceSwiftCode) ?? ""
+        if swift.isEmpty { swift = remittanceSwiftCode }
+        remittanceSwiftCode = ""
         remittanceInstructions = try values.decodeIfPresent(String.self, forKey: .remittanceInstructions) ?? ""
-        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "正常"
+        status = AccountStatus(storedValue: try values.decodeIfPresent(String.self, forKey: .status) ?? "")
         note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
 
         if let savedRegion = try values.decodeIfPresent(BankRegion.self, forKey: .region) {
@@ -503,21 +542,24 @@ struct VaultData: Codable {
     var cards: [BankCard] = []
     var stocks: [StockHolding] = []
     var currencyExchangeRecords: [CurrencyExchangeRecord] = []
+    var medicalRecords: [MedicalRecord] = []
 
     private enum CodingKeys: String, CodingKey {
-        case accounts, cards, stocks, currencyExchangeRecords
+        case accounts, cards, stocks, currencyExchangeRecords, medicalRecords
     }
 
     init(
         accounts: [BankAccount] = [],
         cards: [BankCard] = [],
         stocks: [StockHolding] = [],
-        currencyExchangeRecords: [CurrencyExchangeRecord] = []
+        currencyExchangeRecords: [CurrencyExchangeRecord] = [],
+        medicalRecords: [MedicalRecord] = []
     ) {
         self.accounts = accounts
         self.cards = cards
         self.stocks = stocks
         self.currencyExchangeRecords = currencyExchangeRecords
+        self.medicalRecords = medicalRecords
     }
 
     init(from decoder: Decoder) throws {
@@ -529,6 +571,7 @@ struct VaultData: Codable {
             [CurrencyExchangeRecord].self,
             forKey: .currencyExchangeRecords
         ) ?? []
+        medicalRecords = try values.decodeIfPresent([MedicalRecord].self, forKey: .medicalRecords) ?? []
     }
 
     var currentCardCount: Int {

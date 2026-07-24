@@ -58,6 +58,7 @@ final class SecureStore {
                 copy.accountNumber = ""
                 copy.swift = ""
                 copy.iban = ""
+                copy.remittanceSwiftCode = ""
                 copy.loginPassword = ""
                 copy.foreignSubaccounts = account.foreignSubaccounts.map { subaccount in
                     var redacted = subaccount
@@ -74,7 +75,12 @@ final class SecureStore {
                 copy.transactions = []
                 return copy
             },
-            currencyExchangeRecords: vault.currencyExchangeRecords
+            currencyExchangeRecords: vault.currencyExchangeRecords,
+            medicalRecords: vault.medicalRecords.map { record in
+                var copy = record
+                for index in copy.attachments.indices { copy.attachments[index].backupData = nil }
+                return copy
+            }
         )
         if let publicData = try? JSONEncoder().encode(publicVault) { UserDefaults.standard.set(publicData, forKey: publicDefaultsKey) }
     }

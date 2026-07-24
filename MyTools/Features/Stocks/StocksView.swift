@@ -6,6 +6,7 @@ private func stockValueColor(
     market: StockMarket,
     settings: StockAppearanceSettings
 ) -> Color {
+        guard value != 0 else { return .primary }
         let scheme = settings.scheme(for: market)
         switch (value >= 0, scheme) {
         case (true, .redRiseGreenFall), (false, .greenRiseRedFall): return .red

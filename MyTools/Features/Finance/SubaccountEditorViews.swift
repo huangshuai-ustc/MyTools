@@ -10,6 +10,8 @@ struct DomesticSubaccountRow: View {
                 if !subaccount.name.isEmpty {
                     Text(subaccount.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
+                Spacer(minLength: 4)
+                AccountStatusText(status: subaccount.status)
             }
             if !subaccount.accountNumber.isEmpty {
                 Text(subaccount.accountNumber).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
@@ -31,6 +33,7 @@ struct DomesticSubaccountDetailRow: View {
             LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
             if !subaccount.accountNumber.isEmpty { LabeledContent("账户号", value: subaccount.accountNumber) }
             LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+            LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
         }
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -52,9 +55,10 @@ struct DomesticSubaccountReadOnlyView: View {
                     }
                     CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                    LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
                 }
             }
-            .navigationTitle(subaccount.name.isEmpty ? "境内账户详情" : subaccount.name)
+            .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -100,6 +104,12 @@ struct DomesticSubaccountEditorView: View {
                     LabeledContent("账户号：") {
                         IMESafeTextField(prompt: "可选", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
+                    Picker("状态：", selection: $draft.subaccount.status) {
+                        ForEach(AccountStatus.allCases) { status in
+                            Text(status.title).tag(status)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
                 Section {
                     CurrencySelectionRows(currencies: $draft.subaccount.currencies)
@@ -111,7 +121,7 @@ struct DomesticSubaccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(draft.subaccount.type.isEmpty ? "新增境内账户" : "编辑境内账户")
+            .navigationTitle(draft.subaccount.type.isEmpty ? "新增子账户" : "编辑子账户")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -143,6 +153,8 @@ struct ForeignSubaccountRow: View {
                 if !subaccount.name.isEmpty {
                     Text(subaccount.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
+                Spacer(minLength: 4)
+                AccountStatusText(status: subaccount.status)
             }
             Text(subaccount.accountNumber.isEmpty ? "未填写账户号" : subaccount.accountNumber)
                 .font(.subheadline.monospacedDigit())
@@ -165,6 +177,7 @@ struct ForeignSubaccountDetailRow: View {
             LabeledContent("账户类型", value: subaccount.type.title)
             LabeledContent("账户号", value: subaccount.accountNumber.isEmpty ? "未填写" : subaccount.accountNumber)
             LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+            LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
         }
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -186,9 +199,10 @@ struct ForeignSubaccountReadOnlyView: View {
                     }
                     CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                    LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
                 }
             }
-            .navigationTitle(subaccount.name.isEmpty ? "境外账户详情" : subaccount.name)
+            .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -234,6 +248,12 @@ struct ForeignSubaccountEditorView: View {
                     LabeledContent("账户号：") {
                         IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
+                    Picker("状态：", selection: $draft.subaccount.status) {
+                        ForEach(AccountStatus.allCases) { status in
+                            Text(status.title).tag(status)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
                 Section {
                     CurrencySelectionRows(currencies: $draft.subaccount.currencies)
@@ -245,7 +265,7 @@ struct ForeignSubaccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增境外账户" : "编辑境外账户")
+            .navigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增子账户" : "编辑子账户")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -264,6 +284,26 @@ struct ForeignSubaccountEditorView: View {
             onSave(draft.subaccount)
             dismiss()
         }
+    }
+}
+
+struct AccountStatusText: View {
+    let status: AccountStatus
+
+    private var color: Color {
+        switch status {
+        case .normal: return .green
+        case .abnormal: return .orange
+        case .closed: return .red
+        }
+    }
+
+    var body: some View {
+        Text(status.title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 

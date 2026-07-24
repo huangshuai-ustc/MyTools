@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UniformTypeIdentifiers
 
 private struct QuoteRefreshResult: Sendable {
     let stockID: UUID
@@ -13,6 +14,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var cards: [BankCard]
     @Published private(set) var stocks: [StockHolding]
     @Published private(set) var currencyExchangeRecords: [CurrencyExchangeRecord]
+    @Published private(set) var medicalRecords: [MedicalRecord]
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var lastStockRefreshAt: Date?
@@ -27,6 +29,7 @@ final class AppStore: ObservableObject {
     private let secureStore = SecureStore()
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
+    private let attachmentStore = AttachmentStore()
     private let defaults = UserDefaults.standard
     private var lastExchangeRateRequestAt: Date?
 
@@ -36,6 +39,7 @@ final class AppStore: ObservableObject {
         cards = vault.cards
         stocks = vault.stocks
         currencyExchangeRecords = vault.currencyExchangeRecords
+        medicalRecords = vault.medicalRecords
         if let savedRate = defaults.string(forKey: "stock-usd-cny-buying-rate-v1") {
             usdRenminbiBuyingRate = Decimal(string: savedRate, locale: Locale(identifier: "en_US_POSIX"))
         }
@@ -84,6 +88,7 @@ final class AppStore: ObservableObject {
         cards = vault.cards
         stocks = vault.stocks
         currencyExchangeRecords = vault.currencyExchangeRecords
+        medicalRecords = vault.medicalRecords
         // 旧版本加密数据在管理员认证后迁移到普通可读存储；之后普通模式启动不读取 Keychain。
         try? secureStore.saveVault(vault)
     }
@@ -152,6 +157,43 @@ final class AppStore: ObservableObject {
     func deleteCurrencyExchangeRecords(ids: Set<UUID>) {
         currencyExchangeRecords.removeAll { ids.contains($0.id) }
         persist()
+    }
+
+    func upsertMedicalRecord(_ record: MedicalRecord) {
+        if let index = medicalRecords.firstIndex(where: { $0.id == record.id }) {
+            let retainedIDs = Set(record.attachments.map(\.id))
+            for attachment in medicalRecords[index].attachments where !retainedIDs.contains(attachment.id) {
+                attachmentStore.delete(attachment)
+            }
+            medicalRecords[index] = record
+        } else {
+            medicalRecords.append(record)
+        }
+        persist()
+    }
+
+    func deleteMedicalRecords(ids: Set<UUID>) {
+        for record in medicalRecords where ids.contains(record.id) {
+            record.attachments.forEach(attachmentStore.delete)
+        }
+        medicalRecords.removeAll { ids.contains($0.id) }
+        persist()
+    }
+
+    func importMedicalAttachment(from url: URL) throws -> FileAttachment {
+        try attachmentStore.importFile(from: url)
+    }
+
+    func saveMedicalPhoto(data: Data, fileName: String, contentType: UTType) throws -> FileAttachment {
+        try attachmentStore.save(data: data, originalFileName: fileName, contentType: contentType)
+    }
+
+    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
+        attachmentStore.delete(attachment)
+    }
+
+    func medicalAttachmentURL(for attachment: FileAttachment) -> URL {
+        attachmentStore.url(for: attachment)
     }
 
     func deleteStocks(ids: Set<UUID>) {
@@ -300,23 +342,27 @@ final class AppStore: ObservableObject {
     }
 
     func makeBackupDocument(password: String) throws -> VaultBackupDocument {
+        let medicalRecordsWithAttachments = try attachmentStore.recordsForBackup(medicalRecords)
         let vault = VaultData(
             accounts: accounts,
             cards: cards,
             stocks: stocks,
-            currencyExchangeRecords: currencyExchangeRecords
+            currencyExchangeRecords: currencyExchangeRecords,
+            medicalRecords: medicalRecordsWithAttachments
         )
         let data = try VaultBackupCrypto.makeBackup(from: vault, password: password)
         return VaultBackupDocument(data: data)
     }
 
     func restoreBackup(from data: Data, password: String) throws {
-        let vault = try VaultBackupCrypto.restoreVault(from: data, password: password)
+        var vault = try VaultBackupCrypto.restoreVault(from: data, password: password)
+        vault.medicalRecords = try attachmentStore.restoreAttachments(in: vault.medicalRecords)
         try secureStore.saveVault(vault)
         accounts = vault.accounts
         cards = vault.cards
         stocks = vault.stocks
         currencyExchangeRecords = vault.currencyExchangeRecords
+        medicalRecords = vault.medicalRecords
         quoteErrors = [:]
         quoteSources = [:]
     }
@@ -329,7 +375,8 @@ final class AppStore: ObservableObject {
                 accounts: accounts,
                 cards: cards,
                 stocks: stocks,
-                currencyExchangeRecords: currencyExchangeRecords
+                currencyExchangeRecords: currencyExchangeRecords,
+                medicalRecords: medicalRecords
             )
         )
     }
@@ -337,6 +384,10 @@ final class AppStore: ObservableObject {
 
 private extension VaultData {
     var isEmpty: Bool {
-        accounts.isEmpty && cards.isEmpty && stocks.isEmpty && currencyExchangeRecords.isEmpty
+        accounts.isEmpty
+            && cards.isEmpty
+            && stocks.isEmpty
+            && currencyExchangeRecords.isEmpty
+            && medicalRecords.isEmpty
     }
 }

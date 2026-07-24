@@ -80,9 +80,9 @@ struct AdminCardsView: View {
     private func subaccountSummary(for account: BankAccount) -> String {
         switch account.region {
         case .domestic:
-            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个境内账户"
+            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个子账户"
         case .overseas:
-            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个境外账户"
+            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个子账户"
         }
     }
 }
@@ -200,75 +200,15 @@ struct AccountDetailView: View {
                 if !account.name.isEmpty {
                     CopyableValueRow(title: "备注名称", value: account.name)
                 }
-                if account.region == .overseas {
-                    CopyableValueRow(title: "SWIFT", value: account.swift)
-                    CopyableValueRow(title: "IBAN", value: account.iban)
-                }
-                CopyableValueRow(title: "状态", value: account.status)
-                CopyableValueRow(
-                    title: "开户时间",
-                    value: account.openedAt.formatted(date: .numeric, time: .omitted)
-                )
-                if !account.note.isEmpty {
-                    optionalDetail("备注", account.note)
-                }
-                if !account.boundPhoneNumber.isEmpty {
-                    CopyableValueRow(title: "绑定手机号", value: account.boundPhoneNumber)
-                }
-                if !account.loginAccount.isEmpty {
-                    CopyableValueRow(title: "登录账号", value: account.loginAccount)
-                }
-                if !account.loginPassword.isEmpty {
-                    ProtectedValueRow(
-                        title: "登录密码",
-                        value: account.loginPassword,
-                        concealedValue: "••••••••",
-                        isRevealed: auth.isAdmin || loginPasswordRevealed
-                    )
-                    if !auth.isAdmin {
-                        Button { showingSensitiveAccess = true } label: {
-                            Label(
-                                loginPasswordRevealed ? "重新验证身份" : "验证身份后查看登录密码",
-                                systemImage: loginPasswordRevealed ? "lock.open" : "faceid"
-                            )
-                        }
-                    }
-                }
                 if auth.isAdmin {
                     Button("编辑银行账户") { editingAccount = account }
                 }
             }
 
-            if account.region == .overseas {
-                if !account.correspondenceAddressChinese.isEmpty
-                    || !account.correspondenceAddressEnglish.isEmpty
-                    || !account.residentialAddressChinese.isEmpty
-                    || !account.residentialAddressEnglish.isEmpty {
-                    Section("地址信息") {
-                        optionalDetail("通讯地址（中文）", account.correspondenceAddressChinese)
-                        optionalDetail("通讯地址（英文）", account.correspondenceAddressEnglish)
-                        optionalDetail("住宅地址（中文）", account.residentialAddressChinese)
-                        optionalDetail("住宅地址（英文）", account.residentialAddressEnglish)
-                    }
-                }
-
-                if !account.remittanceBankName.isEmpty
-                    || !account.remittanceBankAddress.isEmpty
-                    || !account.remittanceSwiftCode.isEmpty
-                    || !account.remittanceInstructions.isEmpty {
-                    Section("汇入汇款资料") {
-                        optionalDetail("收款银行正式名称", account.remittanceBankName)
-                        optionalDetail("收款银行地址", account.remittanceBankAddress)
-                        optionalDetail("收款 SWIFT Code", account.remittanceSwiftCode)
-                        optionalDetail("汇款说明", account.remittanceInstructions)
-                    }
-                }
-            }
-
             if account.region == .domestic {
-                Section("境内账户") {
+                Section("子账户") {
                     if account.domesticSubaccounts.isEmpty {
-                        Text("暂无境内账户").foregroundStyle(.secondary)
+                        Text("暂无子账户").foregroundStyle(.secondary)
                     }
                     if auth.isAdmin {
                         ForEach(account.domesticSubaccounts) { subaccount in
@@ -294,16 +234,16 @@ struct AccountDetailView: View {
                     }
                     if auth.isAdmin {
                         Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
-                            Label("添加境内账户", systemImage: "plus.circle")
+                            Label("添加子账户", systemImage: "plus.circle")
                         }
                     }
                 }
             }
 
             if account.region == .overseas {
-                Section("境外账户") {
+                Section("子账户") {
                     if account.foreignSubaccounts.isEmpty {
-                        Text("暂无境外账户").foregroundStyle(.secondary)
+                        Text("暂无子账户").foregroundStyle(.secondary)
                     }
                     if auth.isAdmin {
                         ForEach(account.foreignSubaccounts) { subaccount in
@@ -329,7 +269,7 @@ struct AccountDetailView: View {
                     }
                     if auth.isAdmin {
                         Button { editingForeignSubaccount = ForeignSubaccount() } label: {
-                            Label("添加境外账户", systemImage: "plus.circle")
+                            Label("添加子账户", systemImage: "plus.circle")
                         }
                     }
                 }
@@ -364,6 +304,69 @@ struct AccountDetailView: View {
                     }
                 }
             }
+
+            if !account.boundPhoneNumber.isEmpty
+                || !account.loginAccount.isEmpty
+                || !account.loginPassword.isEmpty {
+                Section("登录信息") {
+                    optionalDetail("绑定手机号", account.boundPhoneNumber)
+                    optionalDetail("登录账号", account.loginAccount)
+                    if !account.loginPassword.isEmpty {
+                        ProtectedValueRow(
+                            title: "登录密码",
+                            value: account.loginPassword,
+                            concealedValue: "••••••••",
+                            isRevealed: auth.isAdmin || loginPasswordRevealed
+                        )
+                        if !auth.isAdmin {
+                            Button { showingSensitiveAccess = true } label: {
+                                Label(
+                                    loginPasswordRevealed ? "重新验证身份" : "验证身份后查看登录密码",
+                                    systemImage: loginPasswordRevealed ? "lock.open" : "faceid"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if account.region == .overseas {
+                if !account.correspondenceAddressChinese.isEmpty
+                    || !account.correspondenceAddressEnglish.isEmpty
+                    || !account.residentialAddressChinese.isEmpty
+                    || !account.residentialAddressEnglish.isEmpty {
+                    Section("地址信息") {
+                        optionalDetail("通讯地址（中文）", account.correspondenceAddressChinese)
+                        optionalDetail("通讯地址（英文）", account.correspondenceAddressEnglish)
+                        optionalDetail("住宅地址（中文）", account.residentialAddressChinese)
+                        optionalDetail("住宅地址（英文）", account.residentialAddressEnglish)
+                    }
+                }
+
+                if !account.remittanceBankName.isEmpty
+                    || !account.remittanceBankAddress.isEmpty
+                    || !account.swift.isEmpty
+                    || !account.iban.isEmpty
+                    || !account.remittanceInstructions.isEmpty {
+                    Section("汇入汇款资料") {
+                        optionalDetail("收款银行正式名称", account.remittanceBankName)
+                        optionalDetail("收款银行地址", account.remittanceBankAddress)
+                        optionalDetail("SWIFT Code", account.swift)
+                        optionalDetail("IBAN", account.iban)
+                        optionalDetail("汇款说明", account.remittanceInstructions)
+                    }
+                }
+            }
+
+            Section("其他") {
+                LabeledContent("状态") { AccountStatusText(status: account.status) }
+                CopyableValueRow(
+                    title: "开户时间",
+                    value: account.openedAt.formatted(date: .numeric, time: .omitted)
+                )
+                optionalDetail("备注", account.note)
+            }
+
         }
 #if os(iOS)
         .listStyle(.insetGrouped)
@@ -432,15 +435,10 @@ private final class AccountEditorDraft: ObservableObject {
 }
 
 struct AccountEditorView: View {
-    private enum Field: Hashable {
-        case bankName, branchName, name, swift, iban, status, note
-    }
-
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: AccountEditorDraft
-    @FocusState private var focusedField: Field?
     @State private var showingAuthentication = false
     @State private var editingDomesticSubaccount: DomesticSubaccount?
     @State private var editingForeignSubaccount: ForeignSubaccount?
@@ -489,9 +487,9 @@ struct AccountEditorView: View {
                 }
 
                 if draft.account.region == .domestic {
-                    Section("境内账户") {
+                    Section("子账户") {
                         if draft.account.domesticSubaccounts.isEmpty {
-                            Text("暂无境内账户").foregroundStyle(.secondary)
+                            Text("暂无子账户").foregroundStyle(.secondary)
                         }
                         ForEach(draft.account.domesticSubaccounts) { subaccount in
                             Button { editingDomesticSubaccount = subaccount } label: {
@@ -502,18 +500,26 @@ struct AccountEditorView: View {
                         .onDelete(perform: deleteDomesticSubaccounts)
 
                         Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
-                            Label("添加境内账户", systemImage: "plus.circle")
+                            Label("添加子账户", systemImage: "plus.circle")
                         }
                     }
                 }
 
                 if draft.account.region == .overseas {
-                    Section("银行识别信息") {
-                        LabeledContent("SWIFT：") {
-                            IMESafeTextField(prompt: "未填写", text: $draft.account.swift, alignment: .trailing, mode: .asciiUppercase)
+                    Section("子账户") {
+                        if draft.account.foreignSubaccounts.isEmpty {
+                            Text("暂无子账户").foregroundStyle(.secondary)
                         }
-                        LabeledContent("IBAN：") {
-                            IMESafeTextField(prompt: "未填写", text: $draft.account.iban, alignment: .trailing, mode: .asciiUppercase)
+                        ForEach(draft.account.foreignSubaccounts) { subaccount in
+                            Button { editingForeignSubaccount = subaccount } label: {
+                                ForeignSubaccountRow(subaccount: subaccount)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete(perform: deleteForeignSubaccounts)
+
+                        Button { editingForeignSubaccount = ForeignSubaccount() } label: {
+                            Label("添加子账户", systemImage: "plus.circle")
                         }
                     }
 
@@ -527,34 +533,23 @@ struct AccountEditorView: View {
                     Section("汇入汇款资料") {
                         multilineField("收款银行正式名称：", prompt: "例如 Bank of China (Hong Kong) Limited", text: $draft.account.remittanceBankName)
                         multilineField("收款银行地址：", prompt: "例如 1 Garden Road, Central, Hong Kong", text: $draft.account.remittanceBankAddress)
-                        LabeledContent("收款 SWIFT Code：") {
-                            IMESafeTextField(prompt: "例如 BKCHHKHHXXX", text: $draft.account.remittanceSwiftCode, alignment: .trailing, mode: .asciiUppercase)
+                        LabeledContent("SWIFT Code：") {
+                            IMESafeTextField(prompt: "例如 BKCHHKHHXXX", text: $draft.account.swift, alignment: .trailing, mode: .asciiUppercase)
+                        }
+                        LabeledContent("IBAN：") {
+                            IMESafeTextField(prompt: "可选", text: $draft.account.iban, alignment: .trailing, mode: .asciiUppercase)
                         }
                         multilineField("汇款说明：", prompt: "可选", text: $draft.account.remittanceInstructions)
-                    }
-
-                    Section("境外账户") {
-                        if draft.account.foreignSubaccounts.isEmpty {
-                            Text("暂无境外账户").foregroundStyle(.secondary)
-                        }
-                        ForEach(draft.account.foreignSubaccounts) { subaccount in
-                            Button { editingForeignSubaccount = subaccount } label: {
-                                ForeignSubaccountRow(subaccount: subaccount)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .onDelete(perform: deleteForeignSubaccounts)
-
-                        Button { editingForeignSubaccount = ForeignSubaccount() } label: {
-                            Label("添加境外账户", systemImage: "plus.circle")
-                        }
                     }
                 }
 
                 Section("其他") {
-                    LabeledContent("状态：") {
-                        IMESafeTextField(prompt: "未填写", text: $draft.account.status, alignment: .trailing)
+                    Picker("状态：", selection: $draft.account.status) {
+                        ForEach(AccountStatus.allCases) { status in
+                            Text(status.title).tag(status)
+                        }
                     }
+                    .pickerStyle(.segmented)
                     DatePicker("开户时间：", selection: $draft.account.openedAt, displayedComponents: .date)
                     HStack(alignment: .top, spacing: 4) {
                         Text("备注：")
@@ -612,6 +607,7 @@ struct AccountEditorView: View {
             return
         }
         var account = draft.account
+        account.remittanceSwiftCode = ""
         if account.region == .domestic {
             account.accountType = ""
             account.currency = ""

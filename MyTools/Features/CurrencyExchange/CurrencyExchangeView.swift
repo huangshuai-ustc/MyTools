@@ -247,8 +247,8 @@ private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable {
 }
 
 private enum BankExchangeRateDisplayMode: String, CaseIterable, Identifiable {
-    case renminbiToForeign
     case foreignToRenminbi
+    case renminbiToForeign
 
     var id: Self { self }
 
@@ -260,9 +260,20 @@ private enum BankExchangeRateDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ExchangeConverterField: Hashable {
+    case source
+    case target
+}
+
 private struct BankOfChinaExchangeRatesView: View {
     @EnvironmentObject private var store: AppStore
     @State private var displayMode: BankExchangeRateDisplayMode = .foreignToRenminbi
+    @State private var sourceCurrency: CurrencyCode = .cny
+    @State private var targetCurrency: CurrencyCode = .usd
+    @State private var sourceAmountText = ""
+    @State private var targetAmountText = ""
+    @State private var lastEditedConverterField: ExchangeConverterField = .source
+    @FocusState private var focusedConverterField: ExchangeConverterField?
 
     var body: some View {
         List {
@@ -273,6 +284,51 @@ private struct BankOfChinaExchangeRatesView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+            }
+
+            Section {
+                Picker("币种 A", selection: currencyBinding(for: .source)) {
+                    ForEach(CurrencyCode.selectableCases) { currency in
+                        Text(currency.title).tag(currency)
+                    }
+                }
+                converterAmountRow(
+                    "金额 A",
+                    currency: sourceCurrency,
+                    text: amountBinding(for: .source),
+                    field: .source
+                )
+
+                HStack {
+                    Spacer()
+                    Button(action: swapConverterCurrencies) {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("交换换算币种")
+                    Spacer()
+                }
+
+                Picker("币种 B", selection: currencyBinding(for: .target)) {
+                    ForEach(CurrencyCode.selectableCases) { currency in
+                        Text(currency.title).tag(currency)
+                    }
+                }
+                converterAmountRow(
+                    "金额 B",
+                    currency: targetCurrency,
+                    text: amountBinding(for: .target),
+                    field: .target
+                )
+
+                if conversionRate(from: sourceCurrency, to: targetCurrency) == nil {
+                    Label("所选币种的牌价待同步", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("币种换算")
+            } footer: {
+                Text("外币卖出按结汇价计算，外币买入按购汇价计算。")
             }
 
             Section {
@@ -323,6 +379,9 @@ private struct BankOfChinaExchangeRatesView: View {
         }
         .task {
             store.refreshExchangeRateIfNeeded()
+        }
+        .onChange(of: store.exchangeRateUpdatedAt) { _, _ in
+            updateConversion(from: lastEditedConverterField)
         }
     }
 
@@ -380,6 +439,93 @@ private struct BankOfChinaExchangeRatesView: View {
         case .foreignToRenminbi:
             return CurrencyExchangeValueFormatter.rate(rate * 100)
         }
+    }
+
+    private func currencyBinding(for field: ExchangeConverterField) -> Binding<CurrencyCode> {
+        Binding {
+            field == .source ? sourceCurrency : targetCurrency
+        } set: { newCurrency in
+            switch field {
+            case .source:
+                if newCurrency == targetCurrency { targetCurrency = sourceCurrency }
+                sourceCurrency = newCurrency
+            case .target:
+                if newCurrency == sourceCurrency { sourceCurrency = targetCurrency }
+                targetCurrency = newCurrency
+            }
+            updateConversion(from: lastEditedConverterField)
+        }
+    }
+
+    private func amountBinding(for field: ExchangeConverterField) -> Binding<String> {
+        Binding {
+            field == .source ? sourceAmountText : targetAmountText
+        } set: { newValue in
+            switch field {
+            case .source: sourceAmountText = newValue
+            case .target: targetAmountText = newValue
+            }
+            updateConversion(from: field)
+        }
+    }
+
+    private func converterAmountRow(
+        _ title: String,
+        currency: CurrencyCode,
+        text: Binding<String>,
+        field: ExchangeConverterField
+    ) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                TextField("0", text: text)
+                    .multilineTextAlignment(.trailing)
+                    .focused($focusedConverterField, equals: field)
+#if os(iOS)
+                    .keyboardType(.decimalPad)
+#endif
+                Text(currency.rawValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func swapConverterCurrencies() {
+        let previousSourceCurrency = sourceCurrency
+        let previousSourceAmount = sourceAmountText
+        sourceCurrency = targetCurrency
+        targetCurrency = previousSourceCurrency
+        sourceAmountText = targetAmountText
+        targetAmountText = previousSourceAmount
+        lastEditedConverterField = .source
+        updateConversion(from: .source)
+    }
+
+    private func updateConversion(from field: ExchangeConverterField) {
+        lastEditedConverterField = field
+        let sourceText = field == .source ? sourceAmountText : targetAmountText
+        guard let amount = DecimalTextParser.decimal(from: sourceText), amount >= 0 else {
+            if field == .source { targetAmountText = "" } else { sourceAmountText = "" }
+            return
+        }
+
+        let fromCurrency = field == .source ? sourceCurrency : targetCurrency
+        let toCurrency = field == .source ? targetCurrency : sourceCurrency
+        guard let rate = conversionRate(from: fromCurrency, to: toCurrency) else {
+            if field == .source { targetAmountText = "" } else { sourceAmountText = "" }
+            return
+        }
+
+        let result = CurrencyExchangeValueFormatter.rate(amount * rate)
+        if field == .source { targetAmountText = result } else { sourceAmountText = result }
+    }
+
+    private func conversionRate(from source: CurrencyCode, to target: CurrencyCode) -> Decimal? {
+        guard source != target else { return 1 }
+        let sourceBuyingRate: Decimal? = source == .cny ? 1 : store.renminbiBuyingRates[source]
+        let targetSellingRate: Decimal? = target == .cny ? 1 : store.renminbiSellingRates[target]
+        guard let sourceBuyingRate, let targetSellingRate, targetSellingRate > 0 else { return nil }
+        return sourceBuyingRate / targetSellingRate
     }
 }
 

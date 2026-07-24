@@ -184,9 +184,9 @@ struct HomeView: View {
     private func subaccountSummary(for account: BankAccount) -> String {
         switch account.region {
         case .domestic:
-            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个境内账户"
+            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个子账户"
         case .overseas:
-            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个境外账户"
+            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个子账户"
         }
     }
 }

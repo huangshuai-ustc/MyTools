@@ -39,6 +39,10 @@
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
 		A30000000000000000000001 /* SensitiveAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000001 /* SensitiveAccessView.swift */; };
+		A40000000000000000000001 /* HealthRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000001 /* HealthRecord.swift */; };
+		A40000000000000000000002 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000002 /* AttachmentStore.swift */; };
+		A40000000000000000000003 /* HealthRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000003 /* HealthRecordsView.swift */; };
+		A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000004 /* MedicalRecordEditorView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -76,8 +80,12 @@
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
 		B30000000000000000000001 /* SensitiveAccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensitiveAccessView.swift; sourceTree = "<group>"; };
-		C00000000000000000000001 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "我的工具箱.app"; path = "/Users/huangshuai11/Documents/MyTools/build/Debug/我的工具箱.app"; sourceTree = "<absolute>"; };
+		B40000000000000000000001 /* HealthRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecord.swift; sourceTree = "<group>"; };
+		B40000000000000000000002 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
+		B40000000000000000000003 /* HealthRecordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecordsView.swift; sourceTree = "<group>"; };
+		B40000000000000000000004 /* MedicalRecordEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordEditorView.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C6BE89B130134C9800036D33 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "我的工具箱.app"; path = "/Users/huangshuai11/Documents/MyTools/build/Debug/我的工具箱.app"; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -94,6 +102,7 @@
 				D10000000000000000000004 /* Finance */,
 				D10000000000000000000005 /* Stocks */,
 				D20000000000000000000001 /* CurrencyExchange */,
+				D40000000000000000000001 /* Health */,
 				D10000000000000000000006 /* Profile */,
 				D10000000000000000000007 /* Authentication */,
 			);
@@ -106,6 +115,7 @@
 				B00000000000000000000002 /* BankCard.swift */,
 				B0000000000000000000000E /* Stock.swift */,
 				B20000000000000000000001 /* CurrencyExchange.swift */,
+				B40000000000000000000001 /* HealthRecord.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -119,6 +129,7 @@
 				B0000000000000000000000D /* VaultBackup.swift */,
 				B0000000000000000000000F /* StockQuoteService.swift */,
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
+				B40000000000000000000002 /* AttachmentStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -218,6 +229,15 @@
 			path = CurrencyExchange;
 			sourceTree = "<group>";
 		};
+		D40000000000000000000001 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				B40000000000000000000003 /* HealthRecordsView.swift */,
+				B40000000000000000000004 /* MedicalRecordEditorView.swift */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -234,7 +254,7 @@
 			);
 			name = "我的工具箱";
 			productName = "我的工具箱";
-			productReference = C00000000000000000000001 /* 我的工具箱.app */;
+			productReference = C6BE89B130134C9800036D33 /* 我的工具箱.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -280,6 +300,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A40000000000000000000001 /* HealthRecord.swift in Sources */,
+				A40000000000000000000002 /* AttachmentStore.swift in Sources */,
+				A40000000000000000000003 /* HealthRecordsView.swift in Sources */,
+				A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */,
 				A30000000000000000000001 /* SensitiveAccessView.swift in Sources */,
 				A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */,
 				A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */,

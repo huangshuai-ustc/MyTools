@@ -65,7 +65,7 @@ struct ProfileView: View {
                     }
                 }
                 Section("关于") {
-                    LabeledContent("版本", value: "MVP 1.0")
+                    LabeledContent("版本", value: "MVP 1.3")
                 }
             }
             .navigationTitle("我的")
@@ -84,7 +84,7 @@ struct ProfileView: View {
                 .iOSLargeSheet()
             }
             .confirmationDialog(
-                "导入会替换当前全部银行账户、银行卡和股票数据",
+                "导入会替换当前全部银行、股票、换汇和健康档案数据",
                 isPresented: $showingImportConfirmation,
                 titleVisibility: .visible
             ) {
