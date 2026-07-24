@@ -4,20 +4,27 @@ import Combine
 @MainActor
 final class StockAppearanceSettings: ObservableObject {
     static let aShareKey = "stock-color-scheme-a-share-v1"
+    static let hongKongKey = "stock-color-scheme-hong-kong-v1"
     static let unitedStatesKey = "stock-color-scheme-us-v1"
 
     @Published private(set) var aShareScheme: StockRiseFallColorScheme
+    @Published private(set) var hongKongScheme: StockRiseFallColorScheme
     @Published private(set) var unitedStatesScheme: StockRiseFallColorScheme
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         aShareScheme = Self.savedScheme(forKey: Self.aShareKey, market: .aShare, defaults: defaults)
+        hongKongScheme = Self.savedScheme(forKey: Self.hongKongKey, market: .hongKong, defaults: defaults)
         unitedStatesScheme = Self.savedScheme(forKey: Self.unitedStatesKey, market: .unitedStates, defaults: defaults)
     }
 
     func scheme(for market: StockMarket) -> StockRiseFallColorScheme {
-        market == .aShare ? aShareScheme : unitedStatesScheme
+        switch market {
+        case .aShare: return aShareScheme
+        case .hongKong: return hongKongScheme
+        case .unitedStates: return unitedStatesScheme
+        }
     }
 
     func setScheme(_ scheme: StockRiseFallColorScheme, for market: StockMarket) {
@@ -25,6 +32,9 @@ final class StockAppearanceSettings: ObservableObject {
         case .aShare:
             aShareScheme = scheme
             defaults.set(scheme.rawValue, forKey: Self.aShareKey)
+        case .hongKong:
+            hongKongScheme = scheme
+            defaults.set(scheme.rawValue, forKey: Self.hongKongKey)
         case .unitedStates:
             unitedStatesScheme = scheme
             defaults.set(scheme.rawValue, forKey: Self.unitedStatesKey)

@@ -6,6 +6,7 @@ struct SensitiveAccessView: View {
     @State private var password = ""
     @State private var error = ""
     @State private var didAttemptBiometrics = false
+    @State private var isVerifying = false
     @FocusState private var passwordFocused: Bool
     let onVerified: () -> Void
 
@@ -21,11 +22,20 @@ struct SensitiveAccessView: View {
                     SecureField("管理员密码", text: $password)
                         .focused($passwordFocused)
                     Button("验证并查看", action: verifyPassword)
+                        .disabled(isVerifying)
                 }
                 Section {
                     Button { Task { await verifyBiometrics() } } label: {
-                        Label("使用 Face ID / Touch ID / 设备密码", systemImage: "faceid")
+                        if isVerifying {
+                            HStack {
+                                ProgressView()
+                                Text("正在验证")
+                            }
+                        } else {
+                            Label("使用 Face ID / Touch ID / 设备密码", systemImage: "faceid")
+                        }
                     }
+                    .disabled(isVerifying)
                 }
                 if !error.isEmpty {
                     Text(error).foregroundStyle(.red)
@@ -43,6 +53,9 @@ struct SensitiveAccessView: View {
             .task {
                 guard !didAttemptBiometrics else { return }
                 didAttemptBiometrics = true
+                // 等待验证页完成呈现，避免系统认证与 sheet 转场同时发生而偶发无响应。
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
                 await verifyBiometrics()
             }
         }
@@ -50,6 +63,9 @@ struct SensitiveAccessView: View {
 
     @MainActor
     private func verifyBiometrics() async {
+        guard !isVerifying else { return }
+        isVerifying = true
+        defer { isVerifying = false }
         if await auth.verifyWithBiometrics() {
             finish()
         } else {

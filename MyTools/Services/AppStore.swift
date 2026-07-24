@@ -15,17 +15,19 @@ final class AppStore: ObservableObject {
     @Published private(set) var currencyExchangeRecords: [CurrencyExchangeRecord]
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
+    @Published private(set) var lastStockRefreshAt: Date?
     @Published private(set) var quoteErrors: [UUID: String] = [:]
     @Published private(set) var quoteSources: [UUID: String] = [:]
     @Published private(set) var usdRenminbiBuyingRate: Decimal?
     @Published private(set) var renminbiBuyingRates: [CurrencyCode: Decimal] = [:]
+    @Published private(set) var renminbiSellingRates: [CurrencyCode: Decimal] = [:]
     @Published private(set) var exchangeRateUpdatedAt: Date?
     @Published private(set) var exchangeRateError: String?
+    @Published private(set) var isRefreshingExchangeRate = false
     private let secureStore = SecureStore()
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
     private let defaults = UserDefaults.standard
-    private var isRefreshingExchangeRate = false
     private var lastExchangeRateRequestAt: Date?
 
     init() {
@@ -47,8 +49,19 @@ final class AppStore: ObservableObject {
                 result[currency] = rate
             }
         }
+        if let savedRates = defaults.dictionary(forKey: "boc-currency-selling-rates-v1") as? [String: String] {
+            renminbiSellingRates = savedRates.reduce(into: [:]) { result, entry in
+                guard let currency = CurrencyCode(rawValue: entry.key),
+                      let rate = Decimal(
+                        string: entry.value,
+                        locale: Locale(identifier: "en_US_POSIX")
+                      ) else { return }
+                result[currency] = rate
+            }
+        }
         if let usdRenminbiBuyingRate { renminbiBuyingRates[.usd] = usdRenminbiBuyingRate }
         renminbiBuyingRates[.cny] = 1
+        renminbiSellingRates[.cny] = 1
         exchangeRateUpdatedAt = defaults.object(forKey: "stock-usd-cny-buying-rate-date-v1") as? Date
     }
 
@@ -225,31 +238,38 @@ final class AppStore: ObservableObject {
             quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
         }
         if successCount > 0 { persist() }
+        if successCount > 0 { lastStockRefreshAt = Date() }
     }
 
     func refreshExchangeRateIfNeeded() {
-        guard !isRefreshingExchangeRate else { return }
         if let lastExchangeRateRequestAt {
             let retryInterval: TimeInterval = exchangeRateError == nil ? 30 * 60 : 5 * 60
             guard Date().timeIntervalSince(lastExchangeRateRequestAt) >= retryInterval else { return }
         }
+        refreshExchangeRates()
+    }
 
+    func refreshExchangeRates() {
+        guard !isRefreshingExchangeRate else { return }
         isRefreshingExchangeRate = true
         lastExchangeRateRequestAt = Date()
         Task { [weak self] in
             guard let self else { return }
             defer { self.isRefreshingExchangeRate = false }
             do {
-                let rates = try await self.exchangeRateService.fetchBuyingRates()
-                var rateValues: [CurrencyCode: Decimal] = [.cny: 1]
+                let rates = try await self.exchangeRateService.fetchRates()
+                var buyingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
+                var sellingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
                 for rate in rates {
                     guard let currency = CurrencyCode(rawValue: rate.currencyCode) else { continue }
-                    rateValues[currency] = rate.renminbiPerUnit
+                    buyingRateValues[currency] = rate.renminbiBuyingPerUnit
+                    sellingRateValues[currency] = rate.renminbiSellingPerUnit
                 }
-                guard let usdRate = rateValues[.usd] else {
+                guard let usdRate = buyingRateValues[.usd] else {
                     throw ForeignExchangeRateError.rateUnavailable
                 }
-                self.renminbiBuyingRates = rateValues
+                self.renminbiBuyingRates = buyingRateValues
+                self.renminbiSellingRates = sellingRateValues
                 self.usdRenminbiBuyingRate = usdRate
                 self.exchangeRateUpdatedAt = rates.map(\.updatedAt).max()
                 self.exchangeRateError = nil
@@ -262,10 +282,16 @@ final class AppStore: ObservableObject {
                     forKey: "stock-usd-cny-buying-rate-date-v1"
                 )
                 self.defaults.set(
-                    rateValues.reduce(into: [String: String]()) { result, entry in
+                    buyingRateValues.reduce(into: [String: String]()) { result, entry in
                         result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
                     },
                     forKey: "boc-currency-buying-rates-v1"
+                )
+                self.defaults.set(
+                    sellingRateValues.reduce(into: [String: String]()) { result, entry in
+                        result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
+                    },
+                    forKey: "boc-currency-selling-rates-v1"
                 )
             } catch {
                 self.exchangeRateError = error.localizedDescription

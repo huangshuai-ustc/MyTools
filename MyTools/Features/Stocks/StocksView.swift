@@ -16,6 +16,7 @@ private func stockValueColor(
 private enum StockMarketFilter: String, CaseIterable, Identifiable {
     case all
     case aShare
+    case hongKong
     case unitedStates
 
     var id: Self { self }
@@ -24,6 +25,7 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "全部"
         case .aShare: return "A 股"
+        case .hongKong: return "港股"
         case .unitedStates: return "美股"
         }
     }
@@ -32,9 +34,21 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: return true
         case .aShare: return stock.market == .aShare
+        case .hongKong: return stock.market == .hongKong
         case .unitedStates: return stock.market == .unitedStates
         }
     }
+}
+
+private enum BeijingDateFormatter {
+    static let dateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy年M月d日 HH:mm"
+        return formatter
+    }()
 }
 
 private enum StockSortOrder: String, CaseIterable, Identifiable {
@@ -126,6 +140,8 @@ struct StocksView: View {
             return StockMarket.allCases
         case .aShare:
             return [.aShare]
+        case .hongKong:
+            return [.hongKong]
         case .unitedStates:
             return [.unitedStates]
         }
@@ -177,11 +193,11 @@ struct StocksView: View {
                 } else if let error = store.quoteRefreshError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
-                } else if let updatedAt = store.stocks.compactMap(\.lastQuoteAt).max() {
-                    LabeledContent("最近刷新", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
+                } else if let updatedAt = store.lastStockRefreshAt {
+                    LabeledContent("最近刷新", value: BeijingDateFormatter.dateTime.string(from: updatedAt))
                 }
             } footer: {
-                Text("行情通过新浪财经及东方财富公开接口获取，可能存在延迟，请以交易所和券商数据为准。")
+                Text("A 股行情通过东方财富、交易所、腾讯证券及新浪财经获取；港股通过东方财富、腾讯证券、Yahoo Finance 及新浪财经获取；美股通过 Yahoo Finance、Nasdaq 及新浪财经获取。公开行情可能存在延迟，请以交易所和券商数据为准。")
             }
         }
         .navigationTitle("我的股票")
@@ -261,14 +277,11 @@ private struct RenminbiPortfolioSummaryRow: View {
     }
 
     private var convertedValues: (netInvestment: Decimal, marketValue: Decimal, profitLoss: Decimal?)? {
-        let containsUnitedStatesStock = includedStocks.contains { $0.market == .unitedStates }
-        guard !containsUnitedStatesStock || store.usdRenminbiBuyingRate != nil else { return nil }
-        let rate = store.usdRenminbiBuyingRate ?? 1
         var netInvestment = Decimal.zero
         var marketValue = Decimal.zero
         var missingQuote = false
         for stock in includedStocks {
-            let multiplier: Decimal = stock.market == .unitedStates ? rate : 1
+            guard let multiplier = renminbiMultiplier(for: stock.market) else { return nil }
             netInvestment += stock.netInvestment * multiplier
             if let value = stock.marketValue {
                 marketValue += value * multiplier
@@ -277,6 +290,31 @@ private struct RenminbiPortfolioSummaryRow: View {
             }
         }
         return (netInvestment, marketValue, missingQuote ? nil : marketValue - netInvestment)
+    }
+
+    private var requiredForeignCurrencies: [CurrencyCode] {
+        var result: [CurrencyCode] = []
+        if marketFilter == .hongKong || includedStocks.contains(where: { $0.market == .hongKong }) {
+            result.append(.hkd)
+        }
+        if marketFilter == .unitedStates || includedStocks.contains(where: { $0.market == .unitedStates }) {
+            result.append(.usd)
+        }
+        return result
+    }
+
+    private var missingRateText: String {
+        let missing = requiredForeignCurrencies.filter { store.renminbiBuyingRates[$0] == nil }
+        guard !missing.isEmpty else { return "外币买入价待同步" }
+        return "中国银行\(missing.map(\.title).joined(separator: "、"))现汇买入价待同步"
+    }
+
+    private func renminbiMultiplier(for market: StockMarket) -> Decimal? {
+        switch market {
+        case .aShare: return 1
+        case .hongKong: return store.renminbiBuyingRates[.hkd]
+        case .unitedStates: return store.renminbiBuyingRates[.usd]
+        }
     }
 
     var body: some View {
@@ -304,26 +342,34 @@ private struct RenminbiPortfolioSummaryRow: View {
                     }
                 }
             } else {
-                Label("美元买入价待同步", systemImage: "exclamationmark.triangle")
+                Label(missingRateText, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
-            if marketFilter != .aShare {
-                if let rate = store.usdRenminbiBuyingRate {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("按中国银行美元现汇买入价换算：1 USD = \(StockValueFormatter.exchangeRate(rate)) CNY")
-                        if let updatedAt = store.exchangeRateUpdatedAt {
-                            Text("牌价时间：\(updatedAt.formatted(date: .abbreviated, time: .standard))")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else if let error = store.exchangeRateError {
-                    Text(error).font(.caption).foregroundStyle(.orange)
-                }
-            } else {
+            if marketFilter == .aShare {
                 Text("A 股资产无需换汇。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if requiredForeignCurrencies.isEmpty {
+                Text("当前没有需要折算的外币资产。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(requiredForeignCurrencies) { currency in
+                        if let rate = store.renminbiBuyingRates[currency] {
+                            Text("按中国银行\(currency.title)现汇买入价换算：1 \(currency.rawValue) = \(StockValueFormatter.exchangeRate(rate)) CNY")
+                        }
+                    }
+                    if let updatedAt = store.exchangeRateUpdatedAt {
+                        Text("牌价时间：\(BeijingDateFormatter.dateTime.string(from: updatedAt))")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if requiredForeignCurrencies.contains(where: { store.renminbiBuyingRates[$0] == nil }),
+                   let error = store.exchangeRateError {
+                    Text(error).font(.caption).foregroundStyle(.orange)
+                }
             }
         }
         .padding(.vertical, 5)
@@ -354,6 +400,8 @@ private struct RenminbiPortfolioSummaryRow: View {
         switch marketFilter {
         case .aShare:
             return stockValueColor(value, market: .aShare, settings: stockAppearanceSettings)
+        case .hongKong:
+            return stockValueColor(value, market: .hongKong, settings: stockAppearanceSettings)
         case .unitedStates:
             return stockValueColor(value, market: .unitedStates, settings: stockAppearanceSettings)
         case .all:
@@ -495,7 +543,11 @@ struct StockMarketBadge: View {
     let market: StockMarket
 
     private var color: Color {
-        market == .aShare ? .purple : .teal
+        switch market {
+        case .aShare: return .purple
+        case .hongKong: return .orange
+        case .unitedStates: return .teal
+        }
     }
 
     var body: some View {
@@ -599,7 +651,7 @@ private struct StockDetailView: View {
                     }
                 }
                 if let lastQuoteAt = stock.lastQuoteAt {
-                    LabeledContent("更新时间", value: lastQuoteAt.formatted(date: .abbreviated, time: .shortened))
+                    LabeledContent("更新时间", value: BeijingDateFormatter.dateTime.string(from: lastQuoteAt))
                 }
                 if let error = store.quoteErrors[stock.id] {
                     Label(error, systemImage: "exclamationmark.triangle")

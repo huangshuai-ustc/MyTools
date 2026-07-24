@@ -2,6 +2,7 @@ import Foundation
 
 enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     case aShare
+    case hongKong
     case unitedStates
 
     var id: Self { self }
@@ -9,6 +10,7 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .aShare: return "A 股"
+        case .hongKong: return "港股"
         case .unitedStates: return "美股"
         }
     }
@@ -16,6 +18,7 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     var currencyCode: String {
         switch self {
         case .aShare: return "CNY"
+        case .hongKong: return "HKD"
         case .unitedStates: return "USD"
         }
     }
@@ -35,7 +38,10 @@ enum StockRiseFallColorScheme: String, CaseIterable, Identifiable {
     }
 
     static func defaultScheme(for market: StockMarket) -> Self {
-        market == .aShare ? .redRiseGreenFall : .greenRiseRedFall
+        switch market {
+        case .aShare, .hongKong: return .redRiseGreenFall
+        case .unitedStates: return .greenRiseRedFall
+        }
     }
 }
 
@@ -154,7 +160,20 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
             .uppercased()
             .replacingOccurrences(of: " ", with: "")
 
-        guard market == .aShare else { return normalized }
+        guard market == .aShare else {
+            if market == .hongKong {
+                for prefix in ["HK"] where normalized.hasPrefix(prefix) {
+                    normalized.removeFirst(prefix.count)
+                }
+                for suffix in [".HK"] where normalized.hasSuffix(suffix) {
+                    normalized.removeLast(suffix.count)
+                }
+                if normalized.allSatisfy(\.isNumber), normalized.count < 5 {
+                    return String(repeating: "0", count: 5 - normalized.count) + normalized
+                }
+            }
+            return normalized
+        }
         for prefix in ["SH", "SZ", "BJ"] where normalized.hasPrefix(prefix) {
             normalized.removeFirst(prefix.count)
         }

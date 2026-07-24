@@ -51,7 +51,7 @@ struct StockEditorView: View {
                     .disabled(!isNew)
                     LabeledContent("股票代码：") {
                         IMESafeTextField(
-                            prompt: draft.stock.market == .aShare ? "例如 600519" : "例如 AAPL",
+                            prompt: symbolPrompt,
                             text: $draft.symbolText,
                             alignment: .trailing,
                             mode: .asciiUppercase
@@ -132,7 +132,7 @@ struct StockEditorView: View {
         stock.symbol = StockHolding.normalizedSymbol(draft.symbolText, market: stock.market)
         stock.name = draft.nameText
         guard validSymbol(stock.symbol, market: stock.market) else {
-            reportError(stock.market == .aShare ? "A 股代码需要填写 6 位数字。" : "请填写有效的美股代码。")
+            reportError(invalidSymbolMessage)
             return
         }
         guard !store.stockExists(market: stock.market, symbol: stock.symbol, excluding: stock.id) else {
@@ -176,10 +176,30 @@ struct StockEditorView: View {
 
     private func validSymbol(_ symbol: String, market: StockMarket) -> Bool {
         guard !symbol.isEmpty else { return false }
-        if market == .aShare {
+        switch market {
+        case .aShare:
             return symbol.count == 6 && symbol.allSatisfy(\.isNumber)
+        case .hongKong:
+            return symbol.count == 5 && symbol.allSatisfy(\.isNumber)
+        case .unitedStates:
+            return symbol.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
         }
-        return symbol.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }
+    }
+
+    private var symbolPrompt: String {
+        switch draft.stock.market {
+        case .aShare: return "例如 600519"
+        case .hongKong: return "例如 00700"
+        case .unitedStates: return "例如 AAPL"
+        }
+    }
+
+    private var invalidSymbolMessage: String {
+        switch draft.stock.market {
+        case .aShare: return "A 股代码需要填写 6 位数字。"
+        case .hongKong: return "港股代码需要填写 5 位数字，例如 00700。"
+        case .unitedStates: return "请填写有效的美股代码。"
+        }
     }
 
     private func reportError(_ message: String) {
@@ -187,4 +207,3 @@ struct StockEditorView: View {
         showingError = true
     }
 }
-

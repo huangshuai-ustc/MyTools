@@ -239,11 +239,12 @@ private struct StockAppearanceSettingsView: View {
         List {
             Section {
                 schemePicker(title: "A 股", market: .aShare)
+                schemePicker(title: "港股", market: .hongKong)
                 schemePicker(title: "美股", market: .unitedStates)
             } header: {
                 Text("涨跌颜色")
             } footer: {
-                Text("默认遵循市场习惯：A 股红涨绿跌，美股绿涨红跌。盈亏颜色会使用对应股票市场的设置。")
+                Text("默认遵循市场习惯：A 股和港股红涨绿跌，美股绿涨红跌。盈亏颜色会使用对应股票市场的设置。")
             }
         }
         .navigationTitle("我的股票")

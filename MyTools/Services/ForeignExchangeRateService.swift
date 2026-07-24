@@ -2,7 +2,10 @@ import Foundation
 
 struct ForeignExchangeRate: Sendable {
     let currencyCode: String
-    let renminbiPerUnit: Decimal
+    /// 中国银行现汇买入价：用户结汇，1 单位外币可换多少人民币。
+    let renminbiBuyingPerUnit: Decimal
+    /// 中国银行现汇卖出价：用户购汇，购买 1 单位外币需要多少人民币。
+    let renminbiSellingPerUnit: Decimal
     let updatedAt: Date
 }
 
@@ -13,14 +16,14 @@ enum ForeignExchangeRateError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "中国银行外汇牌价返回了无效数据。"
-        case .rateUnavailable: return "暂时无法取得中国银行现汇买入价。"
+        case .rateUnavailable: return "暂时无法取得中国银行结售汇牌价。"
         }
     }
 }
 
 actor ForeignExchangeRateService {
     /// 一次读取中国银行页面中的全部受支持币种，股票和换汇功能共用这份结果。
-    func fetchBuyingRates() async throws -> [ForeignExchangeRate] {
+    func fetchRates() async throws -> [ForeignExchangeRate] {
         guard let url = URL(string: "https://www.boc.cn/sourcedb/whpj/") else {
             throw ForeignExchangeRateError.invalidResponse
         }
@@ -35,7 +38,7 @@ actor ForeignExchangeRateService {
 
         let rates = CurrencyCode.selectableCases.compactMap { currency -> ForeignExchangeRate? in
             guard let bankName = currency.bankOfChinaName else { return nil }
-            return parseBuyingRate(currencyCode: currency.rawValue, bankName: bankName, from: html)
+            return parseRate(currencyCode: currency.rawValue, bankName: bankName, from: html)
         }
         guard rates.contains(where: { $0.currencyCode == "USD" }) else {
             throw ForeignExchangeRateError.rateUnavailable
@@ -43,7 +46,7 @@ actor ForeignExchangeRateService {
         return rates
     }
 
-    private func parseBuyingRate(
+    private func parseRate(
         currencyCode: String,
         bankName: String,
         from html: String
@@ -53,28 +56,38 @@ actor ForeignExchangeRateService {
             + escapedName
             + "['\"][^>]*>\\s*<td[^>]*>\\s*"
             + escapedName
-            + "\\s*</td>\\s*<td[^>]*>\\s*([0-9.]+)\\s*</td>.*?<td[^>]*class\\s*=\\s*['\"]pjrq['\"][^>]*>\\s*([^<]+)\\s*</td>"
+            + "\\s*</td>\\s*<td[^>]*>\\s*([0-9.]+)\\s*</td>"
+            + "\\s*<td[^>]*>.*?</td>"
+            + "\\s*<td[^>]*>\\s*([0-9.]+)\\s*</td>.*?"
+            + "<td[^>]*class\\s*=\\s*['\"]pjrq['\"][^>]*>\\s*([^<]+)\\s*</td>"
         guard let expression = try? NSRegularExpression(
             pattern: pattern,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
         ),
               let match = expression.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-              let rateRange = Range(match.range(at: 1), in: html),
-              let rawRate = Decimal(
-                string: String(html[rateRange]),
+              let buyingRateRange = Range(match.range(at: 1), in: html),
+              let sellingRateRange = Range(match.range(at: 2), in: html),
+              let rawBuyingRate = Decimal(
+                string: String(html[buyingRateRange]),
                 locale: Locale(identifier: "en_US_POSIX")
               ),
-              rawRate > 0 else { return nil }
+              let rawSellingRate = Decimal(
+                string: String(html[sellingRateRange]),
+                locale: Locale(identifier: "en_US_POSIX")
+              ),
+              rawBuyingRate > 0,
+              rawSellingRate > 0 else { return nil }
 
         let updatedAt: Date
-        if let dateRange = Range(match.range(at: 2), in: html) {
+        if let dateRange = Range(match.range(at: 3), in: html) {
             updatedAt = parseBankDate(String(html[dateRange])) ?? Date()
         } else {
             updatedAt = Date()
         }
         return ForeignExchangeRate(
             currencyCode: currencyCode,
-            renminbiPerUnit: rawRate / 100,
+            renminbiBuyingPerUnit: rawBuyingRate / 100,
+            renminbiSellingPerUnit: rawSellingRate / 100,
             updatedAt: updatedAt
         )
     }

@@ -134,9 +134,16 @@ struct StockQuoteService: Sendable {
                 { try await fetchTencentAShareQuote(symbol: symbol) },
                 { try await fetchSinaQuote(symbol: symbol, market: .aShare) }
             ]) { return quote }
+        case .hongKong:
+            if let quote = await firstQuote(from: [
+                { try await fetchEastmoneyQuote(identifier: eastmoneyIdentifier(for: symbol, market: .hongKong), fallbackSymbol: symbol) },
+                { try await fetchTencentHongKongQuote(symbol: symbol) },
+                { try await fetchYahooQuote(symbol: yahooIdentifier(for: symbol, market: .hongKong), fallbackSymbol: symbol) },
+                { try await fetchSinaQuote(symbol: symbol, market: .hongKong) }
+            ]) { return quote }
         case .unitedStates:
             if let quote = await firstQuote(from: [
-                { try await fetchYahooQuote(symbol: symbol) },
+                { try await fetchYahooQuote(symbol: symbol, fallbackSymbol: symbol) },
                 { try await fetchNasdaqQuote(symbol: symbol) },
                 { try await fetchSinaQuote(symbol: symbol, market: .unitedStates) }
             ]) { return quote }
@@ -283,6 +290,39 @@ struct StockQuoteService: Sendable {
         )
     }
 
+    private func fetchTencentHongKongQuote(symbol: String) async throws -> StockQuote? {
+        guard let url = URL(string: "https://qt.gtimg.cn/q=r_hk\(symbol)") else {
+            throw StockQuoteError.invalidResponse
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://stockapp.finance.qq.com/", forHTTPHeaderField: "Referer")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard isSuccessful(response),
+              let body = decodeGB18030(data),
+              let firstQuote = body.firstIndex(of: "\""),
+              let lastQuote = body.lastIndex(of: "\""),
+              firstQuote < lastQuote else {
+            throw StockQuoteError.invalidResponse
+        }
+
+        let payload = body[body.index(after: firstQuote)..<lastQuote]
+        let fields = payload.split(separator: "~", omittingEmptySubsequences: false).map(String.init)
+        guard fields.count > 32,
+              let latestPrice = decimal(fields[3]),
+              latestPrice > 0 else { return nil }
+
+        return StockQuote(
+            symbol: symbol,
+            name: fields[1],
+            latestPrice: latestPrice,
+            previousClose: decimal(fields[4]),
+            changePercent: decimal(fields[32]).map { $0 / 100 },
+            updatedAt: compactQuoteDate(fields[30], timeZoneIdentifier: "Asia/Hong_Kong") ?? Date(),
+            source: "腾讯证券"
+        )
+    }
+
     private func fetchNasdaqQuote(symbol: String) async throws -> StockQuote? {
         var components = URLComponents()
         components.scheme = "https"
@@ -318,7 +358,7 @@ struct StockQuoteService: Sendable {
         )
     }
 
-    private func fetchYahooQuote(symbol: String) async throws -> StockQuote? {
+    private func fetchYahooQuote(symbol: String, fallbackSymbol: String) async throws -> StockQuote? {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "query1.finance.yahoo.com"
@@ -342,7 +382,7 @@ struct StockQuoteService: Sendable {
         let previousClose = meta.chartPreviousClose.map { Decimal($0) }
         let changePercent = previousClose.flatMap { close in close > 0 ? (latestPrice - close) / close : nil }
         return StockQuote(
-            symbol: meta.symbol,
+            symbol: fallbackSymbol,
             name: meta.longName ?? meta.shortName ?? "",
             latestPrice: latestPrice,
             previousClose: previousClose,
@@ -379,6 +419,8 @@ struct StockQuoteService: Sendable {
         switch market {
         case .aShare:
             return parseSinaAShare(fields: fields, fallbackSymbol: symbol)
+        case .hongKong:
+            return parseSinaHongKong(fields: fields, fallbackSymbol: symbol)
         case .unitedStates:
             return parseSinaUnitedStates(fields: fields, fallbackSymbol: symbol)
         }
@@ -429,6 +471,29 @@ struct StockQuoteService: Sendable {
             previousClose: previousClose,
             changePercent: changePercent,
             updatedAt: updatedAt,
+            source: "新浪财经"
+        )
+    }
+
+    private func parseSinaHongKong(fields: [String], fallbackSymbol: String) -> StockQuote? {
+        guard fields.count > 18,
+              let latestPrice = decimal(fields[6]),
+              latestPrice > 0 else { return nil }
+
+        let previousClose = decimal(fields[3])
+        let changePercent = previousClose.flatMap { close in
+            close > 0 ? (latestPrice - close) / close : nil
+        }
+        let updatedAt = fields.count > 18
+            ? quoteDate("\(fields[17]) \(fields[18])", timeZoneIdentifier: "Asia/Hong_Kong")
+            : nil
+        return StockQuote(
+            symbol: fallbackSymbol,
+            name: fields[1].isEmpty ? fields[0] : fields[1],
+            latestPrice: latestPrice,
+            previousClose: previousClose,
+            changePercent: changePercent,
+            updatedAt: updatedAt ?? Date(),
             source: "新浪财经"
         )
     }
@@ -486,6 +551,8 @@ struct StockQuoteService: Sendable {
                 prefix = "sz"
             }
             return prefix + symbol.lowercased()
+        case .hongKong:
+            return "hk" + symbol
         case .unitedStates:
             return "gb_" + symbol.lowercased()
         }
@@ -570,9 +637,15 @@ struct StockQuoteService: Sendable {
                 return "1.\(symbol)"
             }
             return "0.\(symbol)"
+        case .hongKong:
+            return "116.\(symbol)"
         case .unitedStates:
             // 美股不能只凭代码安全判断交易所，避免 105/106/107 猜测命中同名证券。
             return ""
         }
+    }
+
+    private func yahooIdentifier(for symbol: String, market: StockMarket) -> String {
+        market == .hongKong ? "\(symbol).HK" : symbol
     }
 }
