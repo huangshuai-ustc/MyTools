@@ -51,6 +51,7 @@ struct ToolboxView: View {
         switch module {
         case .personalFinance: HomeView()
         case .myStocks: StocksView()
+        case .currencyExchange: CurrencyExchangeView()
         }
     }
 
@@ -60,6 +61,9 @@ struct ToolboxView: View {
             return "\(store.currentBankCount) 家银行 · \(store.currentCardCount) 张卡"
         case .myStocks:
             return "\(store.stocks.count) 只股票 · \(store.openStockCount) 只持仓"
+        case .currencyExchange:
+            let count = store.currencyExchangeRecords.count
+            return count == 0 ? "暂无记录 · 等待首次换汇" : "\(count) 笔记录 · 自动计算损耗"
         }
     }
 }

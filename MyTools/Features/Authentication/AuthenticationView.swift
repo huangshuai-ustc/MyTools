@@ -12,6 +12,12 @@ struct AuthenticationView: View {
     @State private var error = ""
     @State private var didAttemptBiometrics = false
     @FocusState private var focusedField: Field?
+    let onAuthenticated: (() -> Void)?
+
+    init(onAuthenticated: (() -> Void)? = nil) {
+        self.onAuthenticated = onAuthenticated
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -34,7 +40,7 @@ struct AuthenticationView: View {
                         Button {
                             Task {
                                 if await auth.unlockWithBiometrics() {
-                                    dismiss()
+                                    finishAuthentication()
                                 } else {
                                     error = "面容或指纹验证未通过，请输入管理员密码。"
                                 }
@@ -66,7 +72,7 @@ struct AuthenticationView: View {
         guard auth.hasPassword, !auth.isAdmin, !didAttemptBiometrics else { return }
         didAttemptBiometrics = true
         if await auth.unlockWithBiometrics() {
-            dismiss()
+            finishAuthentication()
         } else {
             error = "面容或指纹验证未通过，请输入管理员密码。"
             focusedField = .password
@@ -79,17 +85,29 @@ struct AuthenticationView: View {
                 error = "密码至少 6 位且两次输入需一致"
                 return
             }
-            dismiss()
+            finishAuthentication()
         }
     }
 
     private func requestUnlock() {
         commitPendingTextInput {
             if auth.unlock(with: password) {
-                dismiss()
+                finishAuthentication()
             } else {
                 error = "密码错误"
             }
+        }
+    }
+
+    @MainActor
+    private func finishAuthentication() {
+        // 先关闭认证页，再由仍持有原 StateObject 草稿的编辑页执行保存。
+        // 这样管理员会话在切到后台后失效，也不会因认证状态变化而重建空表单。
+        dismiss()
+        guard let onAuthenticated else { return }
+        Task { @MainActor in
+            await Task.yield()
+            onAuthenticated()
         }
     }
 }

@@ -55,7 +55,7 @@ extension UTType {
 enum VaultBackupCrypto {
     static let defaultPassword = "1.2.3.4."
     private static let format = "mytools-vault"
-    private static let version = 2
+    private static let version = 3
     private static let saltLength = 16
     private static let keyLength = 32
     private static let rounds: UInt32 = 210_000

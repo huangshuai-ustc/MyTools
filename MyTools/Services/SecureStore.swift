@@ -73,7 +73,8 @@ final class SecureStore {
                 var copy = stock
                 copy.transactions = []
                 return copy
-            }
+            },
+            currencyExchangeRecords: vault.currencyExchangeRecords
         )
         if let publicData = try? JSONEncoder().encode(publicVault) { UserDefaults.standard.set(publicData, forKey: publicDefaultsKey) }
     }

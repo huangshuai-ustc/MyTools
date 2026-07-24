@@ -39,16 +39,22 @@ enum ForeignAccountType: String, Codable, CaseIterable, Identifiable {
 enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
     case cny = "CNY"
     case hkd = "HKD"
-    case usd = "USD"
+    case cad = "CAD"
+    case chf = "CHF"
     case eur = "EUR"
     case gbp = "GBP"
     case jpy = "JPY"
-    case aud = "AUD"
-    case cad = "CAD"
-    case chf = "CHF"
-    case sgd = "SGD"
     case nzd = "NZD"
+    case sgd = "SGD"
+    case thb = "THB"
+    case usd = "USD"
+    // 仅用于读取旧版档案，不再出现在新建数据的币种选项中。
+    case aud = "AUD"
     case mop = "MOP"
+
+    static let selectableCases: [CurrencyCode] = [
+        .cny, .hkd, .usd, .cad, .chf, .eur, .gbp, .jpy, .nzd, .sgd, .thb
+    ]
 
     var id: Self { self }
 
@@ -56,17 +62,45 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .cny: return "人民币 CNY"
         case .hkd: return "港币 HKD"
-        case .usd: return "美元 USD"
+        case .cad: return "加拿大元 CAD"
+        case .chf: return "瑞士法郎 CHF"
         case .eur: return "欧元 EUR"
         case .gbp: return "英镑 GBP"
         case .jpy: return "日元 JPY"
-        case .aud: return "澳元 AUD"
-        case .cad: return "加元 CAD"
-        case .chf: return "瑞郎 CHF"
-        case .sgd: return "新加坡元 SGD"
         case .nzd: return "新西兰元 NZD"
+        case .sgd: return "新加坡元 SGD"
+        case .thb: return "泰国铢 THB"
+        case .usd: return "美元 USD"
+        case .aud: return "澳元 AUD"
         case .mop: return "澳门元 MOP"
         }
+    }
+
+    /// 中国银行外汇牌价页使用的货币名称；新增币种时在这里补充映射即可。
+    var bankOfChinaName: String? {
+        switch self {
+        case .cny: return nil
+        case .hkd: return "港币"
+        case .cad: return "加拿大元"
+        case .chf: return "瑞士法郎"
+        case .eur: return "欧元"
+        case .gbp: return "英镑"
+        case .jpy: return "日元"
+        case .nzd: return "新西兰元"
+        case .sgd: return "新加坡元"
+        case .thb: return "泰国铢"
+        case .usd: return "美元"
+        case .aud: return "澳大利亚元"
+        case .mop: return "澳门元"
+        }
+    }
+
+    static func selectableCases(including current: CurrencyCode) -> [CurrencyCode] {
+        selectableCases.contains(current) ? selectableCases : selectableCases + [current]
+    }
+
+    static func selectableCases(including current: Set<CurrencyCode>) -> [CurrencyCode] {
+        selectableCases + allCases.filter { !selectableCases.contains($0) && current.contains($0) }
     }
 
     fileprivate static func selections(from legacyText: String) -> Set<CurrencyCode> {
@@ -442,19 +476,22 @@ struct VaultData: Codable {
     var accounts: [BankAccount] = []
     var cards: [BankCard] = []
     var stocks: [StockHolding] = []
+    var currencyExchangeRecords: [CurrencyExchangeRecord] = []
 
     private enum CodingKeys: String, CodingKey {
-        case accounts, cards, stocks
+        case accounts, cards, stocks, currencyExchangeRecords
     }
 
     init(
         accounts: [BankAccount] = [],
         cards: [BankCard] = [],
-        stocks: [StockHolding] = []
+        stocks: [StockHolding] = [],
+        currencyExchangeRecords: [CurrencyExchangeRecord] = []
     ) {
         self.accounts = accounts
         self.cards = cards
         self.stocks = stocks
+        self.currencyExchangeRecords = currencyExchangeRecords
     }
 
     init(from decoder: Decoder) throws {
@@ -462,6 +499,10 @@ struct VaultData: Codable {
         accounts = try values.decodeIfPresent([BankAccount].self, forKey: .accounts) ?? []
         cards = try values.decodeIfPresent([BankCard].self, forKey: .cards) ?? []
         stocks = try values.decodeIfPresent([StockHolding].self, forKey: .stocks) ?? []
+        currencyExchangeRecords = try values.decodeIfPresent(
+            [CurrencyExchangeRecord].self,
+            forKey: .currencyExchangeRecords
+        ) ?? []
     }
 
     var currentCardCount: Int {

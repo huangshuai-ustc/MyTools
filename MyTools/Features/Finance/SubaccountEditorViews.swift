@@ -213,7 +213,7 @@ struct CurrencySelectionRows: View {
     @Binding var currencies: Set<CurrencyCode>
 
     var body: some View {
-        ForEach(CurrencyCode.allCases) { currency in
+        ForEach(CurrencyCode.selectableCases(including: currencies)) { currency in
             Button { toggle(currency) } label: {
                 HStack {
                     Text(currency.title).foregroundStyle(.primary)

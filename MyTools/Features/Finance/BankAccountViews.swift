@@ -526,7 +526,7 @@ struct AccountEditorView: View {
                 }
             }
             .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView()
+                AuthenticationView(onAuthenticated: save)
                     .iOSLargeSheet()
             }
             .sheet(item: $editingForeignSubaccount) { subaccount in

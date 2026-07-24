@@ -101,7 +101,9 @@ struct CardEditorView: View {
                     Button("保存", action: requestSave).disabled(draft.card.currencies.isEmpty)
                 }
             }
-            .sheet(isPresented: $showingAuthentication) { AuthenticationView().iOSLargeSheet() }
+            .sheet(isPresented: $showingAuthentication) {
+                AuthenticationView(onAuthenticated: save).iOSLargeSheet()
+            }
         }
     }
 

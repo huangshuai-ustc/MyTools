@@ -73,7 +73,7 @@ struct StockTransactionEditorView: View {
                 }
             }
             .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView()
+                AuthenticationView(onAuthenticated: save)
                     .iOSLargeSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
@@ -141,4 +141,3 @@ struct StockTransactionEditorView: View {
         showingError = true
     }
 }
-

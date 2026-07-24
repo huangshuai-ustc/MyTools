@@ -35,6 +35,9 @@
 		A1000000000000000000000B /* StockEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* StockEditorView.swift */; };
 		A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* StockTransactionEditorView.swift */; };
 		A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ForeignExchangeRateService.swift */; };
+		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
+		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
+		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -68,6 +71,9 @@
 		B1000000000000000000000B /* StockEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* StockTransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTransactionEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* ForeignExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForeignExchangeRateService.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
 		C00000000000000000000001 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -86,10 +92,20 @@
 			children = (
 				D10000000000000000000004 /* Finance */,
 				D10000000000000000000005 /* Stocks */,
+				D20000000000000000000001 /* CurrencyExchange */,
 				D10000000000000000000006 /* Profile */,
 				D10000000000000000000007 /* Authentication */,
 			);
 			path = Features;
+			sourceTree = "<group>";
+		};
+		D20000000000000000000001 /* CurrencyExchange */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000002 /* CurrencyExchangeView.swift */,
+				B20000000000000000000003 /* CurrencyExchangeEditorView.swift */,
+			);
+			path = CurrencyExchange;
 			sourceTree = "<group>";
 		};
 		D10000000000000000000004 /* Finance */ = {
@@ -135,6 +151,7 @@
 			children = (
 				B00000000000000000000002 /* BankCard.swift */,
 				B0000000000000000000000E /* Stock.swift */,
+				B20000000000000000000001 /* CurrencyExchange.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -269,6 +286,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */,
+				A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */,
+				A20000000000000000000001 /* CurrencyExchange.swift in Sources */,
 				A00000000000000000000001 /* ToolBoxApp.swift in Sources */,
 				A00000000000000000000002 /* BankCard.swift in Sources */,
 				A00000000000000000000003 /* SecureStore.swift in Sources */,
