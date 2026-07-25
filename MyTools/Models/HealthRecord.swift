@@ -480,4 +480,13 @@ enum MedicalValueFormatter {
         formatter.usesGroupingSeparator = false
         return formatter.string(from: value as NSDecimalNumber) ?? "0"
     }
+
+    static func percentage(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.numberStyle = .percent
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return formatter.string(from: value as NSDecimalNumber) ?? "0.0%"
+    }
 }

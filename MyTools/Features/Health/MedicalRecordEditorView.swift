@@ -282,6 +282,13 @@ struct MedicalRecordEditorView: View {
             }
             ForEach(draft.record.attachments) { attachment in
                 attachmentRow(attachment)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            removeAttachment(attachment)
+                        } label: {
+                            Label("移除", systemImage: "trash")
+                        }
+                    }
             }
 
             PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 20, matching: .images) {
@@ -373,10 +380,6 @@ struct MedicalRecordEditorView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            Button(role: .destructive) { removeAttachment(attachment) } label: {
-                Image(systemName: "trash")
-            }
-            .accessibilityLabel("移除附件")
         }
         .padding(.vertical, 2)
     }

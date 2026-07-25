@@ -10,7 +10,7 @@ struct HealthRecordsView: View {
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var selectedTag = ""
-    @State private var selectedYear = Calendar(identifier: .gregorian).component(.year, from: Date())
+    @State private var selectedYear: Int?
     @State private var editingRecord: MedicalRecord?
 
     private var displayedVisitGroups: [MedicalVisitGroup] {
@@ -59,13 +59,45 @@ struct HealthRecordsView: View {
         Array(Set(store.medicalRecords.flatMap(\.tags))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    private var annualRecords: [MedicalRecord] {
-        store.medicalRecords.filter { calendar.component(.year, from: $0.date) == selectedYear }
+    private var summaryRecords: [MedicalRecord] {
+        guard let selectedYear else { return store.medicalRecords }
+        return store.medicalRecords.filter { calendar.component(.year, from: $0.date) == selectedYear }
     }
 
-    private var annualTotal: Decimal { annualRecords.reduce(0) { $0 + $1.totalCost } }
-    private var annualInsurance: Decimal { annualRecords.reduce(0) { $0 + $1.insuranceCost } }
-    private var annualSelfPay: Decimal { annualRecords.reduce(0) { $0 + $1.selfPayCost } }
+    private var summaryTotal: Decimal { summaryRecords.reduce(0) { $0 + $1.totalCost } }
+    private var summaryInsurance: Decimal { summaryRecords.reduce(0) { $0 + $1.insuranceCost } }
+    private var summarySelfPay: Decimal { summaryRecords.reduce(0) { $0 + $1.selfPayCost } }
+
+    private var visitRecords: [MedicalRecord] {
+        summaryRecords.filter { !$0.isPharmacyPurchase }
+    }
+
+    private var hospitalCount: Int {
+        Set(
+            visitRecords
+                .map { $0.hospital.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        ).count
+    }
+
+    private var visitCount: Int {
+        visitRecords.count
+    }
+
+    private var insuranceRatio: Decimal {
+        ratio(summaryInsurance, of: summaryTotal)
+    }
+
+    private var selfPayRatio: Decimal {
+        ratio(summarySelfPay, of: summaryTotal)
+    }
+
+    private func ratio(_ value: Decimal, of total: Decimal) -> Decimal {
+        guard total > 0 else { return 0 }
+        return NSDecimalNumber(decimal: value)
+            .dividing(by: NSDecimalNumber(decimal: total))
+            .decimalValue
+    }
 
     private var calendar: Calendar {
         var value = Calendar(identifier: .gregorian)
@@ -75,19 +107,16 @@ struct HealthRecordsView: View {
 
     var body: some View {
         List {
-            Section("年度费用") {
-                Picker("统计年份", selection: $selectedYear) {
+            Section("就诊总览") {
+                Picker("统计范围", selection: $selectedYear) {
+                    Text("全部").tag(nil as Int?)
                     ForEach(availableYears, id: \.self) { year in
-                        Text(verbatim: "\(year) 年").tag(year)
+                        Text(verbatim: "\(year) 年").tag(year as Int?)
                     }
                 }
                 .pickerStyle(.menu)
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 14) { annualMetrics }
-                    VStack(alignment: .leading, spacing: 9) { annualMetrics }
-                }
-                .padding(.vertical, 4)
+                overviewMetrics
             }
 
             Section {
@@ -140,6 +169,7 @@ struct HealthRecordsView: View {
                             visitGroup.originalVisit,
                             isFollowUp: visitGroup.originalVisit.isFollowUp,
                             followUpCount: visitGroup.followUps.count,
+                            latestFollowUpDate: visitGroup.followUps.last?.date,
                             displayedTotalCost: visitGroup.costSummary.totalCost
                         )
                     }
@@ -173,21 +203,85 @@ struct HealthRecordsView: View {
         }
     }
 
-    @ViewBuilder
-    private var annualMetrics: some View {
-        medicalMetric("总医疗费用", value: annualTotal, color: .primary)
-        medicalMetric("医保支付", value: annualInsurance, color: .blue)
-        medicalMetric("自费", value: annualSelfPay, color: .orange)
+    private var overviewMetrics: some View {
+        VStack(spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    summaryMetric("医院", value: "\(hospitalCount) 家")
+                    summaryMetric("就诊次数", value: "\(visitCount) 次")
+                    summaryMetric("总费用", value: MedicalValueFormatter.money(summaryTotal))
+                }
+                VStack(alignment: .leading, spacing: 9) {
+                    summaryMetric("医院", value: "\(hospitalCount) 家")
+                    summaryMetric("就诊次数", value: "\(visitCount) 次")
+                    summaryMetric("总费用", value: MedicalValueFormatter.money(summaryTotal))
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    summaryMetricWithRatio(
+                        "医保费用",
+                        amount: summaryInsurance,
+                        ratio: insuranceRatio,
+                        color: .blue
+                    )
+                    summaryMetricWithRatio(
+                        "自费费用",
+                        amount: summarySelfPay,
+                        ratio: selfPayRatio,
+                        color: .orange
+                    )
+                }
+                VStack(alignment: .leading, spacing: 9) {
+                    summaryMetricWithRatio(
+                        "医保费用",
+                        amount: summaryInsurance,
+                        ratio: insuranceRatio,
+                        color: .blue
+                    )
+                    summaryMetricWithRatio(
+                        "自费费用",
+                        amount: summarySelfPay,
+                        ratio: selfPayRatio,
+                        color: .orange
+                    )
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
-    private func medicalMetric(_ title: String, value: Decimal, color: Color) -> some View {
+    private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(MedicalValueFormatter.money(value))
+            Text(value)
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func summaryMetricWithRatio(
+        _ title: String,
+        amount: Decimal,
+        ratio: Decimal,
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(MedicalValueFormatter.money(amount))
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text("(\(MedicalValueFormatter.percentage(ratio)))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(color.opacity(0.75))
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -243,6 +337,7 @@ struct HealthRecordsView: View {
         _ record: MedicalRecord,
         isFollowUp: Bool,
         followUpCount: Int = 0,
+        latestFollowUpDate: Date? = nil,
         displayedTotalCost: Decimal? = nil
     ) -> some View {
         NavigationLink {
@@ -252,6 +347,7 @@ struct HealthRecordsView: View {
                 record: record,
                 isFollowUp: isFollowUp,
                 followUpCount: followUpCount,
+                latestFollowUpDate: latestFollowUpDate,
                 displayedTotalCost: displayedTotalCost ?? record.totalCost
             )
         }
@@ -337,17 +433,20 @@ private struct MedicalRecordRow: View {
     let record: MedicalRecord
     let isFollowUp: Bool
     let followUpCount: Int
+    let latestFollowUpDate: Date?
     let displayedTotalCost: Decimal
 
     init(
         record: MedicalRecord,
         isFollowUp: Bool = false,
         followUpCount: Int = 0,
+        latestFollowUpDate: Date? = nil,
         displayedTotalCost: Decimal? = nil
     ) {
         self.record = record
         self.isFollowUp = isFollowUp
         self.followUpCount = followUpCount
+        self.latestFollowUpDate = latestFollowUpDate
         self.displayedTotalCost = displayedTotalCost ?? record.totalCost
     }
 
@@ -355,7 +454,7 @@ private struct MedicalRecordRow: View {
         VStack(alignment: .leading, spacing: 7) {
             if isFollowUp {
                 HStack {
-                    Label("复诊", systemImage: "arrow.turn.down.right")
+                    Label("复诊记录", systemImage: "calendar.badge.clock")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.teal)
                     Spacer()
@@ -393,9 +492,17 @@ private struct MedicalRecordRow: View {
 
             HStack {
                 if !isFollowUp, followUpCount > 0 {
-                    Label("有复诊 · \(followUpCount) 次", systemImage: "arrow.turn.down.right")
-                        .foregroundStyle(.teal)
-                        .fixedSize()
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                        Text("复诊记录 · \(followUpCount) 次")
+                            .fontWeight(.semibold)
+                        if let latestFollowUpDate {
+                            Text("· 最近 \(latestFollowUpDate.formatted(.dateTime.month().day()))")
+                        }
+                    }
+                    .foregroundStyle(.teal)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 }
                 if !record.tags.isEmpty {
                     Text(record.tags.prefix(2).joined(separator: " · "))
@@ -409,15 +516,6 @@ private struct MedicalRecordRow: View {
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
-        .padding(.leading, isFollowUp ? 18 : 0)
-        .overlay(alignment: .leading) {
-            if isFollowUp {
-                Rectangle()
-                    .fill(Color.teal.opacity(0.35))
-                    .frame(width: 2)
-                    .padding(.vertical, 3)
-            }
-        }
     }
 
     private var recordSummary: String {
@@ -663,6 +761,8 @@ private struct MedicalRecordDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -706,7 +806,7 @@ private struct MedicalFollowUpRow: View {
             HStack {
                 Label(
                     record.date.formatted(date: .long, time: .omitted),
-                    systemImage: "arrow.turn.down.right"
+                    systemImage: "calendar.badge.clock"
                 )
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.teal)

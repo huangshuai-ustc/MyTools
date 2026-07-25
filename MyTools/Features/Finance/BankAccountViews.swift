@@ -43,10 +43,12 @@ struct AccountDetailView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                FinanceCardDisplayMenu(
-                    category: $cardCategoryRawValue,
-                    sort: $cardSortOrderRawValue
-                )
+                if let account, !store.cards(for: account).isEmpty {
+                    FinanceCardDisplayMenu(
+                        category: $cardCategoryRawValue,
+                        sort: $cardSortOrderRawValue
+                    )
+                }
                 if auth.isAdmin, let account {
                     Button { editingAccount = account } label: {
                         Image(systemName: "pencil")
@@ -136,8 +138,10 @@ struct AccountDetailView: View {
                 remittanceSection(account)
             }
 
-            Section("其他") {
-                optionalDetail("备注", account.note)
+            if !account.note.isEmpty {
+                Section("其他") {
+                    optionalDetail("备注", account.note)
+                }
             }
         }
 #if os(iOS)
@@ -166,11 +170,6 @@ struct AccountDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text(account.region == .domestic
-                 ? "境内银行以银行卡为主，这里用于记录个人养老金等特别账户。"
-                 : "每个子账户都有独立账户号，币种和状态可分别维护。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -179,7 +178,8 @@ struct AccountDetailView: View {
         cards: [BankCard],
         allCards: [BankCard]
     ) -> some View {
-        Section("银行卡（\(activeCardCount(allCards))）") {
+        let closedCardCount = allCards.filter { $0.status == .closed }.count
+        return Section("银行卡（\(activeCardCount(allCards))）") {
             if cards.isEmpty {
                 Text(allCards.isEmpty ? "暂无银行卡" : "当前筛选下暂无银行卡")
                     .foregroundStyle(.secondary)
@@ -190,8 +190,8 @@ struct AccountDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            if allCards.contains(where: { $0.status == .closed }) {
-                Text("已销户银行卡仍保留在档案中，但不计入当前卡片统计。")
+            if closedCardCount > 0 {
+                Label("\(closedCardCount) 张已销户卡保留在档案中", systemImage: "archivebox")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

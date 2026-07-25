@@ -18,9 +18,16 @@ struct HomeView: View {
                     (searchTerm.isEmpty
                      || accountMatches(account, searchTerm: searchTerm)
                      || store.cards(for: account).contains { cardMatches($0, searchTerm: searchTerm) })
-                        && (!hidesInactiveBanks || !isInactive(account))
                 }
         )
+    }
+
+    private var activeAccounts: [BankAccount] {
+        filteredAccounts.filter { !isInactive($0) }
+    }
+
+    private var inactiveAccounts: [BankAccount] {
+        filteredAccounts.filter(isInactive)
     }
 
     private var selectedSortOrder: AccountSortOrder {
@@ -38,7 +45,7 @@ struct HomeView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section("档案总览 · \(regionFilter.title)") {
+            Section("银行账户总览 · \(regionFilter.title)") {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { financeMetrics }
                     VStack(alignment: .leading, spacing: 10) { financeMetrics }
@@ -46,29 +53,48 @@ struct HomeView: View {
                 .padding(.vertical, 3)
             }
 
-            Section("银行档案") {
-                if filteredAccounts.isEmpty {
+            Section("银行账户") {
+                if activeAccounts.isEmpty {
                     ContentUnavailableView(
-                        query.isEmpty ? "暂无银行档案" : "没有搜索结果",
+                        query.isEmpty ? "暂无正常银行账户" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
-                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行档案" : "请尝试其他银行、支行、卡种或持卡人关键词")
+                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
                 }
                 if auth.isAdmin {
-                    ForEach(filteredAccounts) { account in
+                    ForEach(activeAccounts) { account in
                         accountLink(account)
                     }
-                    .onDelete(perform: deleteAccounts)
+                    .onDelete { deleteAccounts(at: $0, from: activeAccounts) }
                 } else {
-                    ForEach(filteredAccounts) { account in
+                    ForEach(activeAccounts) { account in
                         accountLink(account)
                     }
                 }
-                if hiddenInactiveCount > 0 {
+                if hidesInactiveBanks, hiddenInactiveCount > 0 {
                     Button {
                         hidesInactiveBanks = false
                     } label: {
                         Label("显示 \(hiddenInactiveCount) 家停用银行", systemImage: "eye")
+                    }
+                }
+            }
+            if !hidesInactiveBanks, !inactiveAccounts.isEmpty {
+                Section("停用银行（\(inactiveAccounts.count)）") {
+                    if auth.isAdmin {
+                        ForEach(inactiveAccounts) { account in
+                            accountLink(account)
+                        }
+                        .onDelete { deleteAccounts(at: $0, from: inactiveAccounts) }
+                    } else {
+                        ForEach(inactiveAccounts) { account in
+                            accountLink(account)
+                        }
+                    }
+                    Button {
+                        hidesInactiveBanks = true
+                    } label: {
+                        Label("隐藏停用银行", systemImage: "eye.slash")
                     }
                 }
             }
@@ -108,11 +134,14 @@ struct HomeView: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    BankRegionBadge(region: account.region)
                     Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
                         .font(.headline)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    BankRegionBadge(region: account.region)
+                    if account.status != .normal {
+                        AccountStatusText(status: account.status)
+                    }
                 }
                 let cards = store.cards(for: account)
                 let subtitle = [account.branchName, account.name]
@@ -125,11 +154,11 @@ struct HomeView: View {
                         .lineLimit(2)
                 }
                 Text(financeRowSummary(account, cards: cards))
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                 let currencies = financeCurrencies(account, cards: cards)
                 if !currencies.isEmpty {
-                    Text(currencies)
+                    Text("币种：\(currencies)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -138,9 +167,9 @@ struct HomeView: View {
         }
     }
 
-    private func deleteAccounts(at offsets: IndexSet) {
+    private func deleteAccounts(at offsets: IndexSet, from source: [BankAccount]) {
         guard auth.isAdmin else { return }
-        let ids = Set(offsets.map { filteredAccounts[$0].id })
+        let ids = Set(offsets.map { source[$0].id })
         let originalOffsets = IndexSet(store.accounts.indices.filter { ids.contains(store.accounts[$0].id) })
         store.deleteAccount(at: originalOffsets)
     }
@@ -184,7 +213,7 @@ struct HomeView: View {
     }
 
     private var hiddenInactiveCount: Int {
-        store.accounts.filter(regionFilter.includes).filter(isInactive).count
+        inactiveAccounts.count
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
@@ -255,9 +284,9 @@ struct CardRow: View {
                         CardStatusText(status: card.status)
                     }
                 }
-                Text("•••• " + String(card.cardNumber.suffix(4)))
+                Text(card.cardNumber.isEmpty ? "未填写卡号" : "•••• " + String(card.cardNumber.suffix(4)))
                     .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(card.cardNumber.isEmpty ? .tertiary : .secondary)
                 if !card.currencySummary.isEmpty {
                     Text(card.currencySummary)
                         .font(.caption)
