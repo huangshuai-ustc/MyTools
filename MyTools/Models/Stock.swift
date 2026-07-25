@@ -89,17 +89,82 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+struct StockDividend: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var receivedAt = Date()
+    var quantity: Decimal = 0
+    var dividendPerShare: Decimal = 0
+    var grossAmount: Decimal = 0
+    var withholdingTax: Decimal = 0
+    var fees: Decimal = 0
+    var note = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case id, receivedAt, quantity, dividendPerShare
+        case grossAmount, withholdingTax, fees, note
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        receivedAt = try values.decodeIfPresent(Date.self, forKey: .receivedAt) ?? Date()
+        quantity = try values.decodeIfPresent(Decimal.self, forKey: .quantity) ?? 0
+        dividendPerShare = try values.decodeIfPresent(Decimal.self, forKey: .dividendPerShare) ?? 0
+        grossAmount = try values.decodeIfPresent(Decimal.self, forKey: .grossAmount) ?? 0
+        withholdingTax = try values.decodeIfPresent(Decimal.self, forKey: .withholdingTax) ?? 0
+        fees = try values.decodeIfPresent(Decimal.self, forKey: .fees) ?? 0
+        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
+    }
+
+    var hasPerShareBreakdown: Bool {
+        quantity > 0 && dividendPerShare > 0
+    }
+
+    var totalDeductions: Decimal {
+        withholdingTax + fees
+    }
+
+    var netAmount: Decimal {
+        grossAmount - totalDeductions
+    }
+}
+
 struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var market: StockMarket = .aShare
     var symbol = ""
     var name = ""
     var transactions: [StockTransaction] = []
+    var dividends: [StockDividend] = []
     var latestPrice: Decimal?
     var previousClose: Decimal?
     var changePercent: Decimal?
     var quoteName = ""
     var lastQuoteAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, market, symbol, name, transactions, dividends
+        case latestPrice, previousClose, changePercent, quoteName, lastQuoteAt
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        market = try values.decodeIfPresent(StockMarket.self, forKey: .market) ?? .aShare
+        symbol = try values.decodeIfPresent(String.self, forKey: .symbol) ?? ""
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        transactions = try values.decodeIfPresent([StockTransaction].self, forKey: .transactions) ?? []
+        dividends = try values.decodeIfPresent([StockDividend].self, forKey: .dividends) ?? []
+        latestPrice = try values.decodeIfPresent(Decimal.self, forKey: .latestPrice)
+        previousClose = try values.decodeIfPresent(Decimal.self, forKey: .previousClose)
+        changePercent = try values.decodeIfPresent(Decimal.self, forKey: .changePercent)
+        quoteName = try values.decodeIfPresent(String.self, forKey: .quoteName) ?? ""
+        lastQuoteAt = try values.decodeIfPresent(Date.self, forKey: .lastQuoteAt)
+    }
 
     var displayName: String {
         let preferredName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,6 +200,10 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         totalBuyCost - totalSellProceeds
     }
 
+    var netDividendIncome: Decimal {
+        dividends.reduce(Decimal.zero) { $0 + $1.netAmount }
+    }
+
     var marketValue: Decimal? {
         guard currentShares > 0, let latestPrice else {
             return currentShares == 0 ? 0 : nil
@@ -144,7 +213,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var totalProfitLoss: Decimal? {
         guard let marketValue else { return nil }
-        return marketValue - netInvestment
+        return marketValue + netDividendIncome - netInvestment
     }
 
     func canApply(_ transaction: StockTransaction) -> Bool {
@@ -189,6 +258,7 @@ struct StockPortfolioSummary {
     let stockCount: Int
     let openPositionCount: Int
     let netInvestment: Decimal
+    let netDividendIncome: Decimal
     let knownMarketValue: Decimal
     let profitLoss: Decimal?
     let hasMissingQuotes: Bool
@@ -199,11 +269,72 @@ struct StockPortfolioSummary {
         stockCount = marketStocks.count
         openPositionCount = marketStocks.lazy.filter { $0.currentShares > 0 }.count
         netInvestment = marketStocks.reduce(Decimal.zero) { $0 + $1.netInvestment }
+        netDividendIncome = marketStocks.reduce(Decimal.zero) { $0 + $1.netDividendIncome }
         knownMarketValue = marketStocks.reduce(Decimal.zero) { result, stock in
             result + (stock.marketValue ?? 0)
         }
         hasMissingQuotes = marketStocks.contains { $0.currentShares > 0 && $0.latestPrice == nil }
-        profitLoss = hasMissingQuotes ? nil : knownMarketValue - netInvestment
+        profitLoss = hasMissingQuotes ? nil : knownMarketValue + netDividendIncome - netInvestment
+    }
+}
+
+struct StockAllocationSnapshot {
+    private let holdingShares: [UUID: Decimal]
+    private let marketShares: [StockMarket: Decimal]
+    let isComplete: Bool
+
+    init(stocks: [StockHolding], marketValueMultipliers: [StockMarket: Decimal]) {
+        var valuesByHolding: [UUID: Decimal] = [:]
+        var valuesByMarket = Dictionary(
+            uniqueKeysWithValues: StockMarket.allCases.map { ($0, Decimal.zero) }
+        )
+        var total = Decimal.zero
+        var complete = true
+
+        for stock in stocks {
+            guard let marketValue = stock.marketValue else {
+                complete = false
+                break
+            }
+            let convertedValue: Decimal
+            if marketValue == 0 {
+                convertedValue = 0
+            } else if let multiplier = marketValueMultipliers[stock.market] {
+                convertedValue = marketValue * multiplier
+            } else {
+                complete = false
+                break
+            }
+            valuesByHolding[stock.id] = convertedValue
+            valuesByMarket[stock.market, default: 0] += convertedValue
+            total += convertedValue
+        }
+
+        guard complete else {
+            holdingShares = [:]
+            marketShares = [:]
+            isComplete = false
+            return
+        }
+
+        if total > 0 {
+            holdingShares = valuesByHolding.mapValues { $0 / total }
+            marketShares = valuesByMarket.mapValues { $0 / total }
+        } else {
+            holdingShares = valuesByHolding.mapValues { _ in 0 }
+            marketShares = valuesByMarket.mapValues { _ in 0 }
+        }
+        isComplete = true
+    }
+
+    func holdingShare(for stockID: UUID) -> Decimal? {
+        guard isComplete else { return nil }
+        return holdingShares[stockID] ?? 0
+    }
+
+    func marketShare(for market: StockMarket) -> Decimal? {
+        guard isComplete else { return nil }
+        return marketShares[market] ?? 0
     }
 }
 
@@ -248,6 +379,14 @@ enum StockValueFormatter {
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         formatter.positivePrefix = "+"
+        return formatter.string(from: value as NSDecimalNumber) ?? "0.00%"
+    }
+
+    static func allocationPercent(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .percent
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "0.00%"
     }
 }

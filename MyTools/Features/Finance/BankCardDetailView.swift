@@ -1,12 +1,21 @@
 import SwiftUI
+#if os(iOS)
+import QuickLook
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct CardDetailView: View {
     let card: BankCard
+    @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var sensitiveInformationRevealed = false
     @State private var showingSensitiveAccess = false
+    @State private var previewAttachment: FileAttachment?
+    @State private var showingAttachmentError = false
+    @State private var attachmentError = ""
 
     private var canShowSensitiveInformation: Bool {
         auth.isAdmin || sensitiveInformationRevealed
@@ -80,6 +89,25 @@ struct CardDetailView: View {
                     }
                 }
 
+                if card.kind == .credit, !card.statements.isEmpty {
+                    Section("信用卡账单") {
+                        if canShowSensitiveInformation {
+                            ForEach(sortedStatements) { statement in
+                                Button { open(statement) } label: {
+                                    CreditCardStatementRow(statement: statement)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } else {
+                            Label("账单 PDF 已隐藏", systemImage: "lock.fill")
+                                .foregroundStyle(.secondary)
+                            Button { showingSensitiveAccess = true } label: {
+                                Label("验证身份后查看账单", systemImage: "faceid")
+                            }
+                        }
+                    }
+                }
+
                 if !card.note.isEmpty {
                     Section("备注") {
                         Text(card.note)
@@ -100,14 +128,38 @@ struct CardDetailView: View {
                 SensitiveAccessView { sensitiveInformationRevealed = true }
                     .iOSLargeSheet()
             }
+#if os(iOS)
+            .sheet(item: $previewAttachment) { attachment in
+                NavigationStack {
+                    FinanceAttachmentPreview(url: store.financeAttachmentURL(for: attachment))
+                        .ignoresSafeArea(edges: .bottom)
+                        .navigationTitle(attachment.fileName)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("关闭") { previewAttachment = nil }
+                            }
+                        }
+                }
+            }
+#endif
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { sensitiveInformationRevealed = false }
+            }
+            .alert("无法打开账单", isPresented: $showingAttachmentError) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(attachmentError)
             }
         }
     }
 
     private var hasSensitiveInformation: Bool {
-        !card.cardNumber.isEmpty || !card.cvv.isEmpty
+        !card.cardNumber.isEmpty || !card.cvv.isEmpty || !card.statements.isEmpty
+    }
+
+    private var sortedStatements: [CreditCardStatement] {
+        card.statements.sorted { $0.statementDate > $1.statementDate }
     }
 
     private var maskedCardNumber: String {
@@ -122,4 +174,48 @@ struct CardDetailView: View {
         let components = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: card.expiryDate)
         return String(format: "%04d年%02d月", components.year ?? 0, components.month ?? 0)
     }
+
+    private func open(_ statement: CreditCardStatement) {
+        guard let attachment = statement.attachment else {
+            attachmentError = "这条账单没有关联 PDF 文件。"
+            showingAttachmentError = true
+            return
+        }
+        let url = store.financeAttachmentURL(for: attachment)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            attachmentError = "账单文件已不在本机，请编辑银行档案并重新添加。"
+            showingAttachmentError = true
+            return
+        }
+#if os(iOS)
+        previewAttachment = attachment
+#elseif os(macOS)
+        NSWorkspace.shared.open(url)
+#endif
+    }
 }
+
+#if os(iOS)
+private struct FinanceAttachmentPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
+}
+#endif

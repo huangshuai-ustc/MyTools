@@ -27,11 +27,6 @@ enum StockQuoteError: LocalizedError, Sendable {
     }
 }
 
-private enum QuoteAttemptResult: Sendable {
-    case quote(StockQuote)
-    case unavailable
-}
-
 struct StockQuoteService: Sendable {
     private struct ShenzhenEnvelope: Decodable {
         let data: ShenzhenQuote?
@@ -125,56 +120,244 @@ struct StockQuoteService: Sendable {
     func fetchQuote(for stock: StockHolding) async throws -> StockQuote {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { throw StockQuoteError.invalidSymbol }
+        guard let quote = await fetchQuotes(for: [stock])[stock.id] else {
+            throw StockQuoteError.quoteUnavailable
+        }
+        return quote
+    }
+
+    func fetchQuotes(for stocks: [StockHolding]) async -> [UUID: StockQuote] {
+        let validStocks = stocks.filter {
+            !StockHolding.normalizedSymbol($0.symbol, market: $0.market).isEmpty
+        }
+        guard !validStocks.isEmpty else { return [:] }
+
+        async let tencentTask = fetchTencentBatchQuotes(for: validStocks)
+        async let sinaTask = fetchSinaBatchQuotes(for: validStocks)
+        let (tencentQuotes, sinaQuotes) = await (tencentTask, sinaTask)
+
+        var quotes: [UUID: StockQuote] = [:]
+        for stock in validStocks {
+            quotes[stock.id] = preferredQuote(
+                primary: tencentQuotes[stock.id],
+                validator: sinaQuotes[stock.id]
+            )
+        }
+
+        let missingStocks = validStocks.filter { quotes[$0.id] == nil }
+        guard !missingStocks.isEmpty else { return quotes }
+
+        await withTaskGroup(of: (UUID, StockQuote?).self) { group in
+            for stock in missingStocks {
+                group.addTask { (stock.id, await fetchFallbackQuote(for: stock)) }
+            }
+            for await (stockID, quote) in group {
+                quotes[stockID] = quote
+            }
+        }
+        return quotes
+    }
+
+    private func preferredQuote(primary: StockQuote?, validator: StockQuote?) -> StockQuote? {
+        guard let primary else { return validator }
+        guard let validator else { return primary }
+
+        let futureTolerance: TimeInterval = 5 * 60
+        let now = Date()
+        let primaryHasValidTime = primary.updatedAt <= now.addingTimeInterval(futureTolerance)
+        let validatorHasValidTime = validator.updatedAt <= now.addingTimeInterval(futureTolerance)
+        if primaryHasValidTime != validatorHasValidTime {
+            return primaryHasValidTime ? primary : validator
+        }
+
+        let timeDifference = primary.updatedAt.timeIntervalSince(validator.updatedAt)
+        if abs(timeDifference) > 2 {
+            return timeDifference > 0 ? primary : validator
+        }
+        return primary
+    }
+
+    private func fetchFallbackQuote(for stock: StockHolding) async -> StockQuote? {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard !symbol.isEmpty else { return nil }
 
         switch stock.market {
         case .aShare:
-            if let quote = await firstQuote(from: [
-                { try await fetchEastmoneyQuote(identifier: eastmoneyIdentifier(for: symbol, market: .aShare), fallbackSymbol: symbol) },
-                { await fetchOfficialAShareQuote(symbol: symbol) },
-                { try await fetchTencentAShareQuote(symbol: symbol) },
-                { try await fetchSinaQuote(symbol: symbol, market: .aShare) }
-            ]) { return quote }
+            if let quote = try? await fetchTencentAShareQuote(symbol: symbol) { return quote }
+            if let quote = try? await fetchSinaQuote(symbol: symbol, market: .aShare) { return quote }
+            if let quote = await fetchOfficialAShareQuote(symbol: symbol) { return quote }
+            if let quote = try? await fetchEastmoneyQuote(
+                identifier: eastmoneyIdentifier(for: symbol, market: .aShare),
+                fallbackSymbol: symbol
+            ) { return quote }
         case .hongKong:
-            if let quote = await firstQuote(from: [
-                { try await fetchEastmoneyQuote(identifier: eastmoneyIdentifier(for: symbol, market: .hongKong), fallbackSymbol: symbol) },
-                { try await fetchTencentHongKongQuote(symbol: symbol) },
-                { try await fetchYahooQuote(symbol: yahooIdentifier(for: symbol, market: .hongKong), fallbackSymbol: symbol) },
-                { try await fetchSinaQuote(symbol: symbol, market: .hongKong) }
-            ]) { return quote }
+            if let quote = try? await fetchTencentHongKongQuote(symbol: symbol) { return quote }
+            if let quote = try? await fetchSinaQuote(symbol: symbol, market: .hongKong) { return quote }
+            if let quote = try? await fetchEastmoneyQuote(
+                identifier: eastmoneyIdentifier(for: symbol, market: .hongKong),
+                fallbackSymbol: symbol
+            ) { return quote }
+            if let quote = try? await fetchYahooQuote(
+                symbol: yahooIdentifier(for: symbol, market: .hongKong),
+                fallbackSymbol: symbol
+            ) { return quote }
         case .unitedStates:
-            if let quote = await firstQuote(from: [
-                { try await fetchYahooQuote(symbol: symbol, fallbackSymbol: symbol) },
-                { try await fetchNasdaqQuote(symbol: symbol) },
-                { try await fetchSinaQuote(symbol: symbol, market: .unitedStates) }
-            ]) { return quote }
+            if let quote = await fetchTencentBatchQuotes(for: [stock])[stock.id] { return quote }
+            if let quote = try? await fetchSinaQuote(symbol: symbol, market: .unitedStates) { return quote }
+            if let quote = try? await fetchNasdaqQuote(symbol: symbol) { return quote }
+            if let quote = try? await fetchYahooQuote(symbol: symbol, fallbackSymbol: symbol) { return quote }
         }
-        throw StockQuoteError.quoteUnavailable
+        return nil
     }
 
-    private func firstQuote(
-        from attempts: [@Sendable () async throws -> StockQuote?]
-    ) async -> StockQuote? {
-        await withTaskGroup(of: QuoteAttemptResult.self) { group in
-            for attempt in attempts {
-                group.addTask {
-                    guard !Task.isCancelled else { return .unavailable }
-                    do {
-                        if let quote = try await attempt() { return .quote(quote) }
-                    } catch {
-                        // 单一行情源失败不应阻塞其他并发来源。
-                    }
-                    return .unavailable
-                }
+    private func fetchTencentBatchQuotes(for stocks: [StockHolding]) async -> [UUID: StockQuote] {
+        var result: [UUID: StockQuote] = [:]
+        for stockBatch in stocks.chunked(maxCount: 40) {
+            let stocksByIdentifier = stockBatch.reduce(into: [String: [StockHolding]]()) { result, stock in
+                guard let identifier = tencentIdentifier(for: stock) else { return }
+                result[identifier, default: []].append(stock)
+            }
+            guard !stocksByIdentifier.isEmpty,
+                  let url = URL(string: "https://qt.gtimg.cn/q=\(stocksByIdentifier.keys.sorted().joined(separator: ","))") else {
+                continue
             }
 
-            for await result in group {
-                if case let .quote(quote) = result {
-                    group.cancelAll()
-                    return quote
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("https://stockapp.finance.qq.com/", forHTTPHeaderField: "Referer")
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  isSuccessful(response),
+                  let body = decodeGB18030(data) else { continue }
+
+            for record in body.split(separator: ";", omittingEmptySubsequences: true) {
+                guard let equalIndex = record.firstIndex(of: "="),
+                      let firstQuote = record.firstIndex(of: "\""),
+                      let lastQuote = record.lastIndex(of: "\""),
+                      firstQuote < lastQuote else { continue }
+                let rawIdentifier = record[..<equalIndex]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let identifier = rawIdentifier.hasPrefix("v_")
+                    ? String(rawIdentifier.dropFirst(2))
+                    : rawIdentifier
+                guard let matchingStocks = stocksByIdentifier[identifier] else { continue }
+                let payload = record[record.index(after: firstQuote)..<lastQuote]
+                let fields = payload.split(separator: "~", omittingEmptySubsequences: false).map(String.init)
+                for stock in matchingStocks {
+                    if let quote = parseTencentQuote(fields: fields, stock: stock) {
+                        result[stock.id] = quote
+                    }
                 }
             }
-            return nil
         }
+        return result
+    }
+
+    private func fetchSinaBatchQuotes(for stocks: [StockHolding]) async -> [UUID: StockQuote] {
+        var result: [UUID: StockQuote] = [:]
+        for stockBatch in stocks.chunked(maxCount: 40) {
+            let stocksByIdentifier = stockBatch.reduce(into: [String: [StockHolding]]()) { result, stock in
+                result[sinaIdentifier(for: stock), default: []].append(stock)
+            }
+            guard !stocksByIdentifier.isEmpty,
+                  let url = URL(string: "https://hq.sinajs.cn/list=\(stocksByIdentifier.keys.sorted().joined(separator: ","))") else {
+                continue
+            }
+
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("https://finance.sina.com.cn/", forHTTPHeaderField: "Referer")
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  isSuccessful(response),
+                  let body = decodeSinaResponse(data) else { continue }
+
+            for record in body.split(separator: ";", omittingEmptySubsequences: true) {
+                guard let identifierStart = record.range(of: "hq_str_")?.upperBound,
+                      let equalIndex = record.firstIndex(of: "="),
+                      identifierStart < equalIndex,
+                      let firstQuote = record.firstIndex(of: "\""),
+                      let lastQuote = record.lastIndex(of: "\""),
+                      firstQuote < lastQuote else { continue }
+                let identifier = String(record[identifierStart..<equalIndex])
+                guard let matchingStocks = stocksByIdentifier[identifier] else { continue }
+                let payload = record[record.index(after: firstQuote)..<lastQuote]
+                guard !payload.isEmpty else { continue }
+                let fields = payload.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+                for stock in matchingStocks {
+                    if let quote = parseSinaQuote(fields: fields, stock: stock) {
+                        result[stock.id] = quote
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    private func parseTencentQuote(fields: [String], stock: StockHolding) -> StockQuote? {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard fields.count > 32,
+              let latestPrice = decimal(fields[3]),
+              latestPrice > 0 else { return nil }
+        let previousClose = decimal(fields[4])
+        let changePercent = percentageChange(latestPrice: latestPrice, previousClose: previousClose)
+
+        switch stock.market {
+        case .aShare:
+            guard let updatedAt = compactQuoteDate(fields[30], timeZoneIdentifier: "Asia/Shanghai") else {
+                return nil
+            }
+            return StockQuote(
+                symbol: fields[2].isEmpty ? symbol : fields[2],
+                name: fields[1],
+                latestPrice: latestPrice,
+                previousClose: previousClose,
+                changePercent: changePercent,
+                updatedAt: updatedAt,
+                source: "腾讯证券"
+            )
+        case .hongKong:
+            guard let updatedAt = slashQuoteDate(fields[30], timeZoneIdentifier: "Asia/Hong_Kong") else {
+                return nil
+            }
+            return StockQuote(
+                symbol: symbol,
+                name: fields[1],
+                latestPrice: latestPrice,
+                previousClose: previousClose,
+                changePercent: changePercent,
+                updatedAt: updatedAt,
+                source: "腾讯证券"
+            )
+        case .unitedStates:
+            guard let updatedAt = quoteDate(fields[30], timeZoneIdentifier: "America/New_York") else {
+                return nil
+            }
+            let englishName = fields.indices.contains(46) ? fields[46] : ""
+            return StockQuote(
+                symbol: symbol,
+                name: englishName.isEmpty ? fields[1] : englishName,
+                latestPrice: latestPrice,
+                previousClose: previousClose,
+                changePercent: changePercent,
+                updatedAt: updatedAt,
+                source: "腾讯证券"
+            )
+        }
+    }
+
+    private func parseSinaQuote(fields: [String], stock: StockHolding) -> StockQuote? {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        switch stock.market {
+        case .aShare:
+            return parseSinaAShare(fields: fields, fallbackSymbol: symbol)
+        case .hongKong:
+            return parseSinaHongKong(fields: fields, fallbackSymbol: symbol)
+        case .unitedStates:
+            return parseSinaUnitedStates(fields: fields, fallbackSymbol: symbol)
+        }
+    }
+
+    private func percentageChange(latestPrice: Decimal, previousClose: Decimal?) -> Decimal? {
+        previousClose.flatMap { $0 > 0 ? (latestPrice - $0) / $0 : nil }
     }
 
     private func fetchOfficialAShareQuote(symbol: String) async -> StockQuote? {
@@ -318,7 +501,7 @@ struct StockQuoteService: Sendable {
             latestPrice: latestPrice,
             previousClose: decimal(fields[4]),
             changePercent: decimal(fields[32]).map { $0 / 100 },
-            updatedAt: compactQuoteDate(fields[30], timeZoneIdentifier: "Asia/Hong_Kong") ?? Date(),
+            updatedAt: slashQuoteDate(fields[30], timeZoneIdentifier: "Asia/Hong_Kong") ?? Date(),
             source: "腾讯证券"
         )
     }
@@ -459,10 +642,8 @@ struct StockQuoteService: Sendable {
         let changeAmount = decimal(fields[4])
         let previousClose = changeAmount.map { latestPrice - $0 }
         let changePercent = decimal(fields[2]).map { $0 / 100 }
-        let updatedAt = quoteDate(
-            fields[3],
-            timeZoneIdentifier: "America/New_York"
-        ) ?? Date()
+        // 新浪美股字段 3 返回北京时间，而不是纽约时间。
+        let updatedAt = quoteDate(fields[3], timeZoneIdentifier: "Asia/Shanghai") ?? Date()
 
         return StockQuote(
             symbol: fallbackSymbol,
@@ -485,7 +666,7 @@ struct StockQuoteService: Sendable {
             close > 0 ? (latestPrice - close) / close : nil
         }
         let updatedAt = fields.count > 18
-            ? quoteDate("\(fields[17]) \(fields[18])", timeZoneIdentifier: "Asia/Hong_Kong")
+            ? slashQuoteDate("\(fields[17]) \(fields[18])", timeZoneIdentifier: "Asia/Hong_Kong")
             : nil
         return StockQuote(
             symbol: fallbackSymbol,
@@ -558,6 +739,24 @@ struct StockQuoteService: Sendable {
         }
     }
 
+    private func sinaIdentifier(for stock: StockHolding) -> String {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        return sinaIdentifier(for: symbol, market: stock.market)
+    }
+
+    private func tencentIdentifier(for stock: StockHolding) -> String? {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard !symbol.isEmpty else { return nil }
+        switch stock.market {
+        case .aShare:
+            return sinaIdentifier(for: symbol, market: .aShare)
+        case .hongKong:
+            return "r_hk\(symbol)"
+        case .unitedStates:
+            return "us\(symbol.uppercased())"
+        }
+    }
+
     private func decimal(_ value: String) -> Decimal? {
         let cleaned = value
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -594,6 +793,18 @@ struct StockQuoteService: Sendable {
         formatter.timeZone = TimeZone(identifier: timeZoneIdentifier)
         formatter.dateFormat = "yyyyMMddHHmmss"
         return formatter.date(from: value)
+    }
+
+    private func slashQuoteDate(_ value: String, timeZoneIdentifier: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: timeZoneIdentifier)
+        for format in ["yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) { return date }
+        }
+        return nil
     }
 
     private func exchangeDate(date: Any, time: Any, timeZoneIdentifier: String) -> Date? {
@@ -647,5 +858,14 @@ struct StockQuoteService: Sendable {
 
     private func yahooIdentifier(for symbol: String, market: StockMarket) -> String {
         market == .hongKong ? "\(symbol).HK" : symbol
+    }
+}
+
+private extension Array {
+    func chunked(maxCount: Int) -> [[Element]] {
+        guard maxCount > 0 else { return [] }
+        return stride(from: 0, to: count, by: maxCount).map { start in
+            Array(self[start..<Swift.min(start + maxCount, count)])
+        }
     }
 }

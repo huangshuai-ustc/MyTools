@@ -109,6 +109,37 @@ final class AttachmentStore {
         }
     }
 
+    func cardsForBackup(_ cards: [BankCard]) throws -> [BankCard] {
+        try cards.map { card in
+            var copy = card
+            for index in copy.statements.indices {
+                guard var attachment = copy.statements[index].attachment else { continue }
+                attachment.backupData = try data(for: attachment)
+                copy.statements[index].attachment = attachment
+            }
+            return copy
+        }
+    }
+
+    func restoreAttachments(in cards: [BankCard]) throws -> [BankCard] {
+        try ensureDirectory()
+        return try cards.map { card in
+            var copy = card
+            for index in copy.statements.indices {
+                guard var attachment = copy.statements[index].attachment,
+                      let payload = attachment.backupData else { continue }
+                try payload.write(
+                    to: url(for: attachment),
+                    options: [.atomic, .completeFileProtection]
+                )
+                attachment.fileSize = Int64(payload.count)
+                attachment.backupData = nil
+                copy.statements[index].attachment = attachment
+            }
+            return copy
+        }
+    }
+
     private func ensureDirectory() throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     }

@@ -10,6 +10,7 @@ struct AdminEditAccessButton: View {
             if auth.isAdmin {
                 auth.lock()
             } else {
+                auth.beginAuthenticationPresentation()
                 showingAuthentication = true
             }
         } label: {
@@ -18,11 +19,17 @@ struct AdminEditAccessButton: View {
         }
         .accessibilityLabel(auth.isAdmin ? "退出编辑模式" : "进入编辑模式")
         .help(auth.isAdmin ? "退出编辑模式" : "验证身份后编辑")
-        .sheet(isPresented: $showingAuthentication) {
+        .sheet(isPresented: $showingAuthentication, onDismiss: authenticationDidDismiss) {
             AuthenticationView().iOSLargeSheet()
         }
-        .onChange(of: auth.isAdmin) { wasAdmin, isAdmin in
-            if !wasAdmin, isAdmin { onAccessGranted?() }
+    }
+
+    private func authenticationDidDismiss() {
+        auth.endAuthenticationPresentation()
+        guard auth.isAdmin, let onAccessGranted else { return }
+        Task { @MainActor in
+            await Task.yield()
+            onAccessGranted()
         }
     }
 }

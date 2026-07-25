@@ -64,7 +64,7 @@ enum AccountStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
+enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
     case cny = "CNY"
     case hkd = "HKD"
     case cad = "CAD"
@@ -80,9 +80,30 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
     case aud = "AUD"
     case mop = "MOP"
 
-    static let selectableCases: [CurrencyCode] = [
+    private static let supportedCases: Set<CurrencyCode> = [
         .cny, .hkd, .usd, .cad, .chf, .eur, .gbp, .jpy, .nzd, .sgd, .thb
     ]
+
+    static var selectableCases: [CurrencyCode] {
+        displayOrdered(supportedCases)
+    }
+
+    static func preferredFinanceCases(for region: BankRegion) -> [CurrencyCode] {
+        switch region {
+        case .domestic:
+            return [.cny, .hkd, .usd]
+        case .overseas:
+            return [.cny, .hkd, .usd, .eur, .gbp, .jpy]
+        }
+    }
+
+    static func additionalFinanceCases(
+        for region: BankRegion,
+        including current: Set<CurrencyCode>
+    ) -> [CurrencyCode] {
+        let preferred = Set(preferredFinanceCases(for: region))
+        return selectableCases(including: current).filter { !preferred.contains($0) }
+    }
 
     var id: Self { self }
 
@@ -102,6 +123,10 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
         case .aud: return "澳元 AUD"
         case .mop: return "澳门元 MOP"
         }
+    }
+
+    private var chineseName: String {
+        title.replacingOccurrences(of: " \(rawValue)", with: "")
     }
 
     /// 中国银行外汇牌价页使用的货币名称；新增币种时在这里补充映射即可。
@@ -124,11 +149,34 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable {
     }
 
     static func selectableCases(including current: CurrencyCode) -> [CurrencyCode] {
-        selectableCases.contains(current) ? selectableCases : selectableCases + [current]
+        displayOrdered(supportedCases.union([current]))
     }
 
     static func selectableCases(including current: Set<CurrencyCode>) -> [CurrencyCode] {
-        selectableCases + allCases.filter { !selectableCases.contains($0) && current.contains($0) }
+        displayOrdered(supportedCases.union(current))
+    }
+
+    static func displayOrdered(_ currencies: Set<CurrencyCode>) -> [CurrencyCode] {
+        let fixedPriority: [CurrencyCode: Int] = [.cny: 0, .hkd: 1, .usd: 2]
+        let locale = Locale(identifier: "zh_Hans_CN")
+
+        return currencies.sorted { lhs, rhs in
+            let lhsPriority = fixedPriority[lhs] ?? Int.max
+            let rhsPriority = fixedPriority[rhs] ?? Int.max
+            if lhsPriority != rhsPriority {
+                return lhsPriority < rhsPriority
+            }
+
+            let comparison = lhs.chineseName.compare(
+                rhs.chineseName,
+                options: [],
+                range: nil,
+                locale: locale
+            )
+            return comparison == .orderedSame
+                ? lhs.rawValue < rhs.rawValue
+                : comparison == .orderedAscending
+        }
     }
 
     fileprivate static func selections(from legacyText: String) -> Set<CurrencyCode> {
@@ -197,8 +245,7 @@ struct ForeignSubaccount: Identifiable, Codable, Equatable {
     }
 
     var currencySummary: String {
-        CurrencyCode.allCases
-            .filter { currencies.contains($0) }
+        CurrencyCode.displayOrdered(currencies)
             .map(\.rawValue)
             .joined(separator: "、")
     }
@@ -243,8 +290,7 @@ struct DomesticSubaccount: Identifiable, Codable, Equatable {
     }
 
     var currencySummary: String {
-        CurrencyCode.allCases
-            .filter { currencies.contains($0) }
+        CurrencyCode.displayOrdered(currencies)
             .map(\.rawValue)
             .joined(separator: "、")
     }
@@ -307,15 +353,23 @@ enum CardNetwork: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .unionPay: return "银联"
-        case .visa: return "Visa"
-        case .mastercard: return "Mastercard"
-        case .jcb: return "JCB"
-        case .americanExpress: return "美国运通"
-        case .dinersClub: return "大来卡"
-        case .discover: return "Discover"
+        case .unionPay: return "银联/UnionPay"
+        case .visa: return "维萨/Visa"
+        case .mastercard: return "万事达/Mastercard"
+        case .jcb: return "日财卡/JCB"
+        case .americanExpress: return "美国运通/American Express"
+        case .dinersClub: return "大来/Diners Club"
+        case .discover: return "发现卡/Discover"
         }
     }
+}
+
+struct CreditCardStatement: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var statementDate = Date()
+    var attachment: FileAttachment?
+    var note = ""
+    var createdAt = Date()
 }
 
 struct BankCard: Identifiable, Codable, Equatable {
@@ -337,10 +391,12 @@ struct BankCard: Identifiable, Codable, Equatable {
     var applePay = false
     var defaultPayment = false
     var note = ""
+    var statements: [CreditCardStatement] = []
 
     private enum CodingKeys: String, CodingKey {
         case id, accountID, bankName, branchName, openedAt, cardNumber, cvv
         case expiryDate, expiryPrecision, cardType, kind, networks, status, currencies, holderName, applePay, defaultPayment, note
+        case statements
     }
 
     init() {}
@@ -373,13 +429,44 @@ struct BankCard: Identifiable, Codable, Equatable {
         applePay = try values.decodeIfPresent(Bool.self, forKey: .applePay) ?? false
         defaultPayment = try values.decodeIfPresent(Bool.self, forKey: .defaultPayment) ?? false
         note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
+        statements = try values.decodeIfPresent([CreditCardStatement].self, forKey: .statements) ?? []
     }
 
     var currencySummary: String {
-        CurrencyCode.allCases
-            .filter { currencies.contains($0) }
+        CurrencyCode.displayOrdered(currencies)
             .map(\.rawValue)
             .joined(separator: "、")
+    }
+}
+
+struct AdditionalLoginField: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name = ""
+    var value = ""
+    var isSensitive = false
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, value, isSensitive
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String = "",
+        value: String = "",
+        isSensitive: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.value = value
+        self.isSensitive = isSensitive
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        value = try values.decodeIfPresent(String.self, forKey: .value) ?? ""
+        isSensitive = try values.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? false
     }
 }
 
@@ -400,6 +487,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var boundPhoneNumber = ""
     var loginAccount = ""
     var loginPassword = ""
+    var additionalLoginFields: [AdditionalLoginField] = []
     var correspondenceAddressChinese = ""
     var correspondenceAddressEnglish = ""
     var residentialAddressChinese = ""
@@ -414,6 +502,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, region, domesticSubaccounts, foreignSubaccounts, bankName, branchName, openedAt, name, accountType, currency
         case accountNumber, swift, iban, boundPhoneNumber, loginAccount, loginPassword
+        case additionalLoginFields
         case correspondenceAddressChinese, correspondenceAddressEnglish
         case residentialAddressChinese, residentialAddressEnglish
         case remittanceBankName, remittanceBankAddress, remittanceSwiftCode, remittanceInstructions
@@ -421,7 +510,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
     }
 
     private enum LegacyCodingKeys: String, CodingKey {
-        case foreignAccountTypes
+        case foreignAccountTypes, onlineBankingAccountNumber, phoneBankingPassword
     }
 
     init() {}
@@ -441,6 +530,7 @@ struct BankAccount: Identifiable, Codable, Equatable {
         boundPhoneNumber = try values.decodeIfPresent(String.self, forKey: .boundPhoneNumber) ?? ""
         loginAccount = try values.decodeIfPresent(String.self, forKey: .loginAccount) ?? ""
         loginPassword = try values.decodeIfPresent(String.self, forKey: .loginPassword) ?? ""
+        additionalLoginFields = try values.decodeIfPresent([AdditionalLoginField].self, forKey: .additionalLoginFields) ?? []
         correspondenceAddressChinese = try values.decodeIfPresent(String.self, forKey: .correspondenceAddressChinese) ?? ""
         correspondenceAddressEnglish = try values.decodeIfPresent(String.self, forKey: .correspondenceAddressEnglish) ?? ""
         residentialAddressChinese = try values.decodeIfPresent(String.self, forKey: .residentialAddressChinese) ?? ""
@@ -453,6 +543,23 @@ struct BankAccount: Identifiable, Codable, Equatable {
         remittanceInstructions = try values.decodeIfPresent(String.self, forKey: .remittanceInstructions) ?? ""
         status = AccountStatus(storedValue: try values.decodeIfPresent(String.self, forKey: .status) ?? "")
         note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
+
+        let legacyValues = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        let legacyOnlineBankingNumber = try legacyValues.decodeIfPresent(String.self, forKey: .onlineBankingAccountNumber) ?? ""
+        if !legacyOnlineBankingNumber.isEmpty {
+            additionalLoginFields.append(AdditionalLoginField(
+                name: "自在理财账户号码",
+                value: legacyOnlineBankingNumber
+            ))
+        }
+        let legacyPhoneBankingPassword = try legacyValues.decodeIfPresent(String.self, forKey: .phoneBankingPassword) ?? ""
+        if !legacyPhoneBankingPassword.isEmpty {
+            additionalLoginFields.append(AdditionalLoginField(
+                name: "电话银行密码",
+                value: legacyPhoneBankingPassword,
+                isSensitive: true
+            ))
+        }
 
         if let savedRegion = try values.decodeIfPresent(BankRegion.self, forKey: .region) {
             region = savedRegion
@@ -480,7 +587,6 @@ struct BankAccount: Identifiable, Codable, Equatable {
         if values.contains(.foreignSubaccounts) {
             foreignSubaccounts = try values.decodeIfPresent([ForeignSubaccount].self, forKey: .foreignSubaccounts) ?? []
         } else if region == .overseas {
-            let legacyValues = try decoder.container(keyedBy: LegacyCodingKeys.self)
             let legacyTypes = try legacyValues.decodeIfPresent(Set<ForeignAccountType>.self, forKey: .foreignAccountTypes) ?? []
             foreignSubaccounts = Self.migrateLegacySubaccounts(
                 types: legacyTypes,
@@ -537,15 +643,37 @@ struct BankAccount: Identifiable, Codable, Equatable {
     }
 }
 
-struct VaultData: Codable {
+extension BankAccount {
+    func isInactiveFinanceArchive(cards: [BankCard]) -> Bool {
+        let hasNormalDebitCard = cards.contains {
+            $0.kind == .debit && $0.status == .normal
+        }
+        let hasActiveSubaccount: Bool
+        switch region {
+        case .domestic:
+            hasActiveSubaccount = domesticSubaccounts.contains { $0.status == .normal }
+        case .overseas:
+            hasActiveSubaccount = foreignSubaccounts.contains { $0.status == .normal }
+        }
+        let hasHistoricalDebitCard = cards.contains { $0.kind == .debit }
+        return !hasNormalDebitCard
+            && !hasActiveSubaccount
+            && (hasHistoricalDebitCard || status != .normal)
+    }
+}
+
+struct VaultData: Codable, @unchecked Sendable {
     var accounts: [BankAccount] = []
     var cards: [BankCard] = []
     var stocks: [StockHolding] = []
     var currencyExchangeRecords: [CurrencyExchangeRecord] = []
     var medicalRecords: [MedicalRecord] = []
+    var hospitalProfiles: [HospitalProfile] = []
+    var hospitalDirectoryInitialized = true
 
     private enum CodingKeys: String, CodingKey {
         case accounts, cards, stocks, currencyExchangeRecords, medicalRecords
+        case hospitalProfiles, hospitalDirectoryInitialized
     }
 
     init(
@@ -553,13 +681,17 @@ struct VaultData: Codable {
         cards: [BankCard] = [],
         stocks: [StockHolding] = [],
         currencyExchangeRecords: [CurrencyExchangeRecord] = [],
-        medicalRecords: [MedicalRecord] = []
+        medicalRecords: [MedicalRecord] = [],
+        hospitalProfiles: [HospitalProfile] = [],
+        hospitalDirectoryInitialized: Bool = true
     ) {
         self.accounts = accounts
         self.cards = cards
         self.stocks = stocks
         self.currencyExchangeRecords = currencyExchangeRecords
         self.medicalRecords = medicalRecords
+        self.hospitalProfiles = hospitalProfiles
+        self.hospitalDirectoryInitialized = hospitalDirectoryInitialized
     }
 
     init(from decoder: Decoder) throws {
@@ -572,6 +704,14 @@ struct VaultData: Codable {
             forKey: .currencyExchangeRecords
         ) ?? []
         medicalRecords = try values.decodeIfPresent([MedicalRecord].self, forKey: .medicalRecords) ?? []
+        hospitalProfiles = try values.decodeIfPresent(
+            [HospitalProfile].self,
+            forKey: .hospitalProfiles
+        ) ?? []
+        hospitalDirectoryInitialized = try values.decodeIfPresent(
+            Bool.self,
+            forKey: .hospitalDirectoryInitialized
+        ) ?? false
     }
 
     var currentCardCount: Int {
@@ -581,7 +721,7 @@ struct VaultData: Codable {
     var currentBankCount: Int {
         accounts.lazy.filter { account in
             let linkedCards = self.cards.filter { $0.accountID == account.id }
-            return linkedCards.isEmpty || linkedCards.contains { $0.status != .closed }
+            return !account.isInactiveFinanceArchive(cards: linkedCards)
         }.count
     }
 }

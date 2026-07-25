@@ -6,10 +6,23 @@ import CryptoKit
 final class AuthManager: ObservableObject {
     @Published private(set) var isAdmin = false
     @Published private(set) var hasPassword: Bool
+    @Published private(set) var isAuthenticationPresented = false
     private let defaults = UserDefaults.standard
     private let passwordKey = "admin-password-hash"
 
     init() { hasPassword = defaults.string(forKey: passwordKey) != nil }
+
+    var isEditSessionReady: Bool {
+        isAdmin && !isAuthenticationPresented
+    }
+
+    func beginAuthenticationPresentation() {
+        isAuthenticationPresented = true
+    }
+
+    func endAuthenticationPresentation() {
+        isAuthenticationPresented = false
+    }
 
     func setPassword(_ password: String) -> Bool {
         guard password.count >= 6 else { return false }
@@ -50,5 +63,8 @@ final class AuthManager: ObservableObject {
         }
     }
 
-    func lock() { isAdmin = false }
+    func lock() {
+        isAdmin = false
+        isAuthenticationPresented = false
+    }
 }

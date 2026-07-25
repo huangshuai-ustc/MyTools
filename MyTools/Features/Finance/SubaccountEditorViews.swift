@@ -112,7 +112,7 @@ struct DomesticSubaccountEditorView: View {
                     .pickerStyle(.segmented)
                 }
                 Section {
-                    CurrencySelectionRows(currencies: $draft.subaccount.currencies)
+                    CurrencySelectionRows(currencies: $draft.subaccount.currencies, region: .domestic)
                 } header: {
                     Text("币种")
                 } footer: {
@@ -256,7 +256,7 @@ struct ForeignSubaccountEditorView: View {
                     .pickerStyle(.segmented)
                 }
                 Section {
-                    CurrencySelectionRows(currencies: $draft.subaccount.currencies)
+                    CurrencySelectionRows(currencies: $draft.subaccount.currencies, region: .overseas)
                 } header: {
                     Text("币种")
                 } footer: {
@@ -309,23 +309,45 @@ struct AccountStatusText: View {
 
 struct CurrencySelectionRows: View {
     @Binding var currencies: Set<CurrencyCode>
+    var region: BankRegion = .overseas
+
+    private var primaryCurrencies: [CurrencyCode] {
+        CurrencyCode.preferredFinanceCases(for: region)
+    }
+
+    private var additionalCurrencies: [CurrencyCode] {
+        CurrencyCode.additionalFinanceCases(for: region, including: currencies)
+    }
 
     var body: some View {
-        ForEach(CurrencyCode.selectableCases(including: currencies)) { currency in
-            Button { toggle(currency) } label: {
-                HStack {
-                    Text(currency.title).foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: currencies.contains(currency) ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(currencies.contains(currency) ? Color.accentColor : Color.secondary)
-                        .font(.title3)
-                }
-                .contentShape(Rectangle())
+        Group {
+            ForEach(primaryCurrencies) { currency in
+                currencyRow(currency)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(currency.title)
-            .accessibilityValue(currencies.contains(currency) ? "已选择" : "未选择")
+            if !additionalCurrencies.isEmpty {
+                DisclosureGroup("更多币种") {
+                    ForEach(additionalCurrencies) { currency in
+                        currencyRow(currency)
+                    }
+                }
+            }
         }
+    }
+
+    private func currencyRow(_ currency: CurrencyCode) -> some View {
+        Button { toggle(currency) } label: {
+            HStack {
+                Text(currency.title).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: currencies.contains(currency) ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(currencies.contains(currency) ? Color.accentColor : Color.secondary)
+                    .font(.title3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(currency.title)
+        .accessibilityValue(currencies.contains(currency) ? "已选择" : "未选择")
     }
 
     private func toggle(_ currency: CurrencyCode) {

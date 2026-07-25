@@ -22,7 +22,7 @@ enum ToolModule: String, CaseIterable, Identifiable {
         case .personalFinance: return "银行账户与银行卡"
         case .myStocks: return "A 股、港股与美股持仓"
         case .currencyExchange: return "记录汇率与换汇损耗"
-        case .healthRecords: return "就诊、处方与医疗附件"
+        case .healthRecords: return "就诊、复诊、购药、费用与医疗附件"
         }
     }
 

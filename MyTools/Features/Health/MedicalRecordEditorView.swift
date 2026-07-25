@@ -2,17 +2,21 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
+private enum MedicalCostInputSource {
+    case insurance
+    case selfPay
+}
+
 @MainActor
 private final class MedicalRecordEditorDraft: ObservableObject {
     @Published var record: MedicalRecord
-    @Published var totalCostText: String
     @Published var insuranceCostText: String
     @Published var selfPayCostText: String
+    @Published var costInputSource: MedicalCostInputSource = .insurance
     @Published var tagsText: String
 
     init(record: MedicalRecord) {
         self.record = record
-        totalCostText = Self.decimalText(record.totalCost)
         insuranceCostText = Self.decimalText(record.insuranceCost)
         selfPayCostText = Self.decimalText(record.selfPayCost)
         tagsText = record.tags.joined(separator: "、")
@@ -28,7 +32,7 @@ struct MedicalRecordEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: MedicalRecordEditorDraft
-    @State private var editingPrescription: Prescription?
+    @State private var editingExpenseItem: MedicalExpenseItem?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingAuthentication = false
@@ -49,13 +53,16 @@ struct MedicalRecordEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if draft.record.isFollowUp {
+                    associatedVisitSection
+                }
                 basicInformationSection
+                expenseItemSection
                 costSection
-                prescriptionSection
                 attachmentSection
                 tagAndNotesSection
             }
-            .navigationTitle(isNew ? "新增就诊" : "编辑就诊")
+            .navigationTitle(editorTitle)
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -68,9 +75,9 @@ struct MedicalRecordEditorView: View {
                     Button("保存", action: requestSave)
                 }
             }
-            .sheet(item: $editingPrescription) { prescription in
-                PrescriptionEditorView(prescription: prescription) { updated in
-                    upsertPrescription(updated)
+            .sheet(item: $editingExpenseItem) { item in
+                MedicalExpenseItemEditorView(item: item) { updated in
+                    upsertExpenseItem(updated)
                 }
                 .iOSLargeSheet()
             }
@@ -88,6 +95,10 @@ struct MedicalRecordEditorView: View {
                 guard !items.isEmpty else { return }
                 Task { await importPhotos(items) }
             }
+            .onChange(of: currentItemsTotal) { _, _ in
+                guard draft.record.paymentMethod == .medicalInsuranceThenSelfPay else { return }
+                synchronizeMixedCosts()
+            }
             .onDisappear(perform: cleanUpUncommittedAttachments)
             .alert("无法完成操作", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -97,56 +108,170 @@ struct MedicalRecordEditorView: View {
         }
     }
 
+    private var editorTitle: String {
+        if draft.record.isPharmacyPurchase {
+            return isNew ? "新增购药" : "编辑购药"
+        }
+        if draft.record.isFollowUp {
+            return isNew ? "新增复诊" : "编辑复诊"
+        }
+        return isNew ? "新增就诊" : "编辑就诊"
+    }
+
+    private var associatedRecord: MedicalRecord? {
+        guard let parentID = draft.record.parentRecordID else { return nil }
+        return store.medicalRecords.first { $0.id == parentID }
+    }
+
+    private var associatedVisitSection: some View {
+        Section("关联就诊") {
+            if let associatedRecord {
+                LabeledContent("原就诊") {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(associatedRecord.hospital)
+                        Text(
+                            "\(associatedRecord.visitType.title) · \(associatedRecord.date.formatted(date: .abbreviated, time: .omitted))"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                Label("原就诊记录已不存在", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
     private var basicInformationSection: some View {
-        Section("就诊信息") {
-            DatePicker("就诊日期：", selection: $draft.record.date, displayedComponents: .date)
-            safeField("医院：", prompt: "必填", text: $draft.record.hospital)
-            safeField("科室：", prompt: "必填", text: $draft.record.department)
-            safeField("医生：", prompt: "可选", text: $draft.record.doctor)
-            Picker("就诊类型：", selection: $draft.record.visitType) {
-                ForEach(MedicalVisitType.allCases) { type in Text(type.title).tag(type) }
+        Section(draft.record.isPharmacyPurchase ? "购药信息" : (draft.record.isFollowUp ? "复诊信息" : "就诊信息")) {
+            DatePicker(
+                draft.record.isPharmacyPurchase ? "购药日期：" : (draft.record.isFollowUp ? "复诊日期：" : "就诊日期："),
+                selection: $draft.record.date,
+                displayedComponents: .date
+            )
+            if draft.record.isPharmacyPurchase {
+                safeField("药房：", prompt: "必填", text: $draft.record.hospital)
+            } else {
+                safeField("医院：", prompt: "必填", text: $draft.record.hospital)
+                if !store.hospitalProfiles.isEmpty {
+                    Menu {
+                        ForEach(sortedHospitalProfiles) { profile in
+                            Button { applyHospital(profile) } label: {
+                                if profile.id == selectedHospitalProfile?.id {
+                                    Label(profile.name, systemImage: "checkmark")
+                                } else {
+                                    Text(profile.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("选择已有医院", systemImage: "building.2")
+                    }
+                }
+                Picker("医院级别：", selection: $draft.record.hospitalLevel) {
+                    ForEach(HospitalLevel.allCases) { level in
+                        Text(level.title).tag(level)
+                    }
+                }
+                Picker("医院等次：", selection: $draft.record.hospitalGrade) {
+                    ForEach(HospitalGrade.allCases) { grade in
+                        Text(grade.title).tag(grade)
+                    }
+                }
+                Picker("医院类型：", selection: $draft.record.hospitalCategory) {
+                    ForEach(HospitalCategory.allCases) { category in
+                        Text(category.title).tag(category)
+                    }
+                }
+            }
+            Picker(draft.record.isFollowUp ? "复诊方式：" : "记录类型：", selection: $draft.record.visitType) {
+                ForEach(availableVisitTypes) { type in
+                    Text(type.shortTitle).tag(type)
+                }
             }
             .pickerStyle(.segmented)
-            multilineField("主诉", prompt: "例如：左膝疼痛", text: $draft.record.chiefComplaint)
-            multilineField("初步诊断", prompt: "例如：半月板损伤", text: $draft.record.diagnosis)
-            multilineField("治疗建议", prompt: "例如：保守治疗", text: $draft.record.treatment)
+            .onChange(of: draft.record.visitType) { oldValue, newValue in
+                if oldValue != .pharmacyPurchase, newValue == .pharmacyPurchase {
+                    draft.record.paymentMethod = .selfPay
+                    draft.insuranceCostText = ""
+                }
+            }
+            if draft.record.isPharmacyPurchase {
+                multilineField("用药原因（可选）", prompt: "例如：感冒、发热", text: $draft.record.chiefComplaint)
+            } else {
+                safeField("科室：", prompt: "必填", text: $draft.record.department)
+                safeField("医生：", prompt: "可选", text: $draft.record.doctor)
+                multilineField("主诉", prompt: "例如：左膝疼痛", text: $draft.record.chiefComplaint)
+                multilineField("初步诊断", prompt: "例如：半月板损伤", text: $draft.record.diagnosis)
+                multilineField("治疗建议", prompt: "例如：保守治疗", text: $draft.record.treatment)
+            }
         }
     }
 
     private var costSection: some View {
         Section {
-            decimalField("总费用：", prompt: "0.00", text: $draft.totalCostText)
-            decimalField("医保支付：", prompt: "0.00", text: $draft.insuranceCostText)
-            decimalField("自费：", prompt: "留空自动计算", text: $draft.selfPayCostText)
-            Picker("支付方式：", selection: $draft.record.paymentMethod) {
+            if linkedFollowUps.isEmpty {
+                calculatedCostRow("总费用：", amount: currentItemsTotal)
+            } else {
+                calculatedCostRow("本次费用：", amount: currentItemsTotal)
+                calculatedCostRow("复诊费用：", amount: linkedFollowUpCostSummary.totalCost)
+                calculatedCostRow("总费用：", amount: aggregateTotalCost)
+            }
+
+            Picker(linkedFollowUps.isEmpty ? "支付方式：" : "本次支付方式：", selection: $draft.record.paymentMethod) {
                 ForEach(MedicalPaymentMethod.allCases) { method in
                     Text(method.title).tag(method)
                 }
             }
             .pickerStyle(.segmented)
+
+            switch draft.record.paymentMethod {
+            case .selfPay:
+                calculatedCostRow("自费：", amount: currentItemsTotal)
+            case .medicalInsurance:
+                calculatedCostRow("医保支付：", amount: currentItemsTotal)
+            case .medicalInsuranceThenSelfPay:
+                expressionField(
+                    "医保支付：",
+                    prompt: "填写后自动计算自费",
+                    text: mixedCostBinding(for: .insurance)
+                )
+                expressionField(
+                    "自费：",
+                    prompt: "填写后自动计算医保支付",
+                    text: mixedCostBinding(for: .selfPay)
+                )
+            }
         } header: {
             Text("费用")
         } footer: {
-            Text("自费留空时按“总费用 - 医保支付”自动计算。")
+            if draft.record.paymentMethod == .medicalInsuranceThenSelfPay {
+                Text("填写医保支付或自费中的任意一项，另一项会按本次费用自动计算。")
+            }
         }
     }
 
-    private var prescriptionSection: some View {
-        Section("处方") {
-            if draft.record.prescriptions.isEmpty {
-                Text("暂无药物").foregroundStyle(.secondary)
+    private var expenseItemSection: some View {
+        Section {
+            if draft.record.expenseItems.isEmpty {
+                Text(draft.record.isPharmacyPurchase ? "暂无药品" : "暂无费用项目")
+                    .foregroundStyle(.secondary)
             }
-            ForEach(draft.record.prescriptions) { prescription in
-                Button { editingPrescription = prescription } label: {
-                    PrescriptionRow(prescription: prescription)
+            ForEach(draft.record.expenseItems) { item in
+                Button { editingExpenseItem = item } label: {
+                    MedicalExpenseItemRow(item: item)
                 }
                 .buttonStyle(.plain)
             }
-            .onDelete { offsets in draft.record.prescriptions.remove(atOffsets: offsets) }
+            .onDelete { offsets in draft.record.expenseItems.remove(atOffsets: offsets) }
 
-            Button { editingPrescription = Prescription() } label: {
-                Label("添加药物", systemImage: "plus.circle")
+            Button { editingExpenseItem = MedicalExpenseItem() } label: {
+                Label(draft.record.isPharmacyPurchase ? "添加药品" : "添加费用项目", systemImage: "plus.circle")
             }
+
+        } header: {
+            Text(draft.record.isPharmacyPurchase ? "药品" : "费用项目")
         }
     }
 
@@ -204,13 +329,32 @@ struct MedicalRecordEditorView: View {
         }
     }
 
-    private func decimalField(_ title: String, prompt: String, text: Binding<String>) -> some View {
+    private func expressionField(_ title: String, prompt: String, text: Binding<String>) -> some View {
         LabeledContent(title) {
-            TextField(prompt, text: text)
-                .multilineTextAlignment(.trailing)
+            VStack(alignment: .trailing, spacing: 2) {
+                TextField(prompt, text: text)
+                    .multilineTextAlignment(.trailing)
 #if os(iOS)
-                .keyboardType(.decimalPad)
+                    .keyboardType(.numbersAndPunctuation)
 #endif
+                if containsArithmeticOperator(text.wrappedValue),
+                   let value = DecimalTextParser.expression(from: text.wrappedValue) {
+                    Text("= \(MedicalValueFormatter.money(value))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func calculatedCostRow(_ title: String, amount: Decimal?) -> some View {
+        LabeledContent(title) {
+            if let amount, amount >= 0 {
+                Text(MedicalValueFormatter.money(amount))
+                    .monospacedDigit()
+            } else {
+                Text("待核对").foregroundStyle(.orange)
+            }
         }
     }
 
@@ -284,11 +428,11 @@ struct MedicalRecordEditorView: View {
         }
     }
 
-    private func upsertPrescription(_ prescription: Prescription) {
-        if let index = draft.record.prescriptions.firstIndex(where: { $0.id == prescription.id }) {
-            draft.record.prescriptions[index] = prescription
+    private func upsertExpenseItem(_ item: MedicalExpenseItem) {
+        if let index = draft.record.expenseItems.firstIndex(where: { $0.id == item.id }) {
+            draft.record.expenseItems[index] = item
         } else {
-            draft.record.prescriptions.append(prescription)
+            draft.record.expenseItems.append(item)
         }
     }
 
@@ -322,36 +466,71 @@ struct MedicalRecordEditorView: View {
         record.department = record.department.trimmingCharacters(in: .whitespacesAndNewlines)
         record.chiefComplaint = record.chiefComplaint.trimmingCharacters(in: .whitespacesAndNewlines)
         record.diagnosis = record.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !record.hospital.isEmpty,
-              !record.department.isEmpty,
-              !record.chiefComplaint.isEmpty,
-              !record.diagnosis.isEmpty else {
-            reportError("医院、科室、主诉和初步诊断为必填项。")
-            return
-        }
-
-        guard let totalCost = DecimalTextParser.optionalDecimal(from: draft.totalCostText),
-              let insuranceCost = DecimalTextParser.optionalDecimal(from: draft.insuranceCostText),
-              totalCost >= 0,
-              insuranceCost >= 0 else {
-            reportError("请输入有效且不小于零的费用。")
-            return
-        }
-        let selfPayCost: Decimal
-        if draft.selfPayCostText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            selfPayCost = max(totalCost - insuranceCost, 0)
-        } else if let value = DecimalTextParser.decimal(from: draft.selfPayCostText), value >= 0 {
-            selfPayCost = value
+        if record.isPharmacyPurchase {
+            guard !record.hospital.isEmpty, !record.expenseItems.isEmpty else {
+                reportError("请填写药房并至少添加一项药品。")
+                return
+            }
+            record.hospitalLevel = .unspecified
+            record.hospitalGrade = .unspecified
+            record.hospitalCategory = .unspecified
+            record.department = ""
+            record.doctor = ""
+            record.diagnosis = ""
+            record.treatment = ""
         } else {
-            reportError("请输入有效且不小于零的自费金额。")
-            return
-        }
-        guard insuranceCost + selfPayCost <= totalCost else {
-            reportError("医保支付与自费之和不能超过总费用。")
-            return
+            guard !record.hospital.isEmpty,
+                  !record.department.isEmpty,
+                  !record.chiefComplaint.isEmpty,
+                  !record.diagnosis.isEmpty else {
+                reportError("医院、科室、主诉和初步诊断为必填项。")
+                return
+            }
         }
 
-        record.date = MedicalRecord.normalizedDate(record.date)
+        let normalizedDate = MedicalRecord.normalizedDate(record.date)
+        if record.isFollowUp {
+            guard let associatedRecord else {
+                reportError("关联的原就诊记录已不存在，无法保存这条复诊。")
+                return
+            }
+            guard normalizedDate >= MedicalRecord.normalizedDate(associatedRecord.date) else {
+                reportError("复诊日期不能早于原就诊日期。")
+                return
+            }
+        }
+
+        let totalCost = record.expenseItemsTotal
+
+        let insuranceCost: Decimal
+        let selfPayCost: Decimal
+        switch record.paymentMethod {
+        case .selfPay:
+            insuranceCost = 0
+            selfPayCost = totalCost
+        case .medicalInsurance:
+            insuranceCost = totalCost
+            selfPayCost = 0
+        case .medicalInsuranceThenSelfPay:
+            switch draft.costInputSource {
+            case .insurance:
+                guard let value = validMixedCost(from: draft.insuranceCostText) else {
+                    reportError("医保支付仅支持数字、加减乘除和括号，且不能超过本次费用。")
+                    return
+                }
+                insuranceCost = value
+                selfPayCost = totalCost - value
+            case .selfPay:
+                guard let value = validMixedCost(from: draft.selfPayCostText) else {
+                    reportError("自费仅支持数字、加减乘除和括号，且不能超过本次费用。")
+                    return
+                }
+                selfPayCost = value
+                insuranceCost = totalCost - value
+            }
+        }
+
+        record.date = normalizedDate
         record.totalCost = totalCost
         record.insuranceCost = insuranceCost
         record.selfPayCost = selfPayCost
@@ -378,34 +557,132 @@ struct MedicalRecordEditorView: View {
         errorMessage = message
         showingError = true
     }
+
+    private var linkedFollowUps: [MedicalRecord] {
+        guard !draft.record.isFollowUp else { return [] }
+        return store.medicalRecords.filter { $0.parentRecordID == draft.record.id }
+    }
+
+    private var linkedFollowUpCostSummary: MedicalCostSummary {
+        linkedFollowUps.reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+    }
+
+    private var currentItemsTotal: Decimal {
+        draft.record.expenseItemsTotal
+    }
+
+    private var aggregateTotalCost: Decimal {
+        currentItemsTotal + linkedFollowUpCostSummary.totalCost
+    }
+
+    private func mixedCostBinding(for source: MedicalCostInputSource) -> Binding<String> {
+        Binding(
+            get: {
+                switch source {
+                case .insurance: return draft.insuranceCostText
+                case .selfPay: return draft.selfPayCostText
+                }
+            },
+            set: { text in
+                draft.costInputSource = source
+                switch source {
+                case .insurance: draft.insuranceCostText = text
+                case .selfPay: draft.selfPayCostText = text
+                }
+                synchronizeMixedCosts(using: source)
+            }
+        )
+    }
+
+    private func synchronizeMixedCosts(using source: MedicalCostInputSource? = nil) {
+        let source = source ?? draft.costInputSource
+        switch source {
+        case .insurance:
+            guard let insurance = validMixedCost(from: draft.insuranceCostText) else {
+                draft.selfPayCostText = ""
+                return
+            }
+            draft.selfPayCostText = decimalInputText(currentItemsTotal - insurance)
+        case .selfPay:
+            guard let selfPay = validMixedCost(from: draft.selfPayCostText) else {
+                draft.insuranceCostText = ""
+                return
+            }
+            draft.insuranceCostText = decimalInputText(currentItemsTotal - selfPay)
+        }
+    }
+
+    private func validMixedCost(from text: String) -> Decimal? {
+        guard let value = DecimalTextParser.optionalExpression(from: text),
+              value >= 0,
+              value <= currentItemsTotal else { return nil }
+        return value
+    }
+
+    private func decimalInputText(_ value: Decimal) -> String {
+        NSDecimalNumber(decimal: value).stringValue
+    }
+
+    private func containsArithmeticOperator(_ text: String) -> Bool {
+        text.contains { "+-*/×÷（）()".contains($0) }
+    }
+
+    private var sortedHospitalProfiles: [HospitalProfile] {
+        store.hospitalProfiles.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private var selectedHospitalProfile: HospitalProfile? {
+        store.hospitalProfile(named: draft.record.hospital)
+    }
+
+    private var availableVisitTypes: [MedicalVisitType] {
+        if draft.record.isFollowUp || !linkedFollowUps.isEmpty {
+            return MedicalVisitType.allCases.filter { $0 != .pharmacyPurchase }
+        }
+        return MedicalVisitType.allCases
+    }
+
+    private func applyHospital(_ profile: HospitalProfile) {
+        draft.record.hospital = profile.name
+        draft.record.hospitalLevel = profile.level
+        draft.record.hospitalGrade = profile.grade
+        draft.record.hospitalCategory = profile.category
+    }
+
 }
 
-private struct PrescriptionEditorView: View {
+private struct MedicalExpenseItemEditorView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var prescription: Prescription
+    @State private var item: MedicalExpenseItem
+    @State private var quantityText: String
+    @State private var amountText: String
     @State private var showingError = false
-    let onSave: (Prescription) -> Void
+    @State private var errorMessage = ""
+    let onSave: (MedicalExpenseItem) -> Void
 
-    init(prescription: Prescription, onSave: @escaping (Prescription) -> Void) {
-        _prescription = State(initialValue: prescription)
+    init(item: MedicalExpenseItem, onSave: @escaping (MedicalExpenseItem) -> Void) {
+        _item = State(initialValue: item)
+        _quantityText = State(initialValue: Self.decimalText(item.quantity))
+        _amountText = State(initialValue: Self.decimalText(item.amount))
         self.onSave = onSave
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("药物") {
-                    field("药品名称：", prompt: "例如：布洛芬", text: $prescription.medicine)
-                    field("规格：", prompt: "例如：0.3g", text: $prescription.specification)
-                    field("频率：", prompt: "例如：每日 2 次", text: $prescription.frequency)
-                    field("每次用量：", prompt: "例如：1 片", text: $prescription.dose)
-                    field("疗程：", prompt: "例如：7 天", text: $prescription.duration)
+                Section("项目") {
+                    field("项目名称：", prompt: "例如：布洛芬或膝关节 MRI", text: $item.name)
+                    numericField("数量：", prompt: "例如 2", text: $quantityText, allowsExpression: false)
+                    field("单位：", prompt: "例如：盒、次、项", text: $item.unit)
+                    numericField("金额：", prompt: "例如 85.60+20", text: $amountText, allowsExpression: true)
                 }
                 Section("备注") {
-                    IMESafeMultilineTextField(prompt: "例如：饭后服用", text: $prescription.remark)
+                    IMESafeMultilineTextField(prompt: "可选", text: $item.note)
                 }
             }
-            .navigationTitle("处方药物")
+            .navigationTitle("费用项目")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -414,20 +691,15 @@ private struct PrescriptionEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         commitPendingTextInput {
-                            let medicine = prescription.medicine.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !medicine.isEmpty else {
-                                showingError = true
-                                return
-                            }
-                            prescription.medicine = medicine
-                            onSave(prescription)
-                            dismiss()
+                            save()
                         }
                     }
                 }
             }
-            .alert("请填写药品名称", isPresented: $showingError) {
+            .alert("无法保存费用项目", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
             }
         }
     }
@@ -437,5 +709,67 @@ private struct PrescriptionEditorView: View {
             IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
                 .frame(maxWidth: 260)
         }
+    }
+
+    private func numericField(
+        _ title: String,
+        prompt: String,
+        text: Binding<String>,
+        allowsExpression: Bool
+    ) -> some View {
+        LabeledContent(title) {
+            VStack(alignment: .trailing, spacing: 2) {
+                TextField(prompt, text: text)
+                    .multilineTextAlignment(.trailing)
+#if os(iOS)
+                    .keyboardType(allowsExpression ? .numbersAndPunctuation : .decimalPad)
+#endif
+                if allowsExpression,
+                   text.wrappedValue.contains(where: { "+-*/×÷（）()".contains($0) }),
+                   let value = DecimalTextParser.expression(from: text.wrappedValue) {
+                    Text("= \(MedicalValueFormatter.money(value))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: 260)
+        }
+    }
+
+    private func save() {
+        let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let unit = item.unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            reportError("请填写项目名称。")
+            return
+        }
+        guard let quantity = DecimalTextParser.decimal(from: quantityText), quantity > 0 else {
+            reportError("数量必须大于零。")
+            return
+        }
+        guard !unit.isEmpty else {
+            reportError("请填写单位。")
+            return
+        }
+        guard let amount = DecimalTextParser.expression(from: amountText), amount >= 0 else {
+            reportError("金额仅支持数字、加减乘除和括号，计算结果不能小于零。")
+            return
+        }
+
+        item.name = name
+        item.quantity = quantity
+        item.unit = unit
+        item.amount = amount
+        onSave(item)
+        dismiss()
+    }
+
+    private func reportError(_ message: String) {
+        errorMessage = message
+        showingError = true
+    }
+
+    private static func decimalText(_ value: Decimal) -> String {
+        value == 0 ? "" : NSDecimalNumber(decimal: value).stringValue
     }
 }

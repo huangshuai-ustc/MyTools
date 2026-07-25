@@ -182,7 +182,7 @@ struct ProfileView: View {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyyMMddHHmm"
-        return formatter.string(from: date)
+        return formatter.string(from: date) + ".mytools"
     }
 }
 

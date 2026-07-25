@@ -43,6 +43,8 @@
 		A40000000000000000000002 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000002 /* AttachmentStore.swift */; };
 		A40000000000000000000003 /* HealthRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000003 /* HealthRecordsView.swift */; };
 		A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000004 /* MedicalRecordEditorView.swift */; };
+		A40000000000000000000005 /* HospitalDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000005 /* HospitalDirectoryView.swift */; };
+		A50000000000000000000001 /* StockDividendEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000001 /* StockDividendEditorView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -84,8 +86,10 @@
 		B40000000000000000000002 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
 		B40000000000000000000003 /* HealthRecordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecordsView.swift; sourceTree = "<group>"; };
 		B40000000000000000000004 /* MedicalRecordEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordEditorView.swift; sourceTree = "<group>"; };
+		B40000000000000000000005 /* HospitalDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HospitalDirectoryView.swift; sourceTree = "<group>"; };
+		B50000000000000000000001 /* StockDividendEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockDividendEditorView.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		C6BE89B130134C9800036D33 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "我的工具箱.app"; path = "/Users/huangshuai11/Documents/MyTools/build/Debug/我的工具箱.app"; sourceTree = "<absolute>"; };
+		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -93,6 +97,7 @@
 			isa = PBXGroup;
 			children = (
 				D00000000000000000000006 /* 我的工具箱 */,
+				E19E9F2D301499DA0018B621 /* 我的工具箱.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -199,6 +204,7 @@
 				B00000000000000000000010 /* StocksView.swift */,
 				B1000000000000000000000B /* StockEditorView.swift */,
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
+				B50000000000000000000001 /* StockDividendEditorView.swift */,
 			);
 			path = Stocks;
 			sourceTree = "<group>";
@@ -234,6 +240,7 @@
 			children = (
 				B40000000000000000000003 /* HealthRecordsView.swift */,
 				B40000000000000000000004 /* MedicalRecordEditorView.swift */,
+				B40000000000000000000005 /* HospitalDirectoryView.swift */,
 			);
 			path = Health;
 			sourceTree = "<group>";
@@ -254,7 +261,7 @@
 			);
 			name = "我的工具箱";
 			productName = "我的工具箱";
-			productReference = C6BE89B130134C9800036D33 /* 我的工具箱.app */;
+			productReference = E19E9F2D301499DA0018B621 /* 我的工具箱.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -304,6 +311,7 @@
 				A40000000000000000000002 /* AttachmentStore.swift in Sources */,
 				A40000000000000000000003 /* HealthRecordsView.swift in Sources */,
 				A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */,
+				A40000000000000000000005 /* HospitalDirectoryView.swift in Sources */,
 				A30000000000000000000001 /* SensitiveAccessView.swift in Sources */,
 				A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */,
 				A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */,
@@ -335,6 +343,7 @@
 				A1000000000000000000000A /* BankCardEditorView.swift in Sources */,
 				A1000000000000000000000B /* StockEditorView.swift in Sources */,
 				A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */,
+				A50000000000000000000001 /* StockDividendEditorView.swift in Sources */,
 				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

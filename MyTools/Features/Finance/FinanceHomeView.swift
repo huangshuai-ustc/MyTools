@@ -7,19 +7,20 @@ struct HomeView: View {
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
     @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
+    @AppStorage("finance-hide-inactive-banks-v1") private var hidesInactiveBanks = true
 
     private var filteredAccounts: [BankAccount] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let accounts: [BankAccount]
-        if searchTerm.isEmpty {
-            accounts = store.accounts
-        } else {
-            accounts = store.accounts.filter { account in
-                accountMatches(account, searchTerm: searchTerm)
-                    || store.cards(for: account).contains { cardMatches($0, searchTerm: searchTerm) }
-            }
-        }
-        return selectedSortOrder.sorted(accounts.filter(regionFilter.includes))
+        return selectedSortOrder.sorted(
+            store.accounts
+                .filter(regionFilter.includes)
+                .filter { account in
+                    (searchTerm.isEmpty
+                     || accountMatches(account, searchTerm: searchTerm)
+                     || store.cards(for: account).contains { cardMatches($0, searchTerm: searchTerm) })
+                        && (!hidesInactiveBanks || !isInactive(account))
+                }
+        )
     }
 
     private var selectedSortOrder: AccountSortOrder {
@@ -37,27 +38,20 @@ struct HomeView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section {
+            Section("档案总览 · \(regionFilter.title)") {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        financeTitle
-                        Spacer(minLength: 12)
-                        archiveSummary
-                    }
-                    VStack(alignment: .leading, spacing: 12) {
-                        financeTitle
-                        archiveSummary
-                    }
+                    HStack(spacing: 12) { financeMetrics }
+                    VStack(alignment: .leading, spacing: 10) { financeMetrics }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 3)
             }
 
-            Section("银行账户") {
+            Section("银行档案") {
                 if filteredAccounts.isEmpty {
                     ContentUnavailableView(
-                        query.isEmpty ? "暂无银行账户" : "没有搜索结果",
+                        query.isEmpty ? "暂无银行档案" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
-                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
+                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行档案" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
                 }
                 if auth.isAdmin {
@@ -68,6 +62,13 @@ struct HomeView: View {
                 } else {
                     ForEach(filteredAccounts) { account in
                         accountLink(account)
+                    }
+                }
+                if hiddenInactiveCount > 0 {
+                    Button {
+                        hidesInactiveBanks = false
+                    } label: {
+                        Label("显示 \(hiddenInactiveCount) 家停用银行", systemImage: "eye")
                     }
                 }
             }
@@ -95,7 +96,7 @@ struct HomeView: View {
         .scrollDismissesKeyboard(.interactively)
 #endif
         .sheet(item: $editingAccount) { account in
-            AccountEditorView(account: account, isNew: true)
+            AccountEditorView(account: account, isNew: true, cards: [])
                 .id(account.id)
                 .iOSLargeSheet()
         }
@@ -113,7 +114,8 @@ struct HomeView: View {
                     Spacer(minLength: 4)
                     BankRegionBadge(region: account.region)
                 }
-                let subtitle = [subaccountSummary(for: account), account.branchName, account.name]
+                let cards = store.cards(for: account)
+                let subtitle = [account.branchName, account.name]
                     .filter { !$0.isEmpty }
                     .joined(separator: " · ")
                 if !subtitle.isEmpty {
@@ -122,42 +124,67 @@ struct HomeView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                Text("\(store.cards(for: account).count) 张银行卡")
+                Text(financeRowSummary(account, cards: cards))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                let currencies = financeCurrencies(account, cards: cards)
+                if !currencies.isEmpty {
+                    Text(currencies)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.vertical, 3)
         }
     }
 
     private func deleteAccounts(at offsets: IndexSet) {
+        guard auth.isAdmin else { return }
         let ids = Set(offsets.map { filteredAccounts[$0].id })
         let originalOffsets = IndexSet(store.accounts.indices.filter { ids.contains(store.accounts[$0].id) })
         store.deleteAccount(at: originalOffsets)
     }
 
-    private var financeTitle: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "building.columns.fill")
-                .font(.title2)
-                .foregroundStyle(.blue)
-                .frame(width: 34, height: 34)
+    @ViewBuilder
+    private var financeMetrics: some View {
+        financeMetric("银行", value: visibleAccounts.count, systemImage: "building.columns")
+        financeMetric("子账户", value: visibleSubaccountCount, systemImage: "list.bullet.rectangle")
+        financeMetric("借记/扣账卡", value: visibleDebitCount, systemImage: "creditcard")
+        financeMetric("贷记/信用卡", value: visibleCreditCount, systemImage: "creditcard.fill")
+    }
+
+    private func financeMetric(_ title: String, value: Int, systemImage: String) -> some View {
+        Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text("个人金融").font(.title2.bold())
-                Text("银行账户与银行卡档案")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Text("\(value)").font(.headline.monospacedDigit())
+                Text(title).font(.caption).foregroundStyle(.secondary)
             }
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(.blue)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var visibleAccounts: [BankAccount] {
+        store.accounts.filter(regionFilter.includes).filter { !hidesInactiveBanks || !isInactive($0) }
+    }
+
+    private var visibleSubaccountCount: Int {
+        visibleAccounts.reduce(0) { total, account in
+            total + (account.region == .domestic ? account.domesticSubaccounts.count : account.foreignSubaccounts.count)
         }
     }
 
-    private var archiveSummary: some View {
-        HStack(spacing: 12) {
-            Label("\(store.currentBankCount) 家银行", systemImage: "building.columns")
-            Label("\(store.currentCardCount) 张卡", systemImage: "creditcard")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    private var visibleDebitCount: Int {
+        visibleAccounts.flatMap(store.cards(for:)).filter { $0.kind == .debit && $0.status != .closed }.count
+    }
+
+    private var visibleCreditCount: Int {
+        visibleAccounts.flatMap(store.cards(for:)).filter { $0.kind == .credit && $0.status != .closed }.count
+    }
+
+    private var hiddenInactiveCount: Int {
+        store.accounts.filter(regionFilter.includes).filter(isInactive).count
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
@@ -181,18 +208,35 @@ struct HomeView: View {
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 
-    private func subaccountSummary(for account: BankAccount) -> String {
+    private func financeRowSummary(_ account: BankAccount, cards: [BankCard]) -> String {
+        let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
+        let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
+        let subs = account.region == .domestic ? account.domesticSubaccounts.count : account.foreignSubaccounts.count
         switch account.region {
         case .domestic:
-            return account.domesticSubaccounts.isEmpty ? "" : "\(account.domesticSubaccounts.count) 个子账户"
+            return "\(debit) 张借记卡 · \(credit) 张贷记卡 · \(subs) 个特别账户"
         case .overseas:
-            return account.foreignSubaccounts.isEmpty ? "" : "\(account.foreignSubaccounts.count) 个子账户"
+            return "\(subs) 个子账户 · \(debit) 张扣账卡 · \(credit) 张信用卡"
         }
+    }
+
+    private func financeCurrencies(_ account: BankAccount, cards: [BankCard]) -> String {
+        let subaccountCurrencies = account.region == .domestic
+            ? account.domesticSubaccounts.flatMap(\.currencies)
+            : account.foreignSubaccounts.flatMap(\.currencies)
+        return CurrencyCode.displayOrdered(Set(cards.flatMap(\.currencies) + subaccountCurrencies))
+            .map(\.rawValue)
+            .joined(separator: " · ")
+    }
+
+    private func isInactive(_ account: BankAccount) -> Bool {
+        account.isInactiveFinanceArchive(cards: store.cards(for: account))
     }
 }
 
 struct CardRow: View {
     let card: BankCard
+    var region: BankRegion? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -207,7 +251,7 @@ struct CardRow: View {
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     HStack(spacing: 6) {
-                        CardKindText(kind: card.kind)
+                        CardKindText(kind: card.kind, region: region)
                         CardStatusText(status: card.status)
                     }
                 }
@@ -279,17 +323,23 @@ struct CardNetworkTags: View {
 
 struct CardKindText: View {
     let kind: BankCardKind
+    var region: BankRegion? = nil
 
     private var color: Color {
         kind == .debit ? .blue : .purple
     }
 
     var body: some View {
-        Text(kind.title)
+        Text(title)
             .font(.caption.weight(.semibold))
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var title: String {
+        if region == .overseas, kind == .debit { return "扣账卡" }
+        return kind.title
     }
 }
 
@@ -337,6 +387,7 @@ struct CardStatusText: View {
 
 enum AccountSortOrder: String, CaseIterable, Identifiable {
     case added
+    case addedReversed
     case openedNewest
     case openedOldest
     case nameAscending
@@ -349,6 +400,7 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .added: return "添加顺序"
+        case .addedReversed: return "添加顺序：新到旧"
         case .openedNewest: return "开户时间：新到旧"
         case .openedOldest: return "开户时间：旧到新"
         case .nameAscending: return "名称：A-Z"
@@ -358,10 +410,41 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
         }
     }
 
+    var criterion: AccountSortCriterion {
+        switch self {
+        case .added, .addedReversed: return .added
+        case .openedNewest, .openedOldest: return .openedAt
+        case .nameAscending, .nameDescending: return .name
+        case .domesticFirst, .overseasFirst: return .region
+        }
+    }
+
+    var direction: SortDirection {
+        switch self {
+        case .added, .openedOldest, .nameAscending, .domesticFirst: return .ascending
+        case .addedReversed, .openedNewest, .nameDescending, .overseasFirst: return .descending
+        }
+    }
+
+    static func value(criterion: AccountSortCriterion, direction: SortDirection) -> Self {
+        switch (criterion, direction) {
+        case (.added, .ascending): return .added
+        case (.added, .descending): return .addedReversed
+        case (.openedAt, .ascending): return .openedOldest
+        case (.openedAt, .descending): return .openedNewest
+        case (.name, .ascending): return .nameAscending
+        case (.name, .descending): return .nameDescending
+        case (.region, .ascending): return .domesticFirst
+        case (.region, .descending): return .overseasFirst
+        }
+    }
+
     func sorted(_ accounts: [BankAccount]) -> [BankAccount] {
         switch self {
         case .added:
             return accounts
+        case .addedReversed:
+            return Array(accounts.reversed())
         case .openedNewest:
             return accounts.sorted {
                 $0.openedAt == $1.openedAt ? isNameAscending($0, $1) : $0.openedAt > $1.openedAt
@@ -403,14 +486,59 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
     }
 }
 
+enum AccountSortCriterion: String, CaseIterable, Identifiable {
+    case added
+    case openedAt
+    case name
+    case region
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .added: return "添加时间"
+        case .openedAt: return "开户时间"
+        case .name: return "名称"
+        case .region: return "境内/境外"
+        }
+    }
+}
+
+enum SortDirection: String, CaseIterable, Identifiable {
+    case ascending
+    case descending
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .ascending: return "升序"
+        case .descending: return "降序"
+        }
+    }
+}
+
 struct AccountSortMenu: View {
     @Binding var selection: String
 
+    private var selectedOrder: AccountSortOrder {
+        AccountSortOrder(rawValue: selection) ?? .nameAscending
+    }
+
     var body: some View {
         Menu {
-            Picker("排序方式", selection: $selection) {
-                ForEach(AccountSortOrder.allCases) { order in
-                    Text(order.title).tag(order.rawValue)
+            Menu("排序依据：\(selectedOrder.criterion.title)") {
+                Picker("排序依据", selection: criterionBinding) {
+                    ForEach(AccountSortCriterion.allCases) { criterion in
+                        Text(criterion.title).tag(criterion)
+                    }
+                }
+            }
+            Menu("排列顺序：\(selectedOrder.direction.title)") {
+                Picker("排列顺序", selection: directionBinding) {
+                    ForEach(SortDirection.allCases) { direction in
+                        Text(direction.title).tag(direction)
+                    }
                 }
             }
         } label: {
@@ -418,6 +546,20 @@ struct AccountSortMenu: View {
         }
         .accessibilityLabel("账户排序")
         .help("账户排序")
+    }
+
+    private var criterionBinding: Binding<AccountSortCriterion> {
+        Binding(
+            get: { selectedOrder.criterion },
+            set: { selection = AccountSortOrder.value(criterion: $0, direction: selectedOrder.direction).rawValue }
+        )
+    }
+
+    private var directionBinding: Binding<SortDirection> {
+        Binding(
+            get: { selectedOrder.direction },
+            set: { selection = AccountSortOrder.value(criterion: selectedOrder.criterion, direction: $0).rawValue }
+        )
     }
 }
 
@@ -429,6 +571,7 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
     case debitFirst
     case creditFirst
     case status
+    case statusReversed
 
     var id: Self { self }
 
@@ -441,6 +584,36 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
         case .debitFirst: return "借记卡优先"
         case .creditFirst: return "贷记卡优先"
         case .status: return "按状态"
+        case .statusReversed: return "按状态：倒序"
+        }
+    }
+
+    var criterion: CardSortCriterion {
+        switch self {
+        case .nameAscending, .nameDescending: return .name
+        case .openedNewest, .openedOldest: return .openedAt
+        case .debitFirst, .creditFirst: return .kind
+        case .status, .statusReversed: return .status
+        }
+    }
+
+    var direction: SortDirection {
+        switch self {
+        case .nameAscending, .openedOldest, .debitFirst, .status: return .ascending
+        case .nameDescending, .openedNewest, .creditFirst, .statusReversed: return .descending
+        }
+    }
+
+    static func value(criterion: CardSortCriterion, direction: SortDirection) -> Self {
+        switch (criterion, direction) {
+        case (.name, .ascending): return .nameAscending
+        case (.name, .descending): return .nameDescending
+        case (.openedAt, .ascending): return .openedOldest
+        case (.openedAt, .descending): return .openedNewest
+        case (.kind, .ascending): return .debitFirst
+        case (.kind, .descending): return .creditFirst
+        case (.status, .ascending): return .status
+        case (.status, .descending): return .statusReversed
         }
     }
 
@@ -467,11 +640,12 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
             return cards.sorted { groupedBefore($0, $1, firstKind: .debit) }
         case .creditFirst:
             return cards.sorted { groupedBefore($0, $1, firstKind: .credit) }
-        case .status:
+        case .status, .statusReversed:
             return cards.sorted {
                 let lhsRank = statusRank($0.status)
                 let rhsRank = statusRank($1.status)
-                return lhsRank == rhsRank ? isNameAscending($0, $1) : lhsRank < rhsRank
+                if lhsRank == rhsRank { return isNameAscending($0, $1) }
+                return self == .status ? lhsRank < rhsRank : lhsRank > rhsRank
             }
         }
     }
@@ -509,6 +683,24 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
     }
 }
 
+enum CardSortCriterion: String, CaseIterable, Identifiable {
+    case name
+    case openedAt
+    case kind
+    case status
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .name: return "名称"
+        case .openedAt: return "开户时间"
+        case .kind: return "借记卡/贷记卡"
+        case .status: return "状态"
+        }
+    }
+}
+
 enum CardCategoryFilter: String, CaseIterable, Identifiable {
     case all
     case debit
@@ -536,11 +728,24 @@ enum CardCategoryFilter: String, CaseIterable, Identifiable {
 struct CardSortMenu: View {
     @Binding var selection: String
 
+    private var selectedOrder: CardSortOrder {
+        CardSortOrder(rawValue: selection) ?? .nameAscending
+    }
+
     var body: some View {
         Menu {
-            Picker("排序方式", selection: $selection) {
-                ForEach(CardSortOrder.allCases) { order in
-                    Text(order.title).tag(order.rawValue)
+            Menu("排序依据：\(selectedOrder.criterion.title)") {
+                Picker("排序依据", selection: criterionBinding) {
+                    ForEach(CardSortCriterion.allCases) { criterion in
+                        Text(criterion.title).tag(criterion)
+                    }
+                }
+            }
+            Menu("排列顺序：\(selectedOrder.direction.title)") {
+                Picker("排列顺序", selection: directionBinding) {
+                    ForEach(SortDirection.allCases) { direction in
+                        Text(direction.title).tag(direction)
+                    }
                 }
             }
         } label: {
@@ -548,6 +753,20 @@ struct CardSortMenu: View {
         }
         .accessibilityLabel("银行卡排序")
         .help("银行卡排序")
+    }
+
+    private var criterionBinding: Binding<CardSortCriterion> {
+        Binding(
+            get: { selectedOrder.criterion },
+            set: { selection = CardSortOrder.value(criterion: $0, direction: selectedOrder.direction).rawValue }
+        )
+    }
+
+    private var directionBinding: Binding<SortDirection> {
+        Binding(
+            get: { selectedOrder.direction },
+            set: { selection = CardSortOrder.value(criterion: selectedOrder.criterion, direction: $0).rawValue }
+        )
     }
 }
 
