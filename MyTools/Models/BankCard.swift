@@ -719,8 +719,9 @@ struct VaultData: Codable, @unchecked Sendable {
     }
 
     var currentBankCount: Int {
-        accounts.lazy.filter { account in
-            let linkedCards = self.cards.filter { $0.accountID == account.id }
+        let cardsByAccountID = Dictionary(grouping: cards) { $0.accountID }
+        return accounts.lazy.filter { account in
+            let linkedCards = cardsByAccountID[account.id] ?? []
             return !account.isInactiveFinanceArchive(cards: linkedCards)
         }.count
     }

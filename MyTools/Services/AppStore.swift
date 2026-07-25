@@ -96,11 +96,13 @@ final class AppStore: ObservableObject {
     @Published private(set) var isRefreshingExchangeRate = false
     @Published private(set) var isInitialDataLoaded = false
     private let secureStore = SecureStore()
+    private let persistence = VaultPersistenceCoordinator()
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
     private let attachmentStore = AttachmentStore()
     private let defaults = UserDefaults.standard
     private var lastExchangeRateRequestAt: Date?
+    private var isRestoringBackup = false
 
     init() {
         accounts = []
@@ -144,14 +146,14 @@ final class AppStore: ObservableObject {
         let upgradedVault = Self.initializingHospitalDirectory(in: vault)
         applyVault(upgradedVault)
         // 旧版本加密数据在管理员认证后迁移到普通可读存储；之后普通模式启动不读取 Keychain。
-        try? secureStore.saveVault(upgradedVault)
+        persistence.schedule(upgradedVault)
     }
 
     private func applyInitialSnapshot(_ snapshot: AppStoreInitialSnapshot) {
         let upgradedVault = Self.initializingHospitalDirectory(in: snapshot.vault)
         applyVault(upgradedVault)
         if !snapshot.vault.hospitalDirectoryInitialized {
-            try? secureStore.saveVault(upgradedVault)
+            persistence.schedule(upgradedVault)
         }
         isInitialDataLoaded = true
         startupLogger.info(
@@ -388,15 +390,21 @@ final class AppStore: ObservableObject {
 
     func deleteMedicalRecords(ids: Set<UUID>) {
         var recordIDsToDelete = ids
-        while true {
-            let dependentIDs = Set(medicalRecords.compactMap { record -> UUID? in
-                guard let parentID = record.parentRecordID,
-                      recordIDsToDelete.contains(parentID) else { return nil }
-                return record.id
-            })
-            let expandedIDs = recordIDsToDelete.union(dependentIDs)
-            guard expandedIDs != recordIDsToDelete else { break }
-            recordIDsToDelete = expandedIDs
+        let childrenByParentID = Dictionary(
+            grouping: medicalRecords.compactMap { record -> (UUID, UUID)? in
+                record.parentRecordID.map { ($0, record.id) }
+            },
+            by: \.0
+        ).mapValues { $0.map(\.1) }
+        var pendingParentIDs = Array(ids)
+        var nextParentIndex = 0
+        while nextParentIndex < pendingParentIDs.count {
+            let parentID = pendingParentIDs[nextParentIndex]
+            nextParentIndex += 1
+            for childID in childrenByParentID[parentID, default: []]
+            where recordIDsToDelete.insert(childID).inserted {
+                pendingParentIDs.append(childID)
+            }
         }
 
         for record in medicalRecords where recordIDsToDelete.contains(record.id) {
@@ -495,12 +503,15 @@ final class AppStore: ObservableObject {
         let stockSnapshot = stocks
         let refreshedQuotes = await quoteService.fetchQuotes(for: stockSnapshot)
 
+        let stockIndices = Dictionary(
+            uniqueKeysWithValues: stocks.indices.map { (stocks[$0].id, $0) }
+        )
         for stock in stockSnapshot {
             guard let quote = refreshedQuotes[stock.id] else {
                 failures[stock.id] = "行情服务暂时不可用"
                 continue
             }
-            guard let index = stocks.firstIndex(where: { $0.id == stock.id }) else { continue }
+            guard let index = stockIndices[stock.id] else { continue }
             stocks[index].symbol = quote.symbol
             stocks[index].quoteName = quote.name
             stocks[index].latestPrice = quote.latestPrice
@@ -579,31 +590,48 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func makeBackupDocument(password: String) throws -> VaultBackupDocument {
-        let medicalRecordsWithAttachments = try attachmentStore.recordsForBackup(medicalRecords)
-        let cardsWithAttachments = try attachmentStore.cardsForBackup(cards)
-        let vault = VaultData(
+    func makeBackupDocument(password: String) async throws -> VaultBackupDocument {
+        let snapshot = VaultData(
             accounts: accounts,
-            cards: cardsWithAttachments,
+            cards: cards,
             stocks: stocks,
             currencyExchangeRecords: currencyExchangeRecords,
-            medicalRecords: medicalRecordsWithAttachments,
+            medicalRecords: medicalRecords,
             hospitalProfiles: hospitalProfiles
         )
-        let data = try VaultBackupCrypto.makeBackup(from: vault, password: password)
+        let data = try await Task.detached(priority: .userInitiated) {
+            let attachmentStore = AttachmentStore()
+            var vault = snapshot
+            vault.medicalRecords = try attachmentStore.recordsForBackup(vault.medicalRecords)
+            vault.cards = try attachmentStore.cardsForBackup(vault.cards)
+            return try VaultBackupCrypto.makeBackup(from: vault, password: password)
+        }.value
         return VaultBackupDocument(data: data)
     }
 
-    func restoreBackup(from data: Data, password: String) throws {
-        var vault = Self.initializingHospitalDirectory(
-            in: try VaultBackupCrypto.restoreVault(from: data, password: password)
-        )
-        vault.medicalRecords = try attachmentStore.restoreAttachments(in: vault.medicalRecords)
-        vault.cards = try attachmentStore.restoreAttachments(in: vault.cards)
-        try secureStore.saveVault(vault)
+    func restoreBackup(from data: Data, password: String) async throws {
+        isRestoringBackup = true
+        defer { isRestoringBackup = false }
+        let restoredVault = try await Task.detached(priority: .userInitiated) {
+            let attachmentStore = AttachmentStore()
+            var restoredVault = try VaultBackupCrypto.restoreVault(from: data, password: password)
+            restoredVault.medicalRecords = try attachmentStore.restoreAttachments(
+                in: restoredVault.medicalRecords
+            )
+            restoredVault.cards = try attachmentStore.restoreAttachments(in: restoredVault.cards)
+            return restoredVault
+        }.value
+        let vault = Self.initializingHospitalDirectory(in: restoredVault)
+        try await Task.detached(priority: .userInitiated) { [persistence] in
+            try persistence.saveImmediately(vault)
+        }.value
         applyVault(vault)
         quoteErrors = [:]
         quoteSources = [:]
+    }
+
+    func flushPendingPersistence() async {
+        await persistence.flush()
     }
 
     func delete(at offsets: IndexSet) {
@@ -620,7 +648,8 @@ final class AppStore: ObservableObject {
         persist()
     }
     private func persist() {
-        try? secureStore.saveVault(
+        guard !isRestoringBackup else { return }
+        persistence.schedule(
             VaultData(
                 accounts: accounts,
                 cards: cards,

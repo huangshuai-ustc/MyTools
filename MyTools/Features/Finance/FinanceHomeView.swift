@@ -9,32 +9,12 @@ struct HomeView: View {
     @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
     @AppStorage("finance-hide-inactive-banks-v1") private var hidesInactiveBanks = true
 
-    private var filteredAccounts: [BankAccount] {
-        let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return selectedSortOrder.sorted(
-            store.accounts
-                .filter(regionFilter.includes)
-                .filter { account in
-                    (searchTerm.isEmpty
-                     || accountMatches(account, searchTerm: searchTerm)
-                     || store.cards(for: account).contains { cardMatches($0, searchTerm: searchTerm) })
-                }
-        )
-    }
-
-    private var activeAccounts: [BankAccount] {
-        filteredAccounts.filter { !isInactive($0) }
-    }
-
-    private var inactiveAccounts: [BankAccount] {
-        filteredAccounts.filter(isInactive)
-    }
-
     private var selectedSortOrder: AccountSortOrder {
         AccountSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
     }
 
     var body: some View {
+        let snapshot = financeSnapshot
         List {
             Section {
                 Picker("银行地区", selection: $regionFilter) {
@@ -47,14 +27,14 @@ struct HomeView: View {
 
             Section("银行账户总览 · \(regionFilter.title)") {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { financeMetrics }
-                    VStack(alignment: .leading, spacing: 10) { financeMetrics }
+                    HStack(spacing: 12) { financeMetrics(snapshot) }
+                    VStack(alignment: .leading, spacing: 10) { financeMetrics(snapshot) }
                 }
                 .padding(.vertical, 3)
             }
 
             Section("银行账户") {
-                if activeAccounts.isEmpty {
+                if snapshot.activeAccounts.isEmpty {
                     ContentUnavailableView(
                         query.isEmpty ? "暂无正常银行账户" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
@@ -62,33 +42,33 @@ struct HomeView: View {
                     )
                 }
                 if auth.isAdmin {
-                    ForEach(activeAccounts) { account in
-                        accountLink(account)
+                    ForEach(snapshot.activeAccounts) { account in
+                        accountLink(account, cards: snapshot.cards(for: account))
                     }
-                    .onDelete { deleteAccounts(at: $0, from: activeAccounts) }
+                    .onDelete { deleteAccounts(at: $0, from: snapshot.activeAccounts) }
                 } else {
-                    ForEach(activeAccounts) { account in
-                        accountLink(account)
+                    ForEach(snapshot.activeAccounts) { account in
+                        accountLink(account, cards: snapshot.cards(for: account))
                     }
                 }
-                if hidesInactiveBanks, hiddenInactiveCount > 0 {
+                if hidesInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
                     Button {
                         hidesInactiveBanks = false
                     } label: {
-                        Label("显示 \(hiddenInactiveCount) 家停用银行", systemImage: "eye")
+                        Label("显示 \(snapshot.inactiveAccounts.count) 家停用银行", systemImage: "eye")
                     }
                 }
             }
-            if !hidesInactiveBanks, !inactiveAccounts.isEmpty {
-                Section("停用银行（\(inactiveAccounts.count)）") {
+            if !hidesInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
+                Section("停用银行（\(snapshot.inactiveAccounts.count)）") {
                     if auth.isAdmin {
-                        ForEach(inactiveAccounts) { account in
-                            accountLink(account)
+                        ForEach(snapshot.inactiveAccounts) { account in
+                            accountLink(account, cards: snapshot.cards(for: account))
                         }
-                        .onDelete { deleteAccounts(at: $0, from: inactiveAccounts) }
+                        .onDelete { deleteAccounts(at: $0, from: snapshot.inactiveAccounts) }
                     } else {
-                        ForEach(inactiveAccounts) { account in
-                            accountLink(account)
+                        ForEach(snapshot.inactiveAccounts) { account in
+                            accountLink(account, cards: snapshot.cards(for: account))
                         }
                     }
                     Button {
@@ -128,7 +108,7 @@ struct HomeView: View {
         }
     }
 
-    private func accountLink(_ account: BankAccount) -> some View {
+    private func accountLink(_ account: BankAccount, cards: [BankCard]) -> some View {
         NavigationLink {
             AccountDetailView(account: account, backTitle: "个人金融")
         } label: {
@@ -143,7 +123,6 @@ struct HomeView: View {
                         AccountStatusText(status: account.status)
                     }
                 }
-                let cards = store.cards(for: account)
                 let subtitle = [account.branchName, account.name]
                     .filter { !$0.isEmpty }
                     .joined(separator: " · ")
@@ -175,11 +154,11 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private var financeMetrics: some View {
-        financeMetric("银行", value: visibleAccounts.count, systemImage: "building.columns")
-        financeMetric("子账户", value: visibleSubaccountCount, systemImage: "list.bullet.rectangle")
-        financeMetric("借记/扣账卡", value: visibleDebitCount, systemImage: "creditcard")
-        financeMetric("贷记/信用卡", value: visibleCreditCount, systemImage: "creditcard.fill")
+    private func financeMetrics(_ snapshot: FinanceViewSnapshot) -> some View {
+        financeMetric("银行", value: snapshot.visibleAccountCount, systemImage: "building.columns")
+        financeMetric("子账户", value: snapshot.visibleSubaccountCount, systemImage: "list.bullet.rectangle")
+        financeMetric("借记/扣账卡", value: snapshot.visibleDebitCount, systemImage: "creditcard")
+        financeMetric("贷记/信用卡", value: snapshot.visibleCreditCount, systemImage: "creditcard.fill")
     }
 
     private func financeMetric(_ title: String, value: Int, systemImage: String) -> some View {
@@ -194,26 +173,57 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var visibleAccounts: [BankAccount] {
-        store.accounts.filter(regionFilter.includes).filter { !hidesInactiveBanks || !isInactive($0) }
-    }
-
-    private var visibleSubaccountCount: Int {
-        visibleAccounts.reduce(0) { total, account in
-            total + (account.region == .domestic ? account.domesticSubaccounts.count : account.foreignSubaccounts.count)
+    private var financeSnapshot: FinanceViewSnapshot {
+        var cardsByAccountID: [UUID: [BankCard]] = [:]
+        for card in store.cards {
+            guard let accountID = card.accountID else { continue }
+            cardsByAccountID[accountID, default: []].append(card)
         }
-    }
 
-    private var visibleDebitCount: Int {
-        visibleAccounts.flatMap(store.cards(for:)).filter { $0.kind == .debit && $0.status != .closed }.count
-    }
+        let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filteredAccounts = selectedSortOrder.sorted(
+            store.accounts
+                .filter(regionFilter.includes)
+                .filter { account in
+                    searchTerm.isEmpty
+                        || accountMatches(account, searchTerm: searchTerm)
+                        || cardsByAccountID[account.id, default: []].contains {
+                            cardMatches($0, searchTerm: searchTerm)
+                        }
+                }
+        )
+        let activeAccounts = filteredAccounts.filter {
+            !isInactive($0, cards: cardsByAccountID[$0.id, default: []])
+        }
+        let inactiveAccounts = filteredAccounts.filter {
+            isInactive($0, cards: cardsByAccountID[$0.id, default: []])
+        }
+        let visibleAccounts = store.accounts.filter(regionFilter.includes).filter { account in
+            !hidesInactiveBanks
+                || !isInactive(account, cards: cardsByAccountID[account.id, default: []])
+        }
 
-    private var visibleCreditCount: Int {
-        visibleAccounts.flatMap(store.cards(for:)).filter { $0.kind == .credit && $0.status != .closed }.count
-    }
+        var subaccountCount = 0
+        var debitCount = 0
+        var creditCount = 0
+        for account in visibleAccounts {
+            subaccountCount += account.region == .domestic
+                ? account.domesticSubaccounts.count
+                : account.foreignSubaccounts.count
+            for card in cardsByAccountID[account.id, default: []] where card.status != .closed {
+                if card.kind == .debit { debitCount += 1 } else { creditCount += 1 }
+            }
+        }
 
-    private var hiddenInactiveCount: Int {
-        inactiveAccounts.count
+        return FinanceViewSnapshot(
+            activeAccounts: activeAccounts,
+            inactiveAccounts: inactiveAccounts,
+            cardsByAccountID: cardsByAccountID,
+            visibleAccountCount: visibleAccounts.count,
+            visibleSubaccountCount: subaccountCount,
+            visibleDebitCount: debitCount,
+            visibleCreditCount: creditCount
+        )
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
@@ -258,8 +268,22 @@ struct HomeView: View {
             .joined(separator: " · ")
     }
 
-    private func isInactive(_ account: BankAccount) -> Bool {
-        account.isInactiveFinanceArchive(cards: store.cards(for: account))
+    private func isInactive(_ account: BankAccount, cards: [BankCard]) -> Bool {
+        account.isInactiveFinanceArchive(cards: cards)
+    }
+}
+
+private struct FinanceViewSnapshot {
+    let activeAccounts: [BankAccount]
+    let inactiveAccounts: [BankAccount]
+    let cardsByAccountID: [UUID: [BankCard]]
+    let visibleAccountCount: Int
+    let visibleSubaccountCount: Int
+    let visibleDebitCount: Int
+    let visibleCreditCount: Int
+
+    func cards(for account: BankAccount) -> [BankCard] {
+        cardsByAccountID[account.id, default: []]
     }
 }
 

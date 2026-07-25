@@ -14,6 +14,7 @@ struct ProfileView: View {
     @State private var showingBackupMessage = false
     @State private var backupMessage = ""
     @State private var importSucceeded = false
+    @State private var isPreparingImport = false
     @State private var exportFilename = "备份"
 
     var body: some View {
@@ -37,14 +38,22 @@ struct ProfileView: View {
                     } label: {
                         Label("导出加密备份", systemImage: "square.and.arrow.up")
                     }
-                    .disabled(!auth.isAdmin)
+                    .disabled(!auth.isAdmin || isPreparingImport)
 
                     Button {
                         showingImportConfirmation = true
                     } label: {
                         Label("从文件导入备份", systemImage: "square.and.arrow.down")
                     }
-                    .disabled(!auth.isAdmin)
+                    .disabled(!auth.isAdmin || isPreparingImport)
+
+                    if isPreparingImport {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("正在读取备份")
+                        }
+                        .foregroundStyle(.secondary)
+                    }
 
                     if !auth.isAdmin {
                         Text("进入管理员模式后可以导出或导入备份。")
@@ -79,7 +88,7 @@ struct ProfileView: View {
             }
             .sheet(item: $backupPasswordMode, onDismiss: finishBackupPasswordFlow) { mode in
                 BackupPasswordView(mode: mode) { password in
-                    handleBackupPassword(password, mode: mode)
+                    await handleBackupPassword(password, mode: mode)
                 }
                 .iOSLargeSheet()
             }
@@ -128,15 +137,15 @@ struct ProfileView: View {
         }
     }
 
-    private func handleBackupPassword(_ password: String, mode: BackupPasswordMode) -> String? {
+    private func handleBackupPassword(_ password: String, mode: BackupPasswordMode) async -> String? {
         do {
             switch mode {
             case .export:
-                exportDocument = try store.makeBackupDocument(password: password)
+                exportDocument = try await store.makeBackupDocument(password: password)
                 exportFilename = backupFilename(for: Date())
             case .restore:
                 guard let pendingImportData else { throw VaultBackupError.invalidFile }
-                try store.restoreBackup(from: pendingImportData, password: password)
+                try await store.restoreBackup(from: pendingImportData, password: password)
                 self.pendingImportData = nil
                 importSucceeded = true
             }
@@ -158,16 +167,21 @@ struct ProfileView: View {
 
     private func prepareImport(from url: URL) {
         let hasAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if hasAccess { url.stopAccessingSecurityScopedResource() }
-        }
-
-        do {
-            pendingImportData = try Data(contentsOf: url, options: .mappedIfSafe)
-            backupPasswordMode = .restore
-        } catch {
-            pendingImportData = nil
-            reportBackupMessage(error.localizedDescription)
+        isPreparingImport = true
+        Task { @MainActor in
+            defer {
+                if hasAccess { url.stopAccessingSecurityScopedResource() }
+                isPreparingImport = false
+            }
+            do {
+                pendingImportData = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: url)
+                }.value
+                backupPasswordMode = .restore
+            } catch {
+                pendingImportData = nil
+                reportBackupMessage(error.localizedDescription)
+            }
         }
     }
 
@@ -295,10 +309,11 @@ enum BackupPasswordMode: Int, Identifiable {
 struct BackupPasswordView: View {
     @Environment(\.dismiss) private var dismiss
     let mode: BackupPasswordMode
-    let onSubmit: (String) -> String?
+    let onSubmit: (String) async -> String?
     @State private var password = VaultBackupCrypto.defaultPassword
     @State private var confirmation = VaultBackupCrypto.defaultPassword
     @State private var error = ""
+    @State private var isSubmitting = false
     @FocusState private var inputFocused: Bool
 
     private var canSubmit: Bool {
@@ -335,21 +350,35 @@ struct BackupPasswordView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
+                        .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(mode.confirmationTitle, action: requestSubmit)
-                    .disabled(!canSubmit)
+                    Button(action: requestSubmit) {
+                        if isSubmitting {
+                            ProgressView()
+                        } else {
+                            Text(mode.confirmationTitle)
+                        }
+                    }
+                    .disabled(!canSubmit || isSubmitting)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
         }
     }
 
     private func requestSubmit() {
         commitPendingTextInput {
-            if let message = onSubmit(password) {
-                error = message
-            } else {
-                dismiss()
+            guard !isSubmitting else { return }
+            isSubmitting = true
+            let submittedPassword = password
+            Task { @MainActor in
+                if let message = await onSubmit(submittedPassword) {
+                    error = message
+                    isSubmitting = false
+                } else {
+                    dismiss()
+                }
             }
         }
     }

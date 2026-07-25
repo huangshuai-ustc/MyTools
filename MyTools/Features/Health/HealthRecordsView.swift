@@ -14,18 +14,23 @@ struct HealthRecordsView: View {
     @State private var editingRecord: MedicalRecord?
 
     private var displayedVisitGroups: [MedicalVisitGroup] {
-        let recordIDs = Set(store.medicalRecords.map(\.id))
-        let originalVisits = store.medicalRecords
+        let records = store.medicalRecords
+        let recordIDs = Set(records.map(\.id))
+        let originalVisits = records
             .filter { record in
                 guard let parentID = record.parentRecordID else { return true }
                 return !recordIDs.contains(parentID)
             }
             .sorted { $0.date > $1.date }
+        let followUpsByParentID = Dictionary(
+            grouping: records.compactMap { record -> (UUID, MedicalRecord)? in
+                record.parentRecordID.map { ($0, record) }
+            },
+            by: \.0
+        ).mapValues { $0.map(\.1).sorted { $0.date < $1.date } }
 
         return originalVisits.compactMap { originalVisit in
-            let followUps = store.medicalRecords
-                .filter { $0.parentRecordID == originalVisit.id }
-                .sorted { $0.date < $1.date }
+            let followUps = followUpsByParentID[originalVisit.id, default: []]
             let episodeCostSummary = followUps.reduce(originalVisit.costSummary) {
                 $0 + $1.costSummary
             }
@@ -41,8 +46,8 @@ struct HealthRecordsView: View {
         }
     }
 
-    private var groupedRecords: [MedicalYearGroup] {
-        Dictionary(grouping: displayedVisitGroups) {
+    private func yearGroups(from visitGroups: [MedicalVisitGroup]) -> [MedicalYearGroup] {
+        Dictionary(grouping: visitGroups) {
             calendar.component(.year, from: $0.originalVisit.date)
         }
             .map { MedicalYearGroup(year: $0.key, visitGroups: $0.value.sorted { $0.originalVisit.date > $1.originalVisit.date }) }
@@ -59,37 +64,36 @@ struct HealthRecordsView: View {
         Array(Set(store.medicalRecords.flatMap(\.tags))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    private var summaryRecords: [MedicalRecord] {
-        guard let selectedYear else { return store.medicalRecords }
-        return store.medicalRecords.filter { calendar.component(.year, from: $0.date) == selectedYear }
-    }
+    private var overviewSnapshot: MedicalOverviewSnapshot {
+        var total = Decimal.zero
+        var insurance = Decimal.zero
+        var selfPay = Decimal.zero
+        var visitCount = 0
+        var hospitals: Set<String> = []
 
-    private var summaryTotal: Decimal { summaryRecords.reduce(0) { $0 + $1.totalCost } }
-    private var summaryInsurance: Decimal { summaryRecords.reduce(0) { $0 + $1.insuranceCost } }
-    private var summarySelfPay: Decimal { summaryRecords.reduce(0) { $0 + $1.selfPayCost } }
+        for record in store.medicalRecords {
+            if let selectedYear,
+               calendar.component(.year, from: record.date) != selectedYear {
+                continue
+            }
+            total += record.totalCost
+            insurance += record.insuranceCost
+            selfPay += record.selfPayCost
+            guard !record.isPharmacyPurchase else { continue }
+            visitCount += 1
+            let hospital = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !hospital.isEmpty { hospitals.insert(hospital) }
+        }
 
-    private var visitRecords: [MedicalRecord] {
-        summaryRecords.filter { !$0.isPharmacyPurchase }
-    }
-
-    private var hospitalCount: Int {
-        Set(
-            visitRecords
-                .map { $0.hospital.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        ).count
-    }
-
-    private var visitCount: Int {
-        visitRecords.count
-    }
-
-    private var insuranceRatio: Decimal {
-        ratio(summaryInsurance, of: summaryTotal)
-    }
-
-    private var selfPayRatio: Decimal {
-        ratio(summarySelfPay, of: summaryTotal)
+        return MedicalOverviewSnapshot(
+            hospitalCount: hospitals.count,
+            visitCount: visitCount,
+            total: total,
+            insurance: insurance,
+            selfPay: selfPay,
+            insuranceRatio: ratio(insurance, of: total),
+            selfPayRatio: ratio(selfPay, of: total)
+        )
     }
 
     private func ratio(_ value: Decimal, of total: Decimal) -> Decimal {
@@ -106,6 +110,8 @@ struct HealthRecordsView: View {
     }
 
     var body: some View {
+        let visitGroups = displayedVisitGroups
+        let groupedRecords = yearGroups(from: visitGroups)
         List {
             Section("就诊总览") {
                 Picker("统计范围", selection: $selectedYear) {
@@ -152,7 +158,7 @@ struct HealthRecordsView: View {
                 }
             }
 
-            if displayedVisitGroups.isEmpty {
+            if visitGroups.isEmpty {
                 Section {
                     ContentUnavailableView(
                         store.medicalRecords.isEmpty ? "暂无就诊记录" : "没有匹配的就诊记录",
@@ -204,45 +210,46 @@ struct HealthRecordsView: View {
     }
 
     private var overviewMetrics: some View {
-        VStack(spacing: 10) {
+        let summary = overviewSnapshot
+        return VStack(spacing: 10) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) {
-                    summaryMetric("医院", value: "\(hospitalCount) 家")
-                    summaryMetric("就诊次数", value: "\(visitCount) 次")
-                    summaryMetric("总费用", value: MedicalValueFormatter.money(summaryTotal))
+                    summaryMetric("医院", value: "\(summary.hospitalCount) 家")
+                    summaryMetric("就诊次数", value: "\(summary.visitCount) 次")
+                    summaryMetric("总费用", value: MedicalValueFormatter.money(summary.total))
                 }
                 VStack(alignment: .leading, spacing: 9) {
-                    summaryMetric("医院", value: "\(hospitalCount) 家")
-                    summaryMetric("就诊次数", value: "\(visitCount) 次")
-                    summaryMetric("总费用", value: MedicalValueFormatter.money(summaryTotal))
+                    summaryMetric("医院", value: "\(summary.hospitalCount) 家")
+                    summaryMetric("就诊次数", value: "\(summary.visitCount) 次")
+                    summaryMetric("总费用", value: MedicalValueFormatter.money(summary.total))
                 }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) {
                     summaryMetricWithRatio(
                         "医保费用",
-                        amount: summaryInsurance,
-                        ratio: insuranceRatio,
+                        amount: summary.insurance,
+                        ratio: summary.insuranceRatio,
                         color: .blue
                     )
                     summaryMetricWithRatio(
                         "自费费用",
-                        amount: summarySelfPay,
-                        ratio: selfPayRatio,
+                        amount: summary.selfPay,
+                        ratio: summary.selfPayRatio,
                         color: .orange
                     )
                 }
                 VStack(alignment: .leading, spacing: 9) {
                     summaryMetricWithRatio(
                         "医保费用",
-                        amount: summaryInsurance,
-                        ratio: insuranceRatio,
+                        amount: summary.insurance,
+                        ratio: summary.insuranceRatio,
                         color: .blue
                     )
                     summaryMetricWithRatio(
                         "自费费用",
-                        amount: summarySelfPay,
-                        ratio: selfPayRatio,
+                        amount: summary.selfPay,
+                        ratio: summary.selfPayRatio,
                         color: .orange
                     )
                 }
@@ -367,6 +374,16 @@ private struct MedicalYearGroup: Identifiable {
     let year: Int
     let visitGroups: [MedicalVisitGroup]
     var id: Int { year }
+}
+
+private struct MedicalOverviewSnapshot {
+    let hospitalCount: Int
+    let visitCount: Int
+    let total: Decimal
+    let insurance: Decimal
+    let selfPay: Decimal
+    let insuranceRatio: Decimal
+    let selfPayRatio: Decimal
 }
 
 private struct MedicalVisitGroup: Identifiable {

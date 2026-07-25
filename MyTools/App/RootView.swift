@@ -26,7 +26,10 @@ struct RootView: View {
         }
         .animation(.easeOut(duration: 0.18), value: store.isInitialDataLoaded)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background, auth.isAdmin { auth.lock() }
+            if phase == .background {
+                if auth.isAdmin { auth.lock() }
+                Task { await store.flushPendingPersistence() }
+            }
         }
         .onChange(of: auth.isAdmin) { _, isAdmin in
             if isAdmin { store.loadEncryptedVaultAfterAuthentication() }

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import OSLog
 import Security
 
 enum SecureStoreError: Error { case keychain(OSStatus), invalidData }
@@ -75,7 +76,9 @@ final class SecureStore {
 
         if fileManager.fileExists(atPath: localVaultURL.path) {
             let readStartedAt = ProcessInfo.processInfo.systemUptime
-            let data = try? Data(contentsOf: localVaultURL, options: .mappedIfSafe)
+            // The vault is small and decoded immediately. A direct read avoids the extra
+            // mapping setup and first-page faults seen on cold launches on physical devices.
+            let data = try? Data(contentsOf: localVaultURL)
             readMilliseconds += elapsedMilliseconds(since: readStartedAt)
 
             if let data {
@@ -290,5 +293,83 @@ final class SecureStore {
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
         return result as? Data
+    }
+}
+
+private let persistenceLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.fjwyz.PersonalToolBox",
+    category: "Persistence"
+)
+
+/// Serializes full-vault writes away from the UI thread and coalesces bursts of edits.
+final class VaultPersistenceCoordinator: @unchecked Sendable {
+    private let lock = NSLock()
+    private let queue = DispatchQueue(
+        label: "com.fjwyz.PersonalToolBox.vault-persistence",
+        qos: .utility
+    )
+    private let secureStore: SecureStore
+    private var pendingVault: VaultData?
+    private var isWorkerScheduled = false
+
+    init(secureStore: SecureStore = SecureStore()) {
+        self.secureStore = secureStore
+    }
+
+    func schedule(_ vault: VaultData) {
+        lock.lock()
+        pendingVault = vault
+        let shouldScheduleWorker = !isWorkerScheduled
+        isWorkerScheduled = true
+        lock.unlock()
+
+        guard shouldScheduleWorker else { return }
+        queue.async { [self] in
+            drainPendingWrites()
+        }
+    }
+
+    /// Used by restore operations that must report a write failure before replacing live data.
+    func saveImmediately(_ vault: VaultData) throws {
+        let result: Result<Void, Error> = queue.sync {
+            lock.lock()
+            pendingVault = nil
+            lock.unlock()
+            let result = Result { try secureStore.saveVault(vault) }
+            lock.lock()
+            pendingVault = nil
+            lock.unlock()
+            return result
+        }
+        try result.get()
+    }
+
+    func flush() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func drainPendingWrites() {
+        while true {
+            lock.lock()
+            guard let vault = pendingVault else {
+                isWorkerScheduled = false
+                lock.unlock()
+                return
+            }
+            pendingVault = nil
+            lock.unlock()
+
+            do {
+                try secureStore.saveVault(vault)
+            } catch {
+                persistenceLogger.error(
+                    "Unable to persist local vault: \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
     }
 }
