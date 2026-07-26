@@ -14,6 +14,7 @@ struct ToolBoxApp: App {
                 .environmentObject(auth)
                 .environmentObject(moduleSettings)
                 .environmentObject(stockAppearanceSettings)
+                .appListSpacing()
         }
     }
 }

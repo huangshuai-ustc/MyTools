@@ -1,6 +1,21 @@
 import SwiftUI
 
 extension View {
+    func appListRowStyle() -> some View {
+        listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
+    }
+
+    @ViewBuilder
+    func appListSpacing() -> some View {
+        environment(\.defaultMinListRowHeight, 46)
+#if os(iOS)
+            .listSectionSpacing(.compact)
+            .listRowSpacing(0)
+#endif
+    }
+
     func iOSLabeledBackButton(_ title: String) -> some View {
         modifier(IOSLabeledBackButtonModifier(title: title))
     }

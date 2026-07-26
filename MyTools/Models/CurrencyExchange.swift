@@ -1,17 +1,17 @@
 import Foundation
 
 enum CurrencyExchangeQuoteConvention: String, Codable, CaseIterable, Identifiable, Sendable {
-    case oneSoldToBought
     case hundredBoughtToSold
+    case hundredSoldToBought
 
     var id: Self { self }
 
     func title(soldCurrency: CurrencyCode, boughtCurrency: CurrencyCode) -> String {
         switch self {
-        case .oneSoldToBought:
-            return "1 \(soldCurrency.rawValue) = ? \(boughtCurrency.rawValue)"
         case .hundredBoughtToSold:
             return "100 \(boughtCurrency.rawValue) = ? \(soldCurrency.rawValue)"
+        case .hundredSoldToBought:
+            return "100 \(soldCurrency.rawValue) = ? \(boughtCurrency.rawValue)"
         }
     }
 }
@@ -21,23 +21,18 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
     var exchangedAt = Date()
     var soldCurrency: CurrencyCode = .cny
     var boughtCurrency: CurrencyCode = .usd
-    var quoteConvention: CurrencyExchangeQuoteConvention = .oneSoldToBought
+    var quoteConvention: CurrencyExchangeQuoteConvention = .hundredBoughtToSold
     var quotedRate: Decimal = 0
     var soldAmount: Decimal = 0
     var boughtAmount: Decimal = 0
     var fee: Decimal = 0
-
-    private enum CodingKeys: String, CodingKey {
-        case id, exchangedAt, soldCurrency, boughtCurrency, quoteConvention
-        case quotedRate, soldAmount, boughtAmount, fee
-    }
 
     init(
         id: UUID = UUID(),
         exchangedAt: Date = Date(),
         soldCurrency: CurrencyCode = .cny,
         boughtCurrency: CurrencyCode = .usd,
-        quoteConvention: CurrencyExchangeQuoteConvention = .oneSoldToBought,
+        quoteConvention: CurrencyExchangeQuoteConvention = .hundredBoughtToSold,
         quotedRate: Decimal = 0,
         soldAmount: Decimal = 0,
         boughtAmount: Decimal = 0,
@@ -54,24 +49,6 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
         self.fee = fee
     }
 
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        exchangedAt = Self.noon(
-            on: try values.decodeIfPresent(Date.self, forKey: .exchangedAt) ?? Date()
-        )
-        soldCurrency = try values.decodeIfPresent(CurrencyCode.self, forKey: .soldCurrency) ?? .cny
-        boughtCurrency = try values.decodeIfPresent(CurrencyCode.self, forKey: .boughtCurrency) ?? .usd
-        quoteConvention = try values.decodeIfPresent(
-            CurrencyExchangeQuoteConvention.self,
-            forKey: .quoteConvention
-        ) ?? .oneSoldToBought
-        quotedRate = try values.decodeIfPresent(Decimal.self, forKey: .quotedRate) ?? 0
-        soldAmount = try values.decodeIfPresent(Decimal.self, forKey: .soldAmount) ?? 0
-        boughtAmount = try values.decodeIfPresent(Decimal.self, forKey: .boughtAmount) ?? 0
-        fee = try values.decodeIfPresent(Decimal.self, forKey: .fee) ?? 0
-    }
-
     /// 换汇只记录日期；统一存成当地中午，避免时区变化或夏令时把日期推到前后一天。
     static func noon(on date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
         calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
@@ -81,10 +58,10 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
     var boughtUnitsPerSoldUnit: Decimal {
         guard quotedRate > 0 else { return 0 }
         switch quoteConvention {
-        case .oneSoldToBought:
-            return quotedRate
         case .hundredBoughtToSold:
             return 100 / quotedRate
+        case .hundredSoldToBought:
+            return quotedRate / 100
         }
     }
 
@@ -144,6 +121,14 @@ enum CurrencyExchangeValueFormatter {
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 8
+        return formatter.string(from: value as NSDecimalNumber) ?? "--"
+    }
+
+    static func price(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "--"
     }
 
@@ -212,9 +197,9 @@ enum RenminbiExchangeDirection {
 
     var shortTitle: String {
         switch self {
-        case .sell: return "卖出"
-        case .buy: return "买入"
-        case .crossCurrency: return "外币兑换"
+        case .sell: return "卖"
+        case .buy: return "买"
+        case .crossCurrency: return "换"
         }
     }
 }

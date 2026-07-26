@@ -86,8 +86,8 @@ enum HospitalCategory: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .unspecified: return "未设置"
-        case .general: return "综合医院"
-        case .specialized: return "专科医院"
+        case .general: return "综合"
+        case .specialized: return "专科"
         }
     }
 }

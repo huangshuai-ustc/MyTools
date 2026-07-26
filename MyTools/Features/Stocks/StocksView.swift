@@ -25,10 +25,14 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "全部"
-        case .aShare: return "A 股"
+        case .aShare: return "A股"
         case .hongKong: return "港股"
         case .unitedStates: return "美股"
         }
+    }
+
+    func filtered(_ stocks: [StockHolding]) -> [StockHolding] {
+        stocks.filter(includes)
     }
 
     func includes(_ stock: StockHolding) -> Bool {
@@ -125,8 +129,8 @@ struct StocksView: View {
 
     private var displayedStocks: [StockHolding] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = store.stocks
-            .filter(marketFilter.includes)
+        let filtered = marketFilter
+            .filtered(store.stocks)
             .filter { stock in
                 searchTerm.isEmpty
                     || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
@@ -149,7 +153,7 @@ struct StocksView: View {
     }
 
     private var allocationSnapshot: StockAllocationSnapshot {
-        let stocks = store.stocks.filter(marketFilter.includes)
+        let stocks = marketFilter.filtered(store.stocks)
         let multipliers: [StockMarket: Decimal]
         switch marketFilter {
         case .all:
@@ -176,7 +180,7 @@ struct StocksView: View {
 
         return List {
             Section {
-                Picker("市场", selection: $marketFilter) {
+                Picker("股票市场", selection: $marketFilter) {
                     ForEach(StockMarketFilter.allCases) { filter in
                         Text(filter.title).tag(filter)
                     }
@@ -184,14 +188,16 @@ struct StocksView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section("资产总览") {
+            Section {
                 RenminbiPortfolioSummaryRow(marketFilter: marketFilter)
+                    .appListRowStyle()
                 ForEach(summaryMarkets) { market in
                     StockMarketSummaryRow(
                         summary: StockPortfolioSummary(market: market, stocks: store.stocks),
                         allocation: allocations.marketShare(for: market),
                         showsAllocation: marketFilter == .all
                     )
+                    .appListRowStyle()
                 }
             }
 
@@ -291,6 +297,7 @@ struct StocksView: View {
                 quoteError: store.quoteErrors[stock.id]
             )
         }
+        .appListRowStyle()
     }
 
     private func deleteStocks(at offsets: IndexSet) {
@@ -303,6 +310,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let marketFilter: StockMarketFilter
+    @State private var showingConversionInfo = false
 
     private var includedStocks: [StockHolding] {
         store.stocks.filter(marketFilter.includes)
@@ -362,28 +370,32 @@ private struct RenminbiPortfolioSummaryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
                 Label("人民币合计", systemImage: "yensign.circle.fill")
                     .font(.headline)
                     .foregroundStyle(.blue)
+                Button {
+                    showingConversionInfo = true
+                } label: {
+                    Image(systemName: "exclamationmark.circle")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("人民币合计说明")
+                .help("人民币合计说明")
                 Spacer()
                 Text("CNY")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
+            StockSummaryMetricsHeader()
             if let values = convertedValues {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) {
-                        metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
-                        metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
-                        metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
-                        metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
-                        metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
-                    }
+                HStack(spacing: 12) {
+                    metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
+                    metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
+                    metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
                 }
                 if values.netDividendIncome != 0 {
                     Text("累计净分红 \(StockValueFormatter.money(values.netDividendIncome, currencyCode: "CNY"))，已计入总盈亏")
@@ -394,45 +406,46 @@ private struct RenminbiPortfolioSummaryRow: View {
                 Label(missingRateText, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
-            if marketFilter == .aShare {
-                Text("A 股资产无需换汇。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if requiredForeignCurrencies.isEmpty {
-                Text("当前没有需要折算的外币资产。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(requiredForeignCurrencies) { currency in
-                        if let rate = store.renminbiBuyingRates[currency] {
-                            Text("按中国银行\(currency.title)现汇买入价换算：1 \(currency.rawValue) = \(StockValueFormatter.exchangeRate(rate)) CNY")
-                        }
-                    }
-                    if let updatedAt = store.exchangeRateUpdatedAt {
-                        Text("牌价时间：\(BeijingDateFormatter.dateTime.string(from: updatedAt))")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                if requiredForeignCurrencies.contains(where: { store.renminbiBuyingRates[$0] == nil }),
-                   let error = store.exchangeRateError {
-                    Text(error).font(.caption).foregroundStyle(.orange)
-                }
-            }
         }
-        .padding(.vertical, 5)
+        .alert("人民币合计说明", isPresented: $showingConversionInfo) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(conversionInfoText)
+        }
+    }
+
+    private var conversionInfoText: String {
+        if marketFilter == .aShare {
+            return "A 股资产无需换汇。"
+        }
+        if requiredForeignCurrencies.isEmpty {
+            return "当前没有需要折算的外币资产。"
+        }
+
+        var lines = requiredForeignCurrencies.compactMap { currency -> String? in
+            guard let rate = store.renminbiBuyingRates[currency] else { return nil }
+            return "按中国银行\(currency.title)现汇买入价换算：1 \(currency.rawValue) = \(StockValueFormatter.exchangeRate(rate)) CNY"
+        }
+        let missingCurrencies = requiredForeignCurrencies.filter { store.renminbiBuyingRates[$0] == nil }
+        if !missingCurrencies.isEmpty {
+            lines.append("\(missingCurrencies.map(\.title).joined(separator: "、"))牌价待同步。")
+        }
+        if let updatedAt = store.exchangeRateUpdatedAt {
+            lines.append("牌价时间：\(BeijingDateFormatter.dateTime.string(from: updatedAt))")
+        }
+        if let error = store.exchangeRateError, !missingCurrencies.isEmpty {
+            lines.append(error)
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func metric(_ title: String, value: String, color: Color = .primary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
+        Text(value)
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.68)
+            .accessibilityLabel("\(title)，\(value)")
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -466,7 +479,7 @@ private struct StockMarketSummaryRow: View {
     let showsAllocation: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 StockMarketBadge(market: summary.market)
                 Text(positionSummaryText)
@@ -480,17 +493,10 @@ private struct StockMarketSummaryRow: View {
                     .foregroundStyle(.secondary)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) {
-                    summaryMetric("净投入", value: StockValueFormatter.money(summary.netInvestment, currencyCode: summary.market.currencyCode))
-                    summaryMetric("持仓市值", value: marketValueText)
-                    summaryMetric("总盈亏", value: profitLossText, color: profitLossColor)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    summaryMetric("净投入", value: StockValueFormatter.money(summary.netInvestment, currencyCode: summary.market.currencyCode))
-                    summaryMetric("持仓市值", value: marketValueText)
-                    summaryMetric("总盈亏", value: profitLossText, color: profitLossColor)
-                }
+            HStack(spacing: 12) {
+                summaryMetric("净投入", value: StockValueFormatter.money(summary.netInvestment, currencyCode: summary.market.currencyCode))
+                summaryMetric("持仓市值", value: marketValueText)
+                summaryMetric("总盈亏", value: profitLossText, color: profitLossColor)
             }
             if summary.netDividendIncome != 0 {
                 Text("累计净分红 \(StockValueFormatter.money(summary.netDividendIncome, currencyCode: summary.market.currencyCode))，已计入总盈亏")
@@ -498,7 +504,6 @@ private struct StockMarketSummaryRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 5)
     }
 
     private var positionSummaryText: String {
@@ -525,17 +530,30 @@ private struct StockMarketSummaryRow: View {
     }
 
     private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
+        Text(value)
+            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.68)
+            .accessibilityLabel("\(title)，\(value)")
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct StockSummaryMetricsHeader: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            header("净投入")
+            header("持仓市值")
+            header("总盈亏")
+        }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -590,7 +608,6 @@ private struct StockRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
     }
 
     private var marketValueText: String {
@@ -629,12 +646,20 @@ struct StockMarketBadge: View {
     }
 
     var body: some View {
-        Text(market.title)
+        Text(shortTitle)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private var shortTitle: String {
+        switch market {
+        case .aShare: return "A"
+        case .hongKong: return "港"
+        case .unitedStates: return "美"
+        }
     }
 }
 

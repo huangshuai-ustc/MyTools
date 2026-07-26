@@ -25,12 +25,12 @@ struct HomeView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section("银行账户总览 · \(regionFilter.title)") {
+            Section {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { financeMetrics(snapshot) }
                     VStack(alignment: .leading, spacing: 10) { financeMetrics(snapshot) }
                 }
-                .padding(.vertical, 3)
+                .appListRowStyle()
             }
 
             Section("银行账户") {
@@ -135,15 +135,9 @@ struct HomeView: View {
                 Text(financeRowSummary(account, cards: cards))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                let currencies = financeCurrencies(account, cards: cards)
-                if !currencies.isEmpty {
-                    Text("币种：\(currencies)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
             }
-            .padding(.vertical, 3)
         }
+        .appListRowStyle()
     }
 
     private func deleteAccounts(at offsets: IndexSet, from source: [BankAccount]) {
@@ -257,15 +251,6 @@ struct HomeView: View {
         case .overseas:
             return "\(subs) 个子账户 · \(debit) 张扣账卡 · \(credit) 张信用卡"
         }
-    }
-
-    private func financeCurrencies(_ account: BankAccount, cards: [BankCard]) -> String {
-        let subaccountCurrencies = account.region == .domestic
-            ? account.domesticSubaccounts.flatMap(\.currencies)
-            : account.foreignSubaccounts.flatMap(\.currencies)
-        return CurrencyCode.displayOrdered(Set(cards.flatMap(\.currencies) + subaccountCurrencies))
-            .map(\.rawValue)
-            .joined(separator: " · ")
     }
 
     private func isInactive(_ account: BankAccount, cards: [BankCard]) -> Bool {
@@ -400,7 +385,7 @@ struct BankRegionBadge: View {
     let region: BankRegion
 
     private var color: Color {
-        region == .domestic ? .blue : .indigo
+        region == .domestic ? .cyan : .mint
     }
 
     private var title: String {
@@ -439,73 +424,20 @@ struct CardStatusText: View {
 }
 
 enum AccountSortOrder: String, CaseIterable, Identifiable {
-    case added
-    case addedReversed
-    case openedNewest
-    case openedOldest
     case nameAscending
     case nameDescending
-    case domesticFirst
-    case overseasFirst
 
     var id: Self { self }
 
     var title: String {
         switch self {
-        case .added: return "添加顺序"
-        case .addedReversed: return "添加顺序：新到旧"
-        case .openedNewest: return "开户时间：新到旧"
-        case .openedOldest: return "开户时间：旧到新"
         case .nameAscending: return "名称：A-Z"
         case .nameDescending: return "名称：Z-A"
-        case .domesticFirst: return "境内优先"
-        case .overseasFirst: return "境外优先"
-        }
-    }
-
-    var criterion: AccountSortCriterion {
-        switch self {
-        case .added, .addedReversed: return .added
-        case .openedNewest, .openedOldest: return .openedAt
-        case .nameAscending, .nameDescending: return .name
-        case .domesticFirst, .overseasFirst: return .region
-        }
-    }
-
-    var direction: SortDirection {
-        switch self {
-        case .added, .openedOldest, .nameAscending, .domesticFirst: return .ascending
-        case .addedReversed, .openedNewest, .nameDescending, .overseasFirst: return .descending
-        }
-    }
-
-    static func value(criterion: AccountSortCriterion, direction: SortDirection) -> Self {
-        switch (criterion, direction) {
-        case (.added, .ascending): return .added
-        case (.added, .descending): return .addedReversed
-        case (.openedAt, .ascending): return .openedOldest
-        case (.openedAt, .descending): return .openedNewest
-        case (.name, .ascending): return .nameAscending
-        case (.name, .descending): return .nameDescending
-        case (.region, .ascending): return .domesticFirst
-        case (.region, .descending): return .overseasFirst
         }
     }
 
     func sorted(_ accounts: [BankAccount]) -> [BankAccount] {
         switch self {
-        case .added:
-            return accounts
-        case .addedReversed:
-            return Array(accounts.reversed())
-        case .openedNewest:
-            return accounts.sorted {
-                $0.openedAt == $1.openedAt ? isNameAscending($0, $1) : $0.openedAt > $1.openedAt
-            }
-        case .openedOldest:
-            return accounts.sorted {
-                $0.openedAt == $1.openedAt ? isNameAscending($0, $1) : $0.openedAt < $1.openedAt
-            }
         case .nameAscending:
             return accounts.sorted(by: isNameAscending)
         case .nameDescending:
@@ -515,16 +447,7 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
                     ? $0.id.uuidString > $1.id.uuidString
                     : comparison == .orderedDescending
             }
-        case .domesticFirst:
-            return accounts.sorted { groupedBefore($0, $1, firstRegion: .domestic) }
-        case .overseasFirst:
-            return accounts.sorted { groupedBefore($0, $1, firstRegion: .overseas) }
         }
-    }
-
-    private func groupedBefore(_ lhs: BankAccount, _ rhs: BankAccount, firstRegion: BankRegion) -> Bool {
-        guard lhs.region != rhs.region else { return isNameAscending(lhs, rhs) }
-        return lhs.region == firstRegion
     }
 
     private func isNameAscending(_ lhs: BankAccount, _ rhs: BankAccount) -> Bool {
@@ -536,24 +459,6 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
 
     private func displayName(_ account: BankAccount) -> String {
         account.bankName.isEmpty ? account.name : account.bankName
-    }
-}
-
-enum AccountSortCriterion: String, CaseIterable, Identifiable {
-    case added
-    case openedAt
-    case name
-    case region
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .added: return "添加时间"
-        case .openedAt: return "开户时间"
-        case .name: return "名称"
-        case .region: return "境内/境外"
-        }
     }
 }
 
@@ -574,24 +479,11 @@ enum SortDirection: String, CaseIterable, Identifiable {
 struct AccountSortMenu: View {
     @Binding var selection: String
 
-    private var selectedOrder: AccountSortOrder {
-        AccountSortOrder(rawValue: selection) ?? .nameAscending
-    }
-
     var body: some View {
         Menu {
-            Menu("排序依据：\(selectedOrder.criterion.title)") {
-                Picker("排序依据", selection: criterionBinding) {
-                    ForEach(AccountSortCriterion.allCases) { criterion in
-                        Text(criterion.title).tag(criterion)
-                    }
-                }
-            }
-            Menu("排列顺序：\(selectedOrder.direction.title)") {
-                Picker("排列顺序", selection: directionBinding) {
-                    ForEach(SortDirection.allCases) { direction in
-                        Text(direction.title).tag(direction)
-                    }
+            Picker("名称排序", selection: $selection) {
+                ForEach(AccountSortOrder.allCases) { order in
+                    Text(order.title).tag(order.rawValue)
                 }
             }
         } label: {
@@ -601,19 +493,6 @@ struct AccountSortMenu: View {
         .help("账户排序")
     }
 
-    private var criterionBinding: Binding<AccountSortCriterion> {
-        Binding(
-            get: { selectedOrder.criterion },
-            set: { selection = AccountSortOrder.value(criterion: $0, direction: selectedOrder.direction).rawValue }
-        )
-    }
-
-    private var directionBinding: Binding<SortDirection> {
-        Binding(
-            get: { selectedOrder.direction },
-            set: { selection = AccountSortOrder.value(criterion: selectedOrder.criterion, direction: $0).rawValue }
-        )
-    }
 }
 
 enum CardSortOrder: String, CaseIterable, Identifiable {

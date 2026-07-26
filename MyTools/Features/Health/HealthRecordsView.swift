@@ -123,6 +123,7 @@ struct HealthRecordsView: View {
                 .pickerStyle(.menu)
 
                 overviewMetrics
+                    .appListRowStyle()
             }
 
             Section {
@@ -255,7 +256,6 @@ struct HealthRecordsView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
     }
 
     private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
@@ -358,6 +358,7 @@ struct HealthRecordsView: View {
                 displayedTotalCost: displayedTotalCost ?? record.totalCost
             )
         }
+        .appListRowStyle()
         .swipeActions {
             if auth.isAdmin {
                 Button(role: .destructive) {
@@ -429,8 +430,8 @@ private extension HospitalGrade {
 private extension HospitalCategory {
     var badgeColor: Color {
         switch self {
-        case .specialized: return .pink.opacity(0.58)
-        case .general: return .pink
+        case .specialized: return .mint
+        case .general: return .cyan
         case .unspecified: return .secondary
         }
     }
@@ -535,15 +536,23 @@ private struct MedicalRecordRow: View {
             .foregroundStyle(.secondary)
 
             if !recordSummary.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(record.isPharmacyPurchase ? "用药原因" : "初步诊断")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                if record.isPharmacyPurchase {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("用药原因")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(recordSummary)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .lineLimit(2)
+                } else {
                     Text(recordSummary)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .accessibilityLabel("初步诊断，\(recordSummary)")
                 }
-                .lineLimit(2)
             }
 
             HStack {
@@ -571,7 +580,6 @@ private struct MedicalRecordRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
     }
 
     private var recordSummary: String {

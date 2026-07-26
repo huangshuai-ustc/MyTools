@@ -76,13 +76,9 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
     case sgd = "SGD"
     case thb = "THB"
     case usd = "USD"
-    // 仅用于读取旧版档案，不再出现在新建数据的币种选项中。
     case aud = "AUD"
-    case mop = "MOP"
 
-    private static let supportedCases: Set<CurrencyCode> = [
-        .cny, .hkd, .usd, .cad, .chf, .eur, .gbp, .jpy, .nzd, .sgd, .thb
-    ]
+    private static let supportedCases = Set(allCases)
 
     static var selectableCases: [CurrencyCode] {
         displayOrdered(supportedCases)
@@ -120,8 +116,7 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .sgd: return "新加坡元 SGD"
         case .thb: return "泰国铢 THB"
         case .usd: return "美元 USD"
-        case .aud: return "澳元 AUD"
-        case .mop: return "澳门元 MOP"
+        case .aud: return "澳大利亚元 AUD"
         }
     }
 
@@ -144,7 +139,6 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .thb: return "泰国铢"
         case .usd: return "美元"
         case .aud: return "澳大利亚元"
-        case .mop: return "澳门元"
         }
     }
 

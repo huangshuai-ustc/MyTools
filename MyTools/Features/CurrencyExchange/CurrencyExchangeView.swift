@@ -5,6 +5,9 @@ struct CurrencyExchangeView: View {
     @EnvironmentObject private var auth: AuthManager
     @State private var editingRecord: CurrencyExchangeRecord?
     @State private var recordFilter: CurrencyExchangeRecordFilter = .all
+    @State private var selectedYear: Int?
+    @State private var primaryCurrencyFilter: CurrencyCode?
+    @State private var pairedCurrencyFilter: CurrencyCode?
     @State private var query = ""
 
     private var allRecords: [CurrencyExchangeRecord] {
@@ -15,7 +18,9 @@ struct CurrencyExchangeView: View {
     private var records: [CurrencyExchangeRecord] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return allRecords.filter { record in
-            recordFilter.includes(record)
+            yearMatches(record)
+                && recordFilter.includes(record)
+                && currenciesMatch(record)
                 && (searchTerm.isEmpty
                     || record.soldCurrency.title.localizedCaseInsensitiveContains(searchTerm)
                     || record.boughtCurrency.title.localizedCaseInsensitiveContains(searchTerm)
@@ -47,19 +52,42 @@ struct CurrencyExchangeView: View {
 
             Section("换汇概览") {
                 exchangeOverviewMetrics
-                if let latestRecord = allRecords.first {
-                    LabeledContent("最近换汇", value: latestRecord.exchangedAt.formatted(date: .abbreviated, time: .omitted))
-                }
-                exchangeRateStatus
+                    .appListRowStyle()
             }
 
-            Section("查找换汇记录") {
+            Section("记录筛选") {
+                Picker("年份", selection: $selectedYear) {
+                    Text("全部年份").tag(nil as Int?)
+                    ForEach(availableYears, id: \.self) { year in
+                        Text(verbatim: "\(year) 年").tag(year as Int?)
+                    }
+                }
+                .pickerStyle(.menu)
+
                 Picker("记录分类", selection: $recordFilter) {
                     ForEach(CurrencyExchangeRecordFilter.allCases) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
                 .pickerStyle(.segmented)
+
+                Picker("相关币种", selection: $primaryCurrencyFilter) {
+                    Text("全部币种").tag(nil as CurrencyCode?)
+                    ForEach(CurrencyCode.selectableCases) { currency in
+                        Text(currency.title).tag(currency as CurrencyCode?)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if let primaryCurrencyFilter {
+                    Picker("组合币种", selection: $pairedCurrencyFilter) {
+                        Text("不限另一币种").tag(nil as CurrencyCode?)
+                        ForEach(CurrencyCode.selectableCases.filter { $0 != primaryCurrencyFilter }) { currency in
+                            Text(currency.title).tag(currency as CurrencyCode?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
 
                 if records.isEmpty {
                     ContentUnavailableView(
@@ -85,13 +113,20 @@ struct CurrencyExchangeView: View {
                                 record: record,
                                 buyingRates: store.renminbiBuyingRates
                             )
+                            .appListRowStyle()
                         }
                     }
                 }
             }
 
+            if store.exchangeRateUpdatedAt != nil || store.exchangeRateError != nil {
+                Section {
+                    BankOfChinaExchangeRateStatus()
+                }
+            }
+
             Section {
-                Text("人民币损耗会随中国银行现汇买入价更新：把换汇前卖出的本金与手续费、换汇后实际到账的外币分别按当前中国银行买入价折算为人民币，再计算差额。录入价格只用于保存交易与展示当时的理论买入数，不再作为累计损耗基准。")
+                Text("记录分类以人民币为标准：买表示买入人民币，卖表示卖出人民币，换表示两种非人民币币种之间的兑换。人民币损耗按当前中国银行现汇买入价动态计算，将交易前的人民币成本（含手续费）与当前可换回的人民币金额进行比较。录入价格仅用于记录交易时的汇率及理论买入数，不参与当前损耗计算。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } header: {
@@ -131,11 +166,47 @@ struct CurrencyExchangeView: View {
         .task {
             store.refreshExchangeRateIfNeeded()
         }
+        .onChange(of: primaryCurrencyFilter) { _, currency in
+            if currency == nil || currency == pairedCurrencyFilter {
+                pairedCurrencyFilter = nil
+            }
+        }
+        .onChange(of: pairedCurrencyFilter) { _, currency in
+            if currency != nil {
+                recordFilter = .all
+            }
+        }
+        .onChange(of: recordFilter) { _, filter in
+            if filter != .all {
+                pairedCurrencyFilter = nil
+            }
+        }
     }
 
     private var currencyCountText: String {
         let currencies = Set(allRecords.flatMap { [$0.soldCurrency, $0.boughtCurrency] })
         return currencies.isEmpty ? "0 种" : "\(currencies.count) 种"
+    }
+
+    private var availableYears: [Int] {
+        let calendar = CurrencyExchangeMonthGroup.calendar
+        return Set(allRecords.map { calendar.component(.year, from: $0.exchangedAt) })
+            .sorted(by: >)
+    }
+
+    private func yearMatches(_ record: CurrencyExchangeRecord) -> Bool {
+        guard let selectedYear else { return true }
+        return CurrencyExchangeMonthGroup.calendar.component(.year, from: record.exchangedAt) == selectedYear
+    }
+
+    private func currenciesMatch(_ record: CurrencyExchangeRecord) -> Bool {
+        guard let primaryCurrencyFilter else { return true }
+        guard let pairedCurrencyFilter else {
+            return record.soldCurrency == primaryCurrencyFilter
+                || record.boughtCurrency == primaryCurrencyFilter
+        }
+        return (record.soldCurrency == primaryCurrencyFilter && record.boughtCurrency == pairedCurrencyFilter)
+            || (record.soldCurrency == pairedCurrencyFilter && record.boughtCurrency == primaryCurrencyFilter)
     }
 
     private var exchangeOverviewMetrics: some View {
@@ -165,7 +236,6 @@ struct CurrencyExchangeView: View {
                 exchangeMetric(totalResultTitle, value: resultValue, color: resultColor)
             }
         }
-        .padding(.vertical, 4)
     }
 
     private func exchangeMetric(_ title: String, value: String, color: Color = .primary) -> some View {
@@ -195,15 +265,6 @@ struct CurrencyExchangeView: View {
     }
 
     @ViewBuilder
-    private var exchangeRateStatus: some View {
-        if let updatedAt = store.exchangeRateUpdatedAt {
-            LabeledContent("中国银行牌价时间", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
-        } else if let error = store.exchangeRateError {
-            Label(error, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-        }
-    }
-
     private func recordButton(_ record: CurrencyExchangeRecord) -> some View {
         Button { editingRecord = record } label: {
             CurrencyExchangeRecordRow(
@@ -212,6 +273,7 @@ struct CurrencyExchangeView: View {
             )
         }
         .buttonStyle(.plain)
+        .appListRowStyle()
     }
 
     private func deleteRecords(at offsets: IndexSet, from records: [CurrencyExchangeRecord]) {
@@ -256,24 +318,44 @@ private struct CurrencyExchangeMonthGroup: Identifiable {
 
 private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable {
     case all
-    case sellRenminbi
     case buyRenminbi
+    case sellRenminbi
+    case crossCurrency
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .all: return "全部"
-        case .sellRenminbi: return "卖出"
-        case .buyRenminbi: return "买入"
+        case .buyRenminbi: return "买"
+        case .sellRenminbi: return "卖"
+        case .crossCurrency: return "换"
         }
     }
 
     func includes(_ record: CurrencyExchangeRecord) -> Bool {
         switch self {
         case .all: return true
-        case .sellRenminbi: return RenminbiExchangeDirection(record: record) == .sell
         case .buyRenminbi: return RenminbiExchangeDirection(record: record) == .buy
+        case .sellRenminbi: return RenminbiExchangeDirection(record: record) == .sell
+        case .crossCurrency: return RenminbiExchangeDirection(record: record) == .crossCurrency
+        }
+    }
+}
+
+private struct BankOfChinaExchangeRateStatus: View {
+    @EnvironmentObject private var store: AppStore
+
+    var body: some View {
+        if let updatedAt = store.exchangeRateUpdatedAt {
+            LabeledContent(
+                "中国银行牌价时间",
+                value: updatedAt.formatted(date: .abbreviated, time: .shortened)
+            )
+        }
+        if let error = store.exchangeRateError {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
         }
     }
 }
@@ -330,13 +412,7 @@ private struct BankOfChinaExchangeRatesView: View {
             }
 
             Section {
-                if let updatedAt = store.exchangeRateUpdatedAt {
-                    LabeledContent("牌价时间", value: updatedAt.formatted(date: .abbreviated, time: .standard))
-                }
-                if let error = store.exchangeRateError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                BankOfChinaExchangeRateStatus()
                 Text("页面使用股票和换汇记录共用的中国银行牌价缓存；右上角刷新按钮会主动请求最新结售汇牌价。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -456,9 +532,9 @@ private struct BankOfChinaExchangeRatesView: View {
     private func convertedRateText(_ rate: Decimal) -> String {
         switch displayMode {
         case .renminbiToForeign:
-            return CurrencyExchangeValueFormatter.rate(100 / rate)
+            return CurrencyExchangeValueFormatter.price(100 / rate)
         case .foreignToRenminbi:
-            return CurrencyExchangeValueFormatter.rate(rate * 100)
+            return CurrencyExchangeValueFormatter.price(rate * 100)
         }
     }
 
@@ -594,9 +670,9 @@ private struct CurrencyExchangeRecordRow: View {
             }
 
             HStack(alignment: .firstTextBaseline) {
-                Text("卖出 \(CurrencyExchangeValueFormatter.amount(record.soldAmount, currency: record.soldCurrency))")
+                Text("卖 \(CurrencyExchangeValueFormatter.amount(record.soldAmount, currency: record.soldCurrency))")
                 Spacer()
-                Text("买入 \(CurrencyExchangeValueFormatter.amount(record.boughtAmount, currency: record.boughtCurrency))")
+                Text("买 \(CurrencyExchangeValueFormatter.amount(record.boughtAmount, currency: record.boughtCurrency))")
             }
             .font(.subheadline)
 
@@ -609,7 +685,6 @@ private struct CurrencyExchangeRecordRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
 
@@ -633,7 +708,7 @@ private struct CurrencyExchangeRecordRow: View {
         switch direction {
         case .sell: return .blue
         case .buy: return .purple
-        case .crossCurrency: return .secondary
+        case .crossCurrency: return .teal
         }
     }
 
@@ -648,10 +723,10 @@ private struct CurrencyExchangeRecordRow: View {
 
     private var priceText: String {
         switch record.quoteConvention {
-        case .oneSoldToBought:
-            return "价格 1 \(record.soldCurrency.rawValue) = \(CurrencyExchangeValueFormatter.rate(record.quotedRate)) \(record.boughtCurrency.rawValue)"
         case .hundredBoughtToSold:
-            return "价格 100 \(record.boughtCurrency.rawValue) = \(CurrencyExchangeValueFormatter.rate(record.quotedRate)) \(record.soldCurrency.rawValue)"
+            return "价格 100 \(record.boughtCurrency.rawValue) = \(CurrencyExchangeValueFormatter.price(record.quotedRate)) \(record.soldCurrency.rawValue)"
+        case .hundredSoldToBought:
+            return "价格 100 \(record.soldCurrency.rawValue) = \(CurrencyExchangeValueFormatter.price(record.quotedRate)) \(record.boughtCurrency.rawValue)"
         }
     }
 }
