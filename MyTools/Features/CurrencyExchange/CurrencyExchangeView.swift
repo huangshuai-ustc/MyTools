@@ -46,19 +46,7 @@ struct CurrencyExchangeView: View {
             }
 
             Section("换汇概览") {
-                LabeledContent("累计记录", value: "\(allRecords.count) 笔")
-                LabeledContent("涉及币种", value: currencyCountText)
-                LabeledContent(totalResultTitle) {
-                    if let totalRenminbiLoss {
-                        Text(CurrencyExchangeValueFormatter.amount(
-                            CurrencyExchangeResult(amount: totalRenminbiLoss).displayValue(totalRenminbiLoss),
-                            currency: .cny
-                        ))
-                            .foregroundStyle(resultColor(for: totalRenminbiLoss))
-                    } else {
-                        Text("牌价待同步").foregroundStyle(.orange)
-                    }
-                }
+                exchangeOverviewMetrics
                 if let latestRecord = allRecords.first {
                     LabeledContent("最近换汇", value: latestRecord.exchangedAt.formatted(date: .abbreviated, time: .omitted))
                 }
@@ -148,6 +136,50 @@ struct CurrencyExchangeView: View {
     private var currencyCountText: String {
         let currencies = Set(allRecords.flatMap { [$0.soldCurrency, $0.boughtCurrency] })
         return currencies.isEmpty ? "0 种" : "\(currencies.count) 种"
+    }
+
+    private var exchangeOverviewMetrics: some View {
+        let resultValue: String
+        let resultColor: Color
+        if let totalRenminbiLoss {
+            let result = CurrencyExchangeResult(amount: totalRenminbiLoss)
+            resultValue = CurrencyExchangeValueFormatter.amount(
+                result.displayValue(totalRenminbiLoss),
+                currency: .cny
+            )
+            resultColor = self.resultColor(for: totalRenminbiLoss)
+        } else {
+            resultValue = "待同步"
+            resultColor = .orange
+        }
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                exchangeMetric("换汇记录", value: "\(allRecords.count) 笔")
+                exchangeMetric("涉及币种", value: currencyCountText)
+                exchangeMetric(totalResultTitle, value: resultValue, color: resultColor)
+            }
+            VStack(alignment: .leading, spacing: 9) {
+                exchangeMetric("换汇记录", value: "\(allRecords.count) 笔")
+                exchangeMetric("涉及币种", value: currencyCountText)
+                exchangeMetric(totalResultTitle, value: resultValue, color: resultColor)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func exchangeMetric(_ title: String, value: String, color: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var totalRenminbiLoss: Decimal? {
@@ -287,51 +319,6 @@ private struct BankOfChinaExchangeRatesView: View {
             }
 
             Section {
-                Picker("币种 A", selection: currencyBinding(for: .source)) {
-                    ForEach(CurrencyCode.selectableCases) { currency in
-                        Text(currency.title).tag(currency)
-                    }
-                }
-                converterAmountRow(
-                    "金额 A",
-                    currency: sourceCurrency,
-                    text: amountBinding(for: .source),
-                    field: .source
-                )
-
-                HStack {
-                    Spacer()
-                    Button(action: swapConverterCurrencies) {
-                        Image(systemName: "arrow.up.arrow.down")
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("交换换算币种")
-                    Spacer()
-                }
-
-                Picker("币种 B", selection: currencyBinding(for: .target)) {
-                    ForEach(CurrencyCode.selectableCases) { currency in
-                        Text(currency.title).tag(currency)
-                    }
-                }
-                converterAmountRow(
-                    "金额 B",
-                    currency: targetCurrency,
-                    text: amountBinding(for: .target),
-                    field: .target
-                )
-
-                if conversionRate(from: sourceCurrency, to: targetCurrency) == nil {
-                    Label("所选币种的牌价待同步", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-            } header: {
-                Text("币种换算")
-            } footer: {
-                Text("外币卖出按结汇价计算，外币买入按购汇价计算。")
-            }
-
-            Section {
                 exchangeRateHeader
                 ForEach(CurrencyCode.selectableCases.filter { $0 != .cny }) { currency in
                     exchangeRateRow(currency)
@@ -353,6 +340,40 @@ private struct BankOfChinaExchangeRatesView: View {
                 Text("页面使用股票和换汇记录共用的中国银行牌价缓存；右上角刷新按钮会主动请求最新结售汇牌价。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+
+            Section {
+                HStack(spacing: 7) {
+                    converterCurrencyMenu(for: .source)
+                    converterValueField(
+                        text: amountBinding(for: .source),
+                        currency: sourceCurrency,
+                        field: .source
+                    )
+                    Button(action: swapConverterCurrencies) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("交换换算币种")
+                    converterValueField(
+                        text: amountBinding(for: .target),
+                        currency: targetCurrency,
+                        field: .target
+                    )
+                    converterCurrencyMenu(for: .target)
+                }
+                .frame(maxWidth: .infinity)
+
+                if conversionRate(from: sourceCurrency, to: targetCurrency) == nil {
+                    Label("所选币种的牌价待同步", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("币种换算")
+            } footer: {
+                Text("输入任意一侧金额，另一侧会按当前中国银行结售汇牌价自动计算。")
             }
         }
         .navigationTitle("中国银行结售汇牌价")
@@ -469,25 +490,46 @@ private struct BankOfChinaExchangeRatesView: View {
         }
     }
 
-    private func converterAmountRow(
-        _ title: String,
-        currency: CurrencyCode,
+    private func converterCurrencyMenu(for field: ExchangeConverterField) -> some View {
+        Menu {
+            ForEach(CurrencyCode.selectableCases) { currency in
+                Button {
+                    currencyBinding(for: field).wrappedValue = currency
+                } label: {
+                    if currency == (field == .source ? sourceCurrency : targetCurrency) {
+                        Label(currency.title, systemImage: "checkmark")
+                    } else {
+                        Text(currency.title)
+                    }
+                }
+            }
+        } label: {
+            Text((field == .source ? sourceCurrency : targetCurrency).rawValue)
+                .font(.subheadline.weight(.semibold).monospaced())
+                .frame(minWidth: 42)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(field == .source ? "选择左侧币种" : "选择右侧币种")
+    }
+
+    private func converterValueField(
         text: Binding<String>,
+        currency: CurrencyCode,
         field: ExchangeConverterField
     ) -> some View {
-        LabeledContent(title) {
-            HStack(spacing: 8) {
-                TextField("0", text: text)
-                    .multilineTextAlignment(.trailing)
-                    .focused($focusedConverterField, equals: field)
+        HStack(spacing: 3) {
+            TextField("0", text: text)
+                .multilineTextAlignment(.trailing)
+                .focused($focusedConverterField, equals: field)
+                .frame(minWidth: 45)
 #if os(iOS)
-                    .keyboardType(.decimalPad)
+                .keyboardType(.decimalPad)
 #endif
-                Text(currency.rawValue)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
+            Text(currency.rawValue)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func swapConverterCurrencies() {

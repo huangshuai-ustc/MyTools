@@ -404,6 +404,38 @@ private extension MedicalVisitType {
     }
 }
 
+private extension HospitalLevel {
+    var badgeColor: Color {
+        switch self {
+        case .levelThree: return .indigo
+        case .levelTwo: return .indigo.opacity(0.72)
+        case .levelOne: return .indigo.opacity(0.48)
+        case .unspecified: return .secondary
+        }
+    }
+}
+
+private extension HospitalGrade {
+    var badgeColor: Color {
+        switch self {
+        case .classA: return .purple
+        case .classB: return .purple.opacity(0.72)
+        case .classC: return .purple.opacity(0.48)
+        case .unspecified: return .secondary
+        }
+    }
+}
+
+private extension HospitalCategory {
+    var badgeColor: Color {
+        switch self {
+        case .specialized: return .pink.opacity(0.58)
+        case .general: return .pink
+        case .unspecified: return .secondary
+        }
+    }
+}
+
 struct HospitalClassificationBadges: View {
     let level: HospitalLevel
     let grade: HospitalGrade
@@ -424,13 +456,13 @@ struct HospitalClassificationBadges: View {
     var body: some View {
         HStack(spacing: 4) {
             if level != .unspecified {
-                badge(level.title, color: .blue)
+                badge(level.title, color: level.badgeColor)
             }
             if grade != .unspecified {
-                badge(grade.title, color: .orange)
+                badge(grade.title, color: grade.badgeColor)
             }
             if category != .unspecified {
-                badge(category.title, color: .teal)
+                badge(category.title, color: category.badgeColor)
             }
         }
     }
@@ -490,7 +522,6 @@ private struct MedicalRecordRow: View {
                     Text("药品 \(record.expenseItems.count) 项")
                 } else {
                     Text(record.department)
-                    if !record.doctor.isEmpty { Text("· \(record.doctor)") }
                 }
                 Spacer()
                 Text(record.visitType.title)
@@ -503,9 +534,17 @@ private struct MedicalRecordRow: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
 
-            Text(recordSummary)
-                .font(.subheadline)
+            if !recordSummary.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(record.isPharmacyPurchase ? "用药原因" : "初步诊断")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(recordSummary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
                 .lineLimit(2)
+            }
 
             HStack {
                 if !isFollowUp, followUpCount > 0 {

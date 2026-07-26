@@ -130,12 +130,12 @@ private struct HospitalProfileEditorView: View {
                             .frame(maxWidth: 260)
                     }
                     Picker("医院级别：", selection: $profile.level) {
-                        ForEach(HospitalLevel.allCases) { level in
+                        ForEach(HospitalLevel.displayOrder) { level in
                             Text(level.title).tag(level)
                         }
                     }
                     Picker("医院等次：", selection: $profile.grade) {
-                        ForEach(HospitalGrade.allCases) { grade in
+                        ForEach(HospitalGrade.displayOrder) { grade in
                             Text(grade.title).tag(grade)
                         }
                     }

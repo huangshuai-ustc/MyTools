@@ -548,6 +548,7 @@ private struct StockRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
+                StockMarketBadge(market: stock.market)
                 Text(stock.displayName)
                     .font(.headline)
                     .lineLimit(1)
@@ -555,7 +556,6 @@ private struct StockRow: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                StockMarketBadge(market: stock.market)
             }
 
             HStack {

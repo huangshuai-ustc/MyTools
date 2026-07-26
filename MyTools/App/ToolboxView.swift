@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct ToolboxView: View {
-    @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
 
     private var visibleModules: [ToolModule] {
@@ -40,7 +39,6 @@ struct ToolboxView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(module.title).font(.headline)
                 Text(module.subtitle).font(.subheadline).foregroundStyle(.secondary)
-                Text(moduleSummary(module)).font(.caption).foregroundStyle(.secondary)
             }
             .padding(.vertical, 3)
         }
@@ -53,26 +51,6 @@ struct ToolboxView: View {
         case .myStocks: StocksView()
         case .currencyExchange: CurrencyExchangeView()
         case .healthRecords: HealthRecordsView()
-        }
-    }
-
-    private func moduleSummary(_ module: ToolModule) -> String {
-        switch module {
-        case .personalFinance:
-            return "\(store.currentBankCount) 家银行 · \(store.currentCardCount) 张卡"
-        case .myStocks:
-            return "\(store.stocks.count) 只股票 · \(store.openStockCount) 只持仓"
-        case .currencyExchange:
-            let count = store.currencyExchangeRecords.count
-            return count == 0 ? "暂无记录 · 等待首次换汇" : "\(count) 笔记录 · 自动计算损耗"
-        case .healthRecords:
-            let count = store.medicalRecords.count
-            guard count > 0 else { return "暂无记录 · 建立健康档案" }
-            let year = Calendar(identifier: .gregorian).component(.year, from: Date())
-            let selfPay = store.medicalRecords
-                .filter { Calendar(identifier: .gregorian).component(.year, from: $0.date) == year }
-                .reduce(Decimal.zero) { $0 + $1.selfPayCost }
-            return "\(count) 次就诊 · 本年自费 \(MedicalValueFormatter.money(selfPay))"
         }
     }
 }

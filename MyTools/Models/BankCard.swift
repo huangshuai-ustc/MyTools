@@ -59,7 +59,7 @@ enum AccountStatus: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .normal: return "正常"
         case .abnormal: return "异常"
-        case .closed: return "已销户"
+        case .closed: return "销户"
         }
     }
 }

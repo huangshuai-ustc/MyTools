@@ -157,8 +157,8 @@ struct HomeView: View {
     private func financeMetrics(_ snapshot: FinanceViewSnapshot) -> some View {
         financeMetric("银行", value: snapshot.visibleAccountCount, systemImage: "building.columns")
         financeMetric("子账户", value: snapshot.visibleSubaccountCount, systemImage: "list.bullet.rectangle")
-        financeMetric("借记/扣账卡", value: snapshot.visibleDebitCount, systemImage: "creditcard")
-        financeMetric("贷记/信用卡", value: snapshot.visibleCreditCount, systemImage: "creditcard.fill")
+        financeMetric("借记卡", value: snapshot.visibleDebitCount, systemImage: "creditcard")
+        financeMetric("信用卡", value: snapshot.visibleCreditCount, systemImage: "creditcard.fill")
     }
 
     private func financeMetric(_ title: String, value: Int, systemImage: String) -> some View {
@@ -400,7 +400,7 @@ struct BankRegionBadge: View {
     let region: BankRegion
 
     private var color: Color {
-        region == .domestic ? .green : .orange
+        region == .domestic ? .blue : .indigo
     }
 
     private var title: String {

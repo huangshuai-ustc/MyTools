@@ -35,6 +35,8 @@
 		A1000000000000000000000B /* StockEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* StockEditorView.swift */; };
 		A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* StockTransactionEditorView.swift */; };
 		A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ForeignExchangeRateService.swift */; };
+		A60000000000000000000001 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* DiagnosticLogger.swift */; };
+		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
 		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
@@ -78,6 +80,8 @@
 		B1000000000000000000000B /* StockEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* StockTransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTransactionEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* ForeignExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForeignExchangeRateService.swift; sourceTree = "<group>"; };
+		B60000000000000000000001 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
+		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
@@ -135,6 +139,7 @@
 				B0000000000000000000000F /* StockQuoteService.swift */,
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 				B40000000000000000000002 /* AttachmentStore.swift */,
+				B60000000000000000000001 /* DiagnosticLogger.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -213,6 +218,7 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000009 /* ProfileView.swift */,
+				B60000000000000000000002 /* DiagnosticsView.swift */,
 			);
 			path = Profile;
 			sourceTree = "<group>";
@@ -345,6 +351,8 @@
 				A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */,
 				A50000000000000000000001 /* StockDividendEditorView.swift in Sources */,
 				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
+				A60000000000000000000001 /* DiagnosticLogger.swift in Sources */,
+				A60000000000000000000002 /* DiagnosticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,7 +367,9 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 6Y8DN35HLK;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyTools/Info.plist;
@@ -367,6 +377,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fjwyz.PersonalToolBox;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
 				PRODUCT_NAME = "$(TARGET_NAME)";

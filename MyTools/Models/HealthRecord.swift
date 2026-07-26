@@ -48,6 +48,10 @@ enum HospitalLevel: String, Codable, CaseIterable, Identifiable {
         case .levelThree: return "三级"
         }
     }
+
+    static var displayOrder: [Self] {
+        [.levelThree, .levelTwo, .levelOne, .unspecified]
+    }
 }
 
 enum HospitalGrade: String, Codable, CaseIterable, Identifiable {
@@ -65,6 +69,10 @@ enum HospitalGrade: String, Codable, CaseIterable, Identifiable {
         case .classB: return "乙等"
         case .classC: return "丙等"
         }
+    }
+
+    static var displayOrder: [Self] {
+        [.classA, .classB, .classC, .unspecified]
     }
 }
 

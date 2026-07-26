@@ -27,8 +27,14 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.18), value: store.isInitialDataLoaded)
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
+                DiagnosticLogger.shared.markEnteredBackground()
                 if auth.isAdmin { auth.lock() }
-                Task { await store.flushPendingPersistence() }
+                Task {
+                    await store.flushPendingPersistence()
+                    await DiagnosticLogger.shared.flush()
+                }
+            } else if phase == .active {
+                DiagnosticLogger.shared.markBecameActive()
             }
         }
         .onChange(of: auth.isAdmin) { _, isAdmin in

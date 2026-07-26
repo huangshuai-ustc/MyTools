@@ -72,6 +72,11 @@ struct ProfileView: View {
                     } label: {
                         Label("我的股票", systemImage: "chart.line.uptrend.xyaxis")
                     }
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("调试信息", systemImage: "ladybug")
+                    }
                 }
                 Section("关于") {
                     LabeledContent("版本", value: "MVP 1.3")

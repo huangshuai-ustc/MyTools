@@ -14,6 +14,15 @@ extension View {
         self
 #endif
     }
+
+    func diagnosticScreen(_ name: String) -> some View {
+        onAppear {
+            DiagnosticLogger.shared.log(.navigation, "页面显示：\(name)")
+        }
+        .onDisappear {
+            DiagnosticLogger.shared.log(.navigation, "页面离开：\(name)")
+        }
+    }
 }
 
 private struct IOSLabeledBackButtonModifier: ViewModifier {
