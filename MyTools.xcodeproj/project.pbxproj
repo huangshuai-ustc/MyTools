@@ -35,8 +35,6 @@
 		A1000000000000000000000B /* StockEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* StockEditorView.swift */; };
 		A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* StockTransactionEditorView.swift */; };
 		A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ForeignExchangeRateService.swift */; };
-		A60000000000000000000001 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* DiagnosticLogger.swift */; };
-		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
 		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
@@ -47,6 +45,8 @@
 		A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000004 /* MedicalRecordEditorView.swift */; };
 		A40000000000000000000005 /* HospitalDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000005 /* HospitalDirectoryView.swift */; };
 		A50000000000000000000001 /* StockDividendEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000001 /* StockDividendEditorView.swift */; };
+		A60000000000000000000001 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* DiagnosticLogger.swift */; };
+		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -80,8 +80,6 @@
 		B1000000000000000000000B /* StockEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* StockTransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTransactionEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* ForeignExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForeignExchangeRateService.swift; sourceTree = "<group>"; };
-		B60000000000000000000001 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
-		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
@@ -92,6 +90,8 @@
 		B40000000000000000000004 /* MedicalRecordEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordEditorView.swift; sourceTree = "<group>"; };
 		B40000000000000000000005 /* HospitalDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HospitalDirectoryView.swift; sourceTree = "<group>"; };
 		B50000000000000000000001 /* StockDividendEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockDividendEditorView.swift; sourceTree = "<group>"; };
+		B60000000000000000000001 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
+		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */

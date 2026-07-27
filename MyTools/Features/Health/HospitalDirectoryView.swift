@@ -12,6 +12,7 @@ struct HospitalDirectoryView: View {
             .filter { profile in
                 searchTerm.isEmpty
                     || profile.name.localizedCaseInsensitiveContains(searchTerm)
+                    || profile.institutionType.title.localizedCaseInsensitiveContains(searchTerm)
                     || profile.classificationTitles.contains {
                         $0.localizedCaseInsensitiveContains(searchTerm)
                     }
@@ -23,7 +24,7 @@ struct HospitalDirectoryView: View {
         List {
             if displayedProfiles.isEmpty {
                 ContentUnavailableView(
-                    store.hospitalProfiles.isEmpty ? "暂无医院资料" : "没有匹配的医院",
+                    store.hospitalProfiles.isEmpty ? "暂无机构资料" : "没有匹配的机构",
                     systemImage: store.hospitalProfiles.isEmpty ? "building.2" : "magnifyingglass"
                 )
             } else {
@@ -46,9 +47,9 @@ struct HospitalDirectoryView: View {
                 }
             }
         }
-        .navigationTitle("医院资料库")
+        .navigationTitle("医疗机构资料库")
         .iOSLabeledBackButton("健康档案")
-        .searchable(text: $query, prompt: "搜索医院名称或分类")
+        .searchable(text: $query, prompt: "搜索机构名称或分类")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 AdminEditAccessButton { editingProfile = HospitalProfile() }
@@ -56,7 +57,7 @@ struct HospitalDirectoryView: View {
                     Button { editingProfile = HospitalProfile() } label: {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("新增医院")
+                    .accessibilityLabel("新增机构")
                 }
             }
         }
@@ -81,18 +82,21 @@ private struct HospitalProfileRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "building.2.fill")
+            Image(systemName: profile.institutionType.systemImage)
                 .foregroundStyle(.pink)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(profile.name)
                     .font(.headline)
                     .lineLimit(2)
-                if profile.classificationTitles.isEmpty {
-                    Text("未设置医院分类")
+                Text(profile.institutionType.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if profile.institutionType == .hospital, profile.classificationTitles.isEmpty {
+                    Text("未设置机构分类")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
+                } else if profile.institutionType == .hospital {
                     HospitalClassificationBadges(profile: profile)
                 }
             }
@@ -124,30 +128,40 @@ private struct HospitalProfileEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("医院") {
-                    LabeledContent("医院名称：") {
+                Section("机构") {
+                    LabeledContent("机构名称：") {
                         IMESafeTextField(prompt: "必填", text: $profile.name, alignment: .trailing)
                             .frame(maxWidth: 260)
                     }
-                    Picker("医院级别：", selection: $profile.level) {
-                        ForEach(HospitalLevel.displayOrder) { level in
-                            Text(level.title).tag(level)
+                    Picker("机构类别：", selection: $profile.institutionType) {
+                        ForEach(MedicalInstitutionType.allCases) { type in
+                            Text(type.title).tag(type)
                         }
                     }
-                    Picker("医院等次：", selection: $profile.grade) {
-                        ForEach(HospitalGrade.displayOrder) { grade in
-                            Text(grade.title).tag(grade)
+                    if profile.institutionType == .hospital {
+                        Picker("机构级别：", selection: $profile.level) {
+                            ForEach(HospitalLevel.displayOrder) { level in
+                                Text(level.title).tag(level)
+                            }
                         }
-                    }
-                    Picker("医院类型：", selection: $profile.category) {
-                        ForEach(HospitalCategory.allCases) { category in
-                            Text(category.title).tag(category)
+                        Picker("机构等次：", selection: $profile.grade) {
+                            ForEach(HospitalGrade.displayOrder) { grade in
+                                Text(grade.title).tag(grade)
+                            }
+                        }
+                        Picker("医院性质：", selection: $profile.category) {
+                            ForEach(HospitalCategory.allCases) { category in
+                                Text(category.title).tag(category)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle(isNew ? "新增医院" : "编辑医院")
+            .navigationTitle(isNew ? "新增机构" : "编辑机构")
             .adminModeIndicator()
+            .onChange(of: profile.institutionType) { _, _ in
+                profile.normalizeClassification()
+            }
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -183,16 +197,16 @@ private struct HospitalProfileEditorView: View {
     private func save() {
         let normalizedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedName.isEmpty else {
-            reportError("请填写医院名称。")
+            reportError("请填写机构名称。")
             return
         }
         guard !store.hospitalProfileNameExists(normalizedName, excluding: profile.id) else {
-            reportError("医院资料库中已经存在同名医院。")
+            reportError("医疗机构资料库中已经存在同名机构。")
             return
         }
         profile.name = normalizedName
         guard store.upsertHospitalProfile(profile) else {
-            reportError("医院资料保存失败，请检查名称。")
+            reportError("机构资料保存失败，请检查名称。")
             return
         }
         dismiss()

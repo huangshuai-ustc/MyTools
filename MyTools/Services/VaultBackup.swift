@@ -17,7 +17,7 @@ enum VaultBackupError: LocalizedError {
         case .invalidFile:
             return "文件不是有效的“我的工具箱”备份。"
         case .unsupportedVersion:
-            return "此备份来自更新版本，当前版本无法导入。"
+            return "此备份版本不是当前支持的 1.0，无法导入。"
         case .wrongPassword:
             return "备份密码错误，无法解密文件。"
         }
@@ -55,14 +55,14 @@ extension UTType {
 enum VaultBackupCrypto {
     static let defaultPassword = "1.2.3.4."
     private static let format = "mytools-vault"
-    private static let version = 7
+    private static let version = "1.0"
     private static let saltLength = 16
     private static let keyLength = 32
     private static let rounds: UInt32 = 210_000
 
     private struct Envelope: Codable {
         let format: String
-        let version: Int
+        let version: String
         let salt: Data
         let combined: Data
     }
@@ -92,7 +92,7 @@ enum VaultBackupCrypto {
             throw VaultBackupError.invalidFile
         }
         guard envelope.format == format else { throw VaultBackupError.invalidFile }
-        guard (1...version).contains(envelope.version) else { throw VaultBackupError.unsupportedVersion }
+        guard envelope.version == version else { throw VaultBackupError.unsupportedVersion }
 
         let key = try deriveKey(password: effectivePassword, salt: envelope.salt)
         let sealed: AES.GCM.SealedBox

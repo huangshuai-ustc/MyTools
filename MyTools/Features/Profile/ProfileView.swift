@@ -30,9 +30,7 @@ struct ProfileView: View {
                         }
                     }
                 }
-                Section("数据与安全") {
-                    Label("本地优先存储", systemImage: "internaldrive")
-                    Label("备份文件使用 AES-GCM 加密", systemImage: "lock.rotation")
+                Section("备份与恢复") {
                     Button {
                         backupPasswordMode = .export
                     } label: {
@@ -63,20 +61,14 @@ struct ProfileView: View {
                 }
                 Section("设置") {
                     NavigationLink {
-                        HomeFeatureSettingsView()
+                        ProfileSettingsView()
                     } label: {
-                        Label("首页功能", systemImage: "switch.2")
+                        Label("设置", systemImage: "gearshape")
                     }
-                    NavigationLink {
-                        StockAppearanceSettingsView()
-                    } label: {
-                        Label(ToolModule.myStocks.title, systemImage: "chart.line.uptrend.xyaxis")
-                    }
-                    NavigationLink {
-                        DiagnosticsView()
-                    } label: {
-                        Label("调试信息", systemImage: "ladybug")
-                    }
+                }
+                Section("存储与安全说明") {
+                    Label("本地优先存储", systemImage: "internaldrive")
+                    Label("备份文件使用 AES-GCM 加密", systemImage: "lock.rotation")
                 }
                 Section("关于") {
                     LabeledContent("版本", value: "MVP 2.0.4")
@@ -96,17 +88,18 @@ struct ProfileView: View {
                 BackupPasswordView(mode: mode) { password in
                     await handleBackupPassword(password, mode: mode)
                 }
-                .iOSLargeSheet()
+                .iOSAuthenticationSheet()
             }
-            .confirmationDialog(
-                "导入会替换当前全部银行、股票、换汇和健康档案数据",
+            .alert(
+                "导入备份",
                 isPresented: $showingImportConfirmation,
-                titleVisibility: .visible
             ) {
-                Button("选择备份文件", role: .destructive) {
+                Button("选择备份文件") {
                     showingImporter = true
                 }
                 Button("取消", role: .cancel) {}
+            } message: {
+                Text("导入会替换当前全部银行、股票、换汇和健康档案数据。")
             }
             .fileExporter(
                 isPresented: $showingExporter,
@@ -206,6 +199,39 @@ struct ProfileView: View {
     }
 }
 
+private struct ProfileSettingsView: View {
+    var body: some View {
+        List {
+            Section("功能设置") {
+                NavigationLink {
+                    HomeFeatureSettingsView()
+                } label: {
+                    Label("首页功能", systemImage: "switch.2")
+                }
+                NavigationLink {
+                    StockAppearanceSettingsView()
+                } label: {
+                    Label(ToolModule.myStocks.title, systemImage: "chart.line.uptrend.xyaxis")
+                }
+            }
+            Section("诊断") {
+                NavigationLink {
+                    DiagnosticsView()
+                } label: {
+                    Label("调试信息", systemImage: "ladybug")
+                }
+            }
+        }
+        .navigationTitle("设置")
+        .adminModeIndicator()
+        .iOSLabeledBackButton("我的")
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.insetGrouped)
+#endif
+    }
+}
+
 private struct HomeFeatureSettingsView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
 
@@ -237,7 +263,7 @@ private struct HomeFeatureSettingsView: View {
             }
             .navigationTitle("首页功能")
             .adminModeIndicator()
-            .iOSLabeledBackButton("我的")
+            .iOSLabeledBackButton("设置")
 #if os(iOS)
         .toolbar { EditButton() }
         .navigationBarTitleDisplayMode(.inline)
@@ -270,7 +296,7 @@ private struct StockAppearanceSettingsView: View {
         }
         .navigationTitle(ToolModule.myStocks.title)
         .adminModeIndicator()
-        .iOSLabeledBackButton("我的")
+        .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
@@ -342,7 +368,7 @@ struct BackupPasswordView: View {
                             .focused($inputFocused)
                     }
                 } footer: {
-                    Text(mode == .export ? "已填入默认密码 1.2.3.4.；清空后导出也会使用该默认密码。自定义密码至少 8 位。" : "已填入默认密码 1.2.3.4.；清空后导入也会尝试该默认密码。")
+                    Text(mode == .export ? "已填入默认密码.；清空后导出也会使用该默认密码。自定义密码至少 8 位。" : "已填入默认密码；清空后导入也会尝试该默认密码。")
                 }
 
                 if !error.isEmpty {

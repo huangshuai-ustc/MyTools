@@ -143,6 +143,8 @@ final class AppStore: ObservableObject {
     private func applyInitialSnapshot(_ snapshot: AppStoreInitialSnapshot) {
         applyVault(snapshot.vault)
         canPersistVault = snapshot.canPersistVault
+        migrateLegacyPhysicalExamSessions()
+        synchronizeHospitalProfilesWithMedicalRecords()
         isVaultLoadFailurePresented = !snapshot.canPersistVault
         isInitialDataLoaded = true
         let loadSummary = "Local vault loaded from \(snapshot.vaultSource): \(snapshot.vaultByteCount) bytes; read \(snapshot.readDurationMilliseconds) ms, decode \(snapshot.decodeDurationMilliseconds) ms, total \(snapshot.loadDurationMilliseconds) ms"
@@ -271,6 +273,7 @@ final class AppStore: ObservableObject {
 
     func upsertMedicalRecord(_ record: MedicalRecord) {
         var storedRecord = record
+        storedRecord.normalizeInstitutionClassification()
         storedRecord.hospital = storedRecord.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
         if let index = medicalRecords.firstIndex(where: { $0.id == storedRecord.id }) {
             let retainedIDs = Set(storedRecord.attachments.map(\.id))
@@ -285,9 +288,11 @@ final class AppStore: ObservableObject {
         persist()
     }
 
-    func hospitalProfile(named name: String) -> HospitalProfile? {
+    func hospitalProfile(named name: String, type: MedicalInstitutionType? = nil) -> HospitalProfile? {
         let key = hospitalNameKey(name)
-        return hospitalProfiles.first { hospitalNameKey($0.name) == key }
+        return hospitalProfiles.first {
+            hospitalNameKey($0.name) == key && (type == nil || $0.institutionType == type)
+        }
     }
 
     func hospitalProfileNameExists(_ name: String, excluding id: UUID? = nil) -> Bool {
@@ -300,6 +305,7 @@ final class AppStore: ObservableObject {
     func upsertHospitalProfile(_ profile: HospitalProfile) -> Bool {
         var storedProfile = profile
         storedProfile.name = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedProfile.normalizeClassification()
         guard !storedProfile.name.isEmpty,
               !hospitalProfileNameExists(storedProfile.name, excluding: storedProfile.id) else {
             return false
@@ -320,12 +326,14 @@ final class AppStore: ObservableObject {
 
         let namesToMatch = [previousName, storedProfile.name].compactMap { $0 }.map(hospitalNameKey)
         for index in medicalRecords.indices
-        where !medicalRecords[index].isPharmacyPurchase
-            && namesToMatch.contains(hospitalNameKey(medicalRecords[index].hospital)) {
+        where namesToMatch.contains(hospitalNameKey(medicalRecords[index].hospital)) {
             medicalRecords[index].hospital = storedProfile.name
-            medicalRecords[index].hospitalLevel = storedProfile.level
-            medicalRecords[index].hospitalGrade = storedProfile.grade
-            medicalRecords[index].hospitalCategory = storedProfile.category
+            if medicalRecords[index].institutionType == storedProfile.institutionType {
+                medicalRecords[index].hospitalLevel = storedProfile.level
+                medicalRecords[index].hospitalGrade = storedProfile.grade
+                medicalRecords[index].hospitalCategory = storedProfile.category
+            }
+            medicalRecords[index].normalizeInstitutionClassification()
             medicalRecords[index].updatedAt = Date()
         }
         persist()
@@ -337,24 +345,114 @@ final class AppStore: ObservableObject {
         persist()
     }
 
+    private func migrateLegacyPhysicalExamSessions() {
+        var migratedRecords: [MedicalRecord] = []
+        var didChange = false
+
+        for index in medicalRecords.indices {
+            guard medicalRecords[index].isPhysicalExam,
+                  var details = medicalRecords[index].physicalExamDetails,
+                  !details.sessions.isEmpty else {
+                continue
+            }
+            didChange = true
+
+            let parent = medicalRecords[index]
+            let sessions = details.sessions.sorted { $0.date < $1.date }
+            if let firstSession = sessions.first {
+                medicalRecords[index].date = MedicalRecord.normalizedDate(firstSession.date)
+                if details.completedItems.isEmpty {
+                    details.completedItems = firstSession.completedItems
+                }
+                if medicalRecords[index].diagnosis.isEmpty {
+                    medicalRecords[index].diagnosis = firstSession.result
+                }
+                if medicalRecords[index].treatment.isEmpty {
+                    medicalRecords[index].treatment = firstSession.recommendation
+                }
+                if medicalRecords[index].notes.isEmpty {
+                    medicalRecords[index].notes = firstSession.notes
+                }
+            }
+
+            for session in sessions.dropFirst() {
+                guard !medicalRecords.contains(where: { $0.id == session.id }) else { continue }
+                var child = MedicalRecord(followUpTo: parent, date: session.date)
+                child.id = session.id
+                child.hospital = session.institution.isEmpty ? parent.hospital : session.institution
+                child.physicalExamDetails = PhysicalExamDetails(
+                    packageName: details.packageName,
+                    completedItems: session.completedItems
+                )
+                child.diagnosis = session.result
+                child.treatment = session.recommendation
+                child.notes = session.notes
+                migratedRecords.append(child)
+            }
+
+            details.sessions = []
+            medicalRecords[index].physicalExamDetails = details
+            medicalRecords[index].updatedAt = Date()
+        }
+
+        guard didChange else { return }
+        medicalRecords.append(contentsOf: migratedRecords)
+        persist()
+    }
+
     private func rememberHospital(from record: MedicalRecord) {
-        guard !record.isPharmacyPurchase, !record.hospital.isEmpty else { return }
+        guard !record.hospital.isEmpty else { return }
         if let index = hospitalProfiles.firstIndex(where: {
             hospitalNameKey($0.name) == hospitalNameKey(record.hospital)
         }) {
-            if record.hospitalLevel != .unspecified {
-                hospitalProfiles[index].level = record.hospitalLevel
+            var didChange = false
+            if hospitalProfiles[index].institutionType != record.institutionType {
+                hospitalProfiles[index].institutionType = record.institutionType
+                didChange = true
             }
-            if record.hospitalGrade != .unspecified {
-                hospitalProfiles[index].grade = record.hospitalGrade
+            if record.institutionType == .hospital {
+                if record.hospitalLevel != .unspecified {
+                    if hospitalProfiles[index].level != record.hospitalLevel {
+                        hospitalProfiles[index].level = record.hospitalLevel
+                        didChange = true
+                    }
+                }
+                if record.hospitalGrade != .unspecified {
+                    if hospitalProfiles[index].grade != record.hospitalGrade {
+                        hospitalProfiles[index].grade = record.hospitalGrade
+                        didChange = true
+                    }
+                }
+                if record.hospitalCategory != .unspecified {
+                    if hospitalProfiles[index].category != record.hospitalCategory {
+                        hospitalProfiles[index].category = record.hospitalCategory
+                        didChange = true
+                    }
+                }
+            } else {
+                let previousProfile = hospitalProfiles[index]
+                hospitalProfiles[index].normalizeClassification()
+                if hospitalProfiles[index] != previousProfile { didChange = true }
             }
-            if record.hospitalCategory != .unspecified {
-                hospitalProfiles[index].category = record.hospitalCategory
+            if didChange {
+                hospitalProfiles[index].updatedAt = Date()
             }
-            hospitalProfiles[index].updatedAt = Date()
         } else {
             hospitalProfiles.append(HospitalProfile(record: record))
         }
+    }
+
+    private func synchronizeHospitalProfilesWithMedicalRecords() {
+        let previousRecords = medicalRecords
+        medicalRecords = medicalRecords.map { record in
+            var normalizedRecord = record
+            normalizedRecord.normalizeInstitutionClassification()
+            return normalizedRecord
+        }
+        let previousProfiles = hospitalProfiles
+        medicalRecords.forEach { rememberHospital(from: $0) }
+        guard hospitalProfiles != previousProfiles || medicalRecords != previousRecords else { return }
+        persist()
     }
 
     private func hospitalNameKey(_ name: String) -> String {

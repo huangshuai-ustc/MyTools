@@ -135,11 +135,11 @@ struct AccountDetailView: View {
             }
 
             if account.region == .overseas {
-                subaccountsSection(account)
+                subaccountsSections(account)
                 cardsSection(account, cards: cards, allCards: allCards)
             } else {
                 cardsSection(account, cards: cards, allCards: allCards)
-                subaccountsSection(account)
+                subaccountsSections(account)
             }
 
             loginSection(account)
@@ -160,18 +160,18 @@ struct AccountDetailView: View {
 #endif
     }
 
-    private func subaccountsSection(_ account: BankAccount) -> some View {
+    @ViewBuilder
+    private func subaccountsSections(_ account: BankAccount) -> some View {
         let allSubaccounts = account.region == .domestic
             ? account.domesticSubaccounts.map(AnySubaccount.domestic)
             : account.foreignSubaccounts.map(AnySubaccount.foreign)
-        let subaccounts = showsClosedSubaccounts
-            ? allSubaccounts
-            : allSubaccounts.filter { $0.status != .closed }
+        let subaccounts = allSubaccounts.filter { $0.status != .closed }
+        let closedSubaccounts = allSubaccounts.filter { $0.status == .closed }
         let closedSubaccountCount = account.closedSubaccountCount
 
-        return Section("子账户（\(account.activeSubaccountCount)）") {
+        Section("子账户（\(account.activeSubaccountCount)）") {
             if subaccounts.isEmpty {
-                Text(allSubaccounts.isEmpty ? "暂无子账户" : "已隐藏全部已销户子账户")
+                Text(allSubaccounts.isEmpty ? "暂无子账户" : "暂无正常子账户")
                     .foregroundStyle(.secondary)
             }
             ForEach(subaccounts) { item in
@@ -185,22 +185,42 @@ struct AccountDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            if closedSubaccountCount > 0 {
+            if !showsClosedSubaccounts, closedSubaccountCount > 0 {
                 HiddenItemsVisibilityButton(
                     itemsDescription: "\(closedSubaccountCount) 个已销户子账户",
                     isShowing: $showsClosedSubaccounts
                 )
             }
         }
+        if showsClosedSubaccounts, !closedSubaccounts.isEmpty {
+            Section("已销户子账户（\(closedSubaccounts.count)）") {
+                HiddenItemsVisibilityButton(
+                    itemsDescription: "\(closedSubaccounts.count) 个已销户子账户",
+                    isShowing: $showsClosedSubaccounts
+                )
+                ForEach(closedSubaccounts) { item in
+                    Button {
+                        switch item {
+                        case .domestic(let subaccount): viewingDomesticSubaccount = subaccount
+                        case .foreign(let subaccount): viewingForeignSubaccount = subaccount
+                        }
+                    } label: {
+                        item.row
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
+    @ViewBuilder
     private func cardsSection(
         _ account: BankAccount,
         cards: [BankCard],
         allCards: [BankCard]
     ) -> some View {
-        let closedCardCount = allCards.filter { $0.status == .closed }.count
-        return Section("银行卡（\(activeCardCount(allCards))）") {
+        let closedCards = closedCards(for: account)
+        Section("银行卡（\(activeCardCount(allCards))）") {
             if cards.isEmpty {
                 Text(allCards.isEmpty ? "暂无银行卡" : "当前筛选下暂无银行卡")
                     .foregroundStyle(.secondary)
@@ -212,11 +232,26 @@ struct AccountDetailView: View {
                 .buttonStyle(.plain)
                 .appListRowStyle()
             }
-            if closedCardCount > 0 {
+            if !showsClosedCards, !closedCards.isEmpty {
                 HiddenItemsVisibilityButton(
-                    itemsDescription: "\(closedCardCount) 张已销户银行卡",
+                    itemsDescription: "\(closedCards.count) 张已销户银行卡",
                     isShowing: $showsClosedCards
                 )
+            }
+        }
+        if showsClosedCards, !closedCards.isEmpty {
+            Section("已销户银行卡（\(closedCards.count)）") {
+                HiddenItemsVisibilityButton(
+                    itemsDescription: "\(closedCards.count) 张已销户银行卡",
+                    isShowing: $showsClosedCards
+                )
+                ForEach(closedCards) { card in
+                    Button { viewingCard = card } label: {
+                        CardRow(card: card)
+                    }
+                    .buttonStyle(.plain)
+                    .appListRowStyle()
+                }
             }
         }
     }
@@ -306,7 +341,15 @@ struct AccountDetailView: View {
 
     private func displayedCards(for account: BankAccount) -> [BankCard] {
         let cards = store.cards(for: account).filter {
-            (showsClosedCards || $0.status != .closed)
+            $0.status != .closed
+                && (CardCategoryFilter(rawValue: cardCategoryRawValue)?.includes($0) ?? true)
+        }
+        return (CardSortOrder(rawValue: cardSortOrderRawValue) ?? .nameAscending).sorted(cards)
+    }
+
+    private func closedCards(for account: BankAccount) -> [BankCard] {
+        let cards = store.cards(for: account).filter {
+            $0.status == .closed
                 && (CardCategoryFilter(rawValue: cardCategoryRawValue)?.includes($0) ?? true)
         }
         return (CardSortOrder(rawValue: cardSortOrderRawValue) ?? .nameAscending).sorted(cards)

@@ -60,6 +60,10 @@ struct HomeView: View {
             }
             if showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
                 Section("停用银行（\(snapshot.inactiveAccounts.count)）") {
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
+                        isShowing: $showsInactiveBanks
+                    )
                     if auth.isAdmin {
                         ForEach(snapshot.inactiveAccounts) { account in
                             accountLink(account, cards: snapshot.cards(for: account))
@@ -70,10 +74,6 @@ struct HomeView: View {
                             accountLink(account, cards: snapshot.cards(for: account))
                         }
                     }
-                    HiddenItemsVisibilityButton(
-                        itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
-                        isShowing: $showsInactiveBanks
-                    )
                 }
             }
         }

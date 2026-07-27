@@ -33,7 +33,6 @@ struct MedicalRecordEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: MedicalRecordEditorDraft
     @State private var editingExpenseItem: MedicalExpenseItem?
-    @State private var editingPhysicalExamSession: PhysicalExamSession?
     @State private var editingPhysicalExamFinding: PhysicalExamFinding?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
@@ -61,7 +60,6 @@ struct MedicalRecordEditorView: View {
                 basicInformationSection
                 if draft.record.isPhysicalExam {
                     physicalExamInformationSection
-                    physicalExamSessionSection
                     physicalExamFindingSection
                 }
                 expenseItemSection
@@ -86,12 +84,6 @@ struct MedicalRecordEditorView: View {
             .sheet(item: $editingExpenseItem) { item in
                 MedicalExpenseItemEditorView(item: item) { updated in
                     upsertExpenseItem(updated)
-                }
-                .iOSLargeSheet()
-            }
-            .sheet(item: $editingPhysicalExamSession) { session in
-                PhysicalExamSessionEditorView(session: session) { updated in
-                    upsertPhysicalExamSession(updated)
                 }
                 .iOSLargeSheet()
             }
@@ -133,6 +125,9 @@ struct MedicalRecordEditorView: View {
             return isNew ? "新增购药" : "编辑购药"
         }
         if draft.record.isPhysicalExam {
+            if draft.record.hasAssociatedRecord {
+                return isNew ? "新增检查批次" : "编辑检查批次"
+            }
             return isNew ? "新增体检" : "编辑体检"
         }
         if draft.record.isFollowUp {
@@ -147,9 +142,9 @@ struct MedicalRecordEditorView: View {
     }
 
     private var associatedVisitSection: some View {
-        Section("关联就诊") {
+        Section(draft.record.isPhysicalExam ? "关联体检" : "关联就诊") {
             if let associatedRecord {
-                LabeledContent("原就诊") {
+                LabeledContent(draft.record.isPhysicalExam ? "原体检" : "原就诊") {
                     VStack(alignment: .trailing, spacing: 3) {
                         Text(associatedRecord.hospital)
                         Text(
@@ -169,44 +164,49 @@ struct MedicalRecordEditorView: View {
     private var basicInformationSection: some View {
         Section(draft.record.isPharmacyPurchase ? "购药信息" : (draft.record.isPhysicalExam ? "体检信息" : (draft.record.isFollowUp ? "复诊信息" : "就诊信息"))) {
             DatePicker(
-                draft.record.isPharmacyPurchase ? "购药日期：" : (draft.record.isPhysicalExam ? "首个检查日期：" : (draft.record.isFollowUp ? "复诊日期：" : "就诊日期：")),
+                draft.record.isPharmacyPurchase ? "购药日期：" : (draft.record.isPhysicalExam ? "体检日期：" : (draft.record.isFollowUp ? "复诊日期：" : "就诊日期：")),
                 selection: $draft.record.date,
                 displayedComponents: .date
             )
-            if draft.record.isPharmacyPurchase {
-                safeField("药房：", prompt: "必填", text: $draft.record.hospital)
-            } else {
-                safeField(draft.record.isPhysicalExam ? "体检机构：" : "医院：", prompt: "必填", text: $draft.record.hospital)
-                if !draft.record.isPhysicalExam, !store.hospitalProfiles.isEmpty {
-                    Menu {
-                        ForEach(sortedHospitalProfiles) { profile in
-                            Button { applyHospital(profile) } label: {
-                                if profile.id == selectedHospitalProfile?.id {
-                                    Label(profile.name, systemImage: "checkmark")
-                                } else {
-                                    Text(profile.name)
-                                }
+            safeField(
+                draft.record.isPharmacyPurchase
+                    ? "药房："
+                    : (draft.record.isPhysicalExam ? "体检机构：" : "医院："),
+                prompt: "必填",
+                text: $draft.record.hospital
+            )
+            .onChange(of: draft.record.hospital) { _, name in
+                applyMatchingHospitalProfile(named: name)
+            }
+            if !sortedHospitalProfiles.isEmpty {
+                Menu {
+                    ForEach(sortedHospitalProfiles) { profile in
+                        Button { applyHospital(profile) } label: {
+                            if profile.id == selectedHospitalProfile?.id {
+                                Label(profile.name, systemImage: "checkmark")
+                            } else {
+                                Text(profile.name)
                             }
                         }
-                    } label: {
-                        Label("选择已有医院", systemImage: "building.2")
+                    }
+                } label: {
+                    Label("选择已有机构", systemImage: "building.2")
+                }
+            }
+            if draft.record.institutionType == .hospital {
+                Picker("机构级别：", selection: $draft.record.hospitalLevel) {
+                    ForEach(HospitalLevel.displayOrder) { level in
+                        Text(level.title).tag(level)
                     }
                 }
-                if !draft.record.isPhysicalExam {
-                    Picker("医院级别：", selection: $draft.record.hospitalLevel) {
-                        ForEach(HospitalLevel.displayOrder) { level in
-                            Text(level.title).tag(level)
-                        }
+                Picker("机构等次：", selection: $draft.record.hospitalGrade) {
+                    ForEach(HospitalGrade.displayOrder) { grade in
+                        Text(grade.title).tag(grade)
                     }
-                    Picker("医院等次：", selection: $draft.record.hospitalGrade) {
-                        ForEach(HospitalGrade.displayOrder) { grade in
-                            Text(grade.title).tag(grade)
-                        }
-                    }
-                    Picker("医院类型：", selection: $draft.record.hospitalCategory) {
-                        ForEach(HospitalCategory.allCases) { category in
-                            Text(category.title).tag(category)
-                        }
+                }
+                Picker("医院性质：", selection: $draft.record.hospitalCategory) {
+                    ForEach(HospitalCategory.allCases) { category in
+                        Text(category.title).tag(category)
                     }
                 }
             }
@@ -222,6 +222,7 @@ struct MedicalRecordEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: draft.record.visitType) { oldValue, newValue in
+                        draft.record.normalizeInstitutionClassification()
                         if oldValue != .pharmacyPurchase, newValue == .pharmacyPurchase {
                             draft.record.paymentMethod = .selfPay
                             draft.insuranceCostText = ""
@@ -234,8 +235,9 @@ struct MedicalRecordEditorView: View {
                 if draft.record.isPharmacyPurchase {
                     multilineField("用药原因（可选）", prompt: "例如：感冒、发热", text: $draft.record.chiefComplaint)
                 } else if draft.record.isPhysicalExam {
-                    multilineField("主检结论（可选）", prompt: "例如：轻度脂肪肝声像图", text: $draft.record.diagnosis)
-                    multilineField("健康建议（可选）", prompt: "例如：年度复查腹部超声、肝功能及血脂", text: $draft.record.treatment)
+                    multilineField("完成项目（可选）", prompt: "例如：肝功能、腹部超声、尿常规", text: physicalExamCompletedItemsBinding)
+                    multilineField("本轮检查结果（可选）", prompt: "例如：轻度脂肪肝声像图", text: $draft.record.diagnosis)
+                    multilineField("本轮健康建议（可选）", prompt: "例如：年度复查腹部超声、肝功能及血脂", text: $draft.record.treatment)
                 } else {
                 safeField("科室：", prompt: "必填", text: $draft.record.department)
                 safeField("医生：", prompt: "可选", text: $draft.record.doctor)
@@ -260,29 +262,6 @@ struct MedicalRecordEditorView: View {
                 } label: {
                     Label("添加报告日期", systemImage: "calendar.badge.plus")
                 }
-            }
-        }
-    }
-
-    private var physicalExamSessionSection: some View {
-        Section("检查批次") {
-            if physicalExamSessions.isEmpty {
-                Text("至少添加一次实际检查日期；未完成的项目可在后续补检批次中继续记录。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(physicalExamSessions.sorted { $0.date < $1.date }) { session in
-                Button { editingPhysicalExamSession = session } label: {
-                    PhysicalExamSessionRow(session: session)
-                }
-                .buttonStyle(.plain)
-                .appListRowStyle()
-            }
-            .onDelete(perform: deletePhysicalExamSessions)
-            Button {
-                editingPhysicalExamSession = PhysicalExamSession(date: draft.record.date)
-            } label: {
-                Label("添加检查批次", systemImage: "plus.circle")
             }
         }
     }
@@ -315,7 +294,10 @@ struct MedicalRecordEditorView: View {
             } else {
                 calculatedCostRow("本次费用：", amount: currentItemsTotal)
                 if !linkedFollowUps.isEmpty {
-                    calculatedCostRow("复诊费用：", amount: linkedFollowUpCostSummary.totalCost)
+                    calculatedCostRow(
+                        draft.record.isPhysicalExam ? "其他检查批次费用：" : "复诊费用：",
+                        amount: linkedFollowUpCostSummary.totalCost
+                    )
                 }
                 if !linkedPharmacyPurchases.isEmpty {
                     calculatedCostRow("关联购药费用：", amount: linkedPharmacyPurchaseCostSummary.totalCost)
@@ -553,6 +535,15 @@ struct MedicalRecordEditorView: View {
         )
     }
 
+    private var physicalExamCompletedItemsBinding: Binding<String> {
+        Binding(
+            get: { draft.record.physicalExamDetails?.completedItems ?? "" },
+            set: { completedItems in
+                updatePhysicalExamDetails { $0.completedItems = completedItems }
+            }
+        )
+    }
+
     private var physicalExamReportDate: Date? {
         draft.record.physicalExamDetails?.reportDate
     }
@@ -566,45 +557,19 @@ struct MedicalRecordEditorView: View {
         )
     }
 
-    private var physicalExamSessions: [PhysicalExamSession] {
-        draft.record.physicalExamDetails?.sessions ?? []
-    }
-
     private var physicalExamFindings: [PhysicalExamFinding] {
         draft.record.physicalExamDetails?.findings ?? []
     }
 
     private func ensurePhysicalExamDetails() {
         guard draft.record.physicalExamDetails == nil else { return }
-        draft.record.physicalExamDetails = PhysicalExamDetails(
-            sessions: [PhysicalExamSession(date: draft.record.date)]
-        )
+        draft.record.physicalExamDetails = PhysicalExamDetails()
     }
 
     private func updatePhysicalExamDetails(_ update: (inout PhysicalExamDetails) -> Void) {
-        var details = draft.record.physicalExamDetails ?? PhysicalExamDetails(
-            sessions: [PhysicalExamSession(date: draft.record.date)]
-        )
+        var details = draft.record.physicalExamDetails ?? PhysicalExamDetails()
         update(&details)
         draft.record.physicalExamDetails = details
-    }
-
-    private func upsertPhysicalExamSession(_ session: PhysicalExamSession) {
-        updatePhysicalExamDetails { details in
-            if let index = details.sessions.firstIndex(where: { $0.id == session.id }) {
-                details.sessions[index] = session
-            } else {
-                details.sessions.append(session)
-            }
-        }
-    }
-
-    private func deletePhysicalExamSessions(at offsets: IndexSet) {
-        let sessions = physicalExamSessions.sorted { $0.date < $1.date }
-        let ids = Set(offsets.map { sessions[$0].id })
-        updatePhysicalExamDetails { details in
-            details.sessions.removeAll { ids.contains($0.id) }
-        }
     }
 
     private func upsertPhysicalExamFinding(_ finding: PhysicalExamFinding) {
@@ -650,6 +615,7 @@ struct MedicalRecordEditorView: View {
         }
 
         var record = draft.record
+        record.normalizeInstitutionClassification()
         record.hospital = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
         record.department = record.department.trimmingCharacters(in: .whitespacesAndNewlines)
         record.chiefComplaint = record.chiefComplaint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -660,9 +626,6 @@ struct MedicalRecordEditorView: View {
                 reportError("请填写药房并至少添加一项药品。")
                 return
             }
-            record.hospitalLevel = .unspecified
-            record.hospitalGrade = .unspecified
-            record.hospitalCategory = .unspecified
             record.department = ""
             record.doctor = ""
             record.diagnosis = ""
@@ -672,19 +635,9 @@ struct MedicalRecordEditorView: View {
                 reportError("请填写体检机构。")
                 return
             }
-            guard var details = record.physicalExamDetails, !details.sessions.isEmpty else {
-                reportError("请至少添加一个检查批次。")
-                return
-            }
+            var details = record.physicalExamDetails ?? PhysicalExamDetails()
             details.packageName = details.packageName.trimmingCharacters(in: .whitespacesAndNewlines)
-            details.sessions = details.sessions.map { session in
-                var session = session
-                session.date = MedicalRecord.normalizedDate(session.date)
-                session.institution = session.institution.trimmingCharacters(in: .whitespacesAndNewlines)
-                session.completedItems = session.completedItems.trimmingCharacters(in: .whitespacesAndNewlines)
-                session.notes = session.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-                return session
-            }
+            details.completedItems = details.completedItems.trimmingCharacters(in: .whitespacesAndNewlines)
             details.findings = details.findings.map { finding in
                 var finding = finding
                 finding.item = finding.item.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -693,9 +646,6 @@ struct MedicalRecordEditorView: View {
                 return finding
             }
             record.physicalExamDetails = details
-            record.hospitalLevel = .unspecified
-            record.hospitalGrade = .unspecified
-            record.hospitalCategory = .unspecified
             record.department = ""
             record.doctor = ""
             record.chiefComplaint = ""
@@ -709,13 +659,7 @@ struct MedicalRecordEditorView: View {
             }
         }
 
-        let normalizedDate: Date
-        if record.isPhysicalExam,
-           let earliestSessionDate = record.physicalExamDetails?.sessions.map(\.date).min() {
-            normalizedDate = MedicalRecord.normalizedDate(earliestSessionDate)
-        } else {
-            normalizedDate = MedicalRecord.normalizedDate(record.date)
-        }
+        let normalizedDate = MedicalRecord.normalizedDate(record.date)
         if record.hasAssociatedRecord {
             guard let associatedRecord else {
                 reportError("关联的原就诊记录已不存在，无法保存这条记录。")
@@ -872,18 +816,23 @@ struct MedicalRecordEditorView: View {
     }
 
     private var sortedHospitalProfiles: [HospitalProfile] {
-        store.hospitalProfiles.sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
+        store.hospitalProfiles
+            .filter { $0.institutionType == draft.record.institutionType }
+            .sorted {
+                $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
     }
 
     private var selectedHospitalProfile: HospitalProfile? {
-        store.hospitalProfile(named: draft.record.hospital)
+        store.hospitalProfile(named: draft.record.hospital, type: draft.record.institutionType)
     }
 
     private var availableVisitTypes: [MedicalVisitType] {
         if draft.record.hasAssociatedRecord {
             return [draft.record.visitType]
+        }
+        if draft.record.isPhysicalExam, !linkedRecords.isEmpty {
+            return [.physicalExam]
         }
         if !linkedRecords.isEmpty {
             return MedicalVisitType.allCases.filter { $0 != .pharmacyPurchase && $0 != .physicalExam }
@@ -896,36 +845,14 @@ struct MedicalRecordEditorView: View {
         draft.record.hospitalLevel = profile.level
         draft.record.hospitalGrade = profile.grade
         draft.record.hospitalCategory = profile.category
+        draft.record.normalizeInstitutionClassification()
     }
 
-}
-
-private struct PhysicalExamSessionRow: View {
-    let session: PhysicalExamSession
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
-            Text(session.date, format: .dateTime.year().month().day())
-                .font(.headline)
-            if !session.institution.isEmpty {
-                Text(session.institution)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            if !session.completedItems.isEmpty {
-                Text(session.completedItems)
-                    .font(.subheadline)
-                    .lineLimit(2)
-            }
-            if !session.notes.isEmpty {
-                Text(session.notes)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private func applyMatchingHospitalProfile(named name: String) {
+        guard let profile = store.hospitalProfile(named: name, type: draft.record.institutionType) else { return }
+        applyHospital(profile)
     }
+
 }
 
 private struct PhysicalExamFindingRow: View {
@@ -948,66 +875,6 @@ private struct PhysicalExamFindingRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct PhysicalExamSessionEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var session: PhysicalExamSession
-    let onSave: (PhysicalExamSession) -> Void
-
-    init(session: PhysicalExamSession, onSave: @escaping (PhysicalExamSession) -> Void) {
-        _session = State(initialValue: session)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("检查批次") {
-                    DatePicker("检查日期：", selection: $session.date, displayedComponents: .date)
-                    field("检查机构：", prompt: "可选；与体检机构不同才填写", text: $session.institution)
-                    multilineField("完成项目", prompt: "例如：乙肝五项、肝胆脾胰双肾彩超、尿常规", text: $session.completedItems)
-                }
-                Section("备注") {
-                    IMESafeMultilineTextField(prompt: "例如：因时间不足，后续补检", text: $session.notes)
-                }
-            }
-            .navigationTitle("检查批次")
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        commitPendingTextInput {
-                            session.date = MedicalRecord.normalizedDate(session.date)
-                            session.institution = session.institution.trimmingCharacters(in: .whitespacesAndNewlines)
-                            session.completedItems = session.completedItems.trimmingCharacters(in: .whitespacesAndNewlines)
-                            session.notes = session.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-                            onSave(session)
-                            dismiss()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func field(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-                .frame(maxWidth: 260)
-        }
-    }
-
-    private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("\(title)：").font(.subheadline).foregroundStyle(.secondary)
-            IMESafeMultilineTextField(prompt: prompt, text: text)
-        }
     }
 }
 

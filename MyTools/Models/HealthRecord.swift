@@ -94,9 +94,34 @@ enum HospitalCategory: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum MedicalInstitutionType: String, Codable, CaseIterable, Identifiable {
+    case hospital
+    case pharmacy
+    case physicalExam
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .hospital: return "医院"
+        case .pharmacy: return "药房"
+        case .physicalExam: return "体检机构"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .hospital: return "building.2"
+        case .pharmacy: return "pills"
+        case .physicalExam: return "heart.text.clipboard"
+        }
+    }
+}
+
 struct HospitalProfile: Identifiable, Codable, Equatable {
     var id = UUID()
     var name = ""
+    var institutionType: MedicalInstitutionType = .hospital
     var level: HospitalLevel = .unspecified
     var grade: HospitalGrade = .unspecified
     var category: HospitalCategory = .unspecified
@@ -159,6 +184,8 @@ struct PhysicalExamSession: Identifiable, Codable, Equatable {
     var date = Date()
     var institution = ""
     var completedItems = ""
+    var result = ""
+    var recommendation = ""
     var notes = ""
 
     init(
@@ -166,12 +193,16 @@ struct PhysicalExamSession: Identifiable, Codable, Equatable {
         date: Date = Date(),
         institution: String = "",
         completedItems: String = "",
+        result: String = "",
+        recommendation: String = "",
         notes: String = ""
     ) {
         self.id = id
         self.date = date
         self.institution = institution
         self.completedItems = completedItems
+        self.result = result
+        self.recommendation = recommendation
         self.notes = notes
     }
 }
@@ -198,19 +229,45 @@ struct PhysicalExamFinding: Identifiable, Codable, Equatable {
 struct PhysicalExamDetails: Codable, Equatable {
     var packageName = ""
     var reportDate: Date?
+    var completedItems = ""
+    // 仅用于启动时迁移旧版嵌套检查批次。
     var sessions: [PhysicalExamSession] = []
     var findings: [PhysicalExamFinding] = []
 
     init(
         packageName: String = "",
         reportDate: Date? = nil,
+        completedItems: String = "",
         sessions: [PhysicalExamSession] = [],
         findings: [PhysicalExamFinding] = []
     ) {
         self.packageName = packageName
         self.reportDate = reportDate
+        self.completedItems = completedItems
         self.sessions = sessions
         self.findings = findings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case packageName, reportDate, completedItems, sessions, findings
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        packageName = try values.decodeIfPresent(String.self, forKey: .packageName) ?? ""
+        reportDate = try values.decodeIfPresent(Date.self, forKey: .reportDate)
+        completedItems = try values.decodeIfPresent(String.self, forKey: .completedItems) ?? ""
+        sessions = try values.decodeIfPresent([PhysicalExamSession].self, forKey: .sessions) ?? []
+        findings = try values.decodeIfPresent([PhysicalExamFinding].self, forKey: .findings) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(packageName, forKey: .packageName)
+        try values.encodeIfPresent(reportDate, forKey: .reportDate)
+        try values.encode(completedItems, forKey: .completedItems)
+        try values.encode(sessions, forKey: .sessions)
+        try values.encode(findings, forKey: .findings)
     }
 }
 
@@ -316,6 +373,12 @@ struct MedicalRecord: ToolEvent, Equatable {
         chiefComplaint = parent.chiefComplaint
         diagnosis = parent.diagnosis
         treatment = parent.treatment
+        if parent.isPhysicalExam {
+            let parentDetails = parent.physicalExamDetails
+            physicalExamDetails = PhysicalExamDetails(
+                packageName: parentDetails?.packageName ?? ""
+            )
+        }
         tags = parent.tags
     }
 
@@ -330,9 +393,7 @@ struct MedicalRecord: ToolEvent, Equatable {
     init(physicalExamOn date: Date = Date()) {
         self.date = Self.normalizedDate(date)
         visitType = .physicalExam
-        physicalExamDetails = PhysicalExamDetails(
-            sessions: [PhysicalExamSession(date: Self.normalizedDate(date))]
-        )
+        physicalExamDetails = PhysicalExamDetails()
     }
 
     static func normalizedDate(_ date: Date) -> Date {
@@ -373,17 +434,33 @@ struct MedicalRecord: ToolEvent, Equatable {
         visitType == .physicalExam
     }
 
+    var institutionType: MedicalInstitutionType {
+        if isPharmacyPurchase { return .pharmacy }
+        if isPhysicalExam { return .physicalExam }
+        return .hospital
+    }
+
     var institutionLabel: String {
         if isPharmacyPurchase { return "药房" }
         return isPhysicalExam ? "体检机构" : "医院"
     }
 
     var hospitalClassificationTitles: [String] {
-        [
+        guard institutionType == .hospital else { return [] }
+        return [
             hospitalLevel == .unspecified ? nil : hospitalLevel.title,
             hospitalGrade == .unspecified ? nil : hospitalGrade.title,
             hospitalCategory == .unspecified ? nil : hospitalCategory.title
         ].compactMap { $0 }
+    }
+
+    mutating func normalizeInstitutionClassification() {
+        guard institutionType == .hospital else {
+            hospitalLevel = .unspecified
+            hospitalGrade = .unspecified
+            hospitalCategory = .unspecified
+            return
+        }
     }
 
     var costSummary: MedicalCostSummary {
@@ -396,13 +473,51 @@ struct MedicalRecord: ToolEvent, Equatable {
 }
 
 extension HospitalProfile {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, institutionType, level, grade, category, createdAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        institutionType = try values.decodeIfPresent(MedicalInstitutionType.self, forKey: .institutionType) ?? .hospital
+        level = try values.decodeIfPresent(HospitalLevel.self, forKey: .level) ?? .unspecified
+        grade = try values.decodeIfPresent(HospitalGrade.self, forKey: .grade) ?? .unspecified
+        category = try values.decodeIfPresent(HospitalCategory.self, forKey: .category) ?? .unspecified
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        normalizeClassification()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(name, forKey: .name)
+        try values.encode(institutionType, forKey: .institutionType)
+        try values.encode(level, forKey: .level)
+        try values.encode(grade, forKey: .grade)
+        try values.encode(category, forKey: .category)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encode(updatedAt, forKey: .updatedAt)
+    }
+
     init(record: MedicalRecord) {
         name = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
+        institutionType = record.institutionType
         level = record.hospitalLevel
         grade = record.hospitalGrade
         category = record.hospitalCategory
         createdAt = record.createdAt
         updatedAt = record.updatedAt
+        normalizeClassification()
+    }
+
+    mutating func normalizeClassification() {
+        guard institutionType != .hospital else { return }
+        level = .unspecified
+        grade = .unspecified
+        category = .unspecified
     }
 }
 
