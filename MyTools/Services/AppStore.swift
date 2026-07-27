@@ -291,7 +291,9 @@ final class AppStore: ObservableObject {
     func hospitalProfile(named name: String, type: MedicalInstitutionType? = nil) -> HospitalProfile? {
         let key = hospitalNameKey(name)
         return hospitalProfiles.first {
-            hospitalNameKey($0.name) == key && (type == nil || $0.institutionType == type)
+            guard hospitalNameKey($0.name) == key else { return false }
+            guard let type else { return true }
+            return $0.supports(type)
         }
     }
 
@@ -328,7 +330,7 @@ final class AppStore: ObservableObject {
         for index in medicalRecords.indices
         where namesToMatch.contains(hospitalNameKey(medicalRecords[index].hospital)) {
             medicalRecords[index].hospital = storedProfile.name
-            if medicalRecords[index].institutionType == storedProfile.institutionType {
+            if storedProfile.supports(medicalRecords[index].institutionType), medicalRecords[index].institutionType == .hospital {
                 medicalRecords[index].hospitalLevel = storedProfile.level
                 medicalRecords[index].hospitalGrade = storedProfile.grade
                 medicalRecords[index].hospitalCategory = storedProfile.category
@@ -406,8 +408,8 @@ final class AppStore: ObservableObject {
             hospitalNameKey($0.name) == hospitalNameKey(record.hospital)
         }) {
             var didChange = false
-            if hospitalProfiles[index].institutionType != record.institutionType {
-                hospitalProfiles[index].institutionType = record.institutionType
+            if !hospitalProfiles[index].supports(record.institutionType) {
+                hospitalProfiles[index].institutionTypes.insert(record.institutionType)
                 didChange = true
             }
             if record.institutionType == .hospital {
@@ -429,11 +431,10 @@ final class AppStore: ObservableObject {
                         didChange = true
                     }
                 }
-            } else {
-                let previousProfile = hospitalProfiles[index]
-                hospitalProfiles[index].normalizeClassification()
-                if hospitalProfiles[index] != previousProfile { didChange = true }
             }
+            let previousProfile = hospitalProfiles[index]
+            hospitalProfiles[index].normalizeClassification()
+            if hospitalProfiles[index] != previousProfile { didChange = true }
             if didChange {
                 hospitalProfiles[index].updatedAt = Date()
             }

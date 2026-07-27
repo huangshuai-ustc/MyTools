@@ -12,7 +12,7 @@ struct HospitalDirectoryView: View {
             .filter { profile in
                 searchTerm.isEmpty
                     || profile.name.localizedCaseInsensitiveContains(searchTerm)
-                    || profile.institutionType.title.localizedCaseInsensitiveContains(searchTerm)
+                    || profile.institutionTypeTitle.localizedCaseInsensitiveContains(searchTerm)
                     || profile.classificationTitles.contains {
                         $0.localizedCaseInsensitiveContains(searchTerm)
                     }
@@ -82,21 +82,21 @@ private struct HospitalProfileRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: profile.institutionType.systemImage)
+            Image(systemName: profile.institutionTypeSystemImage)
                 .foregroundStyle(.pink)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(profile.name)
                     .font(.headline)
                     .lineLimit(2)
-                Text(profile.institutionType.title)
+                Text(profile.institutionTypeTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if profile.institutionType == .hospital, profile.classificationTitles.isEmpty {
+                if profile.supports(.hospital), profile.classificationTitles.isEmpty {
                     Text("未设置机构分类")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if profile.institutionType == .hospital {
+                } else if profile.supports(.hospital) {
                     HospitalClassificationBadges(profile: profile)
                 }
             }
@@ -133,12 +133,15 @@ private struct HospitalProfileEditorView: View {
                         IMESafeTextField(prompt: "必填", text: $profile.name, alignment: .trailing)
                             .frame(maxWidth: 260)
                     }
-                    Picker("机构类别：", selection: $profile.institutionType) {
-                        ForEach(MedicalInstitutionType.allCases) { type in
-                            Text(type.title).tag(type)
-                        }
+                }
+                Section("机构类别") {
+                    ForEach(MedicalInstitutionType.allCases) { type in
+                        Toggle(type.title, isOn: Binding(
+                            get: { profile.supports(type) },
+                            set: { profile.setSupport(type, enabled: $0) }
+                        ))
                     }
-                    if profile.institutionType == .hospital {
+                    if profile.supports(.hospital) {
                         Picker("机构级别：", selection: $profile.level) {
                             ForEach(HospitalLevel.displayOrder) { level in
                                 Text(level.title).tag(level)
@@ -159,7 +162,7 @@ private struct HospitalProfileEditorView: View {
             }
             .navigationTitle(isNew ? "新增机构" : "编辑机构")
             .adminModeIndicator()
-            .onChange(of: profile.institutionType) { _, _ in
+            .onChange(of: profile.institutionTypes) { _, _ in
                 profile.normalizeClassification()
             }
 #if os(iOS)

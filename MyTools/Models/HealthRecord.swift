@@ -121,12 +121,48 @@ enum MedicalInstitutionType: String, Codable, CaseIterable, Identifiable {
 struct HospitalProfile: Identifiable, Codable, Equatable {
     var id = UUID()
     var name = ""
-    var institutionType: MedicalInstitutionType = .hospital
+    var institutionTypes: Set<MedicalInstitutionType> = [.hospital]
     var level: HospitalLevel = .unspecified
     var grade: HospitalGrade = .unspecified
     var category: HospitalCategory = .unspecified
     var createdAt = Date()
     var updatedAt = Date()
+
+    // Kept as a source-compatible bridge for older callers and decoded data.
+    var institutionType: MedicalInstitutionType {
+        get { primaryInstitutionType }
+        set { institutionTypes = [newValue] }
+    }
+
+    var primaryInstitutionType: MedicalInstitutionType {
+        MedicalInstitutionType.allCases.first(where: { institutionTypes.contains($0) }) ?? .hospital
+    }
+
+    var institutionTypeTitles: [String] {
+        MedicalInstitutionType.allCases
+            .filter { institutionTypes.contains($0) }
+            .map(\.title)
+    }
+
+    var institutionTypeTitle: String {
+        institutionTypeTitles.joined(separator: "、")
+    }
+
+    var institutionTypeSystemImage: String {
+        primaryInstitutionType.systemImage
+    }
+
+    func supports(_ type: MedicalInstitutionType) -> Bool {
+        institutionTypes.contains(type)
+    }
+
+    mutating func setSupport(_ type: MedicalInstitutionType, enabled: Bool) {
+        if enabled {
+            institutionTypes.insert(type)
+        } else if institutionTypes.count > 1 {
+            institutionTypes.remove(type)
+        }
+    }
 
     var classificationTitles: [String] {
         [
@@ -474,14 +510,20 @@ struct MedicalRecord: ToolEvent, Equatable {
 
 extension HospitalProfile {
     private enum CodingKeys: String, CodingKey {
-        case id, name, institutionType, level, grade, category, createdAt, updatedAt
+        case id, name, institutionTypes, institutionType, level, grade, category, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
-        institutionType = try values.decodeIfPresent(MedicalInstitutionType.self, forKey: .institutionType) ?? .hospital
+        if let types = try values.decodeIfPresent(Set<MedicalInstitutionType>.self, forKey: .institutionTypes), !types.isEmpty {
+            institutionTypes = types
+        } else {
+            institutionTypes = [
+                try values.decodeIfPresent(MedicalInstitutionType.self, forKey: .institutionType) ?? .hospital
+            ]
+        }
         level = try values.decodeIfPresent(HospitalLevel.self, forKey: .level) ?? .unspecified
         grade = try values.decodeIfPresent(HospitalGrade.self, forKey: .grade) ?? .unspecified
         category = try values.decodeIfPresent(HospitalCategory.self, forKey: .category) ?? .unspecified
@@ -494,7 +536,7 @@ extension HospitalProfile {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(id, forKey: .id)
         try values.encode(name, forKey: .name)
-        try values.encode(institutionType, forKey: .institutionType)
+        try values.encode(institutionTypes, forKey: .institutionTypes)
         try values.encode(level, forKey: .level)
         try values.encode(grade, forKey: .grade)
         try values.encode(category, forKey: .category)
@@ -504,7 +546,7 @@ extension HospitalProfile {
 
     init(record: MedicalRecord) {
         name = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
-        institutionType = record.institutionType
+        institutionTypes = [record.institutionType]
         level = record.hospitalLevel
         grade = record.hospitalGrade
         category = record.hospitalCategory
@@ -514,7 +556,7 @@ extension HospitalProfile {
     }
 
     mutating func normalizeClassification() {
-        guard institutionType != .hospital else { return }
+        guard !supports(.hospital) else { return }
         level = .unspecified
         grade = .unspecified
         category = .unspecified

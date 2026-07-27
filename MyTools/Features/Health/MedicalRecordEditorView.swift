@@ -817,7 +817,7 @@ struct MedicalRecordEditorView: View {
 
     private var sortedHospitalProfiles: [HospitalProfile] {
         store.hospitalProfiles
-            .filter { $0.institutionType == draft.record.institutionType }
+            .filter { $0.supports(draft.record.institutionType) }
             .sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }

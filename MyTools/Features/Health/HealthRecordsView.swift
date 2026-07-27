@@ -376,6 +376,7 @@ struct HealthRecordsView: View {
                 } label: {
                     Label("删除", systemImage: "trash")
                 }
+                .tint(.red)
             }
         }
     }
@@ -461,9 +462,9 @@ struct HospitalClassificationBadges: View {
     }
 
     init(profile: HospitalProfile) {
-        level = profile.institutionType == .hospital ? profile.level : .unspecified
-        grade = profile.institutionType == .hospital ? profile.grade : .unspecified
-        category = profile.institutionType == .hospital ? profile.category : .unspecified
+        level = profile.supports(.hospital) ? profile.level : .unspecified
+        grade = profile.supports(.hospital) ? profile.grade : .unspecified
+        category = profile.supports(.hospital) ? profile.category : .unspecified
     }
 
     var body: some View {
@@ -521,7 +522,7 @@ private struct MedicalRecordRow: View {
                         systemImage: record.isPhysicalExam ? "heart.text.clipboard" : "calendar.badge.clock"
                     )
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(record.isPhysicalExam ? .mint : .teal)
+                        .foregroundStyle(record.isPhysicalExam ? .mint : .blue)
                     Spacer()
                     Text(record.date, format: .dateTime.year().month().day())
                         .font(.caption)
@@ -581,7 +582,7 @@ private struct MedicalRecordRow: View {
                         Text("\(record.isPhysicalExam ? "补检记录" : "复诊记录") · \(followUpCount) 次")
                             .fontWeight(.semibold)
                     }
-                    .foregroundStyle(record.isPhysicalExam ? .mint : .teal)
+                    .foregroundStyle(record.isPhysicalExam ? .mint : .blue)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 }
@@ -841,6 +842,7 @@ private struct MedicalRecordDetailView: View {
                                     } label: {
                                         Label("删除", systemImage: "trash")
                                     }
+                                    .tint(.red)
                                 }
                             }
                         }
@@ -864,6 +866,7 @@ private struct MedicalRecordDetailView: View {
                                     } label: {
                                         Label("删除", systemImage: "trash")
                                     }
+                                    .tint(.red)
                                 }
                             }
                         }
@@ -887,6 +890,7 @@ private struct MedicalRecordDetailView: View {
                                     } label: {
                                         Label("删除", systemImage: "trash")
                                     }
+                                    .tint(.red)
                                 }
                             }
                         }
@@ -1081,7 +1085,7 @@ private struct MedicalFollowUpRow: View {
                     systemImage: "calendar.badge.clock"
                 )
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.teal)
+                .foregroundStyle(.blue)
                 Spacer()
                 Text(record.visitType.title)
                     .font(.caption)
