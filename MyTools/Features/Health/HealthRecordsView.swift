@@ -501,7 +501,7 @@ private struct MedicalRecordRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             if isFollowUp {
                 HStack {
                     Label("复诊记录", systemImage: "calendar.badge.clock")
@@ -750,6 +750,7 @@ private struct MedicalRecordDetailView: View {
                         } label: {
                             MedicalFollowUpRow(record: followUp)
                         }
+                        .appListRowStyle()
                         .swipeActions {
                             if auth.isAdmin {
                                 Button(role: .destructive) {
@@ -795,6 +796,7 @@ private struct MedicalRecordDetailView: View {
                 }
                 ForEach(record.expenseItems) { item in
                     MedicalExpenseItemRow(item: item)
+                        .appListRowStyle()
                 }
                 if !record.expenseItems.isEmpty {
                     LabeledContent(
@@ -834,12 +836,16 @@ private struct MedicalRecordDetailView: View {
 
             if !record.tags.isEmpty {
                 Section("标签") {
-                    Text(record.tags.joined(separator: " · ")).textSelection(.enabled)
+                    Text(record.tags.joined(separator: " · "))
+                        .copyableText(record.tags.joined(separator: " · "))
                 }
             }
 
             if !record.notes.isEmpty {
-                Section("备注") { Text(record.notes).textSelection(.enabled) }
+                Section("备注") {
+                    Text(record.notes)
+                        .copyableText(record.notes)
+                }
             }
         }
 #if os(iOS)
@@ -866,7 +872,7 @@ private struct MedicalFollowUpRow: View {
     let record: MedicalRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label(
                     record.date.formatted(date: .long, time: .omitted),
@@ -891,7 +897,6 @@ private struct MedicalFollowUpRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
     }
 }
 
@@ -900,7 +905,7 @@ struct MedicalExpenseItemRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(item.name).font(.headline)
                 if item.quantity > 0 || !item.unit.isEmpty {
                     Text([MedicalValueFormatter.number(item.quantity), item.unit]
@@ -918,8 +923,22 @@ struct MedicalExpenseItemRow: View {
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
         }
-        .padding(.vertical, 3)
-        .textSelection(.enabled)
+        .copyableText(copyText)
+    }
+
+    private var copyText: String {
+        [
+            item.name,
+            item.quantity > 0 || !item.unit.isEmpty
+                ? [MedicalValueFormatter.number(item.quantity), item.unit]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                : nil,
+            MedicalValueFormatter.money(item.amount),
+            item.note.isEmpty ? nil : item.note
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
     }
 }
 

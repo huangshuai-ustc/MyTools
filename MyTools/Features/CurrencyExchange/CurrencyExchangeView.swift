@@ -402,6 +402,7 @@ private struct BankOfChinaExchangeRatesView: View {
 
             Section {
                 exchangeRateHeader
+                    .appListRowStyle()
                 ForEach(CurrencyCode.selectableCases.filter { $0 != .cny }) { currency in
                     exchangeRateRow(currency)
                 }
@@ -441,7 +442,7 @@ private struct BankOfChinaExchangeRatesView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                if conversionRate(from: sourceCurrency, to: targetCurrency) == nil {
+                if leftToRightConversionRate == nil {
                     Label("所选币种的牌价待同步", systemImage: "exclamationmark.triangle")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -449,7 +450,7 @@ private struct BankOfChinaExchangeRatesView: View {
             } header: {
                 Text("币种换算")
             } footer: {
-                Text("输入任意一侧金额，另一侧会按当前中国银行结售汇牌价自动计算。")
+                Text("换算方向固定为卖出左侧币种、买入右侧币种。左侧外币按结汇价折算，右侧外币按购汇价买入；输入任意一侧均使用同一组牌价。")
             }
         }
         .navigationTitle("中国银行结售汇牌价")
@@ -509,7 +510,7 @@ private struct BankOfChinaExchangeRatesView: View {
             rateValue(store.renminbiBuyingRates[currency])
             rateValue(store.renminbiSellingRates[currency])
         }
-        .padding(.vertical, 3)
+        .appListRowStyle()
     }
 
     private func rateValue(_ rate: Decimal?) -> some View {
@@ -517,7 +518,7 @@ private struct BankOfChinaExchangeRatesView: View {
             if let rate, rate > 0 {
                 Text(convertedRateText(rate))
                     .foregroundStyle(.primary)
-                    .textSelection(.enabled)
+                    .copyableText(convertedRateText(rate))
             } else {
                 Text("--")
                     .foregroundStyle(.orange)
@@ -627,21 +628,27 @@ private struct BankOfChinaExchangeRatesView: View {
             return
         }
 
-        let fromCurrency = field == .source ? sourceCurrency : targetCurrency
-        let toCurrency = field == .source ? targetCurrency : sourceCurrency
-        guard let rate = conversionRate(from: fromCurrency, to: toCurrency) else {
+        guard let rate = leftToRightConversionRate, rate > 0 else {
             if field == .source { targetAmountText = "" } else { sourceAmountText = "" }
             return
         }
 
-        let result = CurrencyExchangeValueFormatter.rate(amount * rate)
-        if field == .source { targetAmountText = result } else { sourceAmountText = result }
+        switch field {
+        case .source:
+            targetAmountText = CurrencyExchangeValueFormatter.rate(amount * rate)
+        case .target:
+            sourceAmountText = CurrencyExchangeValueFormatter.rate(amount / rate)
+        }
     }
 
-    private func conversionRate(from source: CurrencyCode, to target: CurrencyCode) -> Decimal? {
-        guard source != target else { return 1 }
-        let sourceBuyingRate: Decimal? = source == .cny ? 1 : store.renminbiBuyingRates[source]
-        let targetSellingRate: Decimal? = target == .cny ? 1 : store.renminbiSellingRates[target]
+    private var leftToRightConversionRate: Decimal? {
+        guard sourceCurrency != targetCurrency else { return 1 }
+        let sourceBuyingRate: Decimal? = sourceCurrency == .cny
+            ? 1
+            : store.renminbiBuyingRates[sourceCurrency]
+        let targetSellingRate: Decimal? = targetCurrency == .cny
+            ? 1
+            : store.renminbiSellingRates[targetCurrency]
         guard let sourceBuyingRate, let targetSellingRate, targetSellingRate > 0 else { return nil }
         return sourceBuyingRate / targetSellingRate
     }
@@ -652,7 +659,7 @@ private struct CurrencyExchangeRecordRow: View {
     let buyingRates: [CurrencyCode: Decimal]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: "arrow.left.arrow.right")
                     .font(.headline)

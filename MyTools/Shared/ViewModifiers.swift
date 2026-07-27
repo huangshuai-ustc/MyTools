@@ -1,15 +1,27 @@
 import SwiftUI
 
+enum AppListMetrics {
+    static let rowVerticalInset: CGFloat = 8
+    static let rowHorizontalInset: CGFloat = 16
+    static let minimumRowHeight: CGFloat = 46
+    static let recordContentSpacing: CGFloat = 8
+}
+
 extension View {
     func appListRowStyle() -> some View {
-        listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
+        listRowInsets(EdgeInsets(
+            top: AppListMetrics.rowVerticalInset,
+            leading: AppListMetrics.rowHorizontalInset,
+            bottom: AppListMetrics.rowVerticalInset,
+            trailing: AppListMetrics.rowHorizontalInset
+        ))
             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
             .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     }
 
     @ViewBuilder
     func appListSpacing() -> some View {
-        environment(\.defaultMinListRowHeight, 46)
+        environment(\.defaultMinListRowHeight, AppListMetrics.minimumRowHeight)
 #if os(iOS)
             .listSectionSpacing(.compact)
             .listRowSpacing(0)
@@ -24,6 +36,16 @@ extension View {
     func iOSLargeSheet() -> some View {
 #if os(iOS)
         presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func iOSAuthenticationSheet() -> some View {
+#if os(iOS)
+        presentationDetents([.height(360)])
             .presentationDragIndicator(.visible)
 #else
         self

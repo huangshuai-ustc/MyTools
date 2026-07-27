@@ -29,6 +29,7 @@ struct HospitalDirectoryView: View {
             } else {
                 ForEach(displayedProfiles) { profile in
                     HospitalProfileRow(profile: profile, showsEditIndicator: auth.isAdmin)
+                        .appListRowStyle()
                         .contentShape(Rectangle())
                         .onTapGesture {
                             if auth.isAdmin { editingProfile = profile }
@@ -83,7 +84,7 @@ private struct HospitalProfileRow: View {
             Image(systemName: "building.2.fill")
                 .foregroundStyle(.pink)
                 .frame(width: 24)
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(profile.name)
                     .font(.headline)
                     .lineLimit(2)
@@ -102,7 +103,6 @@ private struct HospitalProfileRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 3)
     }
 }
 
@@ -161,7 +161,7 @@ private struct HospitalProfileEditorView: View {
             }
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}

@@ -56,62 +56,123 @@ private enum BeijingDateFormatter {
     }()
 }
 
-private enum StockSortOrder: String, CaseIterable, Identifiable {
-    case nameAscending
-    case firstPurchaseOldest
+private enum StockSortCriterion: String, CaseIterable, Identifiable {
+    case name
+    case firstPurchase
 
     var id: Self { self }
 
     var title: String {
         switch self {
-        case .nameAscending: return "名称：A-Z"
-        case .firstPurchaseOldest: return "最早购买时间"
+        case .name: return "名称"
+        case .firstPurchase: return "首购日期"
+        }
+    }
+}
+
+private enum StockSortDirection: String {
+    case ascending
+    case descending
+
+    var indicator: String {
+        switch self {
+        case .ascending: return "↑"
+        case .descending: return "↓"
         }
     }
 
+    var title: String {
+        switch self {
+        case .ascending: return "顺序"
+        case .descending: return "倒序"
+        }
+    }
+
+    mutating func toggle() {
+        self = self == .ascending ? .descending : .ascending
+    }
+}
+
+private struct StockSorter {
+    let criterion: StockSortCriterion
+    let direction: StockSortDirection
+
     func sorted(_ stocks: [StockHolding]) -> [StockHolding] {
         stocks.sorted { lhs, rhs in
-            switch self {
-            case .nameAscending:
-                return nameBefore(lhs, rhs)
-            case .firstPurchaseOldest:
+            switch criterion {
+            case .name:
+                return isOrderedBefore(nameComparison(lhs, rhs))
+            case .firstPurchase:
                 switch (lhs.firstPurchasedAt, rhs.firstPurchasedAt) {
                 case let (left?, right?) where left != right:
-                    return left < right
+                    return direction == .ascending ? left < right : left > right
                 case (_?, nil):
                     return true
                 case (nil, _?):
                     return false
                 default:
-                    return nameBefore(lhs, rhs)
+                    return isOrderedBefore(nameComparison(lhs, rhs))
                 }
             }
         }
     }
 
-    private func nameBefore(_ lhs: StockHolding, _ rhs: StockHolding) -> Bool {
+    private func nameComparison(_ lhs: StockHolding, _ rhs: StockHolding) -> ComparisonResult {
         let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
         return comparison == .orderedSame
-            ? lhs.symbol.localizedStandardCompare(rhs.symbol) == .orderedAscending
-            : comparison == .orderedAscending
+            ? lhs.symbol.localizedStandardCompare(rhs.symbol)
+            : comparison
+    }
+
+    private func isOrderedBefore(_ comparison: ComparisonResult) -> Bool {
+        switch direction {
+        case .ascending: return comparison == .orderedAscending
+        case .descending: return comparison == .orderedDescending
+        }
     }
 }
 
 private struct StockSortMenu: View {
-    @Binding var selection: String
+    @Binding var criterionRawValue: String
+    @Binding var directionRawValue: String
+
+    private var selectedCriterion: StockSortCriterion {
+        StockSortCriterion(rawValue: criterionRawValue) ?? .name
+    }
+
+    private var selectedDirection: StockSortDirection {
+        StockSortDirection(rawValue: directionRawValue) ?? .ascending
+    }
 
     var body: some View {
         Menu {
-            Picker("排序方式", selection: $selection) {
-                ForEach(StockSortOrder.allCases) { order in
-                    Text(order.title).tag(order.rawValue)
+            ForEach(StockSortCriterion.allCases) { criterion in
+                Button {
+                    select(criterion)
+                } label: {
+                    if selectedCriterion == criterion {
+                        Text("\(criterion.title)  \(selectedDirection.indicator)")
+                    } else {
+                        Text(criterion.title)
+                    }
                 }
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down")
         }
-        .accessibilityLabel("股票排序")
-        .help("股票排序")
+        .accessibilityLabel("股票排序：\(selectedCriterion.title)，\(selectedDirection.title)")
+        .help("股票排序：\(selectedCriterion.title)，\(selectedDirection.title)")
+    }
+
+    private func select(_ criterion: StockSortCriterion) {
+        if selectedCriterion == criterion {
+            var direction = selectedDirection
+            direction.toggle()
+            directionRawValue = direction.rawValue
+        } else {
+            criterionRawValue = criterion.rawValue
+            directionRawValue = StockSortDirection.ascending.rawValue
+        }
     }
 }
 
@@ -121,10 +182,14 @@ struct StocksView: View {
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var editingStock: StockHolding?
-    @AppStorage("stock-sort-order-v1") private var sortOrderRawValue = StockSortOrder.nameAscending.rawValue
+    @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
+    @AppStorage("stock-sort-direction-v2") private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
 
-    private var selectedSortOrder: StockSortOrder {
-        StockSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
+    private var stockSorter: StockSorter {
+        StockSorter(
+            criterion: StockSortCriterion(rawValue: sortCriterionRawValue) ?? .name,
+            direction: StockSortDirection(rawValue: sortDirectionRawValue) ?? .ascending
+        )
     }
 
     private var displayedStocks: [StockHolding] {
@@ -136,7 +201,7 @@ struct StocksView: View {
                     || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
                     || stock.displayName.localizedCaseInsensitiveContains(searchTerm)
             }
-        return selectedSortOrder.sorted(filtered)
+        return stockSorter.sorted(filtered)
     }
 
     private var summaryMarkets: [StockMarket] {
@@ -242,7 +307,10 @@ struct StocksView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                StockSortMenu(selection: $sortOrderRawValue)
+                StockSortMenu(
+                    criterionRawValue: $sortCriterionRawValue,
+                    directionRawValue: $sortDirectionRawValue
+                )
                 Button {
                     Task { await store.refreshStockQuotes() }
                 } label: {
@@ -370,7 +438,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack(spacing: 6) {
                 Label("人民币合计", systemImage: "yensign.circle.fill")
                     .font(.headline)
@@ -479,7 +547,7 @@ private struct StockMarketSummaryRow: View {
     let showsAllocation: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 StockMarketBadge(market: summary.market)
                 Text(positionSummaryText)
@@ -564,7 +632,7 @@ private struct StockRow: View {
     let quoteError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 StockMarketBadge(market: stock.market)
                 Text(stock.displayName)
@@ -822,6 +890,7 @@ private struct StockDetailView: View {
                             StockTransactionRow(transaction: transaction, market: stock.market)
                         }
                         .buttonStyle(.plain)
+                        .appListRowStyle()
                     }
                     .onDelete { offsets in
                         deleteTransactions(at: offsets, sortedTransactions: sortedTransactions)
@@ -832,6 +901,7 @@ private struct StockDetailView: View {
                 } else {
                     ForEach(sortedTransactions) { transaction in
                         StockTransactionRow(transaction: transaction, market: stock.market)
+                            .appListRowStyle()
                     }
                 }
             }
@@ -846,6 +916,7 @@ private struct StockDetailView: View {
                             StockDividendRow(dividend: dividend, market: stock.market)
                         }
                         .buttonStyle(.plain)
+                        .appListRowStyle()
                     }
                     .onDelete { offsets in
                         deleteDividends(at: offsets, sortedDividends: sortedDividends)
@@ -856,6 +927,7 @@ private struct StockDetailView: View {
                 } else {
                     ForEach(sortedDividends) { dividend in
                         StockDividendRow(dividend: dividend, market: stock.market)
+                            .appListRowStyle()
                     }
                 }
             }
@@ -894,7 +966,7 @@ private struct StockTransactionRow: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(color)
                 .frame(width: 34, alignment: .leading)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股 × \(StockValueFormatter.price(transaction.unitPrice, currencyCode: market.currencyCode))")
                     .font(.subheadline.monospacedDigit())
                 Text(transaction.tradedAt.formatted(date: .abbreviated, time: .shortened))
@@ -902,7 +974,7 @@ private struct StockTransactionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
                 Text(StockValueFormatter.money(transaction.grossAmount, currencyCode: market.currencyCode))
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                 if transaction.fees > 0 {
@@ -912,7 +984,6 @@ private struct StockTransactionRow: View {
                 }
             }
         }
-        .padding(.vertical, 3)
         .contentShape(Rectangle())
     }
 }
@@ -923,7 +994,7 @@ private struct StockDividendRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(dividend.receivedAt.formatted(date: .abbreviated, time: .omitted))
                     .font(.subheadline)
                 if dividend.hasPerShareBreakdown {
@@ -940,7 +1011,7 @@ private struct StockDividendRow: View {
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
                 Text(StockValueFormatter.money(dividend.netAmount, currencyCode: market.currencyCode))
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                 if dividend.totalDeductions > 0 {
@@ -952,7 +1023,6 @@ private struct StockDividendRow: View {
                 }
             }
         }
-        .padding(.vertical, 3)
         .contentShape(Rectangle())
     }
 }

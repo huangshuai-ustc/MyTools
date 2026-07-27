@@ -134,11 +134,6 @@ struct MedicalExpenseItem: Identifiable, Codable, Equatable {
     var amount: Decimal
     var note: String
 
-    private enum CodingKeys: String, CodingKey {
-        case id, name, quantity, unit, amount, note
-        case medicine, specification, frequency, dose, duration, remark
-    }
-
     init(
         id: UUID = UUID(),
         name: String = "",
@@ -155,47 +150,6 @@ struct MedicalExpenseItem: Identifiable, Codable, Equatable {
         self.note = note
     }
 
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-
-        if values.contains(.name) {
-            name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
-            quantity = try values.decodeIfPresent(Decimal.self, forKey: .quantity) ?? 0
-            unit = try values.decodeIfPresent(String.self, forKey: .unit) ?? ""
-            amount = try values.decodeIfPresent(Decimal.self, forKey: .amount) ?? 0
-            note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
-            return
-        }
-
-        name = try values.decodeIfPresent(String.self, forKey: .medicine) ?? ""
-        quantity = 0
-        unit = ""
-        amount = 0
-        let legacyDetails = [
-            Self.labeledLegacyValue("规格", try values.decodeIfPresent(String.self, forKey: .specification)),
-            Self.labeledLegacyValue("频率", try values.decodeIfPresent(String.self, forKey: .frequency)),
-            Self.labeledLegacyValue("每次用量", try values.decodeIfPresent(String.self, forKey: .dose)),
-            Self.labeledLegacyValue("疗程", try values.decodeIfPresent(String.self, forKey: .duration)),
-            try values.decodeIfPresent(String.self, forKey: .remark) ?? ""
-        ]
-        note = legacyDetails.filter { !$0.isEmpty }.joined(separator: "；")
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(id, forKey: .id)
-        try values.encode(name, forKey: .name)
-        try values.encode(quantity, forKey: .quantity)
-        try values.encode(unit, forKey: .unit)
-        try values.encode(amount, forKey: .amount)
-        try values.encode(note, forKey: .note)
-    }
-
-    private static func labeledLegacyValue(_ label: String, _ value: String?) -> String {
-        guard let value, !value.isEmpty else { return "" }
-        return "\(label)：\(value)"
-    }
 }
 
 enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
@@ -281,15 +235,6 @@ struct MedicalRecord: ToolEvent, Equatable {
     var createdAt = Date()
     var updatedAt = Date()
 
-    private enum CodingKeys: String, CodingKey {
-        case id, parentRecordID, date, hospital, hospitalLevel, hospitalGrade, hospitalCategory
-        case department, doctor, visitType
-        case chiefComplaint, diagnosis, treatment
-        case totalCost, insuranceCost, selfPayCost, paymentMethod
-        case expenseItems = "prescriptions"
-        case attachments, tags, notes, createdAt, updatedAt
-    }
-
     init() {}
 
     init(followUpTo parent: MedicalRecord, date: Date = Date()) {
@@ -302,73 +247,10 @@ struct MedicalRecord: ToolEvent, Equatable {
         department = parent.department
         doctor = parent.doctor
         visitType = parent.visitType
+        chiefComplaint = parent.chiefComplaint
+        diagnosis = parent.diagnosis
+        treatment = parent.treatment
         tags = parent.tags
-    }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        parentRecordID = try values.decodeIfPresent(UUID.self, forKey: .parentRecordID)
-        date = try values.decodeIfPresent(Date.self, forKey: .date) ?? Date()
-        hospital = try values.decodeIfPresent(String.self, forKey: .hospital) ?? ""
-        hospitalLevel = try values.decodeIfPresent(HospitalLevel.self, forKey: .hospitalLevel) ?? .unspecified
-        hospitalGrade = try values.decodeIfPresent(HospitalGrade.self, forKey: .hospitalGrade) ?? .unspecified
-        hospitalCategory = try values.decodeIfPresent(HospitalCategory.self, forKey: .hospitalCategory) ?? .unspecified
-        department = try values.decodeIfPresent(String.self, forKey: .department) ?? ""
-        doctor = try values.decodeIfPresent(String.self, forKey: .doctor) ?? ""
-        visitType = try values.decodeIfPresent(MedicalVisitType.self, forKey: .visitType) ?? .outpatient
-        chiefComplaint = try values.decodeIfPresent(String.self, forKey: .chiefComplaint) ?? ""
-        diagnosis = try values.decodeIfPresent(String.self, forKey: .diagnosis) ?? ""
-        treatment = try values.decodeIfPresent(String.self, forKey: .treatment) ?? ""
-        totalCost = try values.decodeIfPresent(Decimal.self, forKey: .totalCost) ?? 0
-        insuranceCost = try values.decodeIfPresent(Decimal.self, forKey: .insuranceCost) ?? 0
-        selfPayCost = try values.decodeIfPresent(Decimal.self, forKey: .selfPayCost) ?? 0
-        let paymentRawValue = try values.decodeIfPresent(String.self, forKey: .paymentMethod)
-        if let paymentRawValue,
-           let storedMethod = MedicalPaymentMethod(rawValue: paymentRawValue) {
-            paymentMethod = storedMethod
-        } else if insuranceCost > 0, selfPayCost > 0 {
-            paymentMethod = .medicalInsuranceThenSelfPay
-        } else if insuranceCost > 0 {
-            paymentMethod = .medicalInsurance
-        } else {
-            paymentMethod = .selfPay
-        }
-        expenseItems = try values.decodeIfPresent(
-            [MedicalExpenseItem].self,
-            forKey: .expenseItems
-        ) ?? []
-
-        let storedItemsTotal = expenseItems.reduce(Decimal.zero) { $0 + $1.amount }
-        if totalCost > storedItemsTotal {
-            expenseItems.append(
-                MedicalExpenseItem(
-                    name: storedItemsTotal == 0 ? "历史费用汇总" : "历史费用差额",
-                    quantity: 1,
-                    unit: "项",
-                    amount: totalCost - storedItemsTotal,
-                    note: "由旧版手动填写的总费用自动迁移"
-                )
-            )
-        }
-        totalCost = expenseItems.reduce(Decimal.zero) { $0 + $1.amount }
-        switch paymentMethod {
-        case .selfPay:
-            insuranceCost = 0
-            selfPayCost = totalCost
-        case .medicalInsurance:
-            insuranceCost = totalCost
-            selfPayCost = 0
-        case .medicalInsuranceThenSelfPay:
-            insuranceCost = min(max(insuranceCost, 0), totalCost)
-            selfPayCost = totalCost - insuranceCost
-        }
-
-        attachments = try values.decodeIfPresent([FileAttachment].self, forKey: .attachments) ?? []
-        tags = try values.decodeIfPresent([String].self, forKey: .tags) ?? []
-        notes = try values.decodeIfPresent(String.self, forKey: .notes) ?? ""
-        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? date
-        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 
     static func normalizedDate(_ date: Date) -> Date {
@@ -426,31 +308,6 @@ extension HospitalProfile {
         category = record.hospitalCategory
         createdAt = record.createdAt
         updatedAt = record.updatedAt
-    }
-
-    static func inferred(from records: [MedicalRecord]) -> [HospitalProfile] {
-        var profiles: [String: HospitalProfile] = [:]
-        for record in records where !record.isPharmacyPurchase {
-            let name = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            let key = name.folding(
-                options: [.caseInsensitive, .widthInsensitive],
-                locale: Locale(identifier: "zh_CN")
-            )
-            if var profile = profiles[key] {
-                if profile.level == .unspecified { profile.level = record.hospitalLevel }
-                if profile.grade == .unspecified { profile.grade = record.hospitalGrade }
-                if profile.category == .unspecified { profile.category = record.hospitalCategory }
-                profile.createdAt = min(profile.createdAt, record.createdAt)
-                profile.updatedAt = max(profile.updatedAt, record.updatedAt)
-                profiles[key] = profile
-            } else {
-                profiles[key] = HospitalProfile(record: record)
-            }
-        }
-        return profiles.values.sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
     }
 }
 

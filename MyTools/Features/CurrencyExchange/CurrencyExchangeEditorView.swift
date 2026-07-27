@@ -125,7 +125,7 @@ struct CurrencyExchangeEditorView: View {
                 }
             }
             .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication).iOSLargeSheet()
+                AuthenticationView(onAuthenticated: saveAfterAuthentication).iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}

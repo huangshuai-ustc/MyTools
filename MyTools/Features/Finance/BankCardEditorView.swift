@@ -87,13 +87,7 @@ struct CardEditorView: View {
                     } else {
                         DatePicker("有效期：", selection: $draft.card.expiryDate, displayedComponents: .date)
                     }
-                    DatePicker("开户时间：", selection: $draft.card.openedAt, displayedComponents: .date)
-                    Toggle("Apple Pay", isOn: $draft.card.applePay)
-                    Toggle("默认支付", isOn: $draft.card.defaultPayment)
-                    HStack(alignment: .top, spacing: 4) {
-                        Text("备注：").fixedSize(horizontal: true, vertical: true)
-                        IMESafeMultilineTextField(prompt: "未填写", text: $draft.card.note)
-                    }
+                    DatePicker("开卡时间：", selection: $draft.card.openedAt, displayedComponents: .date)
                 }
                 if draft.card.kind == .credit {
                     Section {

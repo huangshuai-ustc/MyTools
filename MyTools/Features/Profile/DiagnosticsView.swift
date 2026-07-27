@@ -69,7 +69,7 @@ struct DiagnosticsView: View {
                     ScrollView(.horizontal) {
                         Text(text)
                             .font(.system(size: 10, design: .monospaced))
-                            .textSelection(.enabled)
+                            .copyableText(text)
                             .fixedSize(horizontal: true, vertical: false)
                     }
                 } else {

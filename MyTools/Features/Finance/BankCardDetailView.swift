@@ -24,33 +24,9 @@ struct CardDetailView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("基本信息") {
-                    CopyableValueRow(title: "银行", value: card.bankName)
-                    CopyableValueRow(title: "支行", value: card.branchName)
-                    CopyableValueRow(title: "卡片类型", value: card.kind.title)
-                    CopyableValueRow(title: "卡片名称", value: card.cardType)
-                    LabeledContent("发卡组织") {
-                        if card.networks.isEmpty {
-                            Text("未选择").foregroundStyle(.secondary)
-                        } else {
-                            CardNetworkTags(networks: card.networks)
-                        }
-                    }
-                    LabeledContent("状态") {
-                        CardStatusText(status: card.status)
-                            .copyableText(card.status.title)
-                    }
-                    CopyableValueRow(
-                        title: "币种",
-                        value: card.currencySummary,
-                        emptyValue: "未选择"
-                    )
-                    CopyableValueRow(title: "持卡人", value: card.holderName)
-                    CopyableValueRow(title: "Apple Pay", value: card.applePay ? "已添加" : "未添加")
-                    CopyableValueRow(title: "默认支付", value: card.defaultPayment ? "是" : "否")
-                }
-
                 Section {
+                    CopyableValueRow(title: "卡片名称", value: card.cardType)
+                    CopyableValueRow(title: "卡片类型", value: card.kind.title)
                     ProtectedValueRow(
                         title: "卡号",
                         value: card.cardNumber,
@@ -68,16 +44,39 @@ struct CardDetailView: View {
                             .fontDesign(canShowSensitiveInformation ? .monospaced : .default)
                             .copyableText(canShowSensitiveInformation ? expiryText : nil)
                     }
+                    LabeledContent("发卡组织") {
+                        if card.networks.isEmpty {
+                            Text("未选择").foregroundStyle(.secondary)
+                        } else {
+                            CardNetworkTags(networks: card.networks)
+                        }
+                    }
                     CopyableValueRow(
-                        title: "开户时间",
+                        title: "开卡时间",
                         value: card.openedAt.formatted(date: .numeric, time: .omitted)
                     )
+                    LabeledContent("状态") {
+                        CardStatusText(status: card.status)
+                            .copyableText(card.status.title)
+                    }
+                    CopyableValueRow(
+                        title: "币种",
+                        value: card.currencySummary,
+                        emptyValue: "未选择"
+                    )
+                    CopyableValueRow(title: "持卡人", value: card.holderName)
 
                     if !auth.isAdmin, hasSensitiveInformation {
-                        Button { showingSensitiveAccess = true } label: {
+                        Button {
+                            if sensitiveInformationRevealed {
+                                sensitiveInformationRevealed = false
+                            } else {
+                                showingSensitiveAccess = true
+                            }
+                        } label: {
                             Label(
-                                sensitiveInformationRevealed ? "重新验证身份" : "验证身份后查看敏感信息",
-                                systemImage: sensitiveInformationRevealed ? "lock.open" : "faceid"
+                                sensitiveInformationRevealed ? "隐藏敏感信息" : "验证身份后查看敏感信息",
+                                systemImage: sensitiveInformationRevealed ? "lock" : "faceid"
                             )
                         }
                     }
@@ -108,14 +107,8 @@ struct CardDetailView: View {
                     }
                 }
 
-                if !card.note.isEmpty {
-                    Section("备注") {
-                        Text(card.note)
-                            .textSelection(.enabled)
-                    }
-                }
             }
-            .navigationTitle(card.bankName.isEmpty ? "银行卡详情" : card.bankName)
+            .navigationTitle("银行卡详情")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -146,6 +139,9 @@ struct CardDetailView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { sensitiveInformationRevealed = false }
             }
+            .onChange(of: auth.isAdmin) { _, _ in
+                sensitiveInformationRevealed = false
+            }
             .alert("无法打开账单", isPresented: $showingAttachmentError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -168,11 +164,23 @@ struct CardDetailView: View {
     }
 
     private var expiryText: String {
-        guard card.expiryPrecision == .yearMonth else {
-            return card.expiryDate.formatted(date: .numeric, time: .omitted)
+        let components = Calendar(identifier: .gregorian).dateComponents(
+            [.year, .month, .day],
+            from: card.expiryDate
+        )
+        if card.expiryPrecision == .yearMonth {
+            return String(
+                format: "%02d/%04d",
+                components.month ?? 0,
+                components.year ?? 0
+            )
         }
-        let components = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: card.expiryDate)
-        return String(format: "%04d年%02d月", components.year ?? 0, components.month ?? 0)
+        return String(
+            format: "%02d/%02d/%04d",
+            components.month ?? 0,
+            components.day ?? 0,
+            components.year ?? 0
+        )
     }
 
     private func open(_ statement: CreditCardStatement) {

@@ -16,6 +16,7 @@ enum DiagnosticLogCategory: String, Sendable {
     case attachment = "附件"
     case stockQuote = "股票行情"
     case exchangeRate = "外汇牌价"
+    case textInput = "文字输入"
     case navigation = "页面"
     case dataChange = "数据变更"
 }

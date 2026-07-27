@@ -1,4 +1,9 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct AdminEditAccessButton: View {
     @EnvironmentObject private var auth: AuthManager
@@ -20,7 +25,7 @@ struct AdminEditAccessButton: View {
         .accessibilityLabel(auth.isAdmin ? "退出编辑模式" : "进入编辑模式")
         .help(auth.isAdmin ? "退出编辑模式" : "验证身份后编辑")
         .sheet(isPresented: $showingAuthentication, onDismiss: authenticationDidDismiss) {
-            AuthenticationView().iOSLargeSheet()
+            AuthenticationView().iOSAuthenticationSheet()
         }
     }
 
@@ -71,14 +76,56 @@ struct CopyableValueRow: View {
     }
 }
 
+@MainActor
+final class CopyToastCenter: ObservableObject {
+    static let shared = CopyToastCenter()
+
+    @Published private(set) var isVisible = false
+    private var dismissalTask: Task<Void, Never>?
+
+    func show() {
+        dismissalTask?.cancel()
+        withAnimation(.easeOut(duration: 0.16)) {
+            isVisible = true
+        }
+        dismissalTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) {
+                self?.isVisible = false
+            }
+        }
+    }
+}
+
 private struct CopyableTextModifier: ViewModifier {
     let value: String?
 
     func body(content: Content) -> some View {
         if let value, !value.isEmpty {
-            content.textSelection(.enabled)
+            content
+                .contentShape(Rectangle())
+                .onLongPressGesture(minimumDuration: 0.45, maximumDistance: 24) {
+                    copy(value)
+                }
+                .accessibilityHint("长按复制")
+                .accessibilityAction(named: "复制") {
+                    copy(value)
+                }
         } else {
             content
+        }
+    }
+
+    private func copy(_ value: String) {
+#if os(iOS)
+        UIPasteboard.general.string = value
+#elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+#endif
+        Task { @MainActor in
+            CopyToastCenter.shared.show()
         }
     }
 }

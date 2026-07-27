@@ -4,23 +4,12 @@ struct DomesticSubaccountRow: View {
     let subaccount: DomesticSubaccount
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(subaccount.type.isEmpty ? "未填写账户类型" : subaccount.type).font(.headline)
-                if !subaccount.name.isEmpty {
-                    Text(subaccount.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                AccountStatusText(status: subaccount.status)
-            }
-            if !subaccount.accountNumber.isEmpty {
-                Text(subaccount.accountNumber).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Text(subaccount.currencySummary.isEmpty ? "未选择币种" : subaccount.currencySummary)
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 3)
-        .contentShape(Rectangle())
+        SubaccountSummaryRow(
+            name: subaccount.name,
+            accountType: subaccount.type,
+            accountNumber: subaccount.accountNumber,
+            status: subaccount.status
+        )
     }
 }
 
@@ -28,16 +17,7 @@ struct DomesticSubaccountDetailRow: View {
     let subaccount: DomesticSubaccount
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !subaccount.name.isEmpty { Text(subaccount.name).font(.headline) }
-            LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
-            if !subaccount.accountNumber.isEmpty { LabeledContent("账户号", value: subaccount.accountNumber) }
-            LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
-            LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
-        }
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        DomesticSubaccountRow(subaccount: subaccount)
     }
 }
 
@@ -49,13 +29,11 @@ struct DomesticSubaccountReadOnlyView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
+                    CopyableValueRow(title: "账户名称", value: subaccount.name)
                     LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
-                    if !subaccount.name.isEmpty {
-                        LabeledContent("备注名称", value: subaccount.name)
-                    }
                     CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
-                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                     LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
+                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
             }
             .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
@@ -79,15 +57,24 @@ private final class DomesticSubaccountDraft: ObservableObject {
 struct DomesticSubaccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: DomesticSubaccountDraft
+    @State private var selectedType: DomesticAccountType
     let onSave: (DomesticSubaccount) -> Void
 
     init(subaccount: DomesticSubaccount, onSave: @escaping (DomesticSubaccount) -> Void) {
-        _draft = StateObject(wrappedValue: DomesticSubaccountDraft(subaccount: subaccount))
+        let selection = DomesticAccountType.selection(for: subaccount.type)
+        var preparedSubaccount = subaccount
+        if preparedSubaccount.type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            preparedSubaccount.type = selection.title
+        }
+        _draft = StateObject(wrappedValue: DomesticSubaccountDraft(subaccount: preparedSubaccount))
+        _selectedType = State(initialValue: selection)
         self.onSave = onSave
     }
 
     private var canSave: Bool {
         !draft.subaccount.type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.subaccount.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.subaccount.accountNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !draft.subaccount.currencies.isEmpty
     }
 
@@ -95,14 +82,21 @@ struct DomesticSubaccountEditorView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    LabeledContent("账户类型：") {
-                        IMESafeTextField(prompt: "例如个人养老金", text: $draft.subaccount.type, alignment: .trailing)
+                    LabeledContent("账户名称：") {
+                        IMESafeTextField(prompt: "例如退休金账户", text: $draft.subaccount.name, alignment: .trailing)
                     }
-                    LabeledContent("备注名称：") {
-                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.name, alignment: .trailing)
+                    Picker("账户类型：", selection: $selectedType) {
+                        ForEach(DomesticAccountType.allCases) { type in
+                            Text(type.title).tag(type)
+                        }
+                    }
+                    if selectedType == .other {
+                        LabeledContent("自定义类型：") {
+                            IMESafeTextField(prompt: "例如私人理财账户", text: $draft.subaccount.type, alignment: .trailing)
+                        }
                     }
                     LabeledContent("账户号：") {
-                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.accountNumber, alignment: .trailing)
+                        IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
                     Picker("状态：", selection: $draft.subaccount.status) {
                         ForEach(AccountStatus.allCases) { status in
@@ -121,7 +115,11 @@ struct DomesticSubaccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(draft.subaccount.type.isEmpty ? "新增子账户" : "编辑子账户")
+            .navigationTitle(
+                draft.subaccount.name.isEmpty && draft.subaccount.accountNumber.isEmpty
+                    ? "新增子账户"
+                    : "编辑子账户"
+            )
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -130,6 +128,16 @@ struct DomesticSubaccountEditorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave).disabled(!canSave)
+                }
+            }
+            .onChange(of: selectedType) { _, type in
+                if type == .other {
+                    let matchesPreset = DomesticAccountType.allCases.contains {
+                        $0 != .other && $0.title == draft.subaccount.type
+                    }
+                    if matchesPreset { draft.subaccount.type = "" }
+                } else {
+                    draft.subaccount.type = type.title
                 }
             }
         }
@@ -147,24 +155,12 @@ struct ForeignSubaccountRow: View {
     let subaccount: ForeignSubaccount
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(subaccount.type.title).font(.headline)
-                if !subaccount.name.isEmpty {
-                    Text(subaccount.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                AccountStatusText(status: subaccount.status)
-            }
-            Text(subaccount.accountNumber.isEmpty ? "未填写账户号" : subaccount.accountNumber)
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(subaccount.accountNumber.isEmpty ? .secondary : .primary)
-            if !subaccount.currencySummary.isEmpty {
-                Text(subaccount.currencySummary).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 3)
-        .contentShape(Rectangle())
+        SubaccountSummaryRow(
+            name: subaccount.name,
+            accountType: subaccount.typeTitle,
+            accountNumber: subaccount.accountNumber,
+            status: subaccount.status
+        )
     }
 }
 
@@ -172,14 +168,34 @@ struct ForeignSubaccountDetailRow: View {
     let subaccount: ForeignSubaccount
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !subaccount.name.isEmpty { Text(subaccount.name).font(.headline) }
-            LabeledContent("账户类型", value: subaccount.type.title)
-            LabeledContent("账户号", value: subaccount.accountNumber.isEmpty ? "未填写" : subaccount.accountNumber)
-            LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
-            LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
+        ForeignSubaccountRow(subaccount: subaccount)
+    }
+}
+
+private struct SubaccountSummaryRow: View {
+    let name: String
+    let accountType: String
+    let accountNumber: String
+    let status: AccountStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(name.isEmpty ? "未命名子账户" : name)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                AccountStatusText(status: status)
+            }
+            Text(accountType.isEmpty ? "未填写账户类型" : accountType)
+                .font(.subheadline)
+                .foregroundStyle(accountType.isEmpty ? .tertiary : .secondary)
+                .lineLimit(1)
+            Text(accountNumber.isEmpty ? "未填写账户号" : accountNumber)
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(accountNumber.isEmpty ? .tertiary : .secondary)
+                .lineLimit(1)
         }
-        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -193,13 +209,11 @@ struct ForeignSubaccountReadOnlyView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    LabeledContent("账户类型", value: subaccount.type.title)
-                    if !subaccount.name.isEmpty {
-                        LabeledContent("备注名称", value: subaccount.name)
-                    }
+                    CopyableValueRow(title: "账户名称", value: subaccount.name)
+                    LabeledContent("账户类型", value: subaccount.typeTitle)
                     CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
-                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                     LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
+                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
             }
             .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
@@ -231,19 +245,27 @@ struct ForeignSubaccountEditorView: View {
     }
 
     private var canSave: Bool {
-        !draft.subaccount.accountNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.subaccount.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.subaccount.accountNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !draft.subaccount.currencies.isEmpty
+            && (draft.subaccount.type != .other
+                || !(draft.subaccount.customType?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("账户信息") {
+                    LabeledContent("账户名称：") {
+                        IMESafeTextField(prompt: "例如港币储蓄", text: $draft.subaccount.name, alignment: .trailing)
+                    }
                     Picker("账户类型：", selection: $draft.subaccount.type) {
                         ForEach(ForeignAccountType.allCases) { Text($0.title).tag($0) }
                     }
-                    LabeledContent("备注名称：") {
-                        IMESafeTextField(prompt: "可选", text: $draft.subaccount.name, alignment: .trailing)
+                    if draft.subaccount.type == .other {
+                        LabeledContent("自定义类型：") {
+                            IMESafeTextField(prompt: "例如贵金属账户", text: customType, alignment: .trailing)
+                        }
                     }
                     LabeledContent("账户号：") {
                         IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
@@ -281,9 +303,19 @@ struct ForeignSubaccountEditorView: View {
 
     private func requestSave() {
         commitPendingTextInput {
+            if draft.subaccount.type != .other {
+                draft.subaccount.customType = nil
+            }
             onSave(draft.subaccount)
             dismiss()
         }
+    }
+
+    private var customType: Binding<String> {
+        Binding(
+            get: { draft.subaccount.customType ?? "" },
+            set: { draft.subaccount.customType = $0 }
+        )
     }
 }
 

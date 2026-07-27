@@ -90,6 +90,9 @@ struct AccountDetailView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { sensitiveLoginInformationRevealed = false }
         }
+        .onChange(of: auth.isAdmin) { _, _ in
+            sensitiveLoginInformationRevealed = false
+        }
     }
 
     @ViewBuilder
@@ -156,7 +159,7 @@ struct AccountDetailView: View {
 
         return Section("子账户（\(subaccounts.count)）") {
             if subaccounts.isEmpty {
-                Text(account.region == .domestic ? "暂无特别账户" : "暂无子账户")
+                Text("暂无子账户")
                     .foregroundStyle(.secondary)
             }
             ForEach(subaccounts) { item in
@@ -186,9 +189,10 @@ struct AccountDetailView: View {
             }
             ForEach(cards) { card in
                 Button { viewingCard = card } label: {
-                    CardRow(card: card, region: account.region)
+                    CardRow(card: card)
                 }
                 .buttonStyle(.plain)
+                .appListRowStyle()
             }
             if closedCardCount > 0 {
                 Label("\(closedCardCount) 张已销户卡保留在档案中", systemImage: "archivebox")
@@ -232,10 +236,16 @@ struct AccountDetailView: View {
                     }
                 }
                 if !auth.isAdmin, hasSensitive {
-                    Button { showingSensitiveAccess = true } label: {
+                    Button {
+                        if sensitiveLoginInformationRevealed {
+                            sensitiveLoginInformationRevealed = false
+                        } else {
+                            showingSensitiveAccess = true
+                        }
+                    } label: {
                         Label(
-                            sensitiveLoginInformationRevealed ? "重新验证身份" : "验证身份后查看敏感信息",
-                            systemImage: sensitiveLoginInformationRevealed ? "lock.open" : "faceid"
+                            sensitiveLoginInformationRevealed ? "隐藏敏感信息" : "验证身份后查看敏感信息",
+                            systemImage: sensitiveLoginInformationRevealed ? "lock" : "faceid"
                         )
                     }
                 }
@@ -293,8 +303,8 @@ struct AccountDetailView: View {
             ? account.domesticSubaccounts.count
             : account.foreignSubaccounts.count
         return account.region == .domestic
-            ? "\(debit) 张借记卡 · \(credit) 张贷记卡 · \(subaccountCount) 个特别账户"
-            : "\(subaccountCount) 个子账户 · \(debit) 张扣账卡 · \(credit) 张信用卡"
+            ? "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subaccountCount) 个子账户"
+            : "\(subaccountCount) 个子账户 · \(debit) 张借记卡 · \(credit) 张信用卡"
     }
 
     @ViewBuilder
@@ -405,7 +415,7 @@ struct AccountEditorView: View {
             }
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
             .sheet(item: $editingCard) { card in
                 CardEditorView(card: card, account: draft.account, onSave: upsertCard)
@@ -448,7 +458,7 @@ struct AccountEditorView: View {
                 IMESafeTextField(prompt: "可选", text: $draft.account.name, alignment: .trailing)
             }
             Text(draft.account.region == .domestic
-                 ? "境内银行以银行卡为主；特别账户用于个人养老金等没有独立卡片的账户。"
+                 ? "境内银行以银行卡为主；子账户用于个人养老金等没有独立卡片的账户。"
                  : "境外银行以子账户为主；每个账户可单独记录账户号、币种和状态。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -460,7 +470,7 @@ struct AccountEditorView: View {
             let domestic = draft.account.region == .domestic
             if domestic {
                 if draft.account.domesticSubaccounts.isEmpty {
-                    Text("暂无特别账户").foregroundStyle(.secondary)
+                    Text("暂无子账户").foregroundStyle(.secondary)
                 }
                 ForEach(draft.account.domesticSubaccounts) { subaccount in
                     Button { editingDomesticSubaccount = subaccount } label: {
@@ -470,7 +480,7 @@ struct AccountEditorView: View {
                 }
                 .onDelete(perform: deleteDomesticSubaccounts)
                 Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
-                    Label("添加特别账户", systemImage: "plus.circle")
+                    Label("添加子账户", systemImage: "plus.circle")
                 }
             } else {
                 if draft.account.foreignSubaccounts.isEmpty {
@@ -497,16 +507,17 @@ struct AccountEditorView: View {
             }
             ForEach(sortedDraftCards) { card in
                 Button { editingCard = card } label: {
-                    CardRow(card: card, region: draft.account.region)
+                    CardRow(card: card)
                 }
                 .buttonStyle(.plain)
+                .appListRowStyle()
             }
             .onDelete(perform: deleteCards)
             Button { editingCard = BankCard() } label: {
                 Label("添加银行卡", systemImage: "plus.circle")
             }
         } header: {
-            Text(draft.account.region == .domestic ? "银行卡（主要档案）" : "银行卡/扣账卡")
+            Text(draft.account.region == .domestic ? "银行卡（主要档案）" : "银行卡")
         } footer: {
             Text(draft.account.region == .domestic
                  ? "境内银行的卡片是主要金融载体；子账户仅用于记录特殊账户。"
@@ -600,10 +611,6 @@ struct AccountEditorView: View {
             showingError = true
             return
         }
-        account.remittanceSwiftCode = ""
-        account.accountType = ""
-        account.currency = ""
-        account.accountNumber = ""
         if account.region == .domestic {
             account.swift = ""
             account.iban = ""
@@ -747,34 +754,18 @@ private struct FinanceCardDisplayMenu: View {
             Picker("卡片分类", selection: $category) {
                 ForEach(CardCategoryFilter.allCases) { value in Text(value.title).tag(value.rawValue) }
             }
-            Menu("排序依据：\(selectedSort.criterion.title)") {
-                Picker("排序依据", selection: criterionBinding) {
-                    ForEach(CardSortCriterion.allCases) { value in Text(value.title).tag(value) }
-                }
-            }
-            Menu("排列顺序：\(selectedSort.direction.title)") {
-                Picker("排列顺序", selection: directionBinding) {
-                    ForEach(SortDirection.allCases) { value in Text(value.title).tag(value) }
-                }
+            Divider()
+            Button {
+                sort = selectedSort == .nameAscending
+                    ? CardSortOrder.nameDescending.rawValue
+                    : CardSortOrder.nameAscending.rawValue
+            } label: {
+                Text("名称  \(selectedSort.direction.indicator)")
             }
         } label: {
             Image(systemName: selectedCategory == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
         }
-        .accessibilityLabel("银行卡显示方式")
-        .help("银行卡显示方式")
-    }
-
-    private var criterionBinding: Binding<CardSortCriterion> {
-        Binding(
-            get: { selectedSort.criterion },
-            set: { sort = CardSortOrder.value(criterion: $0, direction: selectedSort.direction).rawValue }
-        )
-    }
-
-    private var directionBinding: Binding<SortDirection> {
-        Binding(
-            get: { selectedSort.direction },
-            set: { sort = CardSortOrder.value(criterion: selectedSort.criterion, direction: $0).rawValue }
-        )
+        .accessibilityLabel("银行卡显示方式：名称，\(selectedSort.direction.title)")
+        .help("银行卡显示方式：名称，\(selectedSort.direction.title)")
     }
 }

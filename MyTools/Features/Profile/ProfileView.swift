@@ -79,7 +79,7 @@ struct ProfileView: View {
                     }
                 }
                 Section("关于") {
-                    LabeledContent("版本", value: "MVP 1.3")
+                    LabeledContent("版本", value: "MVP 2.0.4")
                 }
             }
             .navigationTitle("我的")
@@ -89,7 +89,7 @@ struct ProfileView: View {
 #endif
             .sheet(isPresented: $showAuth) {
                 AuthenticationView()
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
             .sheet(item: $backupPasswordMode, onDismiss: finishBackupPasswordFlow) { mode in
                 BackupPasswordView(mode: mode) { password in

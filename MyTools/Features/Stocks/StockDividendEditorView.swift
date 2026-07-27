@@ -106,7 +106,7 @@ struct StockDividendEditorView: View {
             }
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}

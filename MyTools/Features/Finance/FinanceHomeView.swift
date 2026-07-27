@@ -112,7 +112,7 @@ struct HomeView: View {
         NavigationLink {
             AccountDetailView(account: account, backTitle: "个人金融")
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     BankRegionBadge(region: account.region)
                     Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
@@ -122,15 +122,6 @@ struct HomeView: View {
                     if account.status != .normal {
                         AccountStatusText(status: account.status)
                     }
-                }
-                let subtitle = [account.branchName, account.name]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
                 }
                 Text(financeRowSummary(account, cards: cards))
                     .font(.subheadline)
@@ -221,10 +212,10 @@ struct HomeView: View {
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
-        let bankMatches = [account.region.title, account.bankName, account.branchName, account.name, account.accountType, account.currency, account.accountNumber, account.swift, account.iban]
+        let bankMatches = [account.region.title, account.bankName, account.branchName, account.name, account.swift, account.iban]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
         let subaccountMatches = account.foreignSubaccounts.contains { subaccount in
-            [subaccount.type.title, subaccount.name, subaccount.accountNumber, subaccount.currencySummary]
+            [subaccount.typeTitle, subaccount.name, subaccount.accountNumber, subaccount.currencySummary]
                 .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
         }
         let domesticSubaccountMatches = account.domesticSubaccounts.contains { subaccount in
@@ -237,7 +228,7 @@ struct HomeView: View {
     private func cardMatches(_ card: BankCard, searchTerm: String) -> Bool {
         let currencyTitles = card.currencies.map(\.title).joined(separator: " ")
         let networks = card.networks.map(\.title).joined(separator: " " )
-        return [card.bankName, card.branchName, card.kind.title, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles, networks]
+        return [card.kind.title, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles, networks]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 
@@ -247,9 +238,9 @@ struct HomeView: View {
         let subs = account.region == .domestic ? account.domesticSubaccounts.count : account.foreignSubaccounts.count
         switch account.region {
         case .domestic:
-            return "\(debit) 张借记卡 · \(credit) 张贷记卡 · \(subs) 个特别账户"
+            return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subs) 个子账户"
         case .overseas:
-            return "\(subs) 个子账户 · \(debit) 张扣账卡 · \(credit) 张信用卡"
+            return "\(subs) 个子账户 · \(debit) 张借记卡 · \(credit) 张信用卡"
         }
     }
 
@@ -274,7 +265,6 @@ private struct FinanceViewSnapshot {
 
 struct CardRow: View {
     let card: BankCard
-    var region: BankRegion? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -282,31 +272,30 @@ struct CardRow: View {
                 .font(.title2)
                 .foregroundStyle(.blue)
                 .frame(width: 30)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(card.cardType.isEmpty ? "未命名卡片" : card.cardType)
                         .font(.headline)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     HStack(spacing: 6) {
-                        CardKindText(kind: card.kind, region: region)
+                        CardKindText(kind: card.kind)
                         CardStatusText(status: card.status)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                Text(card.cardNumber.isEmpty ? "未填写卡号" : "•••• " + String(card.cardNumber.suffix(4)))
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(card.cardNumber.isEmpty ? .tertiary : .secondary)
-                if !card.currencySummary.isEmpty {
-                    Text(card.currencySummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if !card.networks.isEmpty {
-                    CardNetworkTags(networks: card.networks)
+                HStack(alignment: .center, spacing: 8) {
+                    Text(card.cardNumber.isEmpty ? "未填写卡号" : "•••• " + String(card.cardNumber.suffix(4)))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(card.cardNumber.isEmpty ? .tertiary : .secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if !card.networks.isEmpty {
+                        CardNetworkTags(networks: card.networks)
+                    }
                 }
             }
         }
-        .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
 }
@@ -361,7 +350,6 @@ struct CardNetworkTags: View {
 
 struct CardKindText: View {
     let kind: BankCardKind
-    var region: BankRegion? = nil
 
     private var color: Color {
         kind == .debit ? .blue : .purple
@@ -376,7 +364,6 @@ struct CardKindText: View {
     }
 
     private var title: String {
-        if region == .overseas, kind == .debit { return "扣账卡" }
         return kind.title
     }
 }
@@ -423,16 +410,14 @@ struct CardStatusText: View {
     }
 }
 
-enum AccountSortOrder: String, CaseIterable, Identifiable {
+enum AccountSortOrder: String {
     case nameAscending
     case nameDescending
 
-    var id: Self { self }
-
-    var title: String {
+    var direction: SortDirection {
         switch self {
-        case .nameAscending: return "名称：A-Z"
-        case .nameDescending: return "名称：Z-A"
+        case .nameAscending: return .ascending
+        case .nameDescending: return .descending
         }
     }
 
@@ -462,11 +447,9 @@ enum AccountSortOrder: String, CaseIterable, Identifiable {
     }
 }
 
-enum SortDirection: String, CaseIterable, Identifiable {
+enum SortDirection {
     case ascending
     case descending
-
-    var id: Self { self }
 
     var title: String {
         switch self {
@@ -474,78 +457,48 @@ enum SortDirection: String, CaseIterable, Identifiable {
         case .descending: return "降序"
         }
     }
+
+    var indicator: String {
+        switch self {
+        case .ascending: return "↑"
+        case .descending: return "↓"
+        }
+    }
 }
 
 struct AccountSortMenu: View {
     @Binding var selection: String
 
+    private var selectedOrder: AccountSortOrder {
+        AccountSortOrder(rawValue: selection) ?? .nameAscending
+    }
+
     var body: some View {
         Menu {
-            Picker("名称排序", selection: $selection) {
-                ForEach(AccountSortOrder.allCases) { order in
-                    Text(order.title).tag(order.rawValue)
-                }
+            Button {
+                selection = selectedOrder == .nameAscending
+                    ? AccountSortOrder.nameDescending.rawValue
+                    : AccountSortOrder.nameAscending.rawValue
+            } label: {
+                Text("名称  \(selectedOrder.direction.indicator)")
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down")
         }
-        .accessibilityLabel("账户排序")
-        .help("账户排序")
+        .accessibilityLabel("账户排序：名称，\(selectedOrder.direction.title)")
+        .help("账户排序：名称，\(selectedOrder.direction.title)")
     }
 
 }
 
-enum CardSortOrder: String, CaseIterable, Identifiable {
+enum CardSortOrder: String {
     case nameAscending
     case nameDescending
-    case openedNewest
-    case openedOldest
-    case debitFirst
-    case creditFirst
-    case status
-    case statusReversed
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .nameAscending: return "名称：A-Z"
-        case .nameDescending: return "名称：Z-A"
-        case .openedNewest: return "开户时间：新到旧"
-        case .openedOldest: return "开户时间：旧到新"
-        case .debitFirst: return "借记卡优先"
-        case .creditFirst: return "贷记卡优先"
-        case .status: return "按状态"
-        case .statusReversed: return "按状态：倒序"
-        }
-    }
-
-    var criterion: CardSortCriterion {
-        switch self {
-        case .nameAscending, .nameDescending: return .name
-        case .openedNewest, .openedOldest: return .openedAt
-        case .debitFirst, .creditFirst: return .kind
-        case .status, .statusReversed: return .status
-        }
-    }
 
     var direction: SortDirection {
         switch self {
-        case .nameAscending, .openedOldest, .debitFirst, .status: return .ascending
-        case .nameDescending, .openedNewest, .creditFirst, .statusReversed: return .descending
-        }
-    }
-
-    static func value(criterion: CardSortCriterion, direction: SortDirection) -> Self {
-        switch (criterion, direction) {
-        case (.name, .ascending): return .nameAscending
-        case (.name, .descending): return .nameDescending
-        case (.openedAt, .ascending): return .openedOldest
-        case (.openedAt, .descending): return .openedNewest
-        case (.kind, .ascending): return .debitFirst
-        case (.kind, .descending): return .creditFirst
-        case (.status, .ascending): return .status
-        case (.status, .descending): return .statusReversed
+        case .nameAscending: return .ascending
+        case .nameDescending: return .descending
         }
     }
 
@@ -557,34 +510,10 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
             return cards.sorted {
                 let comparison = displayName($0).localizedStandardCompare(displayName($1))
                 return comparison == .orderedSame
-                    ? tieBreak($0, $1)
+                    ? tieBreak($1, $0)
                     : comparison == .orderedDescending
             }
-        case .openedNewest:
-            return cards.sorted {
-                $0.openedAt == $1.openedAt ? isNameAscending($0, $1) : $0.openedAt > $1.openedAt
-            }
-        case .openedOldest:
-            return cards.sorted {
-                $0.openedAt == $1.openedAt ? isNameAscending($0, $1) : $0.openedAt < $1.openedAt
-            }
-        case .debitFirst:
-            return cards.sorted { groupedBefore($0, $1, firstKind: .debit) }
-        case .creditFirst:
-            return cards.sorted { groupedBefore($0, $1, firstKind: .credit) }
-        case .status, .statusReversed:
-            return cards.sorted {
-                let lhsRank = statusRank($0.status)
-                let rhsRank = statusRank($1.status)
-                if lhsRank == rhsRank { return isNameAscending($0, $1) }
-                return self == .status ? lhsRank < rhsRank : lhsRank > rhsRank
-            }
         }
-    }
-
-    private func groupedBefore(_ lhs: BankCard, _ rhs: BankCard, firstKind: BankCardKind) -> Bool {
-        guard lhs.kind != rhs.kind else { return isNameAscending(lhs, rhs) }
-        return lhs.kind == firstKind
     }
 
     private func isNameAscending(_ lhs: BankCard, _ rhs: BankCard) -> Bool {
@@ -606,31 +535,6 @@ enum CardSortOrder: String, CaseIterable, Identifiable {
         return name.isEmpty ? card.kind.title : name
     }
 
-    private func statusRank(_ status: CardStatus) -> Int {
-        switch status {
-        case .normal: return 0
-        case .abnormal: return 1
-        case .closed: return 2
-        }
-    }
-}
-
-enum CardSortCriterion: String, CaseIterable, Identifiable {
-    case name
-    case openedAt
-    case kind
-    case status
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .name: return "名称"
-        case .openedAt: return "开户时间"
-        case .kind: return "借记卡/贷记卡"
-        case .status: return "状态"
-        }
-    }
 }
 
 enum CardCategoryFilter: String, CaseIterable, Identifiable {
@@ -644,7 +548,7 @@ enum CardCategoryFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "全部卡片"
         case .debit: return "借记卡"
-        case .credit: return "贷记卡"
+        case .credit: return "信用卡"
         }
     }
 
@@ -654,51 +558,6 @@ enum CardCategoryFilter: String, CaseIterable, Identifiable {
         case .debit: return card.kind == .debit
         case .credit: return card.kind == .credit
         }
-    }
-}
-
-struct CardSortMenu: View {
-    @Binding var selection: String
-
-    private var selectedOrder: CardSortOrder {
-        CardSortOrder(rawValue: selection) ?? .nameAscending
-    }
-
-    var body: some View {
-        Menu {
-            Menu("排序依据：\(selectedOrder.criterion.title)") {
-                Picker("排序依据", selection: criterionBinding) {
-                    ForEach(CardSortCriterion.allCases) { criterion in
-                        Text(criterion.title).tag(criterion)
-                    }
-                }
-            }
-            Menu("排列顺序：\(selectedOrder.direction.title)") {
-                Picker("排列顺序", selection: directionBinding) {
-                    ForEach(SortDirection.allCases) { direction in
-                        Text(direction.title).tag(direction)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .accessibilityLabel("银行卡排序")
-        .help("银行卡排序")
-    }
-
-    private var criterionBinding: Binding<CardSortCriterion> {
-        Binding(
-            get: { selectedOrder.criterion },
-            set: { selection = CardSortOrder.value(criterion: $0, direction: selectedOrder.direction).rawValue }
-        )
-    }
-
-    private var directionBinding: Binding<SortDirection> {
-        Binding(
-            get: { selectedOrder.direction },
-            set: { selection = CardSortOrder.value(criterion: selectedOrder.criterion, direction: $0).rawValue }
-        )
     }
 }
 

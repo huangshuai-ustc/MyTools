@@ -13,6 +13,7 @@ struct ToolboxView: View {
                 Section("工具") {
                     ForEach(visibleModules) { module in
                         NavigationLink { destination(for: module) } label: { moduleRow(module) }
+                            .appListRowStyle()
                     }
                 }
             }
@@ -36,11 +37,10 @@ struct ToolboxView: View {
                 .foregroundStyle(.white)
                 .frame(width: 40, height: 40)
                 .background(module.tint, in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(module.title).font(.headline)
                 Text(module.subtitle).font(.subheadline).foregroundStyle(.secondary)
             }
-            .padding(.vertical, 3)
         }
     }
 

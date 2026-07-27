@@ -99,25 +99,6 @@ struct StockDividend: Identifiable, Codable, Equatable, Sendable {
     var fees: Decimal = 0
     var note = ""
 
-    private enum CodingKeys: String, CodingKey {
-        case id, receivedAt, quantity, dividendPerShare
-        case grossAmount, withholdingTax, fees, note
-    }
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        receivedAt = try values.decodeIfPresent(Date.self, forKey: .receivedAt) ?? Date()
-        quantity = try values.decodeIfPresent(Decimal.self, forKey: .quantity) ?? 0
-        dividendPerShare = try values.decodeIfPresent(Decimal.self, forKey: .dividendPerShare) ?? 0
-        grossAmount = try values.decodeIfPresent(Decimal.self, forKey: .grossAmount) ?? 0
-        withholdingTax = try values.decodeIfPresent(Decimal.self, forKey: .withholdingTax) ?? 0
-        fees = try values.decodeIfPresent(Decimal.self, forKey: .fees) ?? 0
-        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
-    }
-
     var hasPerShareBreakdown: Bool {
         quantity > 0 && dividendPerShare > 0
     }
@@ -143,28 +124,6 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     var changePercent: Decimal?
     var quoteName = ""
     var lastQuoteAt: Date?
-
-    private enum CodingKeys: String, CodingKey {
-        case id, market, symbol, name, transactions, dividends
-        case latestPrice, previousClose, changePercent, quoteName, lastQuoteAt
-    }
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        market = try values.decodeIfPresent(StockMarket.self, forKey: .market) ?? .aShare
-        symbol = try values.decodeIfPresent(String.self, forKey: .symbol) ?? ""
-        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
-        transactions = try values.decodeIfPresent([StockTransaction].self, forKey: .transactions) ?? []
-        dividends = try values.decodeIfPresent([StockDividend].self, forKey: .dividends) ?? []
-        latestPrice = try values.decodeIfPresent(Decimal.self, forKey: .latestPrice)
-        previousClose = try values.decodeIfPresent(Decimal.self, forKey: .previousClose)
-        changePercent = try values.decodeIfPresent(Decimal.self, forKey: .changePercent)
-        quoteName = try values.decodeIfPresent(String.self, forKey: .quoteName) ?? ""
-        lastQuoteAt = try values.decodeIfPresent(Date.self, forKey: .lastQuoteAt)
-    }
 
     var displayName: String {
         let preferredName = name.trimmingCharacters(in: .whitespacesAndNewlines)

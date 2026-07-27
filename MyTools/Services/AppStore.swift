@@ -12,9 +12,9 @@ private struct AppStoreInitialSnapshot: @unchecked Sendable {
     let vault: VaultData
     let vaultByteCount: Int
     let vaultSource: String
+    let canPersistVault: Bool
     let readDurationMilliseconds: Double
     let decodeDurationMilliseconds: Double
-    let migrationDurationMilliseconds: Double
     let loadDurationMilliseconds: Double
 
     static func load() -> Self {
@@ -24,9 +24,9 @@ private struct AppStoreInitialSnapshot: @unchecked Sendable {
             vault: result.vault,
             vaultByteCount: result.byteCount,
             vaultSource: result.source,
+            canPersistVault: result.canPersist,
             readDurationMilliseconds: result.readMilliseconds,
             decodeDurationMilliseconds: result.decodeMilliseconds,
-            migrationDurationMilliseconds: result.migrationMilliseconds,
             loadDurationMilliseconds: (
                 ProcessInfo.processInfo.systemUptime - startedAt
             ) * 1_000
@@ -95,7 +95,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var exchangeRateError: String?
     @Published private(set) var isRefreshingExchangeRate = false
     @Published private(set) var isInitialDataLoaded = false
-    private let secureStore = SecureStore()
+    @Published private(set) var isVaultLoadFailurePresented = false
     private let persistence = VaultPersistenceCoordinator()
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
@@ -103,6 +103,7 @@ final class AppStore: ObservableObject {
     private let defaults = UserDefaults.standard
     private var lastExchangeRateRequestAt: Date?
     private var isRestoringBackup = false
+    private var canPersistVault = true
 
     init() {
         accounts = []
@@ -139,26 +140,14 @@ final class AppStore: ObservableObject {
         stocks.lazy.filter { $0.currentShares > 0 }.count
     }
 
-    func loadEncryptedVaultAfterAuthentication() {
-        guard !secureStore.hasLocalVault() else { return }
-        let vault = secureStore.loadEncryptedVault()
-        guard !vault.isEmpty else { return }
-        let upgradedVault = Self.initializingHospitalDirectory(in: vault)
-        applyVault(upgradedVault)
-        // 旧版本加密数据在管理员认证后迁移到普通可读存储；之后普通模式启动不读取 Keychain。
-        persistence.schedule(upgradedVault)
-    }
-
     private func applyInitialSnapshot(_ snapshot: AppStoreInitialSnapshot) {
-        let upgradedVault = Self.initializingHospitalDirectory(in: snapshot.vault)
-        applyVault(upgradedVault)
-        if !snapshot.vault.hospitalDirectoryInitialized {
-            persistence.schedule(upgradedVault)
-        }
+        applyVault(snapshot.vault)
+        canPersistVault = snapshot.canPersistVault
+        isVaultLoadFailurePresented = !snapshot.canPersistVault
         isInitialDataLoaded = true
-        startupLogger.info(
-            "Local vault loaded from \(snapshot.vaultSource, privacy: .public): \(snapshot.vaultByteCount, privacy: .public) bytes; read \(snapshot.readDurationMilliseconds, privacy: .public) ms, decode \(snapshot.decodeDurationMilliseconds, privacy: .public) ms, migration \(snapshot.migrationDurationMilliseconds, privacy: .public) ms, total \(snapshot.loadDurationMilliseconds, privacy: .public) ms"
-        )
+        let loadSummary = "Local vault loaded from \(snapshot.vaultSource): \(snapshot.vaultByteCount) bytes; read \(snapshot.readDurationMilliseconds) ms, decode \(snapshot.decodeDurationMilliseconds) ms, total \(snapshot.loadDurationMilliseconds) ms"
+        startupLogger.info("\(loadSummary, privacy: .public)")
+        DiagnosticLogger.shared.log(.startup, loadSummary)
     }
 
     private func applyCachedRatesSnapshot(_ snapshot: AppStoreCachedRatesSnapshot) {
@@ -179,21 +168,9 @@ final class AppStore: ObservableObject {
         hospitalProfiles = vault.hospitalProfiles
     }
 
-    private static func initializingHospitalDirectory(in vault: VaultData) -> VaultData {
-        guard !vault.hospitalDirectoryInitialized else { return vault }
-        var upgraded = vault
-        upgraded.hospitalProfiles = HospitalProfile.inferred(from: vault.medicalRecords)
-        upgraded.hospitalDirectoryInitialized = true
-        return upgraded
-    }
-
     func upsertAccount(_ account: BankAccount) {
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index] = account
-            for cardIndex in cards.indices where cards[cardIndex].accountID == account.id {
-                cards[cardIndex].bankName = account.bankName
-                cards[cardIndex].branchName = account.branchName
-            }
         } else {
             accounts.append(account)
         }
@@ -222,8 +199,6 @@ final class AppStore: ObservableObject {
         cards.append(contentsOf: updatedCards.map { card in
             var attached = card
             attached.accountID = account.id
-            attached.bankName = account.bankName
-            attached.branchName = account.branchName
             return attached
         })
         persist()
@@ -242,7 +217,8 @@ final class AppStore: ObservableObject {
     func cards(for account: BankAccount) -> [BankCard] { cards.filter { $0.accountID == account.id } }
 
     func upsertCard(_ card: BankCard, in account: BankAccount) {
-        var attached = card; attached.accountID = account.id; attached.bankName = account.bankName; attached.branchName = account.branchName
+        var attached = card
+        attached.accountID = account.id
         upsert(attached)
     }
 
@@ -621,17 +597,21 @@ final class AppStore: ObservableObject {
             restoredVault.cards = try attachmentStore.restoreAttachments(in: restoredVault.cards)
             return restoredVault
         }.value
-        let vault = Self.initializingHospitalDirectory(in: restoredVault)
         try await Task.detached(priority: .userInitiated) { [persistence] in
-            try persistence.saveImmediately(vault)
+            try persistence.saveImmediately(restoredVault)
         }.value
-        applyVault(vault)
+        applyVault(restoredVault)
+        canPersistVault = true
         quoteErrors = [:]
         quoteSources = [:]
     }
 
     func flushPendingPersistence() async {
         await persistence.flush()
+    }
+
+    func dismissVaultLoadFailure() {
+        isVaultLoadFailurePresented = false
     }
 
     func delete(at offsets: IndexSet) {
@@ -648,7 +628,16 @@ final class AppStore: ObservableObject {
         persist()
     }
     private func persist() {
-        guard !isRestoringBackup else { return }
+        guard !isRestoringBackup, canPersistVault else {
+            if !canPersistVault {
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "本地存档未成功读取，已拦截写入以保护原文件",
+                    level: .error
+                )
+            }
+            return
+        }
         persistence.schedule(
             VaultData(
                 accounts: accounts,
@@ -659,16 +648,5 @@ final class AppStore: ObservableObject {
                 hospitalProfiles: hospitalProfiles
             )
         )
-    }
-}
-
-private extension VaultData {
-    var isEmpty: Bool {
-        accounts.isEmpty
-            && cards.isEmpty
-            && stocks.isEmpty
-            && currencyExchangeRecords.isEmpty
-            && medicalRecords.isEmpty
-            && hospitalProfiles.isEmpty
     }
 }

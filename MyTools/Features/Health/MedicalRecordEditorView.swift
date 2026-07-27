@@ -83,7 +83,7 @@ struct MedicalRecordEditorView: View {
             }
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -263,6 +263,7 @@ struct MedicalRecordEditorView: View {
                     MedicalExpenseItemRow(item: item)
                 }
                 .buttonStyle(.plain)
+                .appListRowStyle()
             }
             .onDelete { offsets in draft.record.expenseItems.remove(atOffsets: offsets) }
 
