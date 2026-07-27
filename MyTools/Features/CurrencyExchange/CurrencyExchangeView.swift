@@ -56,6 +56,13 @@ struct CurrencyExchangeView: View {
             }
 
             Section("记录筛选") {
+                Picker("记录分类", selection: $recordFilter) {
+                    ForEach(CurrencyExchangeRecordFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 Picker("年份", selection: $selectedYear) {
                     Text("全部年份").tag(nil as Int?)
                     ForEach(availableYears, id: \.self) { year in
@@ -63,13 +70,6 @@ struct CurrencyExchangeView: View {
                     }
                 }
                 .pickerStyle(.menu)
-
-                Picker("记录分类", selection: $recordFilter) {
-                    ForEach(CurrencyExchangeRecordFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
-                    }
-                }
-                .pickerStyle(.segmented)
 
                 Picker("相关币种", selection: $primaryCurrencyFilter) {
                     Text("全部币种").tag(nil as CurrencyCode?)
@@ -281,11 +281,10 @@ struct CurrencyExchangeView: View {
     }
 
     private var totalResultTitle: String {
-        guard let totalRenminbiLoss else { return "当前人民币总损耗" }
+        guard let totalRenminbiLoss else { return "人民币总损耗" }
         switch CurrencyExchangeResult(amount: totalRenminbiLoss) {
-        case .loss: return "亏损 · 人民币总损耗"
-        case .profit: return "盈利 · 人民币总增益"
-        case .even: return "持平 · 人民币总损耗"
+        case .loss, .even: return "人民币总损耗"
+        case .profit: return "人民币总盈利"
         }
     }
 
@@ -701,10 +700,16 @@ private struct CurrencyExchangeRecordRow: View {
         }
         let result = CurrencyExchangeResult(amount: loss)
         let amount = CurrencyExchangeValueFormatter.amount(result.displayValue(loss), currency: .cny)
-        guard let rate = record.renminbiLossRate(using: buyingRates) else {
-            return "当前损耗 \(amount)"
+        let title: String
+        switch result {
+        case .loss: title = "损耗"
+        case .profit: title = "盈利"
+        case .even: title = "持平"
         }
-        return "\(result.title) · 当前损耗 \(amount)（\(CurrencyExchangeValueFormatter.percent(result.displayValue(rate)))）"
+        guard let rate = record.renminbiLossRate(using: buyingRates) else {
+            return "\(title) \(amount)"
+        }
+        return "\(title) \(amount) (\(CurrencyExchangeValueFormatter.percent(result.displayValue(rate))))"
     }
 
     private var direction: RenminbiExchangeDirection {

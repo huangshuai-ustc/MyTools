@@ -406,6 +406,24 @@ struct BankAccount: Identifiable, Codable, Equatable {
 }
 
 extension BankAccount {
+    var activeSubaccountCount: Int {
+        switch region {
+        case .domestic:
+            domesticSubaccounts.filter { $0.status != .closed }.count
+        case .overseas:
+            foreignSubaccounts.filter { $0.status != .closed }.count
+        }
+    }
+
+    var closedSubaccountCount: Int {
+        switch region {
+        case .domestic:
+            domesticSubaccounts.filter { $0.status == .closed }.count
+        case .overseas:
+            foreignSubaccounts.filter { $0.status == .closed }.count
+        }
+    }
+
     func isInactiveFinanceArchive(cards: [BankCard]) -> Bool {
         let hasNormalDebitCard = cards.contains {
             $0.kind == .debit && $0.status == .normal

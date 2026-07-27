@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1630"
-   version = "1.7">
+   version = "1.3">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
@@ -15,8 +15,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E00000000000000000000001"
-               BuildableName = "我的工具箱.app"
-               BlueprintName = "我的工具箱"
+               BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
+               BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
                ReferencedContainer = "container:MyTools.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -27,6 +27,8 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <Testables>
+      </Testables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -43,8 +45,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E00000000000000000000001"
-            BuildableName = "我的工具箱.app"
-            BlueprintName = "我的工具箱"
+            BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
+            BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
             ReferencedContainer = "container:MyTools.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -60,8 +62,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E00000000000000000000001"
-            BuildableName = "我的工具箱.app"
-            BlueprintName = "我的工具箱"
+            BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
+            BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
             ReferencedContainer = "container:MyTools.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

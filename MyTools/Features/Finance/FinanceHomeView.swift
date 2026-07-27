@@ -192,9 +192,7 @@ struct HomeView: View {
         var debitCount = 0
         var creditCount = 0
         for account in visibleAccounts {
-            subaccountCount += account.region == .domestic
-                ? account.domesticSubaccounts.count
-                : account.foreignSubaccounts.count
+            subaccountCount += account.activeSubaccountCount
             for card in cardsByAccountID[account.id, default: []] where card.status != .closed {
                 if card.kind == .debit { debitCount += 1 } else { creditCount += 1 }
             }
@@ -235,7 +233,7 @@ struct HomeView: View {
     private func financeRowSummary(_ account: BankAccount, cards: [BankCard]) -> String {
         let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
         let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
-        let subs = account.region == .domestic ? account.domesticSubaccounts.count : account.foreignSubaccounts.count
+        let subs = account.activeSubaccountCount
         switch account.region {
         case .domestic:
             return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subs) 个子账户"

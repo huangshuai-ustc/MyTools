@@ -77,26 +77,142 @@ struct CopyableValueRow: View {
 }
 
 @MainActor
-final class CopyToastCenter: ObservableObject {
+final class CopyToastCenter {
     static let shared = CopyToastCenter()
 
-    @Published private(set) var isVisible = false
     private var dismissalTask: Task<Void, Never>?
 
     func show() {
         dismissalTask?.cancel()
-        withAnimation(.easeOut(duration: 0.16)) {
-            isVisible = true
-        }
+        CopyToastPresenter.shared.show()
         dismissalTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_100_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeIn(duration: 0.2)) {
-                self?.isVisible = false
-            }
+            self?.dismiss()
         }
     }
+
+    private func dismiss() {
+        CopyToastPresenter.shared.dismiss()
+    }
 }
+
+private struct CopyToastBanner: View {
+    var body: some View {
+        Label("已复制到剪贴板", systemImage: "checkmark.circle.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.thinMaterial, in: Capsule())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("已复制到剪贴板")
+    }
+}
+
+#if os(iOS)
+@MainActor
+private final class CopyToastPresenter {
+    static let shared = CopyToastPresenter()
+
+    private var window: CopyToastWindow?
+
+    func show() {
+        guard let windowScene = activeWindowScene else { return }
+
+        let toastWindow: CopyToastWindow
+        if let window, window.windowScene === windowScene {
+            toastWindow = window
+        } else {
+            window?.isHidden = true
+            toastWindow = CopyToastWindow(windowScene: windowScene)
+            toastWindow.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
+            window = toastWindow
+        }
+
+        let controller = UIHostingController(rootView: CopyToastOverlay())
+        controller.view.backgroundColor = .clear
+        toastWindow.rootViewController = controller
+        toastWindow.isHidden = false
+    }
+
+    func dismiss() {
+        window?.isHidden = true
+        window?.rootViewController = nil
+        window = nil
+    }
+
+    private var activeWindowScene: UIWindowScene? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+    }
+}
+
+private final class CopyToastWindow: UIWindow {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        false
+    }
+}
+
+private struct CopyToastOverlay: View {
+    var body: some View {
+        VStack {
+            CopyToastBanner()
+                .padding(.top, 12)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .allowsHitTesting(false)
+    }
+}
+#elseif os(macOS)
+@MainActor
+private final class CopyToastPresenter {
+    static let shared = CopyToastPresenter()
+
+    private var panel: NSPanel?
+
+    func show() {
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        position(panel)
+        panel.orderFrontRegardless()
+    }
+
+    func dismiss() {
+        panel?.orderOut(nil)
+    }
+
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 220, height: 44),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        panel.ignoresMouseEvents = true
+        panel.contentView = NSHostingView(rootView: CopyToastBanner())
+        return panel
+    }
+
+    private func position(_ panel: NSPanel) {
+        guard let screen = NSApp.keyWindow?.screen ?? NSScreen.main else { return }
+        let visibleFrame = screen.visibleFrame
+        panel.setFrameOrigin(
+            NSPoint(
+                x: visibleFrame.midX - panel.frame.width / 2,
+                y: visibleFrame.maxY - panel.frame.height - 16
+            )
+        )
+    }
+}
+#endif
 
 private struct CopyableTextModifier: ViewModifier {
     let value: String?

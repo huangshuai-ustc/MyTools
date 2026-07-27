@@ -156,8 +156,9 @@ struct AccountDetailView: View {
         let subaccounts = account.region == .domestic
             ? account.domesticSubaccounts.map(AnySubaccount.domestic)
             : account.foreignSubaccounts.map(AnySubaccount.foreign)
+        let closedSubaccountCount = account.closedSubaccountCount
 
-        return Section("子账户（\(subaccounts.count)）") {
+        return Section("子账户（\(account.activeSubaccountCount)）") {
             if subaccounts.isEmpty {
                 Text("暂无子账户")
                     .foregroundStyle(.secondary)
@@ -172,6 +173,11 @@ struct AccountDetailView: View {
                     item.row
                 }
                 .buttonStyle(.plain)
+            }
+            if closedSubaccountCount > 0 {
+                Label("\(closedSubaccountCount) 个已销户子账户保留在档案中", systemImage: "archivebox")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -299,9 +305,7 @@ struct AccountDetailView: View {
     private func accountSummary(_ account: BankAccount, cards: [BankCard]) -> String {
         let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
         let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
-        let subaccountCount = account.region == .domestic
-            ? account.domesticSubaccounts.count
-            : account.foreignSubaccounts.count
+        let subaccountCount = account.activeSubaccountCount
         return account.region == .domestic
             ? "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subaccountCount) 个子账户"
             : "\(subaccountCount) 个子账户 · \(debit) 张借记卡 · \(credit) 张信用卡"

@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum AppListMetrics {
-    static let rowVerticalInset: CGFloat = 8
+    static let rowVerticalInset: CGFloat = 10
     static let rowHorizontalInset: CGFloat = 16
     static let minimumRowHeight: CGFloat = 46
-    static let recordContentSpacing: CGFloat = 8
+    static let recordContentSpacing: CGFloat = 10
 }
 
 extension View {
