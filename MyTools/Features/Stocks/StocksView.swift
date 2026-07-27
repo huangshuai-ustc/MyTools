@@ -390,8 +390,7 @@ struct StocksView: View {
         } label: {
             StockRow(
                 stock: stock,
-                allocation: allocation,
-                quoteError: store.quoteErrors[stock.id]
+                allocation: allocation
             )
         }
         .appListRowStyle()
@@ -683,7 +682,6 @@ private struct StockRow: View {
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stock: StockHolding
     let allocation: Decimal?
-    let quoteError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
@@ -698,38 +696,48 @@ private struct StockRow: View {
                 Spacer(minLength: 4)
             }
 
-            HStack {
-                Text("持仓 \(StockValueFormatter.quantity(stock.currentShares)) 股")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let latestPrice = stock.latestPrice {
-                    Text(StockValueFormatter.price(latestPrice, currencyCode: stock.market.currencyCode))
-                        .monospacedDigit()
-                    if let changePercent = stock.changePercent {
-                        Text(StockValueFormatter.percent(changePercent))
-                            .foregroundStyle(stockValueColor(changePercent, market: stock.market, settings: stockAppearanceSettings))
-                            .monospacedDigit()
-                    }
-                } else {
-                    Text(quoteError == nil ? "待同步" : "刷新失败")
-                        .foregroundStyle(quoteError == nil ? Color.secondary : Color.orange)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("持仓 \(StockValueFormatter.quantity(stock.currentShares)) 股")
+                    Text("市值 \(marketValueText) (\(allocationText))")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .foregroundStyle(.secondary)
+
+                Spacer(minLength: 4)
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    metric("涨跌", value: changePercentText, color: changePercentColor)
+                    metric(profitLossLabel, value: profitLossText, color: profitLossColor)
                 }
             }
-            .font(.subheadline)
-
-            HStack {
-                Text("市值：\(marketValueText) · 占比 \(allocationText)")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer()
-                Text("\(profitLossLabel)：\(profitLossText)")
-                    .foregroundStyle(profitLossColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.caption.monospacedDigit())
         }
+    }
+
+    @ViewBuilder
+    private func metric(_ label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .frame(width: 28, alignment: .leading)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .frame(width: 66, alignment: .trailing)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(width: 100, alignment: .leading)
+    }
+
+    private var changePercentText: String {
+        stock.changePercent.map(StockValueFormatter.percent) ?? "--"
+    }
+
+    private var changePercentColor: Color {
+        guard let value = stock.changePercent else { return .secondary }
+        return stockValueColor(value, market: stock.market, settings: stockAppearanceSettings)
     }
 
     private var marketValueText: String {
@@ -739,7 +747,7 @@ private struct StockRow: View {
 
     private var profitLossText: String {
         guard let value = stock.totalProfitLoss else { return "待同步" }
-        return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
+        return StockValueFormatter.money(value < 0 ? -value : value, currencyCode: stock.market.currencyCode)
     }
 
     private var allocationText: String {
@@ -747,7 +755,7 @@ private struct StockRow: View {
     }
 
     private var profitLossLabel: String {
-        stock.netDividendIncome == 0 ? "盈亏" : "盈亏（含分红）"
+        "盈亏"
     }
 
     private var profitLossColor: Color {
