@@ -79,19 +79,17 @@ struct DiagnosticsView: View {
         }
         .navigationTitle("调试信息")
         .adminModeIndicator()
-        .iOSLabeledBackButton("我的")
+        .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
 #endif
         .task { reload() }
-        .confirmationDialog(
-            "清空安装以来的全部诊断日志？",
-            isPresented: $showingClearConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert("清空诊断日志", isPresented: $showingClearConfirmation) {
             Button("清空", role: .destructive, action: clearLogs)
             Button("取消", role: .cancel) {}
+        } message: {
+            Text("将删除安装以来的全部诊断日志。")
         }
         .fileExporter(
             isPresented: $showingExporter,
