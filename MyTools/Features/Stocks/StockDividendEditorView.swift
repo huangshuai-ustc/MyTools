@@ -92,6 +92,7 @@ struct StockDividendEditorView: View {
                 }
             }
             .navigationTitle(draft.dividend.grossAmount == 0 ? "添加分红" : "编辑分红")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

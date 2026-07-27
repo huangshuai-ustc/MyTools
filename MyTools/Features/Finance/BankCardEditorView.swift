@@ -74,8 +74,7 @@ struct CardEditorView: View {
                         IMESafeTextField(prompt: "未填写", text: $draft.card.cardNumber, alignment: .trailing)
                     }
                     LabeledContent("CVV：") {
-                        SecureField("未填写", text: $draft.card.cvv)
-                            .multilineTextAlignment(.trailing)
+                        IMESafeTextField(prompt: "未填写", text: $draft.card.cvv, alignment: .trailing)
                             .focused($focusedField, equals: .cvv)
                     }
                     Picker("有效期格式：", selection: $draft.card.expiryPrecision) {
@@ -128,6 +127,7 @@ struct CardEditorView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -285,6 +285,7 @@ private struct CreditCardStatementEditorView: View {
                 }
             }
             .navigationTitle(statement.attachment == nil ? "添加信用卡账单" : "编辑信用卡账单")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

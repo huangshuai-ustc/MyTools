@@ -1,17 +1,12 @@
 import SwiftUI
 
 struct AuthenticationView: View {
-    private enum Field: Hashable {
-        case password, confirmation
-    }
-
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
     @State private var confirm = ""
     @State private var error = ""
     @State private var didAttemptBiometrics = false
-    @FocusState private var focusedField: Field?
     let onAuthenticated: (() -> Void)?
 
     init(onAuthenticated: (() -> Void)? = nil) {
@@ -19,53 +14,24 @@ struct AuthenticationView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if !auth.hasPassword {
-                    Section("设置管理员密码") {
-                        SecureField("至少 6 位", text: $password)
-                            .focused($focusedField, equals: .password)
-                            .onSubmit { focusedField = .confirmation }
-                        SecureField("再次输入", text: $confirm)
-                            .focused($focusedField, equals: .confirmation)
-                        Button("保存并进入", action: requestSetPassword)
-                    }
-                } else {
-                    Section("密码验证") {
-                        SecureField("管理员密码", text: $password)
-                            .focused($focusedField, equals: .password)
-                        Button("验证", action: requestUnlock)
-                    }
-                    Section {
-                        Button {
-                            Task {
-                                if await auth.unlockWithBiometrics() {
-                                    finishAuthentication()
-                                } else {
-                                    error = "面容或指纹验证未通过，请输入管理员密码。"
-                                }
-                            }
-                        } label: {
-                            Label("重新使用 Face ID / Touch ID", systemImage: "faceid")
-                        }
+        IdentityVerificationForm(
+            mode: auth.hasPassword ? .verify : .setPassword,
+            password: $password,
+            confirmation: $confirm,
+            error: error,
+            passwordAction: auth.hasPassword ? requestUnlock : requestSetPassword,
+            biometricAction: {
+                Task {
+                    if await auth.unlockWithBiometrics() {
+                        finishAuthentication()
+                    } else {
+                        error = "面容或指纹验证未通过，请输入管理员密码。"
                     }
                 }
-                if !error.isEmpty {
-                    Text(error).foregroundStyle(.red)
-                }
-            }
-            .navigationTitle("管理员认证")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .scrollDismissesKeyboard(.interactively)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-            }
-            .task { await attemptBiometricUnlock() }
-        }
+            },
+            onCancel: { dismiss() }
+        )
+        .task { await attemptBiometricUnlock() }
     }
 
     private func attemptBiometricUnlock() async {
@@ -75,7 +41,6 @@ struct AuthenticationView: View {
             finishAuthentication()
         } else {
             error = "面容或指纹验证未通过，请输入管理员密码。"
-            focusedField = .password
         }
     }
 
@@ -109,5 +74,110 @@ struct AuthenticationView: View {
             await Task.yield()
             onAuthenticated()
         }
+    }
+}
+
+struct IdentityVerificationForm: View {
+    enum Mode: Equatable {
+        case setPassword
+        case verify
+    }
+
+    private enum Field: Hashable {
+        case password
+        case confirmation
+    }
+
+    let mode: Mode
+    @Binding var password: String
+    @Binding var confirmation: String
+    let error: String
+    let isVerifying: Bool
+    let passwordAction: () -> Void
+    let biometricAction: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var focusedField: Field?
+
+    init(
+        mode: Mode,
+        password: Binding<String>,
+        confirmation: Binding<String> = .constant(""),
+        error: String,
+        isVerifying: Bool = false,
+        passwordAction: @escaping () -> Void,
+        biometricAction: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.mode = mode
+        _password = password
+        _confirmation = confirmation
+        self.error = error
+        self.isVerifying = isVerifying
+        self.passwordAction = passwordAction
+        self.biometricAction = biometricAction
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(mode == .setPassword ? "设置管理员密码" : "密码验证") {
+                    SecureField(
+                        mode == .setPassword ? "至少 6 位" : "管理员密码",
+                        text: $password
+                    )
+                    .focused($focusedField, equals: .password)
+                    .onSubmit {
+                        if mode == .setPassword {
+                            focusedField = .confirmation
+                        } else {
+                            passwordAction()
+                        }
+                    }
+
+                    if mode == .setPassword {
+                        SecureField("再次输入", text: $confirmation)
+                            .focused($focusedField, equals: .confirmation)
+                            .onSubmit(passwordAction)
+                    }
+
+                    Button(mode == .setPassword ? "保存并进入" : "验证", action: passwordAction)
+                        .disabled(isVerifying)
+                }
+
+                if mode == .verify {
+                    Section {
+                        Button(action: biometricAction) {
+                            if isVerifying {
+                                HStack {
+                                    ProgressView()
+                                    Text("正在验证")
+                                }
+                            } else {
+                                Label("重新使用 Face ID / Touch ID", systemImage: "faceid")
+                            }
+                        }
+                        .disabled(isVerifying)
+                    }
+                }
+
+                if !error.isEmpty {
+                    Section {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("验证身份")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                }
+            }
+        }
+        .iOSAuthenticationSheet()
     }
 }

@@ -20,6 +20,8 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
     case hongKong
     case unitedStates
 
+    static let marketCases: [Self] = [.aShare, .hongKong, .unitedStates]
+
     var id: Self { self }
 
     var title: String {
@@ -28,6 +30,15 @@ private enum StockMarketFilter: String, CaseIterable, Identifiable {
         case .aShare: return "A股"
         case .hongKong: return "港股"
         case .unitedStates: return "美股"
+        }
+    }
+
+    var market: StockMarket? {
+        switch self {
+        case .all: return nil
+        case .aShare: return .aShare
+        case .hongKong: return .hongKong
+        case .unitedStates: return .unitedStates
         }
     }
 
@@ -192,22 +203,41 @@ struct StocksView: View {
         )
     }
 
-    private var displayedStocks: [StockHolding] {
+    private var stocksWithPurchaseRecords: [StockHolding] {
+        store.stocks.filter(\.hasPurchaseRecord)
+    }
+
+    private var availableMarketFilters: [StockMarketFilter] {
+        let availableMarkets = Set(stocksWithPurchaseRecords.map(\.market))
+        let marketFilters = StockMarketFilter.marketCases.filter { filter in
+            filter.market.map(availableMarkets.contains) ?? false
+        }
+        return [.all] + marketFilters
+    }
+
+    private var stocksInSelectedMarket: [StockHolding] {
+        marketFilter.filtered(stocksWithPurchaseRecords)
+    }
+
+    private var searchFilteredStocks: [StockHolding] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = marketFilter
-            .filtered(store.stocks)
-            .filter { stock in
+        return stocksInSelectedMarket.filter { stock in
                 searchTerm.isEmpty
                     || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
                     || stock.displayName.localizedCaseInsensitiveContains(searchTerm)
             }
-        return stockSorter.sorted(filtered)
+    }
+
+    private var displayedStocks: [StockHolding] {
+        stockSorter.sorted(searchFilteredStocks)
     }
 
     private var summaryMarkets: [StockMarket] {
         switch marketFilter {
         case .all:
-            return StockMarket.allCases
+            return StockMarket.allCases.filter { market in
+                stocksInSelectedMarket.contains { $0.market == market }
+            }
         case .aShare:
             return [.aShare]
         case .hongKong:
@@ -218,7 +248,7 @@ struct StocksView: View {
     }
 
     private var allocationSnapshot: StockAllocationSnapshot {
-        let stocks = marketFilter.filtered(store.stocks)
+        let stocks = stocksInSelectedMarket
         let multipliers: [StockMarket: Decimal]
         switch marketFilter {
         case .all:
@@ -246,7 +276,7 @@ struct StocksView: View {
         return List {
             Section {
                 Picker("股票市场", selection: $marketFilter) {
-                    ForEach(StockMarketFilter.allCases) { filter in
+                    ForEach(availableMarketFilters) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
@@ -258,7 +288,10 @@ struct StocksView: View {
                     .appListRowStyle()
                 ForEach(summaryMarkets) { market in
                     StockMarketSummaryRow(
-                        summary: StockPortfolioSummary(market: market, stocks: store.stocks),
+                        summary: StockPortfolioSummary(
+                            market: market,
+                            stocks: stocksInSelectedMarket
+                        ),
                         allocation: allocations.marketShare(for: market),
                         showsAllocation: marketFilter == .all
                     )
@@ -266,23 +299,14 @@ struct StocksView: View {
                 }
             }
 
-            Section("我的股票") {
+            Section(ToolModule.myStocks.title) {
                 if displayedStocks.isEmpty {
                     ContentUnavailableView(
-                        store.stocks.isEmpty ? "暂无股票" : "没有匹配的股票",
-                        systemImage: store.stocks.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
+                        emptyStocksTitle,
+                        systemImage: emptyStocksSystemImage
                     )
                 }
-                if auth.isEditSessionReady {
-                    ForEach(displayedStocks) { stock in
-                        stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
-                    }
-                    .onDelete(perform: deleteStocks)
-                } else {
-                    ForEach(displayedStocks) { stock in
-                        stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
-                    }
-                }
+                stockLinks(displayedStocks, allocations: allocations)
             }
 
             Section {
@@ -299,7 +323,7 @@ struct StocksView: View {
                 Text("行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
             }
         }
-        .navigationTitle("我的股票")
+        .navigationTitle(ToolModule.myStocks.title)
         .iOSLabeledBackButton("工具箱")
         .searchable(text: $query, prompt: "搜索股票名称或代码")
         .refreshable {
@@ -345,6 +369,11 @@ struct StocksView: View {
                 .id(stock.id)
                 .iOSLargeSheet()
         }
+        .onChange(of: availableMarketFilters) { _, filters in
+            if !filters.contains(marketFilter) {
+                marketFilter = .all
+            }
+        }
         .task {
             await store.refreshStockQuotes()
             while !Task.isCancelled {
@@ -368,8 +397,33 @@ struct StocksView: View {
         .appListRowStyle()
     }
 
-    private func deleteStocks(at offsets: IndexSet) {
-        let ids = Set(offsets.map { displayedStocks[$0].id })
+    @ViewBuilder
+    private func stockLinks(
+        _ stocks: [StockHolding],
+        allocations: StockAllocationSnapshot
+    ) -> some View {
+        if auth.isEditSessionReady {
+            ForEach(stocks) { stock in
+                stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
+            }
+            .onDelete { deleteStocks(at: $0, from: stocks) }
+        } else {
+            ForEach(stocks) { stock in
+                stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
+            }
+        }
+    }
+
+    private var emptyStocksTitle: String {
+        stocksWithPurchaseRecords.isEmpty ? "暂无股票" : "没有匹配的股票"
+    }
+
+    private var emptyStocksSystemImage: String {
+        stocksWithPurchaseRecords.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
+    }
+
+    private func deleteStocks(at offsets: IndexSet, from stocks: [StockHolding]) {
+        let ids = Set(offsets.map { stocks[$0].id })
         store.deleteStocks(ids: ids)
     }
 }
@@ -381,7 +435,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     @State private var showingConversionInfo = false
 
     private var includedStocks: [StockHolding] {
-        store.stocks.filter(marketFilter.includes)
+        store.stocks.filter { $0.hasPurchaseRecord && marketFilter.includes($0) }
     }
 
     private var convertedValues: (
@@ -770,7 +824,7 @@ private struct StockDetailView: View {
             }
         }
         .navigationTitle(stock?.displayName ?? "股票详情")
-        .iOSLabeledBackButton("我的股票")
+        .iOSLabeledBackButton(ToolModule.myStocks.title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif

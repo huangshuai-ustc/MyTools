@@ -453,6 +453,7 @@ private struct BankOfChinaExchangeRatesView: View {
             }
         }
         .navigationTitle("中国银行结售汇牌价")
+        .adminModeIndicator()
         .iOSLabeledBackButton("换汇记录")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

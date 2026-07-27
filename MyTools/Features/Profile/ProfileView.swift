@@ -70,7 +70,7 @@ struct ProfileView: View {
                     NavigationLink {
                         StockAppearanceSettingsView()
                     } label: {
-                        Label("我的股票", systemImage: "chart.line.uptrend.xyaxis")
+                        Label(ToolModule.myStocks.title, systemImage: "chart.line.uptrend.xyaxis")
                     }
                     NavigationLink {
                         DiagnosticsView()
@@ -83,6 +83,7 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("我的")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             .listStyle(.insetGrouped)
@@ -233,9 +234,10 @@ private struct HomeFeatureSettingsView: View {
                 }
                 .onMove(perform: moduleSettings.moveModules)
             }
-        }
-        .navigationTitle("首页功能")
-        .iOSLabeledBackButton("我的")
+            }
+            .navigationTitle("首页功能")
+            .adminModeIndicator()
+            .iOSLabeledBackButton("我的")
 #if os(iOS)
         .toolbar { EditButton() }
         .navigationBarTitleDisplayMode(.inline)
@@ -266,7 +268,8 @@ private struct StockAppearanceSettingsView: View {
                 Text("默认遵循市场习惯：A 股和港股红涨绿跌，美股绿涨红跌。盈亏颜色会使用对应股票市场的设置。")
             }
         }
-        .navigationTitle("我的股票")
+        .navigationTitle(ToolModule.myStocks.title)
+        .adminModeIndicator()
         .iOSLabeledBackButton("我的")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -349,6 +352,7 @@ struct BackupPasswordView: View {
                 }
             }
             .navigationTitle(mode.title)
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

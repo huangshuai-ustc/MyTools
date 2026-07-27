@@ -472,11 +472,11 @@ final class AppStore: ObservableObject {
         defer { isRefreshingQuotes = false }
 
         refreshExchangeRateIfNeeded()
-        guard !stocks.isEmpty else { return }
+        let stockSnapshot = stocks
+        guard !stockSnapshot.isEmpty else { return }
 
         var failures: [UUID: String] = [:]
         var successCount = 0
-        let stockSnapshot = stocks
         let refreshedQuotes = await quoteService.fetchQuotes(for: stockSnapshot)
 
         let stockIndices = Dictionary(

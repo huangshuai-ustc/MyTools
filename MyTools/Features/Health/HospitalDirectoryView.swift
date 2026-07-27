@@ -147,6 +147,7 @@ private struct HospitalProfileEditorView: View {
                 }
             }
             .navigationTitle(isNew ? "新增医院" : "编辑医院")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

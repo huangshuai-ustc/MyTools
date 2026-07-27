@@ -16,6 +16,8 @@ struct AccountDetailView: View {
     @State private var viewingForeignSubaccount: ForeignSubaccount?
     @State private var sensitiveLoginInformationRevealed = false
     @State private var showingSensitiveAccess = false
+    @State private var showsClosedCards = false
+    @State private var showsClosedSubaccounts = false
     @AppStorage("card-sort-order-v1") private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
     @AppStorage("card-category-filter-v1") private var cardCategoryRawValue = CardCategoryFilter.all.rawValue
 
@@ -49,16 +51,17 @@ struct AccountDetailView: View {
                         sort: $cardSortOrderRawValue
                     )
                 }
+                if let account {
+                    AdminEditAccessButton {
+                        editingAccount = account
+                    }
+                }
                 if auth.isAdmin, let account {
                     Button { editingAccount = account } label: {
                         Image(systemName: "pencil")
                     }
                     .accessibilityLabel("编辑银行档案")
                     .help("编辑银行档案")
-                } else {
-                    AdminEditAccessButton {
-                        editingAccount = account
-                    }
                 }
             }
         }
@@ -85,12 +88,17 @@ struct AccountDetailView: View {
         }
         .sheet(isPresented: $showingSensitiveAccess) {
             SensitiveAccessView { sensitiveLoginInformationRevealed = true }
-                .iOSLargeSheet()
+                .iOSAuthenticationSheet()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { sensitiveLoginInformationRevealed = false }
         }
         .onChange(of: auth.isAdmin) { _, _ in
+            sensitiveLoginInformationRevealed = false
+        }
+        .onDisappear {
+            showsClosedCards = false
+            showsClosedSubaccounts = false
             sensitiveLoginInformationRevealed = false
         }
     }
@@ -153,14 +161,17 @@ struct AccountDetailView: View {
     }
 
     private func subaccountsSection(_ account: BankAccount) -> some View {
-        let subaccounts = account.region == .domestic
+        let allSubaccounts = account.region == .domestic
             ? account.domesticSubaccounts.map(AnySubaccount.domestic)
             : account.foreignSubaccounts.map(AnySubaccount.foreign)
+        let subaccounts = showsClosedSubaccounts
+            ? allSubaccounts
+            : allSubaccounts.filter { $0.status != .closed }
         let closedSubaccountCount = account.closedSubaccountCount
 
         return Section("子账户（\(account.activeSubaccountCount)）") {
             if subaccounts.isEmpty {
-                Text("暂无子账户")
+                Text(allSubaccounts.isEmpty ? "暂无子账户" : "已隐藏全部已销户子账户")
                     .foregroundStyle(.secondary)
             }
             ForEach(subaccounts) { item in
@@ -175,9 +186,10 @@ struct AccountDetailView: View {
                 .buttonStyle(.plain)
             }
             if closedSubaccountCount > 0 {
-                Label("\(closedSubaccountCount) 个已销户子账户保留在档案中", systemImage: "archivebox")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                HiddenItemsVisibilityButton(
+                    itemsDescription: "\(closedSubaccountCount) 个已销户子账户",
+                    isShowing: $showsClosedSubaccounts
+                )
             }
         }
     }
@@ -201,9 +213,10 @@ struct AccountDetailView: View {
                 .appListRowStyle()
             }
             if closedCardCount > 0 {
-                Label("\(closedCardCount) 张已销户卡保留在档案中", systemImage: "archivebox")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                HiddenItemsVisibilityButton(
+                    itemsDescription: "\(closedCardCount) 张已销户银行卡",
+                    isShowing: $showsClosedCards
+                )
             }
         }
     }
@@ -293,7 +306,8 @@ struct AccountDetailView: View {
 
     private func displayedCards(for account: BankAccount) -> [BankCard] {
         let cards = store.cards(for: account).filter {
-            CardCategoryFilter(rawValue: cardCategoryRawValue)?.includes($0) ?? true
+            (showsClosedCards || $0.status != .closed)
+                && (CardCategoryFilter(rawValue: cardCategoryRawValue)?.includes($0) ?? true)
         }
         return (CardSortOrder(rawValue: cardSortOrderRawValue) ?? .nameAscending).sorted(cards)
     }
@@ -325,6 +339,13 @@ private enum AnySubaccount: Identifiable {
         switch self {
         case .domestic(let value): return value.id
         case .foreign(let value): return value.id
+        }
+    }
+
+    var status: AccountStatus {
+        switch self {
+        case .domestic(let value): value.status
+        case .foreign(let value): value.status
         }
     }
 
@@ -409,6 +430,7 @@ struct AccountEditorView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -720,6 +742,7 @@ private struct AdditionalLoginFieldEditorView: View {
                 Section { Toggle("作为敏感信息隐藏", isOn: $field.isSensitive) }
             }
             .navigationTitle(field.name.isEmpty ? "添加自定义字段" : "编辑自定义字段")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

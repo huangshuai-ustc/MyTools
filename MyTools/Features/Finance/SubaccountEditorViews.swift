@@ -37,6 +37,7 @@ struct DomesticSubaccountReadOnlyView: View {
                 }
             }
             .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -120,6 +121,7 @@ struct DomesticSubaccountEditorView: View {
                     ? "新增子账户"
                     : "编辑子账户"
             )
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -217,6 +219,7 @@ struct ForeignSubaccountReadOnlyView: View {
                 }
             }
             .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -288,6 +291,7 @@ struct ForeignSubaccountEditorView: View {
                 }
             }
             .navigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增子账户" : "编辑子账户")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

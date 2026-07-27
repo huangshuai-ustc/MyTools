@@ -7,7 +7,7 @@ struct HomeView: View {
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
     @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
-    @AppStorage("finance-hide-inactive-banks-v1") private var hidesInactiveBanks = true
+    @State private var showsInactiveBanks = false
 
     private var selectedSortOrder: AccountSortOrder {
         AccountSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
@@ -51,15 +51,14 @@ struct HomeView: View {
                         accountLink(account, cards: snapshot.cards(for: account))
                     }
                 }
-                if hidesInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
-                    Button {
-                        hidesInactiveBanks = false
-                    } label: {
-                        Label("显示 \(snapshot.inactiveAccounts.count) 家停用银行", systemImage: "eye")
-                    }
+                if !showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
+                        isShowing: $showsInactiveBanks
+                    )
                 }
             }
-            if !hidesInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
+            if showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
                 Section("停用银行（\(snapshot.inactiveAccounts.count)）") {
                     if auth.isAdmin {
                         ForEach(snapshot.inactiveAccounts) { account in
@@ -71,15 +70,14 @@ struct HomeView: View {
                             accountLink(account, cards: snapshot.cards(for: account))
                         }
                     }
-                    Button {
-                        hidesInactiveBanks = true
-                    } label: {
-                        Label("隐藏停用银行", systemImage: "eye.slash")
-                    }
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
+                        isShowing: $showsInactiveBanks
+                    )
                 }
             }
         }
-        .navigationTitle("个人金融")
+        .navigationTitle(ToolModule.personalFinance.title)
         .iOSLabeledBackButton("工具箱")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .toolbar {
@@ -106,11 +104,14 @@ struct HomeView: View {
                 .id(account.id)
                 .iOSLargeSheet()
         }
+        .onDisappear {
+            showsInactiveBanks = false
+        }
     }
 
     private func accountLink(_ account: BankAccount, cards: [BankCard]) -> some View {
         NavigationLink {
-            AccountDetailView(account: account, backTitle: "个人金融")
+            AccountDetailView(account: account, backTitle: ToolModule.personalFinance.title)
         } label: {
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -184,7 +185,7 @@ struct HomeView: View {
             isInactive($0, cards: cardsByAccountID[$0.id, default: []])
         }
         let visibleAccounts = store.accounts.filter(regionFilter.includes).filter { account in
-            !hidesInactiveBanks
+            showsInactiveBanks
                 || !isInactive(account, cards: cardsByAccountID[account.id, default: []])
         }
 

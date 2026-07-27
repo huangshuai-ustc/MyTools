@@ -143,6 +143,10 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
             .min()
     }
 
+    var hasPurchaseRecord: Bool {
+        transactions.contains { $0.type == .buy }
+    }
+
     var totalBuyCost: Decimal {
         transactions.lazy
             .filter { $0.type == .buy }

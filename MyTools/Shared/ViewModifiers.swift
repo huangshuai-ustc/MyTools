@@ -7,6 +7,20 @@ enum AppListMetrics {
     static let recordContentSpacing: CGFloat = 10
 }
 
+struct HiddenItemsVisibilityButton: View {
+    let itemsDescription: String
+    @Binding var isShowing: Bool
+
+    var body: some View {
+        Button { isShowing.toggle() } label: {
+            Label(
+                isShowing ? "隐藏 \(itemsDescription)" : "显示 \(itemsDescription)",
+                systemImage: isShowing ? "eye.slash" : "eye"
+            )
+        }
+    }
+}
+
 extension View {
     func appListRowStyle() -> some View {
         listRowInsets(EdgeInsets(
@@ -47,6 +61,9 @@ extension View {
 #if os(iOS)
         presentationDetents([.height(360)])
             .presentationDragIndicator(.visible)
+            .presentationSizing(.fitted)
+#elseif os(macOS)
+        frame(width: 440, height: 360)
 #else
         self
 #endif

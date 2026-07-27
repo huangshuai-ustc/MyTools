@@ -15,6 +15,7 @@ enum MedicalVisitType: String, Codable, CaseIterable, Identifiable {
     case emergency
     case inpatient
     case pharmacyPurchase
+    case physicalExam
 
     var id: Self { self }
 
@@ -24,6 +25,7 @@ enum MedicalVisitType: String, Codable, CaseIterable, Identifiable {
         case .emergency: return "急诊"
         case .inpatient: return "住院"
         case .pharmacyPurchase: return "药房购药"
+        case .physicalExam: return "体检"
         }
     }
 
@@ -152,6 +154,66 @@ struct MedicalExpenseItem: Identifiable, Codable, Equatable {
 
 }
 
+struct PhysicalExamSession: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var date = Date()
+    var institution = ""
+    var completedItems = ""
+    var notes = ""
+
+    init(
+        id: UUID = UUID(),
+        date: Date = Date(),
+        institution: String = "",
+        completedItems: String = "",
+        notes: String = ""
+    ) {
+        self.id = id
+        self.date = date
+        self.institution = institution
+        self.completedItems = completedItems
+        self.notes = notes
+    }
+}
+
+struct PhysicalExamFinding: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var item = ""
+    var result = ""
+    var recommendation = ""
+
+    init(
+        id: UUID = UUID(),
+        item: String = "",
+        result: String = "",
+        recommendation: String = ""
+    ) {
+        self.id = id
+        self.item = item
+        self.result = result
+        self.recommendation = recommendation
+    }
+}
+
+struct PhysicalExamDetails: Codable, Equatable {
+    var packageName = ""
+    var reportDate: Date?
+    var sessions: [PhysicalExamSession] = []
+    var findings: [PhysicalExamFinding] = []
+
+    init(
+        packageName: String = "",
+        reportDate: Date? = nil,
+        sessions: [PhysicalExamSession] = [],
+        findings: [PhysicalExamFinding] = []
+    ) {
+        self.packageName = packageName
+        self.reportDate = reportDate
+        self.sessions = sessions
+        self.findings = findings
+    }
+}
+
 enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
     case invoice
     case medicalRecord
@@ -160,6 +222,7 @@ enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
     case mri
     case xray
     case testSheet
+    case physicalExamReport
     case scan
     case other
 
@@ -174,6 +237,7 @@ enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
         case .mri: return "MRI"
         case .xray: return "X 光"
         case .testSheet: return "化验单"
+        case .physicalExamReport: return "体检报告"
         case .scan: return "扫描件"
         case .other: return "其他"
         }
@@ -184,6 +248,7 @@ enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
         case .invoice: return "receipt"
         case .medicalRecord: return "doc.text"
         case .laboratoryReport, .testSheet: return "cross.vial"
+        case .physicalExamReport: return "heart.text.clipboard"
         case .ct, .mri, .xray: return "waveform.path.ecg.rectangle"
         case .scan: return "doc.viewfinder"
         case .other: return "paperclip"
@@ -221,6 +286,7 @@ struct MedicalRecord: ToolEvent, Equatable {
     var department = ""
     var doctor = ""
     var visitType: MedicalVisitType = .outpatient
+    var physicalExamDetails: PhysicalExamDetails?
     var chiefComplaint = ""
     var diagnosis = ""
     var treatment = ""
@@ -253,6 +319,22 @@ struct MedicalRecord: ToolEvent, Equatable {
         tags = parent.tags
     }
 
+    init(pharmacyPurchaseFor parent: MedicalRecord, date: Date = Date()) {
+        parentRecordID = parent.parentRecordID ?? parent.id
+        self.date = Self.normalizedDate(date)
+        visitType = .pharmacyPurchase
+        chiefComplaint = parent.diagnosis
+        tags = parent.tags
+    }
+
+    init(physicalExamOn date: Date = Date()) {
+        self.date = Self.normalizedDate(date)
+        visitType = .physicalExam
+        physicalExamDetails = PhysicalExamDetails(
+            sessions: [PhysicalExamSession(date: Self.normalizedDate(date))]
+        )
+    }
+
     static func normalizedDate(_ date: Date) -> Date {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
@@ -272,15 +354,28 @@ struct MedicalRecord: ToolEvent, Equatable {
     }
 
     var isFollowUp: Bool {
-        parentRecordID != nil
+        parentRecordID != nil && !isPharmacyPurchase
     }
 
     var isPharmacyPurchase: Bool {
         visitType == .pharmacyPurchase
     }
 
+    var isLinkedPharmacyPurchase: Bool {
+        isPharmacyPurchase && parentRecordID != nil
+    }
+
+    var hasAssociatedRecord: Bool {
+        parentRecordID != nil
+    }
+
+    var isPhysicalExam: Bool {
+        visitType == .physicalExam
+    }
+
     var institutionLabel: String {
-        isPharmacyPurchase ? "药房" : "医院"
+        if isPharmacyPurchase { return "药房" }
+        return isPhysicalExam ? "体检机构" : "医院"
     }
 
     var hospitalClassificationTitles: [String] {

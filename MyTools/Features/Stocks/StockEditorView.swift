@@ -76,6 +76,7 @@ struct StockEditorView: View {
                 }
             }
             .navigationTitle(isNew ? "添加股票" : "编辑股票")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

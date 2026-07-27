@@ -109,6 +109,7 @@ struct CardDetailView: View {
 
             }
             .navigationTitle("银行卡详情")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -119,7 +120,7 @@ struct CardDetailView: View {
             }
             .sheet(isPresented: $showingSensitiveAccess) {
                 SensitiveAccessView { sensitiveInformationRevealed = true }
-                    .iOSLargeSheet()
+                    .iOSAuthenticationSheet()
             }
 #if os(iOS)
             .sheet(item: $previewAttachment) { attachment in
@@ -127,6 +128,7 @@ struct CardDetailView: View {
                     FinanceAttachmentPreview(url: store.financeAttachmentURL(for: attachment))
                         .ignoresSafeArea(edges: .bottom)
                         .navigationTitle(attachment.fileName)
+                        .adminModeIndicator()
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {

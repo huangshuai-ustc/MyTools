@@ -60,6 +60,7 @@ struct StockTransactionEditorView: View {
                 }
             }
             .navigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")
+            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
