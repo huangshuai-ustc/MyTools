@@ -6,7 +6,6 @@ struct DomesticSubaccountRow: View {
     var body: some View {
         SubaccountSummaryRow(
             name: subaccount.name,
-            accountType: subaccount.type,
             accountNumber: subaccount.accountNumber,
             status: subaccount.status
         )
@@ -159,7 +158,6 @@ struct ForeignSubaccountRow: View {
     var body: some View {
         SubaccountSummaryRow(
             name: subaccount.name,
-            accountType: subaccount.typeTitle,
             accountNumber: subaccount.accountNumber,
             status: subaccount.status
         )
@@ -176,7 +174,6 @@ struct ForeignSubaccountDetailRow: View {
 
 private struct SubaccountSummaryRow: View {
     let name: String
-    let accountType: String
     let accountNumber: String
     let status: AccountStatus
 
@@ -189,10 +186,6 @@ private struct SubaccountSummaryRow: View {
                 Spacer(minLength: 4)
                 AccountStatusText(status: status)
             }
-            Text(accountType.isEmpty ? "未填写账户类型" : accountType)
-                .font(.subheadline)
-                .foregroundStyle(accountType.isEmpty ? .tertiary : .secondary)
-                .lineLimit(1)
             Text(accountNumber.isEmpty ? "未填写账户号" : accountNumber)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(accountNumber.isEmpty ? .tertiary : .secondary)

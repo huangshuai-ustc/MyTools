@@ -172,9 +172,9 @@ struct CardDetailView: View {
         )
         if card.expiryPrecision == .yearMonth {
             return String(
-                format: "%02d/%04d",
+                format: "%02d/%02d",
                 components.month ?? 0,
-                components.year ?? 0
+                (components.year ?? 0) % 100
             )
         }
         return String(
