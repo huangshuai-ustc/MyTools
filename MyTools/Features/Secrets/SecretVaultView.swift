@@ -1,4 +1,11 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+#if os(iOS)
+import QuickLook
+#elseif os(macOS)
+import AppKit
+#endif
 
 private enum SecretCategoryFilter: Hashable, Identifiable {
     case all
@@ -179,6 +186,43 @@ private struct SecretItemRow: View {
     }
 }
 
+private struct SecretAttachmentRow: View {
+    let attachment: FileAttachment
+    let showsDisclosure: Bool
+
+    init(attachment: FileAttachment, showsDisclosure: Bool = false) {
+        self.attachment = attachment
+        self.showsDisclosure = showsDisclosure
+    }
+
+    private var systemImage: String {
+        attachment.contentType.conforms(to: .pdf) ? "doc.richtext" : "photo"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.pink)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(attachment.fileName)
+                    .lineLimit(2)
+                Text(attachment.displaySize)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if showsDisclosure {
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
+    }
+}
+
 struct SecretDetailView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
@@ -188,6 +232,9 @@ struct SecretDetailView: View {
     @State private var hiddenFieldIDs: Set<UUID> = []
     @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
+    @State private var previewAttachment: FileAttachment?
+    @State private var showingAttachmentError = false
+    @State private var attachmentError = ""
 
     private var canRevealSensitiveFields: Bool {
         auth.isAdmin || isUnlocked
@@ -227,6 +274,29 @@ struct SecretDetailView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .modifier(SecretTextSelectionModifier(isEnabled: canRevealSensitiveFields))
                                 .copyableText(canRevealSensitiveFields ? item.note : nil)
+                        }
+                    }
+
+                    if !item.attachments.isEmpty {
+                        Section("附件") {
+                            if canRevealSensitiveFields {
+                                ForEach(item.attachments) { attachment in
+                                    Button {
+                                        openAttachment(attachment)
+                                    } label: {
+                                        SecretAttachmentRow(attachment: attachment, showsDisclosure: true)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            } else {
+                                Label("附件已隐藏", systemImage: "lock.fill")
+                                    .foregroundStyle(.secondary)
+                                Button {
+                                    showingSensitiveAccess = true
+                                } label: {
+                                    Label("验证身份后查看附件", systemImage: "faceid")
+                                }
+                            }
                         }
                     }
                 }
@@ -271,6 +341,21 @@ struct SecretDetailView: View {
                 .id(item.id)
                 .iOSLargeSheet()
         }
+#if os(iOS)
+        .sheet(item: $previewAttachment) { attachment in
+            NavigationStack {
+                SecretAttachmentPreview(url: store.secretAttachmentURL(for: attachment))
+                    .ignoresSafeArea(edges: .bottom)
+                    .navigationTitle(attachment.fileName)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("关闭") { previewAttachment = nil }
+                        }
+                    }
+            }
+        }
+#endif
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { hiddenFieldIDs = [] }
         }
@@ -283,6 +368,25 @@ struct SecretDetailView: View {
                 hiddenFieldIDs = []
             }
         }
+        .alert("无法打开附件", isPresented: $showingAttachmentError) {
+            Button("确定", role: .cancel) {}
+        } message: {
+            Text(attachmentError)
+        }
+    }
+
+    private func openAttachment(_ attachment: FileAttachment) {
+        let url = store.secretAttachmentURL(for: attachment)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            attachmentError = "附件已不在本机，请进入编辑页面重新添加。"
+            showingAttachmentError = true
+            return
+        }
+#if os(iOS)
+        previewAttachment = attachment
+#elseif os(macOS)
+        NSWorkspace.shared.open(url)
+#endif
     }
 }
 
@@ -353,10 +457,17 @@ struct SecretEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: SecretEditorDraft
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var showingFileImporter = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
+    @State private var didSave = false
+    private let originalAttachmentIDs: Set<UUID>
     let isNew: Bool
 
     init(item: SecretItem, isNew: Bool) {
         _draft = StateObject(wrappedValue: SecretEditorDraft(item: item))
+        originalAttachmentIDs = Set(item.attachments.map(\.id))
         self.isNew = isNew
     }
 
@@ -419,6 +530,8 @@ struct SecretEditorView: View {
                     }
                 }
 
+                attachmentSection
+
                 Section("备注") {
                     TextEditor(text: $draft.item.note)
                         .frame(minHeight: 90)
@@ -438,6 +551,22 @@ struct SecretEditorView: View {
                     Button("保存") { save() }
                         .disabled(!canSave)
                 }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.image, .pdf],
+                allowsMultipleSelection: true,
+                onCompletion: importFiles
+            )
+            .onChange(of: selectedPhotoItems) { _, items in
+                guard !items.isEmpty else { return }
+                Task { await importPhotos(items) }
+            }
+            .onDisappear(perform: cleanUpUncommittedAttachments)
+            .alert("无法添加附件", isPresented: $showingError) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
             }
         }
     }
@@ -487,11 +616,133 @@ struct SecretEditorView: View {
         }
     }
 
+    private var attachmentSection: some View {
+        Section {
+            if draft.item.attachments.isEmpty {
+                Text("暂无附件")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(draft.item.attachments) { attachment in
+                SecretAttachmentRow(attachment: attachment)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            removeAttachment(attachment)
+                        } label: {
+                            Label("移除", systemImage: "trash")
+                        }
+                    }
+            }
+
+            PhotosPicker(
+                selection: $selectedPhotoItems,
+                maxSelectionCount: 20,
+                matching: .images
+            ) {
+                Label("从照片添加", systemImage: "photo.on.rectangle.angled")
+            }
+            Button { showingFileImporter = true } label: {
+                Label("从文件添加图片或 PDF", systemImage: "folder.badge.plus")
+            }
+        } header: {
+            Text("附件")
+        } footer: {
+            Text("附件保存在本机应用目录，并会随加密 .mytools 备份导出。")
+        }
+    }
+
+    private func importFiles(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get() {
+                draft.item.attachments.append(try store.importSecretAttachment(from: url))
+            }
+        } catch {
+            reportError(error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotoItems = [] }
+        for item in items {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    throw AttachmentStoreError.invalidFile
+                }
+                let contentType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) }) ?? .jpeg
+                let suffix = contentType.preferredFilenameExtension ?? "jpg"
+                let name = "照片-\(UUID().uuidString.prefix(8)).\(suffix)"
+                draft.item.attachments.append(
+                    try store.saveSecretPhoto(data: data, fileName: name, contentType: contentType)
+                )
+            } catch {
+                reportError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func removeAttachment(_ attachment: FileAttachment) {
+        draft.item.attachments.removeAll { $0.id == attachment.id }
+        if !originalAttachmentIDs.contains(attachment.id) {
+            store.deleteUncommittedAttachment(attachment)
+        }
+    }
+
+    private func cleanUpUncommittedAttachments() {
+        guard !didSave else { return }
+        for attachment in draft.item.attachments
+        where !originalAttachmentIDs.contains(attachment.id) {
+            store.deleteUncommittedAttachment(attachment)
+        }
+    }
+
+    private func reportError(_ message: String) {
+        errorMessage = message
+        showingError = true
+    }
+
     private func save() {
         guard canSave else { return }
         commitPendingTextInput {
+            didSave = true
             store.upsertSecret(draft.item)
             dismiss()
         }
     }
 }
+
+#if os(iOS)
+private struct SecretAttachmentPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+            1
+        }
+
+        func previewController(
+            _ controller: QLPreviewController,
+            previewItemAt index: Int
+        ) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
+}
+#endif

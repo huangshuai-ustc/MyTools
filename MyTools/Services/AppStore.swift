@@ -284,6 +284,11 @@ final class AppStore: ObservableObject {
         storedItem.tags = item.tags.trimmingCharacters(in: .whitespacesAndNewlines)
         storedItem.updatedAt = Date()
         if let index = secretItems.firstIndex(where: { $0.id == storedItem.id }) {
+            let retainedAttachmentIDs = Set(storedItem.attachments.map(\.id))
+            for attachment in secretItems[index].attachments
+            where !retainedAttachmentIDs.contains(attachment.id) {
+                attachmentStore.delete(attachment)
+            }
             storedItem.createdAt = secretItems[index].createdAt
             secretItems[index] = storedItem
         } else {
@@ -294,6 +299,9 @@ final class AppStore: ObservableObject {
 
     func deleteSecrets(ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
+        for item in secretItems where ids.contains(item.id) {
+            item.attachments.forEach(attachmentStore.delete)
+        }
         secretItems.removeAll { ids.contains($0.id) }
         persistSecrets()
     }
@@ -582,6 +590,27 @@ final class AppStore: ObservableObject {
         attachmentStore.delete(attachment)
     }
 
+    func importSecretAttachment(from url: URL) throws -> FileAttachment {
+        let attachment = try attachmentStore.importFile(from: url)
+        guard attachment.contentType.conforms(to: .image)
+                || attachment.contentType.conforms(to: .pdf) else {
+            attachmentStore.delete(attachment)
+            throw AttachmentStoreError.invalidFile
+        }
+        return attachment
+    }
+
+    func saveSecretPhoto(data: Data, fileName: String, contentType: UTType) throws -> FileAttachment {
+        guard contentType.conforms(to: .image) else {
+            throw AttachmentStoreError.invalidFile
+        }
+        return try attachmentStore.save(data: data, originalFileName: fileName, contentType: contentType)
+    }
+
+    func secretAttachmentURL(for attachment: FileAttachment) -> URL {
+        attachmentStore.url(for: attachment)
+    }
+
     func medicalAttachmentURL(for attachment: FileAttachment) -> URL {
         attachmentStore.url(for: attachment)
     }
@@ -761,9 +790,10 @@ final class AppStore: ObservableObject {
             var vault = snapshot
             vault.medicalRecords = try attachmentStore.recordsForBackup(vault.medicalRecords)
             vault.cards = try attachmentStore.cardsForBackup(vault.cards)
+            let secrets = try attachmentStore.secretsForBackup(secretSnapshot)
             return try VaultBackupCrypto.makeBackup(
                 from: vault,
-                secrets: secretSnapshot,
+                secrets: secrets,
                 password: password
             )
         }.value
@@ -780,6 +810,7 @@ final class AppStore: ObservableObject {
                 in: payload.vault.medicalRecords
             )
             payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
+            payload.secrets = try attachmentStore.restoreAttachments(in: payload.secrets)
             return payload
         }.value
         try await Task.detached(priority: .userInitiated) { [persistence] in

@@ -137,6 +137,7 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
     var title = ""
     var category: SecretCategory = .login
     var fields: [SecretField] = SecretCategory.login.defaultFields
+    var attachments: [FileAttachment] = []
     var tags = ""
     var note = ""
     var createdAt = Date()
@@ -147,6 +148,7 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
         title: String = "",
         category: SecretCategory = .login,
         fields: [SecretField]? = nil,
+        attachments: [FileAttachment] = [],
         tags: String = "",
         note: String = "",
         createdAt: Date = Date(),
@@ -156,9 +158,35 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
         self.title = title
         self.category = category
         self.fields = fields ?? category.defaultFields
+        self.attachments = attachments
         self.tags = tags
         self.note = note
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case category
+        case fields
+        case attachments
+        case tags
+        case note
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try values.decodeIfPresent(String.self, forKey: .title) ?? ""
+        category = try values.decodeIfPresent(SecretCategory.self, forKey: .category) ?? .login
+        fields = try values.decodeIfPresent([SecretField].self, forKey: .fields) ?? category.defaultFields
+        attachments = try values.decodeIfPresent([FileAttachment].self, forKey: .attachments) ?? []
+        tags = try values.decodeIfPresent(String.self, forKey: .tags) ?? ""
+        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 }

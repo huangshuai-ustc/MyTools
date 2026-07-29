@@ -307,7 +307,7 @@ struct PhysicalExamDetails: Codable, Equatable {
     }
 }
 
-enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
+enum AttachmentKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case invoice
     case medicalRecord
     case laboratoryReport
@@ -349,7 +349,7 @@ enum AttachmentKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct FileAttachment: Identifiable, Codable, Equatable {
+struct FileAttachment: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var fileName = ""
     var storedFileName = ""

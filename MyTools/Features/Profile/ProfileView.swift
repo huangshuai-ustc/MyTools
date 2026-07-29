@@ -71,7 +71,7 @@ struct ProfileView: View {
                     Label("备份文件使用 AES-GCM 加密", systemImage: "lock.rotation")
                 }
                 Section("关于") {
-                    LabeledContent("版本", value: "MVP 2.4.0")
+                    LabeledContent("版本", value: "MVP 2.4.1")
                 }
             }
             .navigationTitle("我的")

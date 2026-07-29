@@ -121,6 +121,16 @@ final class AttachmentStore {
         }
     }
 
+    func secretsForBackup(_ secrets: [SecretItem]) throws -> [SecretItem] {
+        try secrets.map { item in
+            var copy = item
+            for index in copy.attachments.indices {
+                copy.attachments[index].backupData = try data(for: copy.attachments[index])
+            }
+            return copy
+        }
+    }
+
     func restoreAttachments(in cards: [BankCard]) throws -> [BankCard] {
         try ensureDirectory()
         return try cards.map { card in
@@ -135,6 +145,24 @@ final class AttachmentStore {
                 attachment.fileSize = Int64(payload.count)
                 attachment.backupData = nil
                 copy.statements[index].attachment = attachment
+            }
+            return copy
+        }
+    }
+
+    func restoreAttachments(in secrets: [SecretItem]) throws -> [SecretItem] {
+        try ensureDirectory()
+        return try secrets.map { item in
+            var copy = item
+            for index in copy.attachments.indices {
+                guard let payload = copy.attachments[index].backupData else { continue }
+                let attachment = copy.attachments[index]
+                try payload.write(
+                    to: url(for: attachment),
+                    options: [.atomic, .completeFileProtection]
+                )
+                copy.attachments[index].fileSize = Int64(payload.count)
+                copy.attachments[index].backupData = nil
             }
             return copy
         }
