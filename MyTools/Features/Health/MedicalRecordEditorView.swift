@@ -33,7 +33,6 @@ struct MedicalRecordEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: MedicalRecordEditorDraft
     @State private var editingExpenseItem: MedicalExpenseItem?
-    @State private var editingPhysicalExamFinding: PhysicalExamFinding?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingAuthentication = false
@@ -60,7 +59,6 @@ struct MedicalRecordEditorView: View {
                 basicInformationSection
                 if draft.record.isPhysicalExam {
                     physicalExamInformationSection
-                    physicalExamFindingSection
                 }
                 expenseItemSection
                 costSection
@@ -84,12 +82,6 @@ struct MedicalRecordEditorView: View {
             .sheet(item: $editingExpenseItem) { item in
                 MedicalExpenseItemEditorView(item: item) { updated in
                     upsertExpenseItem(updated)
-                }
-                .iOSLargeSheet()
-            }
-            .sheet(item: $editingPhysicalExamFinding) { finding in
-                PhysicalExamFindingEditorView(finding: finding) { updated in
-                    upsertPhysicalExamFinding(updated)
                 }
                 .iOSLargeSheet()
             }
@@ -130,6 +122,11 @@ struct MedicalRecordEditorView: View {
             }
             return isNew ? "新增体检" : "编辑体检"
         }
+        if draft.record.isInpatient {
+            return draft.record.hasAssociatedRecord
+                ? (isNew ? "新增住院日记录" : "编辑住院日记录")
+                : (isNew ? "新增住院" : "编辑住院")
+        }
         if draft.record.isFollowUp {
             return isNew ? "新增复诊" : "编辑复诊"
         }
@@ -142,9 +139,11 @@ struct MedicalRecordEditorView: View {
     }
 
     private var associatedVisitSection: some View {
-        Section(draft.record.isPhysicalExam ? "关联体检" : "关联就诊") {
+        Section(draft.record.isPhysicalExam ? "关联体检" : (draft.record.isInpatient ? "关联住院" : "关联就诊")) {
             if let associatedRecord {
-                LabeledContent(draft.record.isPhysicalExam ? "原体检" : "原就诊") {
+                LabeledContent(
+                    draft.record.isPhysicalExam ? "原体检" : (draft.record.isInpatient ? "住院主记录" : "原就诊")
+                ) {
                     VStack(alignment: .trailing, spacing: 3) {
                         Text(associatedRecord.hospital)
                         Text(
@@ -162,12 +161,19 @@ struct MedicalRecordEditorView: View {
     }
 
     private var basicInformationSection: some View {
-        Section(draft.record.isPharmacyPurchase ? "购药信息" : (draft.record.isPhysicalExam ? "体检信息" : (draft.record.isFollowUp ? "复诊信息" : "就诊信息"))) {
-            DatePicker(
-                draft.record.isPharmacyPurchase ? "购药日期：" : (draft.record.isPhysicalExam ? "体检日期：" : (draft.record.isFollowUp ? "复诊日期：" : "就诊日期：")),
-                selection: $draft.record.date,
-                displayedComponents: .date
-            )
+        Section(informationSectionTitle) {
+            if draft.record.isInpatientEpisode {
+                DatePicker("入院日期：", selection: $draft.record.date, displayedComponents: .date)
+                    .onChange(of: draft.record.date) { _, admissionDate in
+                        let endDate = draft.record.inpatientEndDate ?? admissionDate
+                        if MedicalRecord.normalizedDate(endDate) < MedicalRecord.normalizedDate(admissionDate) {
+                            draft.record.inpatientEndDate = admissionDate
+                        }
+                    }
+                DatePicker("出院日期：", selection: inpatientEndDateBinding, displayedComponents: .date)
+            } else {
+                DatePicker(dateLabel, selection: $draft.record.date, displayedComponents: .date)
+            }
             safeField(
                 draft.record.isPharmacyPurchase
                     ? "药房："
@@ -210,35 +216,51 @@ struct MedicalRecordEditorView: View {
                     }
                 }
             }
-                if draft.record.hasAssociatedRecord {
-                    LabeledContent(draft.record.isFollowUp ? "复诊方式：" : "记录类型：") {
-                        Text(draft.record.visitType.shortTitle)
-                    }
-                } else {
-                    Picker(draft.record.isFollowUp ? "复诊方式：" : "记录类型：", selection: $draft.record.visitType) {
-                        ForEach(availableVisitTypes) { type in
-                            Text(type.shortTitle).tag(type)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: draft.record.visitType) { oldValue, newValue in
-                        draft.record.normalizeInstitutionClassification()
-                        if oldValue != .pharmacyPurchase, newValue == .pharmacyPurchase {
-                            draft.record.paymentMethod = .selfPay
-                            draft.insuranceCostText = ""
-                        }
-                        if newValue == .physicalExam {
-                            ensurePhysicalExamDetails()
-                        }
+            if draft.record.hasAssociatedRecord {
+                LabeledContent(
+                    draft.record.isInpatient ? "住院日类型：" : (draft.record.isFollowUp ? "复诊方式：" : "记录类型：")
+                ) {
+                    Text(draft.record.visitType.shortTitle)
+                }
+            } else {
+                Picker(draft.record.isFollowUp ? "复诊方式：" : "记录类型：", selection: $draft.record.visitType) {
+                    ForEach(availableVisitTypes) { type in
+                        Text(type.shortTitle).tag(type)
                     }
                 }
-                if draft.record.isPharmacyPurchase {
-                    multilineField("用药原因（可选）", prompt: "例如：感冒、发热", text: $draft.record.chiefComplaint)
-                } else if draft.record.isPhysicalExam {
-                    multilineField("完成项目（可选）", prompt: "例如：肝功能、腹部超声、尿常规", text: physicalExamCompletedItemsBinding)
-                    multilineField("本轮检查结果（可选）", prompt: "例如：轻度脂肪肝声像图", text: $draft.record.diagnosis)
-                    multilineField("本轮健康建议（可选）", prompt: "例如：年度复查腹部超声、肝功能及血脂", text: $draft.record.treatment)
+                .pickerStyle(.segmented)
+                .onChange(of: draft.record.visitType) { oldValue, newValue in
+                    draft.record.normalizeInstitutionClassification()
+                    if oldValue != .pharmacyPurchase, newValue == .pharmacyPurchase {
+                        draft.record.paymentMethod = .selfPay
+                        draft.insuranceCostText = ""
+                    }
+                    if newValue == .physicalExam {
+                        ensurePhysicalExamDetails()
+                    }
+                    if newValue == .inpatient, draft.record.inpatientEndDate == nil {
+                        draft.record.inpatientEndDate = draft.record.date
+                    }
+                    if newValue != .inpatient {
+                        draft.record.inpatientEndDate = nil
+                    }
+                }
+            }
+            if draft.record.isPharmacyPurchase {
+                multilineField("用药原因（可选）", prompt: "例如：感冒、发热", text: $draft.record.chiefComplaint)
+            } else if draft.record.isInpatient {
+                if draft.record.hasAssociatedRecord {
+                    multilineField("当天情况（可选）", prompt: "例如：体温、症状变化、当天检查", text: $draft.record.chiefComplaint)
+                    multilineField("当天诊疗结果（可选）", prompt: "例如：复查指标、医生判断", text: $draft.record.diagnosis)
+                    multilineField("当天用药与操作（可选）", prompt: "例如：静脉输液、换药、康复训练", text: $draft.record.treatment)
                 } else {
+                    safeField("科室：", prompt: "必填", text: $draft.record.department)
+                    safeField("医生：", prompt: "可选", text: $draft.record.doctor)
+                    multilineField("入院原因（可选）", prompt: "例如：持续发热、手术治疗", text: $draft.record.chiefComplaint)
+                    multilineField("主要诊断（可选）", prompt: "例如：肺炎、骨折", text: $draft.record.diagnosis)
+                    multilineField("治疗方案（可选）", prompt: "例如：手术、药物治疗", text: $draft.record.treatment)
+                }
+            } else if !draft.record.isPhysicalExam {
                 safeField("科室：", prompt: "必填", text: $draft.record.department)
                 safeField("医生：", prompt: "可选", text: $draft.record.doctor)
                 multilineField("主诉", prompt: "例如：左膝疼痛", text: $draft.record.chiefComplaint)
@@ -248,42 +270,25 @@ struct MedicalRecordEditorView: View {
         }
     }
 
-    private var physicalExamInformationSection: some View {
-        Section("报告信息") {
-            safeField("体检套餐：", prompt: "例如：年度健康体检", text: physicalExamPackageBinding)
-            if physicalExamReportDate != nil {
-                DatePicker("报告日期：", selection: physicalExamReportDateBinding, displayedComponents: .date)
-                Button("清除报告日期", role: .destructive) {
-                    updatePhysicalExamDetails { $0.reportDate = nil }
-                }
-            } else {
-                Button {
-                    updatePhysicalExamDetails { $0.reportDate = draft.record.date }
-                } label: {
-                    Label("添加报告日期", systemImage: "calendar.badge.plus")
-                }
-            }
-        }
+    private var informationSectionTitle: String {
+        if draft.record.isPharmacyPurchase { return "购药信息" }
+        if draft.record.isPhysicalExam { return "体检信息" }
+        if draft.record.isInpatientEpisode { return "住院信息" }
+        if draft.record.isInpatientDailyRecord { return "住院日记录" }
+        return draft.record.isFollowUp ? "复诊信息" : "就诊信息"
     }
 
-    private var physicalExamFindingSection: some View {
-        Section("关注项") {
-            if physicalExamFindings.isEmpty {
-                Text("可记录体检报告中的异常、边缘结果和复查建议；完整报告可作为附件保存。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(physicalExamFindings) { finding in
-                Button { editingPhysicalExamFinding = finding } label: {
-                    PhysicalExamFindingRow(finding: finding)
-                }
-                .buttonStyle(.plain)
-                .appListRowStyle()
-            }
-            .onDelete(perform: deletePhysicalExamFindings)
-            Button { editingPhysicalExamFinding = PhysicalExamFinding() } label: {
-                Label("添加关注项", systemImage: "plus.circle")
-            }
+    private var dateLabel: String {
+        if draft.record.isPharmacyPurchase { return "购药日期：" }
+        if draft.record.isPhysicalExam { return "体检日期：" }
+        if draft.record.isInpatientDailyRecord { return "记录日期：" }
+        return draft.record.isFollowUp ? "复诊日期：" : "就诊日期："
+    }
+
+    private var physicalExamInformationSection: some View {
+        Section("体检内容") {
+            multilineField("主要内容（可选）", prompt: "例如：年度健康体检、入职体检", text: physicalExamPackageBinding)
+            multilineField("查出的问题（可选）", prompt: "例如：轻度脂肪肝、血脂偏高", text: $draft.record.diagnosis)
         }
     }
 
@@ -295,7 +300,9 @@ struct MedicalRecordEditorView: View {
                 calculatedCostRow("本次费用：", amount: currentItemsTotal)
                 if !linkedFollowUps.isEmpty {
                     calculatedCostRow(
-                        draft.record.isPhysicalExam ? "其他检查批次费用：" : "复诊费用：",
+                        draft.record.isPhysicalExam
+                            ? "其他检查批次费用："
+                            : (draft.record.isInpatient ? "住院日费用：" : "复诊费用："),
                         amount: linkedFollowUpCostSummary.totalCost
                     )
                 }
@@ -341,7 +348,11 @@ struct MedicalRecordEditorView: View {
     private var expenseItemSection: some View {
         Section {
             if draft.record.expenseItems.isEmpty {
-                Text(draft.record.isPharmacyPurchase ? "暂无药品" : "暂无费用项目")
+                Text(
+                    draft.record.isPharmacyPurchase
+                        ? "暂无药品"
+                        : (draft.record.isInpatient ? "暂无住院期间项目" : "暂无费用项目")
+                )
                     .foregroundStyle(.secondary)
             }
             ForEach(draft.record.expenseItems) { item in
@@ -354,11 +365,20 @@ struct MedicalRecordEditorView: View {
             .onDelete { offsets in draft.record.expenseItems.remove(atOffsets: offsets) }
 
             Button { editingExpenseItem = MedicalExpenseItem() } label: {
-                Label(draft.record.isPharmacyPurchase ? "添加药品" : "添加费用项目", systemImage: "plus.circle")
+                Label(
+                    draft.record.isPharmacyPurchase
+                        ? "添加药品"
+                        : (draft.record.isInpatient ? "添加住院期间项目" : "添加费用项目"),
+                    systemImage: "plus.circle"
+                )
             }
 
         } header: {
-            Text(draft.record.isPharmacyPurchase ? "药品" : "费用项目")
+            Text(
+                draft.record.isPharmacyPurchase
+                    ? "药品"
+                    : (draft.record.isInpatient ? "住院期间项目" : "费用项目")
+            )
         }
     }
 
@@ -535,30 +555,11 @@ struct MedicalRecordEditorView: View {
         )
     }
 
-    private var physicalExamCompletedItemsBinding: Binding<String> {
+    private var inpatientEndDateBinding: Binding<Date> {
         Binding(
-            get: { draft.record.physicalExamDetails?.completedItems ?? "" },
-            set: { completedItems in
-                updatePhysicalExamDetails { $0.completedItems = completedItems }
-            }
+            get: { draft.record.inpatientEndDate ?? draft.record.date },
+            set: { endDate in draft.record.inpatientEndDate = endDate }
         )
-    }
-
-    private var physicalExamReportDate: Date? {
-        draft.record.physicalExamDetails?.reportDate
-    }
-
-    private var physicalExamReportDateBinding: Binding<Date> {
-        Binding(
-            get: { physicalExamReportDate ?? draft.record.date },
-            set: { reportDate in
-                updatePhysicalExamDetails { $0.reportDate = reportDate }
-            }
-        )
-    }
-
-    private var physicalExamFindings: [PhysicalExamFinding] {
-        draft.record.physicalExamDetails?.findings ?? []
     }
 
     private func ensurePhysicalExamDetails() {
@@ -570,23 +571,6 @@ struct MedicalRecordEditorView: View {
         var details = draft.record.physicalExamDetails ?? PhysicalExamDetails()
         update(&details)
         draft.record.physicalExamDetails = details
-    }
-
-    private func upsertPhysicalExamFinding(_ finding: PhysicalExamFinding) {
-        updatePhysicalExamDetails { details in
-            if let index = details.findings.firstIndex(where: { $0.id == finding.id }) {
-                details.findings[index] = finding
-            } else {
-                details.findings.append(finding)
-            }
-        }
-    }
-
-    private func deletePhysicalExamFindings(at offsets: IndexSet) {
-        let ids = Set(offsets.map { physicalExamFindings[$0].id })
-        updatePhysicalExamDetails { details in
-            details.findings.removeAll { ids.contains($0.id) }
-        }
     }
 
     private func addSuggestedTag(_ tag: String) {
@@ -621,6 +605,10 @@ struct MedicalRecordEditorView: View {
         record.chiefComplaint = record.chiefComplaint.trimmingCharacters(in: .whitespacesAndNewlines)
         record.diagnosis = record.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
         record.treatment = record.treatment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !record.isInpatient {
+            record.inpatientEndDate = nil
+        }
+        let normalizedDate = MedicalRecord.normalizedDate(record.date)
         if record.isPharmacyPurchase {
             guard !record.hospital.isEmpty, !record.expenseItems.isEmpty else {
                 reportError("请填写药房并至少添加一项药品。")
@@ -649,6 +637,21 @@ struct MedicalRecordEditorView: View {
             record.department = ""
             record.doctor = ""
             record.chiefComplaint = ""
+        } else if record.isInpatient {
+            guard !record.hospital.isEmpty else {
+                reportError("请填写医院。")
+                return
+            }
+            if record.hasAssociatedRecord {
+                record.inpatientEndDate = nil
+            } else {
+                let endDate = MedicalRecord.normalizedDate(record.inpatientEndDate ?? record.date)
+                guard endDate >= normalizedDate else {
+                    reportError("出院日期不能早于入院日期。")
+                    return
+                }
+                record.inpatientEndDate = endDate
+            }
         } else {
             guard !record.hospital.isEmpty,
                   !record.department.isEmpty,
@@ -659,14 +662,38 @@ struct MedicalRecordEditorView: View {
             }
         }
 
-        let normalizedDate = MedicalRecord.normalizedDate(record.date)
         if record.hasAssociatedRecord {
             guard let associatedRecord else {
                 reportError("关联的原就诊记录已不存在，无法保存这条记录。")
                 return
             }
             guard normalizedDate >= MedicalRecord.normalizedDate(associatedRecord.date) else {
-                reportError(record.isPharmacyPurchase ? "购药日期不能早于关联就诊日期。" : "复诊日期不能早于原就诊日期。")
+                let message: String
+                if record.isPharmacyPurchase {
+                    message = "购药日期不能早于关联就诊日期。"
+                } else if record.isInpatient {
+                    message = "住院日记录日期不能早于入院日期。"
+                } else {
+                    message = "复诊日期不能早于原就诊日期。"
+                }
+                reportError(message)
+                return
+            }
+            if record.isInpatient,
+               let inpatientEndDate = associatedRecord.inpatientEndDate,
+               normalizedDate > MedicalRecord.normalizedDate(inpatientEndDate) {
+                reportError("住院日记录日期不能晚于出院日期。")
+                return
+            }
+            if record.isInpatientDailyRecord,
+               let parentRecordID = record.parentRecordID,
+               store.medicalRecords.contains(where: { other in
+                   other.id != record.id
+                       && other.parentRecordID == parentRecordID
+                       && other.isInpatientDailyRecord
+                       && MedicalRecord.normalizedDate(other.date) == normalizedDate
+               }) {
+                reportError("该日期已经存在住院日记录，请选择其他日期。")
                 return
             }
         }
@@ -834,6 +861,9 @@ struct MedicalRecordEditorView: View {
         if draft.record.isPhysicalExam, !linkedRecords.isEmpty {
             return [.physicalExam]
         }
+        if draft.record.isInpatient, !linkedRecords.isEmpty {
+            return [.inpatient]
+        }
         if !linkedRecords.isEmpty {
             return MedicalVisitType.allCases.filter { $0 != .pharmacyPurchase && $0 != .physicalExam }
         }
@@ -853,99 +883,6 @@ struct MedicalRecordEditorView: View {
         applyHospital(profile)
     }
 
-}
-
-private struct PhysicalExamFindingRow: View {
-    let finding: PhysicalExamFinding
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
-            Text(finding.item.isEmpty ? "未命名关注项" : finding.item)
-                .font(.headline)
-            if !finding.result.isEmpty {
-                Text(finding.result)
-                    .font(.subheadline)
-                    .lineLimit(2)
-            }
-            if !finding.recommendation.isEmpty {
-                Text("建议：\(finding.recommendation)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct PhysicalExamFindingEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var finding: PhysicalExamFinding
-    @State private var showingError = false
-    let onSave: (PhysicalExamFinding) -> Void
-
-    init(finding: PhysicalExamFinding, onSave: @escaping (PhysicalExamFinding) -> Void) {
-        _finding = State(initialValue: finding)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("关注项") {
-                    field("项目：", prompt: "例如：脂肪肝声像图（轻度）", text: $finding.item)
-                    multilineField("结果", prompt: "例如：肝内回声呈弥漫性增强", text: $finding.result)
-                    multilineField("建议", prompt: "例如：年度复查腹部超声、肝功能及血脂", text: $finding.recommendation)
-                }
-            }
-            .navigationTitle("关注项")
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        commitPendingTextInput {
-                            save()
-                        }
-                    }
-                }
-            }
-            .alert("无法保存关注项", isPresented: $showingError) {
-                Button("确定", role: .cancel) {}
-            } message: {
-                Text("请填写关注项名称。")
-            }
-        }
-    }
-
-    private func field(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-                .frame(maxWidth: 260)
-        }
-    }
-
-    private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("\(title)：").font(.subheadline).foregroundStyle(.secondary)
-            IMESafeMultilineTextField(prompt: prompt, text: text)
-        }
-    }
-
-    private func save() {
-        finding.item = finding.item.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !finding.item.isEmpty else {
-            showingError = true
-            return
-        }
-        finding.result = finding.result.trimmingCharacters(in: .whitespacesAndNewlines)
-        finding.recommendation = finding.recommendation.trimmingCharacters(in: .whitespacesAndNewlines)
-        onSave(finding)
-        dismiss()
-    }
 }
 
 private struct MedicalExpenseItemEditorView: View {

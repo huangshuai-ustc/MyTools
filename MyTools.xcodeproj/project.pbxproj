@@ -47,6 +47,8 @@
 		A50000000000000000000001 /* StockDividendEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000001 /* StockDividendEditorView.swift */; };
 		A60000000000000000000001 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* DiagnosticLogger.swift */; };
 		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
+		A70000000000000000000001 /* Secret.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000001 /* Secret.swift */; };
+		A70000000000000000000003 /* SecretVaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000003 /* SecretVaultView.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -92,6 +94,8 @@
 		B50000000000000000000001 /* StockDividendEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockDividendEditorView.swift; sourceTree = "<group>"; };
 		B60000000000000000000001 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
 		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		B70000000000000000000001 /* Secret.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Secret.swift; sourceTree = "<group>"; };
+		B70000000000000000000003 /* SecretVaultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretVaultView.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -114,6 +118,7 @@
 				D40000000000000000000001 /* Health */,
 				D10000000000000000000006 /* Profile */,
 				D10000000000000000000007 /* Authentication */,
+				D70000000000000000000001 /* Secrets */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -125,6 +130,7 @@
 				B0000000000000000000000E /* Stock.swift */,
 				B20000000000000000000001 /* CurrencyExchange.swift */,
 				B40000000000000000000001 /* HealthRecord.swift */,
+				B70000000000000000000001 /* Secret.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -251,6 +257,14 @@
 			path = Health;
 			sourceTree = "<group>";
 		};
+		D70000000000000000000001 /* Secrets */ = {
+			isa = PBXGroup;
+			children = (
+				B70000000000000000000003 /* SecretVaultView.swift */,
+			);
+			path = Secrets;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -355,6 +369,8 @@
 				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
 				A60000000000000000000001 /* DiagnosticLogger.swift in Sources */,
 				A60000000000000000000002 /* DiagnosticsView.swift in Sources */,
+				A70000000000000000000001 /* Secret.swift in Sources */,
+				A70000000000000000000003 /* SecretVaultView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

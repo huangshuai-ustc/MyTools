@@ -8,7 +8,6 @@ import AppKit
 struct AdminEditAccessButton: View {
     @EnvironmentObject private var auth: AuthManager
     @State private var showingAuthentication = false
-    var onAccessGranted: (() -> Void)? = nil
 
     var body: some View {
         Button {
@@ -23,17 +22,10 @@ struct AdminEditAccessButton: View {
         }
         .accessibilityLabel(auth.isAdmin ? "退出编辑模式" : "进入编辑模式")
         .help(auth.isAdmin ? "退出编辑模式" : "验证身份后编辑")
-        .sheet(isPresented: $showingAuthentication, onDismiss: authenticationDidDismiss) {
+        .sheet(isPresented: $showingAuthentication, onDismiss: {
+            auth.endAuthenticationPresentation()
+        }) {
             AuthenticationView().iOSAuthenticationSheet()
-        }
-    }
-
-    private func authenticationDidDismiss() {
-        auth.endAuthenticationPresentation()
-        guard auth.isAdmin, let onAccessGranted else { return }
-        Task { @MainActor in
-            await Task.yield()
-            onAccessGranted()
         }
     }
 }
@@ -144,8 +136,8 @@ private struct CopyToastBanner: View {
         Label("已复制到剪贴板", systemImage: "checkmark.circle.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
             .background(.thinMaterial, in: Capsule())
             .accessibilityElement(children: .combine)
             .accessibilityLabel("已复制到剪贴板")
@@ -168,10 +160,11 @@ private final class CopyToastPresenter {
         } else {
             window?.isHidden = true
             toastWindow = CopyToastWindow(windowScene: windowScene)
-            toastWindow.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
             window = toastWindow
         }
 
+        // Keep the banner above sheets and form presentations in the same scene.
+        toastWindow.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
         let controller = UIHostingController(rootView: CopyToastOverlay())
         controller.view.backgroundColor = .clear
         toastWindow.rootViewController = controller
@@ -185,9 +178,12 @@ private final class CopyToastPresenter {
     }
 
     private var activeWindowScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes
+        let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
+            .filter { $0.activationState == .foregroundActive }
+        return scenes.first(where: { scene in
+            scene.windows.contains(where: { $0.isKeyWindow })
+        }) ?? scenes.first
     }
 }
 
@@ -199,12 +195,15 @@ private final class CopyToastWindow: UIWindow {
 
 private struct CopyToastOverlay: View {
     var body: some View {
-        VStack {
-            CopyToastBanner()
-                .padding(.top, 12)
-            Spacer()
+        GeometryReader { proxy in
+            VStack {
+                Spacer(minLength: proxy.size.height * 0.80)
+                CopyToastBanner()
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea()
         .allowsHitTesting(false)
     }
 }
@@ -249,7 +248,7 @@ private final class CopyToastPresenter {
         panel.setFrameOrigin(
             NSPoint(
                 x: visibleFrame.midX - panel.frame.width / 2,
-                y: visibleFrame.maxY - panel.frame.height - 16
+                y: visibleFrame.minY + visibleFrame.height * 0.35
             )
         )
     }

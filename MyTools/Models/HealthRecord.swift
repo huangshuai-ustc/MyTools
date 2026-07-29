@@ -372,6 +372,8 @@ struct MedicalRecord: ToolEvent, Equatable {
     var id = UUID()
     var parentRecordID: UUID?
     var date = Date()
+    // Only the root inpatient record uses this as the inclusive discharge date.
+    var inpatientEndDate: Date?
     var hospital = ""
     var hospitalLevel: HospitalLevel = .unspecified
     var hospitalGrade: HospitalGrade = .unspecified
@@ -415,6 +417,19 @@ struct MedicalRecord: ToolEvent, Equatable {
                 packageName: parentDetails?.packageName ?? ""
             )
         }
+        tags = parent.tags
+    }
+
+    init(inpatientDayFor parent: MedicalRecord, date: Date) {
+        parentRecordID = parent.parentRecordID ?? parent.id
+        self.date = Self.normalizedDate(date)
+        hospital = parent.hospital
+        hospitalLevel = parent.hospitalLevel
+        hospitalGrade = parent.hospitalGrade
+        hospitalCategory = parent.hospitalCategory
+        department = parent.department
+        doctor = parent.doctor
+        visitType = .inpatient
         tags = parent.tags
     }
 
@@ -468,6 +483,32 @@ struct MedicalRecord: ToolEvent, Equatable {
 
     var isPhysicalExam: Bool {
         visitType == .physicalExam
+    }
+
+    var isInpatient: Bool {
+        visitType == .inpatient
+    }
+
+    var isInpatientEpisode: Bool {
+        isInpatient && parentRecordID == nil
+    }
+
+    var isInpatientDailyRecord: Bool {
+        isInpatient && parentRecordID != nil
+    }
+
+    var hasInpatientDailyContent: Bool {
+        isInpatientDailyRecord && (
+            !chiefComplaint.isEmpty
+                || !diagnosis.isEmpty
+                || !treatment.isEmpty
+                || !expenseItems.isEmpty
+                || !attachments.isEmpty
+                || !notes.isEmpty
+                || totalCost != 0
+                || insuranceCost != 0
+                || selfPayCost != 0
+        )
     }
 
     var institutionType: MedicalInstitutionType {

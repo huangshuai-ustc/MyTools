@@ -51,6 +51,7 @@ struct ToolboxView: View {
         case .myStocks: StocksView()
         case .currencyExchange: CurrencyExchangeView()
         case .healthRecords: HealthRecordsView()
+        case .secrets: SecretVaultView()
         }
     }
 }

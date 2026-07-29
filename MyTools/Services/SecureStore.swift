@@ -3,12 +3,42 @@ import OSLog
 
 struct LocalVaultLoadResult: @unchecked Sendable {
     let vault: VaultData
+    let secrets: [SecretItem]
     let byteCount: Int
     let source: String
     let canPersist: Bool
     let readMilliseconds: Double
     let decodeMilliseconds: Double
     let totalMilliseconds: Double
+}
+
+private struct LocalVaultDocument: Codable {
+    let vault: VaultData
+    let secrets: [SecretItem]
+
+    private enum CodingKeys: String, CodingKey {
+        case vault
+        case secrets
+    }
+
+    init(vault: VaultData, secrets: [SecretItem]) {
+        self.vault = vault
+        self.secrets = secrets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let vault = try container.decodeIfPresent(VaultData.self, forKey: .vault) {
+            self.vault = vault
+            // Secret fields are intentionally stored as plain Codable data for now.
+            // Unknown fields from intermediate formats are ignored by Codable.
+            self.secrets = try container.decodeIfPresent([SecretItem].self, forKey: .secrets) ?? []
+        } else {
+            // Files written before the combined container stored VaultData at the top level.
+            self.vault = try VaultData(from: decoder)
+            self.secrets = []
+        }
+    }
 }
 
 final class SecureStore {
@@ -46,11 +76,12 @@ final class SecureStore {
                 let data = try Data(contentsOf: localVaultURL)
                 readMilliseconds += elapsedMilliseconds(since: readStartedAt)
                 let decodeStartedAt = ProcessInfo.processInfo.systemUptime
-                let vault = try JSONDecoder().decode(VaultData.self, from: data)
+                let document = try JSONDecoder().decode(LocalVaultDocument.self, from: data)
                 decodeMilliseconds += elapsedMilliseconds(since: decodeStartedAt)
 
                 return loadResult(
-                    vault: vault,
+                    vault: document.vault,
+                    secrets: document.secrets,
                     byteCount: data.count,
                     source: "Application Support",
                     canPersist: true,
@@ -63,6 +94,7 @@ final class SecureStore {
                 let attributes = try? fileManager.attributesOfItem(atPath: localVaultURL.path)
                 return loadResult(
                     vault: VaultData(),
+                    secrets: [],
                     byteCount: (attributes?[.size] as? NSNumber)?.intValue ?? 0,
                     source: "存档读取失败（原文件已保留）",
                     canPersist: false,
@@ -75,6 +107,7 @@ final class SecureStore {
 
         return loadResult(
             vault: VaultData(),
+            secrets: [],
             byteCount: 0,
             source: "空档案",
             canPersist: true,
@@ -84,12 +117,12 @@ final class SecureStore {
         )
     }
 
-    func saveVault(_ vault: VaultData) throws {
-        try writeVaultFile(vault)
+    func saveVault(_ vault: VaultData, secrets: [SecretItem] = []) throws {
+        try writeVaultFile(LocalVaultDocument(vault: vault, secrets: secrets))
     }
 
-    private func writeVaultFile(_ vault: VaultData) throws {
-        let payload = try JSONEncoder().encode(vault)
+    private func writeVaultFile(_ document: LocalVaultDocument) throws {
+        let payload = try JSONEncoder().encode(document)
         try fileManager.createDirectory(
             at: localVaultDirectory,
             withIntermediateDirectories: true
@@ -115,6 +148,7 @@ final class SecureStore {
 
     private func loadResult(
         vault: VaultData,
+        secrets: [SecretItem],
         byteCount: Int,
         source: String,
         canPersist: Bool,
@@ -124,6 +158,7 @@ final class SecureStore {
     ) -> LocalVaultLoadResult {
         LocalVaultLoadResult(
             vault: vault,
+            secrets: secrets,
             byteCount: byteCount,
             source: source,
             canPersist: canPersist,
@@ -146,22 +181,27 @@ private let persistenceLogger = Logger(
 
 /// Serializes full-vault writes away from the UI thread and coalesces bursts of edits.
 final class VaultPersistenceCoordinator: @unchecked Sendable {
+    private struct PendingWrite: @unchecked Sendable {
+        let vault: VaultData
+        let secrets: [SecretItem]
+    }
+
     private let lock = NSLock()
     private let queue = DispatchQueue(
         label: "com.fjwyz.PersonalToolBox.vault-persistence",
         qos: .utility
     )
     private let secureStore: SecureStore
-    private var pendingVault: VaultData?
+    private var pendingWrite: PendingWrite?
     private var isWorkerScheduled = false
 
     init(secureStore: SecureStore = SecureStore()) {
         self.secureStore = secureStore
     }
 
-    func schedule(_ vault: VaultData) {
+    func schedule(_ vault: VaultData, secrets: [SecretItem] = []) {
         lock.lock()
-        pendingVault = vault
+        pendingWrite = PendingWrite(vault: vault, secrets: secrets)
         let shouldScheduleWorker = !isWorkerScheduled
         isWorkerScheduled = true
         lock.unlock()
@@ -173,14 +213,14 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     }
 
     /// Used by restore operations that must report a write failure before replacing live data.
-    func saveImmediately(_ vault: VaultData) throws {
+    func saveImmediately(_ vault: VaultData, secrets: [SecretItem] = []) throws {
         let result: Result<Void, Error> = queue.sync {
             lock.lock()
-            pendingVault = nil
+            pendingWrite = nil
             lock.unlock()
-            let result = Result { try secureStore.saveVault(vault) }
+            let result = Result { try secureStore.saveVault(vault, secrets: secrets) }
             lock.lock()
-            pendingVault = nil
+            pendingWrite = nil
             lock.unlock()
             return result
         }
@@ -198,16 +238,16 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     private func drainPendingWrites() {
         while true {
             lock.lock()
-            guard let vault = pendingVault else {
+            guard let write = pendingWrite else {
                 isWorkerScheduled = false
                 lock.unlock()
                 return
             }
-            pendingVault = nil
+            pendingWrite = nil
             lock.unlock()
 
             do {
-                try secureStore.saveVault(vault)
+                try secureStore.saveVault(write.vault, secrets: write.secrets)
             } catch {
                 persistenceLogger.error(
                     "Unable to persist local vault: \(String(describing: error), privacy: .public)"

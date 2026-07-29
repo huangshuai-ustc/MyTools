@@ -52,6 +52,33 @@ extension UTType {
     }
 }
 
+struct VaultBackupPayload: Codable, @unchecked Sendable {
+    var vault: VaultData
+    var secrets: [SecretItem]
+
+    init(vault: VaultData, secrets: [SecretItem] = []) {
+        self.vault = vault
+        self.secrets = secrets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case vault
+        case secrets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.vault) {
+            vault = try container.decode(VaultData.self, forKey: .vault)
+            secrets = try container.decodeIfPresent([SecretItem].self, forKey: .secrets) ?? []
+        } else {
+            // Backups created before the secrets module stored VaultData at the top level.
+            vault = try VaultData(from: decoder)
+            secrets = []
+        }
+    }
+}
+
 enum VaultBackupCrypto {
     static let defaultPassword = "1.2.3.4."
     private static let format = "mytools-vault"
@@ -67,13 +94,17 @@ enum VaultBackupCrypto {
         let combined: Data
     }
 
-    static func makeBackup(from vault: VaultData, password: String) throws -> Data {
+    static func makeBackup(
+        from vault: VaultData,
+        secrets: [SecretItem] = [],
+        password: String
+    ) throws -> Data {
         let effectivePassword = normalizedPassword(password)
         guard effectivePassword.count >= 8 else { throw VaultBackupError.invalidPassword }
 
         let salt = randomBytes(count: saltLength)
         let key = try deriveKey(password: effectivePassword, salt: salt)
-        let payload = try JSONEncoder().encode(vault)
+        let payload = try JSONEncoder().encode(VaultBackupPayload(vault: vault, secrets: secrets))
         let sealed = try AES.GCM.seal(payload, using: key)
         guard let combined = sealed.combined else { throw VaultBackupError.invalidFile }
 
@@ -82,6 +113,10 @@ enum VaultBackupCrypto {
     }
 
     static func restoreVault(from data: Data, password: String) throws -> VaultData {
+        try restorePayload(from: data, password: password).vault
+    }
+
+    static func restorePayload(from data: Data, password: String) throws -> VaultBackupPayload {
         let effectivePassword = normalizedPassword(password)
         guard effectivePassword.count >= 8 else { throw VaultBackupError.invalidPassword }
 
@@ -110,7 +145,7 @@ enum VaultBackupCrypto {
         }
 
         do {
-            return try JSONDecoder().decode(VaultData.self, from: payload)
+            return try JSONDecoder().decode(VaultBackupPayload.self, from: payload)
         } catch {
             throw VaultBackupError.invalidFile
         }

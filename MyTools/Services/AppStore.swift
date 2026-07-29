@@ -10,6 +10,7 @@ private let startupLogger = Logger(
 
 private struct AppStoreInitialSnapshot: @unchecked Sendable {
     let vault: VaultData
+    let secretItems: [SecretItem]
     let vaultByteCount: Int
     let vaultSource: String
     let canPersistVault: Bool
@@ -22,6 +23,7 @@ private struct AppStoreInitialSnapshot: @unchecked Sendable {
         let result = SecureStore().loadVaultWithMetrics()
         return Self(
             vault: result.vault,
+            secretItems: result.secrets,
             vaultByteCount: result.byteCount,
             vaultSource: result.source,
             canPersistVault: result.canPersist,
@@ -83,6 +85,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var currencyExchangeRecords: [CurrencyExchangeRecord]
     @Published private(set) var medicalRecords: [MedicalRecord]
     @Published private(set) var hospitalProfiles: [HospitalProfile]
+    @Published private(set) var secretItems: [SecretItem]
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var lastStockRefreshAt: Date?
@@ -112,6 +115,7 @@ final class AppStore: ObservableObject {
         currencyExchangeRecords = []
         medicalRecords = []
         hospitalProfiles = []
+        secretItems = []
         renminbiBuyingRates = [.cny: 1]
         renminbiSellingRates = [.cny: 1]
 
@@ -142,8 +146,10 @@ final class AppStore: ObservableObject {
 
     private func applyInitialSnapshot(_ snapshot: AppStoreInitialSnapshot) {
         applyVault(snapshot.vault)
+        secretItems = snapshot.secretItems
         canPersistVault = snapshot.canPersistVault
         migrateLegacyPhysicalExamSessions()
+        synchronizeLoadedInpatientDailyRecords()
         synchronizeHospitalProfilesWithMedicalRecords()
         isVaultLoadFailurePresented = !snapshot.canPersistVault
         isInitialDataLoaded = true
@@ -271,6 +277,27 @@ final class AppStore: ObservableObject {
         persist()
     }
 
+    func upsertSecret(_ item: SecretItem) {
+        guard !isRestoringBackup else { return }
+        var storedItem = item
+        storedItem.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedItem.tags = item.tags.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedItem.updatedAt = Date()
+        if let index = secretItems.firstIndex(where: { $0.id == storedItem.id }) {
+            storedItem.createdAt = secretItems[index].createdAt
+            secretItems[index] = storedItem
+        } else {
+            secretItems.append(storedItem)
+        }
+        persistSecrets()
+    }
+
+    func deleteSecrets(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        secretItems.removeAll { ids.contains($0.id) }
+        persistSecrets()
+    }
+
     func upsertMedicalRecord(_ record: MedicalRecord) {
         var storedRecord = record
         storedRecord.normalizeInstitutionClassification()
@@ -284,6 +311,7 @@ final class AppStore: ObservableObject {
         } else {
             medicalRecords.append(storedRecord)
         }
+        synchronizeInpatientDailyRecords(for: storedRecord)
         rememberHospital(from: storedRecord)
         persist()
     }
@@ -400,6 +428,59 @@ final class AppStore: ObservableObject {
         guard didChange else { return }
         medicalRecords.append(contentsOf: migratedRecords)
         persist()
+    }
+
+    private func synchronizeInpatientDailyRecords(for parent: MedicalRecord) {
+        guard parent.isInpatientEpisode else { return }
+
+        let calendar = inpatientCalendar
+        let startDate = MedicalRecord.normalizedDate(parent.date)
+        let requestedEndDate = MedicalRecord.normalizedDate(parent.inpatientEndDate ?? parent.date)
+        let endDate = max(startDate, requestedEndDate)
+
+        let staleEmptyIDs = Set(
+            medicalRecords
+                .filter { record in
+                    guard record.parentRecordID == parent.id,
+                          record.isInpatientDailyRecord,
+                          !record.hasInpatientDailyContent else { return false }
+                    let date = MedicalRecord.normalizedDate(record.date)
+                    return date < startDate || date > endDate
+                }
+                .map(\.id)
+        )
+        if !staleEmptyIDs.isEmpty {
+            medicalRecords.removeAll { staleEmptyIDs.contains($0.id) }
+        }
+
+        let existingDates = Set(
+            medicalRecords
+                .filter { $0.parentRecordID == parent.id && $0.isInpatientDailyRecord }
+                .map { MedicalRecord.normalizedDate($0.date) }
+        )
+
+        var currentDate = startDate
+        while currentDate <= endDate {
+            if !existingDates.contains(currentDate) {
+                medicalRecords.append(MedicalRecord(inpatientDayFor: parent, date: currentDate))
+            }
+            guard let nextDate = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+            currentDate = MedicalRecord.normalizedDate(nextDate)
+        }
+    }
+
+    private func synchronizeLoadedInpatientDailyRecords() {
+        let previousCount = medicalRecords.count
+        let inpatientEpisodes = medicalRecords.filter(\.isInpatientEpisode)
+        inpatientEpisodes.forEach { synchronizeInpatientDailyRecords(for: $0) }
+        guard medicalRecords.count != previousCount else { return }
+        persist()
+    }
+
+    private var inpatientCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
     }
 
     private func rememberHospital(from record: MedicalRecord) {
@@ -674,12 +755,17 @@ final class AppStore: ObservableObject {
             medicalRecords: medicalRecords,
             hospitalProfiles: hospitalProfiles
         )
+        let secretSnapshot = secretItems
         let data = try await Task.detached(priority: .userInitiated) {
             let attachmentStore = AttachmentStore()
             var vault = snapshot
             vault.medicalRecords = try attachmentStore.recordsForBackup(vault.medicalRecords)
             vault.cards = try attachmentStore.cardsForBackup(vault.cards)
-            return try VaultBackupCrypto.makeBackup(from: vault, password: password)
+            return try VaultBackupCrypto.makeBackup(
+                from: vault,
+                secrets: secretSnapshot,
+                password: password
+            )
         }.value
         return VaultBackupDocument(data: data)
     }
@@ -687,19 +773,23 @@ final class AppStore: ObservableObject {
     func restoreBackup(from data: Data, password: String) async throws {
         isRestoringBackup = true
         defer { isRestoringBackup = false }
-        let restoredVault = try await Task.detached(priority: .userInitiated) {
+        let restoredPayload = try await Task.detached(priority: .userInitiated) {
             let attachmentStore = AttachmentStore()
-            var restoredVault = try VaultBackupCrypto.restoreVault(from: data, password: password)
-            restoredVault.medicalRecords = try attachmentStore.restoreAttachments(
-                in: restoredVault.medicalRecords
+            var payload = try VaultBackupCrypto.restorePayload(from: data, password: password)
+            payload.vault.medicalRecords = try attachmentStore.restoreAttachments(
+                in: payload.vault.medicalRecords
             )
-            restoredVault.cards = try attachmentStore.restoreAttachments(in: restoredVault.cards)
-            return restoredVault
+            payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
+            return payload
         }.value
         try await Task.detached(priority: .userInitiated) { [persistence] in
-            try persistence.saveImmediately(restoredVault)
+            try persistence.saveImmediately(
+                restoredPayload.vault,
+                secrets: restoredPayload.secrets
+            )
         }.value
-        applyVault(restoredVault)
+        applyVault(restoredPayload.vault)
+        secretItems = restoredPayload.secrets
         canPersistVault = true
         quoteErrors = [:]
         quoteSources = [:]
@@ -737,15 +827,31 @@ final class AppStore: ObservableObject {
             }
             return
         }
-        persistence.schedule(
-            VaultData(
-                accounts: accounts,
-                cards: cards,
-                stocks: stocks,
-                currencyExchangeRecords: currencyExchangeRecords,
-                medicalRecords: medicalRecords,
-                hospitalProfiles: hospitalProfiles
-            )
+        persistence.schedule(currentVaultData(), secrets: secretItems)
+    }
+
+    private func persistSecrets() {
+        guard !isRestoringBackup, canPersistVault else {
+            if !canPersistVault {
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "本地存档未成功读取，已拦截保密资料写入以保护原文件",
+                    level: .error
+                )
+            }
+            return
+        }
+        persistence.schedule(currentVaultData(), secrets: secretItems)
+    }
+
+    private func currentVaultData() -> VaultData {
+        VaultData(
+            accounts: accounts,
+            cards: cards,
+            stocks: stocks,
+            currencyExchangeRecords: currencyExchangeRecords,
+            medicalRecords: medicalRecords,
+            hospitalProfiles: hospitalProfiles
         )
     }
 }

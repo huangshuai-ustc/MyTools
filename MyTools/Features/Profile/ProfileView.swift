@@ -99,7 +99,7 @@ struct ProfileView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("导入会替换当前全部银行、股票、换汇和健康档案数据。")
+                Text("导入会替换当前全部银行、股票、换汇、健康档案和保密资料数据。")
             }
             .fileExporter(
                 isPresented: $showingExporter,

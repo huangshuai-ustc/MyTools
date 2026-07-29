@@ -143,9 +143,7 @@ struct CurrencyExchangeView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton {
-                    editingRecord = CurrencyExchangeRecord()
-                }
+                AdminEditAccessButton()
 
                 if auth.isAdmin {
                     Button { editingRecord = CurrencyExchangeRecord() } label: {

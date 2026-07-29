@@ -192,6 +192,7 @@ struct StocksView: View {
     @State private var marketFilter: StockMarketFilter = .all
     @State private var didAutoSelectMarket = false
     @State private var editingStock: StockHolding?
+    @State private var showsNoPositionStocks = false
     @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
     @AppStorage("stock-sort-direction-v2") private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
 
@@ -228,15 +229,20 @@ struct StocksView: View {
     }
 
     private var displayedStocks: [StockHolding] {
-        stockSorter.sorted(searchFilteredStocks)
+        stockSorter.sorted(searchFilteredStocks.filter { $0.currentShares > 0 })
+    }
+
+    private var noPositionStocks: [StockHolding] {
+        stockSorter.sorted(searchFilteredStocks.filter { $0.currentShares <= 0 })
     }
 
     private var summaryMarkets: [StockMarket] {
         if let market = marketFilter.market {
             return [market]
         }
+        let openStocks = stocksInSelectedMarket.filter { $0.currentShares > 0 }
         return StockMarket.topLevelOrder.filter { market in
-            stocksInSelectedMarket.contains { $0.market == market }
+            openStocks.contains { $0.market == market }
         }
     }
 
@@ -297,6 +303,21 @@ struct StocksView: View {
                     )
                 }
                 stockLinks(displayedStocks, allocations: allocations)
+                if !showsNoPositionStocks, !noPositionStocks.isEmpty {
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(noPositionStocks.count) 只无持仓股票",
+                        isShowing: $showsNoPositionStocks
+                    )
+                }
+            }
+            if showsNoPositionStocks, !noPositionStocks.isEmpty {
+                Section("无持仓股票（\(noPositionStocks.count)）") {
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(noPositionStocks.count) 只无持仓股票",
+                        isShowing: $showsNoPositionStocks
+                    )
+                    stockLinks(noPositionStocks, allocations: allocations)
+                }
             }
 
             Section {
@@ -337,9 +358,7 @@ struct StocksView: View {
                 .disabled(store.isRefreshingQuotes)
                 .accessibilityLabel("刷新股票行情")
 
-                AdminEditAccessButton {
-                    editingStock = StockHolding()
-                }
+                AdminEditAccessButton()
 
                 if auth.isEditSessionReady {
                     Button { editingStock = StockHolding() } label: {
@@ -380,6 +399,9 @@ struct StocksView: View {
                 await store.refreshStockQuotes()
             }
         }
+        .onDisappear {
+            showsNoPositionStocks = false
+        }
     }
 
     private func stockLink(_ stock: StockHolding, allocation: Decimal?) -> some View {
@@ -412,7 +434,11 @@ struct StocksView: View {
     }
 
     private var emptyStocksTitle: String {
-        stocksWithPurchaseRecords.isEmpty ? "暂无股票" : "没有匹配的股票"
+        if stocksWithPurchaseRecords.isEmpty {
+            return "暂无股票"
+        }
+        let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return searchTerm.isEmpty ? "暂无持仓股票" : "没有匹配的持仓股票"
     }
 
     private var emptyStocksSystemImage: String {
@@ -427,7 +453,11 @@ struct StocksView: View {
     private func autoSelectMarketIfNeeded() {
         guard store.isInitialDataLoaded, !didAutoSelectMarket else { return }
 
-        let availableMarkets = Set(stocksWithPurchaseRecords.map(\.market))
+        let availableMarkets = Set(
+            stocksWithPurchaseRecords
+                .filter { $0.currentShares > 0 }
+                .map(\.market)
+        )
         let now = Date()
         if let openMarket = StockMarket.displayOrder.first(where: {
             availableMarkets.contains($0)
@@ -447,24 +477,25 @@ private struct RenminbiPortfolioSummaryRow: View {
     let marketFilter: StockMarketFilter
     @State private var showingConversionInfo = false
 
-    private var includedStocks: [StockHolding] {
-        store.stocks.filter { $0.hasPurchaseRecord && marketFilter.includes($0) }
+    private var selectedStocks: [StockHolding] {
+        store.stocks.filter {
+            $0.hasPurchaseRecord && marketFilter.includes($0)
+        }
     }
 
     private var convertedValues: (
-        netInvestment: Decimal,
-        marketValue: Decimal,
-        netDividendIncome: Decimal,
-        profitLoss: Decimal?
+        holdingCost: Decimal,
+        profitLoss: Decimal?,
+        realizedProfitLoss: Decimal
     )? {
-        var netInvestment = Decimal.zero
+        var holdingCost = Decimal.zero
         var marketValue = Decimal.zero
-        var netDividendIncome = Decimal.zero
+        var realizedProfitLoss = Decimal.zero
         var missingQuote = false
-        for stock in includedStocks {
+        for stock in selectedStocks {
             guard let multiplier = renminbiMultiplier(for: stock.market) else { return nil }
-            netInvestment += stock.netInvestment * multiplier
-            netDividendIncome += stock.netDividendIncome * multiplier
+            holdingCost += stock.holdingCost * multiplier
+            realizedProfitLoss += stock.realizedProfitLoss * multiplier
             if let value = stock.marketValue {
                 marketValue += value * multiplier
             } else if stock.currentShares > 0 {
@@ -472,19 +503,18 @@ private struct RenminbiPortfolioSummaryRow: View {
             }
         }
         return (
-            netInvestment,
-            marketValue,
-            netDividendIncome,
-            missingQuote ? nil : marketValue + netDividendIncome - netInvestment
+            holdingCost,
+            missingQuote ? nil : marketValue - holdingCost,
+            realizedProfitLoss
         )
     }
 
     private var requiredForeignCurrencies: [CurrencyCode] {
         var result: [CurrencyCode] = []
-        if marketFilter.market == .hongKong || includedStocks.contains(where: { $0.market == .hongKong }) {
+        if marketFilter.market == .hongKong || selectedStocks.contains(where: { $0.market == .hongKong }) {
             result.append(.hkd)
         }
-        if marketFilter.market == .unitedStates || includedStocks.contains(where: { $0.market == .unitedStates }) {
+        if marketFilter.market == .unitedStates || selectedStocks.contains(where: { $0.market == .unitedStates }) {
             result.append(.usd)
         }
         return result
@@ -528,14 +558,9 @@ private struct RenminbiPortfolioSummaryRow: View {
             StockSummaryMetricsHeader()
             if let values = convertedValues {
                 HStack(spacing: 12) {
-                    metric("净投入", value: StockValueFormatter.money(values.netInvestment, currencyCode: "CNY"))
-                    metric("持仓市值", value: StockValueFormatter.money(values.marketValue, currencyCode: "CNY"))
-                    metric("总盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
-                }
-                if values.netDividendIncome != 0 {
-                    Text("累计净分红 \(StockValueFormatter.money(values.netDividendIncome, currencyCode: "CNY"))，已计入总盈亏")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    metric("持仓成本", value: StockValueFormatter.money(values.holdingCost, currencyCode: "CNY"))
+                    metric("持仓盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
+                    metric("已变现利润（含分红）", value: StockValueFormatter.money(values.realizedProfitLoss, currencyCode: "CNY"), color: profitLossColor(values.realizedProfitLoss))
                 }
             } else {
                 Label(missingRateText, systemImage: "exclamationmark.triangle")
@@ -585,7 +610,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     }
 
     private func profitLossText(_ value: Decimal?) -> String {
-        value.map { StockValueFormatter.money($0, currencyCode: "CNY") } ?? "待同步"
+        value.map { StockValueFormatter.moneyMagnitude($0, currencyCode: "CNY") } ?? "待同步"
     }
 
     private func profitLossColor(_ value: Decimal?) -> Color {
@@ -621,14 +646,9 @@ private struct StockMarketSummaryRow: View {
             }
 
             HStack(spacing: 12) {
-                summaryMetric("净投入", value: StockValueFormatter.money(summary.netInvestment, currencyCode: summary.market.currencyCode))
-                summaryMetric("持仓市值", value: marketValueText)
-                summaryMetric("总盈亏", value: profitLossText, color: profitLossColor)
-            }
-            if summary.netDividendIncome != 0 {
-                Text("累计净分红 \(StockValueFormatter.money(summary.netDividendIncome, currencyCode: summary.market.currencyCode))，已计入总盈亏")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                summaryMetric("持仓成本", value: StockValueFormatter.money(summary.holdingCost, currencyCode: summary.market.currencyCode))
+                summaryMetric("持仓盈亏", value: profitLossText, color: profitLossColor)
+                summaryMetric("已变现利润（含分红）", value: realizedProfitLossText, color: realizedProfitLossColor)
             }
         }
     }
@@ -640,15 +660,17 @@ private struct StockMarketSummaryRow: View {
         return "\(positionCount) · 占比 \(allocationText)"
     }
 
-    private var marketValueText: String {
-        summary.hasMissingQuotes
-            ? "待同步"
-            : StockValueFormatter.money(summary.knownMarketValue, currencyCode: summary.market.currencyCode)
+    private var realizedProfitLossText: String {
+        StockValueFormatter.money(summary.realizedProfitLoss, currencyCode: summary.market.currencyCode)
+    }
+
+    private var realizedProfitLossColor: Color {
+        stockValueColor(summary.realizedProfitLoss, market: summary.market, settings: stockAppearanceSettings)
     }
 
     private var profitLossText: String {
         guard let profitLoss = summary.profitLoss else { return "待同步" }
-        return StockValueFormatter.money(profitLoss, currencyCode: summary.market.currencyCode)
+        return StockValueFormatter.moneyMagnitude(profitLoss, currencyCode: summary.market.currencyCode)
     }
 
     private var profitLossColor: Color {
@@ -670,9 +692,9 @@ private struct StockMarketSummaryRow: View {
 private struct StockSummaryMetricsHeader: View {
     var body: some View {
         HStack(spacing: 12) {
-            header("净投入")
-            header("持仓市值")
-            header("总盈亏")
+            header("持仓成本")
+            header("持仓盈亏")
+            header("已变现利润（含分红）")
         }
     }
 
@@ -752,8 +774,8 @@ private struct StockRow: View {
     }
 
     private var profitLossText: String {
-        guard let value = stock.totalProfitLoss else { return "待同步" }
-        return StockValueFormatter.money(value < 0 ? -value : value, currencyCode: stock.market.currencyCode)
+        guard stock.currentShares > 0, let value = stock.holdingProfitLoss else { return "--" }
+        return StockValueFormatter.moneyMagnitude(value, currencyCode: stock.market.currencyCode)
     }
 
     private var allocationText: String {
@@ -765,7 +787,7 @@ private struct StockRow: View {
     }
 
     private var profitLossColor: Color {
-        guard let value = stock.totalProfitLoss else { return .secondary }
+        guard stock.currentShares > 0, let value = stock.holdingProfitLoss else { return .secondary }
         return stockValueColor(value, market: stock.market, settings: stockAppearanceSettings)
     }
 }
@@ -935,7 +957,7 @@ private struct StockDetailView: View {
                 LabeledContent("持仓市值", value: stock.marketValue.map { StockValueFormatter.money($0, currencyCode: stock.market.currencyCode) } ?? "待同步")
                 LabeledContent("持仓盈亏") {
                     if let value = stock.holdingProfitLoss {
-                        Text(StockValueFormatter.money(value, currencyCode: stock.market.currencyCode))
+                        Text(StockValueFormatter.moneyMagnitude(value, currencyCode: stock.market.currencyCode))
                             .foregroundStyle(stockValueColor(value, market: stock.market, settings: stockAppearanceSettings))
                     } else {
                         Text("待同步").foregroundStyle(.secondary)
@@ -945,7 +967,7 @@ private struct StockDetailView: View {
                     Text(StockValueFormatter.money(stock.realizedProfitLoss, currencyCode: stock.market.currencyCode))
                         .foregroundStyle(stockValueColor(stock.realizedProfitLoss, market: stock.market, settings: stockAppearanceSettings))
                 }
-                LabeledContent("总盈亏") {
+                LabeledContent("累计总收益（含已变现）") {
                     if let totalProfitLoss = stock.totalProfitLoss {
                         Text(StockValueFormatter.money(totalProfitLoss, currencyCode: stock.market.currencyCode))
                             .foregroundStyle(stockValueColor(totalProfitLoss, market: stock.market, settings: stockAppearanceSettings))

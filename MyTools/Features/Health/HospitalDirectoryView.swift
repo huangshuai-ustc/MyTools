@@ -52,7 +52,7 @@ struct HospitalDirectoryView: View {
         .searchable(text: $query, prompt: "搜索机构名称或分类")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton { editingProfile = HospitalProfile() }
+                AdminEditAccessButton()
                 if auth.isAdmin {
                     Button { editingProfile = HospitalProfile() } label: {
                         Image(systemName: "plus")

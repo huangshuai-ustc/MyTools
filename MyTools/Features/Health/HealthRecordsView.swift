@@ -167,7 +167,7 @@ struct HealthRecordsView: View {
                     ContentUnavailableView(
                         store.medicalRecords.isEmpty ? "暂无健康记录" : "没有匹配的健康记录",
                         systemImage: store.medicalRecords.isEmpty ? "cross.case" : "magnifyingglass",
-                        description: Text(store.medicalRecords.isEmpty ? "点右上角编辑并验证身份后记录第一次就诊、购药或体检" : "请尝试其他机构、药房、体检项目、诊断、费用项目或标签")
+                        description: Text(store.medicalRecords.isEmpty ? "点右上角编辑并验证身份后记录第一次就诊、购药、体检或住院" : "请尝试其他机构、药房、体检项目、住院记录、诊断、费用项目或标签")
                     )
                 }
             }
@@ -193,7 +193,7 @@ struct HealthRecordsView: View {
         .searchable(text: $query, prompt: "搜索机构、药房、诊断、费用项目或标签")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton { editingRecord = MedicalRecord() }
+                AdminEditAccessButton()
                 if auth.isAdmin {
                     Button { editingRecord = MedicalRecord() } label: {
                         Image(systemName: "plus")
@@ -518,11 +518,11 @@ private struct MedicalRecordRow: View {
             if isFollowUp {
                 HStack {
                     Label(
-                        record.isPhysicalExam ? "补检记录" : "复诊记录",
-                        systemImage: record.isPhysicalExam ? "heart.text.clipboard" : "calendar.badge.clock"
+                        linkedRecordTitle,
+                        systemImage: linkedRecordSystemImage
                     )
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(record.isPhysicalExam ? .mint : .blue)
+                        .foregroundStyle(linkedRecordColor)
                     Spacer()
                     Text(record.date, format: .dateTime.year().month().day())
                         .font(.caption)
@@ -578,11 +578,11 @@ private struct MedicalRecordRow: View {
             HStack {
                 if !isFollowUp, followUpCount > 0 {
                     HStack(spacing: 5) {
-                        Image(systemName: record.isPhysicalExam ? "heart.text.clipboard" : "calendar.badge.clock")
-                        Text("\(record.isPhysicalExam ? "补检记录" : "复诊记录") · \(followUpCount) 次")
+                        Image(systemName: linkedRecordSystemImage)
+                        Text("\(linkedRecordTitle) · \(followUpCount) \(linkedRecordCountUnit)")
                             .fontWeight(.semibold)
                     }
-                    .foregroundStyle(record.isPhysicalExam ? .mint : .blue)
+                    .foregroundStyle(linkedRecordColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 }
@@ -612,15 +612,32 @@ private struct MedicalRecordRow: View {
     private var recordSummary: String {
         if record.isPhysicalExam {
             if !record.diagnosis.isEmpty { return record.diagnosis }
-            if let completedItems = record.physicalExamDetails?.completedItems, !completedItems.isEmpty {
-                return completedItems
-            }
             return record.physicalExamDetails?.packageName ?? ""
         }
         guard record.isPharmacyPurchase else { return record.diagnosis }
         if !record.chiefComplaint.isEmpty { return record.chiefComplaint }
         let medicineNames = record.expenseItems.prefix(3).map(\.name).filter { !$0.isEmpty }
         return medicineNames.isEmpty ? "未填写用药原因" : medicineNames.joined(separator: " · ")
+    }
+
+    private var linkedRecordTitle: String {
+        if record.isPhysicalExam { return "补检记录" }
+        if record.isInpatient { return "住院日记录" }
+        return "复诊记录"
+    }
+
+    private var linkedRecordSystemImage: String {
+        if record.isPhysicalExam { return "heart.text.clipboard" }
+        return record.isInpatient ? "bed.double" : "calendar.badge.clock"
+    }
+
+    private var linkedRecordColor: Color {
+        if record.isPhysicalExam { return .mint }
+        return record.isInpatient ? .purple : .blue
+    }
+
+    private var linkedRecordCountUnit: String {
+        record.isInpatient ? "天" : "次"
     }
 }
 
@@ -648,6 +665,11 @@ private struct MedicalRecordDetailView: View {
             .sorted { $0.date < $1.date }
     }
 
+    private var outOfRangeInpatientDailyRecords: [MedicalRecord] {
+        guard let record, record.isInpatientEpisode else { return [] }
+        return followUps.filter { !inpatientDateIsWithinRange($0.date, parent: record) }
+    }
+
     private var pharmacyPurchases: [MedicalRecord] {
         store.medicalRecords
             .filter { $0.parentRecordID == recordID && $0.isLinkedPharmacyPurchase }
@@ -669,6 +691,33 @@ private struct MedicalRecordDetailView: View {
             : record.costSummary + followUpCostSummary + pharmacyPurchaseCostSummary
     }
 
+    private var detailNavigationTitle: String {
+        guard let record else { return "就诊详情" }
+        if record.isPhysicalExam { return "体检详情" }
+        if record.isInpatientEpisode { return "住院详情" }
+        if record.isInpatientDailyRecord { return "住院日详情" }
+        if record.isFollowUp { return "复诊详情" }
+        return record.hospital.isEmpty ? "就诊详情" : record.hospital
+    }
+
+    private var informationSectionTitle: String {
+        guard let record else { return "就诊信息" }
+        if record.isPharmacyPurchase { return "购药信息" }
+        if record.isPhysicalExam { return "体检信息" }
+        if record.isInpatientEpisode { return "住院信息" }
+        if record.isInpatientDailyRecord { return "住院日记录" }
+        return record.isFollowUp ? "复诊信息" : "就诊信息"
+    }
+
+    private var dayRecordDateTitle: String {
+        guard let record else { return "日期" }
+        if record.isPharmacyPurchase { return "购药日期" }
+        if record.isPhysicalExam { return "体检日期" }
+        if record.isInpatientDailyRecord { return "记录日期" }
+        if record.isInpatientEpisode { return "入院日期" }
+        return record.isFollowUp ? "复诊日期" : "日期"
+    }
+
     var body: some View {
         Group {
             if let record {
@@ -677,9 +726,7 @@ private struct MedicalRecordDetailView: View {
                 ContentUnavailableView("就诊记录已不存在", systemImage: "cross.case")
             }
         }
-        .navigationTitle(record?.isPhysicalExam == true
-            ? "体检详情"
-            : (record?.isFollowUp == true ? "复诊详情" : (record?.hospital ?? "就诊详情")))
+        .navigationTitle(detailNavigationTitle)
         .iOSLabeledBackButton("健康档案")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -694,7 +741,10 @@ private struct MedicalRecordDetailView: View {
                         }
                         .accessibilityLabel("新增检查批次")
                         .help("新增检查批次")
-                    } else if !record.hasAssociatedRecord, !record.isPharmacyPurchase, !record.isPhysicalExam {
+                    } else if !record.hasAssociatedRecord,
+                              !record.isPharmacyPurchase,
+                              !record.isPhysicalExam,
+                              !record.isInpatient {
                         Button {
                             editingRecord = MedicalRecord(followUpTo: record)
                         } label: {
@@ -717,7 +767,9 @@ private struct MedicalRecordDetailView: View {
                             ? "编辑购药记录"
                             : (record.isPhysicalExam
                                 ? (record.hasAssociatedRecord ? "编辑检查批次" : "编辑体检记录")
-                                : (record.isFollowUp ? "编辑复诊记录" : "编辑就诊记录")))
+                                : (record.isInpatient
+                                    ? (record.hasAssociatedRecord ? "编辑住院日记录" : "编辑住院记录")
+                                    : (record.isFollowUp ? "编辑复诊记录" : "编辑就诊记录"))))
                 }
             }
         }
@@ -756,7 +808,7 @@ private struct MedicalRecordDetailView: View {
     private func recordList(_ record: MedicalRecord) -> some View {
         List {
             if record.hasAssociatedRecord {
-                Section("关联就诊") {
+                Section(record.isInpatient ? "关联住院" : "关联就诊") {
                     if let associatedRecord {
                         NavigationLink {
                             MedicalRecordDetailView(recordID: associatedRecord.id)
@@ -777,11 +829,21 @@ private struct MedicalRecordDetailView: View {
                 }
             }
 
-            Section(record.isPharmacyPurchase ? "购药信息" : (record.isPhysicalExam ? "体检信息" : (record.isFollowUp ? "复诊信息" : "就诊信息"))) {
+            Section(informationSectionTitle) {
                 CopyableValueRow(
-                    title: record.isPharmacyPurchase ? "购药日期" : (record.isPhysicalExam ? "体检日期" : (record.isFollowUp ? "复诊日期" : "日期")),
+                    title: dayRecordDateTitle,
                     value: record.date.formatted(date: .long, time: .omitted)
                 )
+                if record.isInpatientEpisode {
+                    CopyableValueRow(
+                        title: "出院日期",
+                        value: (record.inpatientEndDate ?? record.date).formatted(date: .long, time: .omitted)
+                    )
+                    CopyableValueRow(
+                        title: "住院天数",
+                        value: "\(inpatientDayCount(for: record)) 天"
+                    )
+                }
                 CopyableValueRow(title: record.institutionLabel, value: record.hospital)
                 if !record.hospitalClassificationTitles.isEmpty {
                     CopyableValueRow(
@@ -795,20 +857,23 @@ private struct MedicalRecordDetailView: View {
                         CopyableValueRow(title: "用药原因", value: record.chiefComplaint)
                     }
                 } else if record.isPhysicalExam {
-                    if let details = record.physicalExamDetails {
-                        CopyableValueRow(title: "体检套餐", value: details.packageName)
-                        if let reportDate = details.reportDate {
-                            CopyableValueRow(
-                                title: "报告日期",
-                                value: reportDate.formatted(date: .long, time: .omitted)
-                            )
-                        }
-                        if !details.completedItems.isEmpty {
-                            CopyableValueRow(title: "完成项目", value: details.completedItems)
-                        }
+                    CopyableValueRow(
+                        title: "主要内容",
+                        value: record.physicalExamDetails?.packageName ?? ""
+                    )
+                    CopyableValueRow(title: "查出的问题", value: record.diagnosis)
+                } else if record.isInpatient {
+                    CopyableValueRow(title: "科室", value: record.department)
+                    if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
+                    if record.isInpatientDailyRecord {
+                        CopyableValueRow(title: "当天情况", value: record.chiefComplaint)
+                        CopyableValueRow(title: "当天诊疗结果", value: record.diagnosis)
+                        CopyableValueRow(title: "当天用药与操作", value: record.treatment)
+                    } else {
+                        CopyableValueRow(title: "入院原因", value: record.chiefComplaint)
+                        CopyableValueRow(title: "主要诊断", value: record.diagnosis)
+                        CopyableValueRow(title: "治疗方案", value: record.treatment)
                     }
-                    CopyableValueRow(title: "本轮检查结果", value: record.diagnosis)
-                    CopyableValueRow(title: "本轮健康建议", value: record.treatment)
                 } else {
                     CopyableValueRow(title: "科室", value: record.department)
                     if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
@@ -816,10 +881,6 @@ private struct MedicalRecordDetailView: View {
                     CopyableValueRow(title: "初步诊断", value: record.diagnosis)
                     CopyableValueRow(title: "治疗建议", value: record.treatment)
                 }
-            }
-
-            if record.isPhysicalExam {
-                physicalExamFindingsSection(record.physicalExamDetails?.findings ?? [])
             }
 
             if !record.hasAssociatedRecord, !record.isPharmacyPurchase {
@@ -833,6 +894,35 @@ private struct MedicalRecordDetailView: View {
                                 MedicalRecordDetailView(recordID: followUp.id)
                             } label: {
                                 MedicalPhysicalExamFollowUpRow(record: followUp)
+                            }
+                            .appListRowStyle()
+                            .swipeActions {
+                                if auth.isAdmin {
+                                    Button(role: .destructive) {
+                                        store.deleteMedicalRecords(ids: [followUp.id])
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                    .tint(.red)
+                                }
+                            }
+                        }
+                    }
+                } else if record.isInpatient {
+                    Section("住院日记录") {
+                        if followUps.isEmpty {
+                            Text("暂无住院日记录").foregroundStyle(.secondary)
+                        }
+                        if !outOfRangeInpatientDailyRecords.isEmpty {
+                            Text("区间外但已有内容的住院日记录已保留，请确认住院日期范围。")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
+                        ForEach(followUps) { followUp in
+                            NavigationLink {
+                                MedicalRecordDetailView(recordID: followUp.id)
+                            } label: {
+                                MedicalInpatientDayRow(record: followUp, parent: record)
                             }
                             .appListRowStyle()
                             .swipeActions {
@@ -903,7 +993,9 @@ private struct MedicalRecordDetailView: View {
                     CopyableValueRow(title: "本次费用", value: MedicalValueFormatter.money(record.totalCost))
                     if !followUps.isEmpty {
                         CopyableValueRow(
-                            title: record.isPhysicalExam ? "其他检查批次费用" : "复诊费用",
+                            title: record.isPhysicalExam
+                                ? "其他检查批次费用"
+                                : (record.isInpatient ? "住院日费用" : "复诊费用"),
                             value: MedicalValueFormatter.money(followUpCostSummary.totalCost)
                         )
                     }
@@ -932,9 +1024,16 @@ private struct MedicalRecordDetailView: View {
                 )
             }
 
-            Section(record.isPharmacyPurchase ? "药品" : (record.isPhysicalExam ? "体检费用" : "费用项目")) {
+            Section(
+                record.isPharmacyPurchase
+                    ? "药品"
+                    : (record.isPhysicalExam
+                        ? "体检费用"
+                        : (record.isInpatient ? "住院期间项目" : "费用项目"))
+            ) {
                 if record.expenseItems.isEmpty {
-                    Text("未记录费用项目").foregroundStyle(.secondary)
+                    Text(record.isInpatient ? "未记录住院期间项目" : "未记录费用项目")
+                        .foregroundStyle(.secondary)
                 }
                 ForEach(record.expenseItems) { item in
                     MedicalExpenseItemRow(item: item)
@@ -995,26 +1094,12 @@ private struct MedicalRecordDetailView: View {
 #endif
     }
 
-    @ViewBuilder
-    private func physicalExamFindingsSection(_ findings: [PhysicalExamFinding]) -> some View {
-        Section("关注项（\(findings.count)）") {
-            if findings.isEmpty {
-                Text("未记录关注项").foregroundStyle(.secondary)
-            }
-            ForEach(findings) { finding in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(finding.item.isEmpty ? "未命名项目" : finding.item)
-                        .font(.headline)
-                    if !finding.result.isEmpty {
-                        CopyableValueRow(title: "结果", value: finding.result)
-                    }
-                    if !finding.recommendation.isEmpty {
-                        CopyableValueRow(title: "建议", value: finding.recommendation)
-                    }
-                }
-                .appListRowStyle()
-            }
-        }
+    private func inpatientDayCount(for record: MedicalRecord) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let start = MedicalRecord.normalizedDate(record.date)
+        let end = MedicalRecord.normalizedDate(record.inpatientEndDate ?? record.date)
+        return max(1, (calendar.dateComponents([.day], from: start, to: end).day ?? 0) + 1)
     }
 
     private func open(_ attachment: FileAttachment) {
@@ -1049,12 +1134,6 @@ private struct MedicalPhysicalExamFollowUpRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if let completedItems = record.physicalExamDetails?.completedItems,
-               !completedItems.isEmpty {
-                Text(completedItems)
-                    .font(.subheadline)
-                    .lineLimit(2)
-            }
             if !record.diagnosis.isEmpty {
                 Text(record.diagnosis)
                     .font(.subheadline)
@@ -1064,6 +1143,71 @@ private struct MedicalPhysicalExamFollowUpRow: View {
             HStack {
                 if !record.hospital.isEmpty {
                     Text(record.hospital)
+                }
+                Spacer()
+                Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private func inpatientDateIsWithinRange(_ date: Date, parent: MedicalRecord) -> Bool {
+    let normalizedDate = MedicalRecord.normalizedDate(date)
+    let startDate = MedicalRecord.normalizedDate(parent.date)
+    let endDate = MedicalRecord.normalizedDate(parent.inpatientEndDate ?? parent.date)
+    return normalizedDate >= startDate && normalizedDate <= endDate
+}
+
+private struct MedicalInpatientDayRow: View {
+    let record: MedicalRecord
+    let parent: MedicalRecord
+
+    private var dayNumber: Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let start = MedicalRecord.normalizedDate(parent.date)
+        let date = MedicalRecord.normalizedDate(record.date)
+        return max(1, (calendar.dateComponents([.day], from: start, to: date).day ?? 0) + 1)
+    }
+
+    private var summary: String {
+        if !record.chiefComplaint.isEmpty { return record.chiefComplaint }
+        if !record.diagnosis.isEmpty { return record.diagnosis }
+        return record.treatment
+    }
+
+    private var isWithinRange: Bool {
+        inpatientDateIsWithinRange(record.date, parent: parent)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            HStack {
+                Label(
+                    isWithinRange ? "住院第\(dayNumber)天" : "区间外记录",
+                    systemImage: isWithinRange ? "bed.double" : "exclamationmark.triangle"
+                )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isWithinRange ? .purple : .orange)
+                Spacer()
+                Text(record.date.formatted(date: .long, time: .omitted))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !summary.isEmpty {
+                Text(summary)
+                    .font(.subheadline)
+                    .lineLimit(2)
+            } else {
+                Text("尚未记录当天情况")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                if !record.expenseItems.isEmpty {
+                    Text("项目 \(record.expenseItems.count) 项")
                 }
                 Spacer()
                 Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()

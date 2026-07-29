@@ -44,6 +44,8 @@ final class DiagnosticLogger: @unchecked Sendable {
     private var fileHandle: FileHandle?
     private var internalError: String?
 
+    private static let lastCleanupDayKey = "diagnostics-last-cleanup-day-v1"
+
     private init() {
         let baseURL = fileManager.urls(
             for: .applicationSupportDirectory,
@@ -73,6 +75,7 @@ final class DiagnosticLogger: @unchecked Sendable {
         let elapsed = ProcessInfo.processInfo.systemUptime - sessionStartedAt
         let thread = Thread.isMainThread ? "main" : "background"
         queue.async { [self] in
+            performDailyCleanupIfNeeded(now: date)
             write(
                 date: date,
                 elapsed: elapsed,
@@ -105,6 +108,7 @@ final class DiagnosticLogger: @unchecked Sendable {
 
     func overview(recentByteLimit: Int = 64 * 1_024) throws -> DiagnosticLogOverview {
         try queue.sync {
+            performDailyCleanupIfNeeded(now: Date())
             try ensureFile()
             try fileHandle?.synchronize()
             let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
@@ -119,6 +123,7 @@ final class DiagnosticLogger: @unchecked Sendable {
 
     func exportData() throws -> Data {
         try queue.sync {
+            performDailyCleanupIfNeeded(now: Date())
             try ensureFile()
             try fileHandle?.synchronize()
             return try Data(contentsOf: fileURL)
@@ -177,6 +182,65 @@ final class DiagnosticLogger: @unchecked Sendable {
         } catch {
             internalError = Self.errorCode(error)
         }
+    }
+
+    /// Keep the rolling diagnostic log to the current day and the previous day.
+    /// The check is performed on log access so it also works after iOS suspension.
+    private func performDailyCleanupIfNeeded(now: Date) {
+        let defaults = UserDefaults.standard
+        let calendar = Calendar.autoupdatingCurrent
+        let dayComponents = calendar.dateComponents([.year, .month, .day], from: now)
+        let dayToken = String(
+            format: "%04d-%02d-%02d",
+            dayComponents.year ?? 0,
+            dayComponents.month ?? 0,
+            dayComponents.day ?? 0
+        )
+        guard defaults.string(forKey: Self.lastCleanupDayKey) != dayToken else { return }
+
+        let startOfToday = calendar.startOfDay(for: now)
+        guard let keepFrom = calendar.date(byAdding: .day, value: -1, to: startOfToday) else {
+            return
+        }
+
+        do {
+            if fileManager.fileExists(atPath: fileURL.path) {
+                try removeEntries(olderThan: keepFrom)
+            }
+            defaults.set(dayToken, forKey: Self.lastCleanupDayKey)
+        } catch {
+            internalError = Self.errorCode(error)
+        }
+    }
+
+    private func removeEntries(olderThan cutoff: Date) throws {
+        try fileHandle?.synchronize()
+        try fileHandle?.close()
+        fileHandle = nil
+
+        let data = try Data(contentsOf: fileURL)
+        let text = String(decoding: data, as: UTF8.self)
+        let retainedLines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { line in
+                guard let separator = line.firstIndex(of: "|") else {
+                    return true
+                }
+                let timestampText = line[..<separator]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let timestamp = Self.timestampFormatter.date(from: timestampText) else {
+                    return true
+                }
+                return timestamp >= cutoff
+            }
+        let retainedText = retainedLines.joined(separator: "\n")
+        try Data(retainedText.utf8).write(to: fileURL, options: .atomic)
+#if os(iOS)
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: fileURL.path
+        )
+#endif
     }
 
     private func ensureFile() throws {

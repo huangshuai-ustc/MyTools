@@ -467,7 +467,8 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         return holdingCost / currentShares
     }
 
-    /// Realized trading profit plus net dividends already received.
+    /// Realized trading profit plus net dividends already received. Later buys
+    /// affect only the current holding cost and do not change this value.
     var realizedProfitLoss: Decimal {
         transactionPerformance.realizedProfitLoss + netDividendIncome
     }
@@ -479,11 +480,13 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         return currentShares * latestPrice
     }
 
+    /// Profit or loss for shares that are still held right now.
     var holdingProfitLoss: Decimal? {
         guard let marketValue else { return nil }
         return marketValue - holdingCost
     }
 
+    /// Lifetime result: current holding profit plus realized profit.
     var totalProfitLoss: Decimal? {
         guard let holdingProfitLoss else { return nil }
         return holdingProfitLoss + realizedProfitLoss
@@ -564,8 +567,9 @@ struct StockPortfolioSummary {
     let market: StockMarket
     let stockCount: Int
     let openPositionCount: Int
-    let netInvestment: Decimal
+    let holdingCost: Decimal
     let netDividendIncome: Decimal
+    let realizedProfitLoss: Decimal
     let knownMarketValue: Decimal
     let profitLoss: Decimal?
     let hasMissingQuotes: Bool
@@ -575,13 +579,14 @@ struct StockPortfolioSummary {
         let marketStocks = stocks.filter { $0.market == market }
         stockCount = marketStocks.count
         openPositionCount = marketStocks.lazy.filter { $0.currentShares > 0 }.count
-        netInvestment = marketStocks.reduce(Decimal.zero) { $0 + $1.netInvestment }
+        holdingCost = marketStocks.reduce(Decimal.zero) { $0 + $1.holdingCost }
         netDividendIncome = marketStocks.reduce(Decimal.zero) { $0 + $1.netDividendIncome }
+        realizedProfitLoss = marketStocks.reduce(Decimal.zero) { $0 + $1.realizedProfitLoss }
         knownMarketValue = marketStocks.reduce(Decimal.zero) { result, stock in
             result + (stock.marketValue ?? 0)
         }
         hasMissingQuotes = marketStocks.contains { $0.currentShares > 0 && $0.latestPrice == nil }
-        profitLoss = hasMissingQuotes ? nil : knownMarketValue + netDividendIncome - netInvestment
+        profitLoss = hasMissingQuotes ? nil : knownMarketValue - holdingCost
     }
 }
 
@@ -661,6 +666,10 @@ enum StockValueFormatter {
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "--"
+    }
+
+    static func moneyMagnitude(_ value: Decimal, currencyCode: String) -> String {
+        money(value < 0 ? -value : value, currencyCode: currencyCode)
     }
 
     static func price(_ value: Decimal, currencyCode: String) -> String {

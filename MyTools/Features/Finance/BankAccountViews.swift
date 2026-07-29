@@ -51,10 +51,8 @@ struct AccountDetailView: View {
                         sort: $cardSortOrderRawValue
                     )
                 }
-                if let account {
-                    AdminEditAccessButton {
-                        editingAccount = account
-                    }
+                if account != nil {
+                    AdminEditAccessButton()
                 }
                 if auth.isAdmin, let account {
                     Button { editingAccount = account } label: {

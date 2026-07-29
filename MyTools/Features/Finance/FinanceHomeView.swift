@@ -83,9 +83,7 @@ struct HomeView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 AccountSortMenu(selection: $sortOrderRawValue)
-                AdminEditAccessButton {
-                    editingAccount = BankAccount()
-                }
+                AdminEditAccessButton()
                 if auth.isAdmin {
                     Button { editingAccount = BankAccount() } label: {
                         Image(systemName: "plus")
