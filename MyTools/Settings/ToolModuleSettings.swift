@@ -1,5 +1,85 @@
 import Foundation
 import Combine
+import SwiftUI
+
+enum AppAppearanceMode: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "白天模式"
+        case .dark: return "夜间模式"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
+enum AppFontSize: String, CaseIterable, Identifiable {
+    case system
+    case xSmall
+    case small
+    case medium
+    case large
+    case xLarge
+    case xxLarge
+    case xxxLarge
+    case accessibility1
+    case accessibility2
+    case accessibility3
+    case accessibility4
+    case accessibility5
+
+    var id: Self { self }
+
+    static let adjustable: [Self] = [
+        .xSmall,
+        .small,
+        .medium,
+        .large,
+        .xLarge,
+        .xxLarge,
+        .xxxLarge,
+        .accessibility1,
+        .accessibility2,
+        .accessibility3,
+        .accessibility4,
+        .accessibility5
+    ]
+
+    var dynamicTypeSize: DynamicTypeSize? {
+        switch self {
+        case .system: return nil
+        case .xSmall: return .xSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .xLarge: return .xLarge
+        case .xxLarge: return .xxLarge
+        case .xxxLarge: return .xxxLarge
+        case .accessibility1: return .accessibility1
+        case .accessibility2: return .accessibility2
+        case .accessibility3: return .accessibility3
+        case .accessibility4: return .accessibility4
+        case .accessibility5: return .accessibility5
+        }
+    }
+
+    var sliderIndex: Int? {
+        Self.adjustable.firstIndex(of: self)
+    }
+}
 
 @MainActor
 final class ToolModuleSettings: ObservableObject {

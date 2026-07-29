@@ -202,12 +202,15 @@ private struct SecretAttachmentRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
+                .font(.title3)
                 .foregroundStyle(.pink)
-                .frame(width: 24)
+                .frame(width: 40, height: 40)
+                .background(.pink.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.fileName)
-                    .lineLimit(2)
-                Text(attachment.displaySize)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text("\(attachment.contentType.conforms(to: .pdf) ? "PDF" : "图片") · \(attachment.displaySize)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -350,10 +353,16 @@ struct SecretDetailView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("关闭") { previewAttachment = nil }
+                            Button { previewAttachment = nil } label: {
+                                Image(systemName: "xmark")
+                            }
+                            .accessibilityLabel("关闭预览")
                         }
                     }
             }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .presentationDragIndicator(.visible)
+            .interactiveDismissDisabled(false)
         }
 #endif
         .onChange(of: scenePhase) { _, phase in
@@ -457,8 +466,12 @@ struct SecretEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: SecretEditorDraft
+    @State private var fieldEditMode: EditMode = .inactive
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
+    @State private var showingAuthentication = false
+    @State private var renamingAttachment: FileAttachment?
+    @State private var renameText = ""
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var didSave = false
@@ -472,8 +485,7 @@ struct SecretEditorView: View {
     }
 
     private var canSave: Bool {
-        auth.isAdmin
-            && !draft.item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && draft.item.fields.allSatisfy {
                 !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -523,6 +535,9 @@ struct SecretEditorView: View {
                     .onDelete { offsets in
                         draft.item.fields.remove(atOffsets: offsets)
                     }
+                    .onMove { source, destination in
+                        draft.item.fields.move(fromOffsets: source, toOffset: destination)
+                    }
                     Button {
                         draft.item.fields.append(SecretField(label: "新字段", kind: .text))
                     } label: {
@@ -547,10 +562,17 @@ struct SecretEditorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
+                ToolbarItem(placement: .automatic) {
+                    EditButton()
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }
+                    Button("保存", action: requestSave)
                         .disabled(!canSave)
                 }
+            }
+            .sheet(isPresented: $showingAuthentication) {
+                AuthenticationView(onAuthenticated: save)
+                    .iOSAuthenticationSheet()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -568,7 +590,22 @@ struct SecretEditorView: View {
             } message: {
                 Text(errorMessage)
             }
+            .alert(
+                "重命名附件",
+                isPresented: Binding(
+                    get: { renamingAttachment != nil },
+                    set: { if !$0 { renamingAttachment = nil } }
+                )
+            ) {
+                TextField("文件名", text: $renameText)
+                Button("取消", role: .cancel) { renamingAttachment = nil }
+                Button("保存") { renameAttachment() }
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: {
+                Text("文件格式会保持不变。")
+            }
         }
+        .environment(\.editMode, $fieldEditMode)
     }
 
     private func binding(for id: UUID, fallback: SecretField) -> Binding<SecretField> {
@@ -624,12 +661,19 @@ struct SecretEditorView: View {
             }
             ForEach(draft.item.attachments) { attachment in
                 SecretAttachmentRow(attachment: attachment)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            beginRename(attachment)
+                        } label: {
+                            Label("重命名", systemImage: "pencil")
+                        }
+                        .tint(.blue)
                         Button(role: .destructive) {
                             removeAttachment(attachment)
                         } label: {
                             Label("移除", systemImage: "trash")
                         }
+                        .tint(.red)
                     }
             }
 
@@ -687,6 +731,26 @@ struct SecretEditorView: View {
         }
     }
 
+    private func beginRename(_ attachment: FileAttachment) {
+        renamingAttachment = attachment
+        renameText = attachment.fileName
+    }
+
+    private func renameAttachment() {
+        guard let attachment = renamingAttachment,
+              let index = draft.item.attachments.firstIndex(where: { $0.id == attachment.id }) else {
+            renamingAttachment = nil
+            return
+        }
+
+        do {
+            draft.item.attachments[index] = try store.renameAttachment(attachment, to: renameText)
+            renamingAttachment = nil
+        } catch {
+            reportError(error.localizedDescription)
+        }
+    }
+
     private func cleanUpUncommittedAttachments() {
         guard !didSave else { return }
         for attachment in draft.item.attachments
@@ -700,13 +764,19 @@ struct SecretEditorView: View {
         showingError = true
     }
 
+    private func requestSave() {
+        commitPendingTextInput { save() }
+    }
+
     private func save() {
-        guard canSave else { return }
-        commitPendingTextInput {
-            didSave = true
-            store.upsertSecret(draft.item)
-            dismiss()
+        guard auth.isAdmin else {
+            showingAuthentication = true
+            return
         }
+
+        didSave = true
+        store.upsertSecret(draft.item)
+        dismiss()
     }
 }
 

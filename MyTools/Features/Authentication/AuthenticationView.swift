@@ -47,7 +47,7 @@ struct AuthenticationView: View {
     private func requestSetPassword() {
         commitPendingTextInput {
             guard password == confirm, auth.setPassword(password) else {
-                error = "密码至少 6 位且两次输入需一致"
+                error = "密码至少 8 位且两次输入需一致"
                 return
             }
             finishAuthentication()
@@ -121,9 +121,9 @@ struct IdentityVerificationForm: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(mode == .setPassword ? "设置管理员密码" : "密码验证") {
+                Section {
                     SecureField(
-                        mode == .setPassword ? "至少 6 位" : "管理员密码",
+                        mode == .setPassword ? "至少 8 位" : "管理员密码",
                         text: $password
                     )
                     .focused($focusedField, equals: .password)
@@ -143,6 +143,14 @@ struct IdentityVerificationForm: View {
 
                     Button(mode == .setPassword ? "保存并进入" : "验证", action: passwordAction)
                         .disabled(isVerifying)
+                } header: {
+                    Text(mode == .setPassword ? "设置管理员密码" : "密码验证")
+                } footer: {
+                    Text(
+                        mode == .setPassword
+                            ? "管理员密码也会作为导出和导入备份的默认密码。"
+                            : "请输入管理员密码，或使用 Face ID / Touch ID 验证。"
+                    )
                 }
 
                 if mode == .verify {

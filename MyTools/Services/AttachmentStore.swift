@@ -3,11 +3,13 @@ import UniformTypeIdentifiers
 
 enum AttachmentStoreError: LocalizedError {
     case invalidFile
+    case invalidFileName
     case fileMissing(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidFile: return "无法读取这个附件。"
+        case .invalidFileName: return "文件名不能为空，也不能包含路径分隔符。"
         case .fileMissing(let name): return "附件“\(name)”已不在本机，请重新添加。"
         }
     }
@@ -82,6 +84,44 @@ final class AttachmentStore {
         let fileURL = url(for: attachment)
         guard fileManager.fileExists(atPath: fileURL.path) else { return }
         try? fileManager.removeItem(at: fileURL)
+    }
+
+    func rename(_ attachment: FileAttachment, to requestedFileName: String) throws -> FileAttachment {
+        let trimmedName = requestedFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              trimmedName != ".",
+              trimmedName != "..",
+              URL(fileURLWithPath: trimmedName).lastPathComponent == trimmedName else {
+            throw AttachmentStoreError.invalidFileName
+        }
+
+        let originalExtension = URL(fileURLWithPath: attachment.fileName).pathExtension
+        let requestedExtension = URL(fileURLWithPath: trimmedName).pathExtension
+        let name: String
+        if !originalExtension.isEmpty {
+            let baseName = requestedExtension.isEmpty
+                ? trimmedName
+                : URL(fileURLWithPath: trimmedName).deletingPathExtension().lastPathComponent
+            name = "\(baseName).\(originalExtension)"
+        } else {
+            name = trimmedName
+        }
+        let sourceURL = url(for: attachment)
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            throw AttachmentStoreError.fileMissing(attachment.fileName)
+        }
+
+        try ensureDirectory()
+        let storedFileName = uniqueFileName(name, excluding: sourceURL)
+        let destinationURL = directoryURL.appendingPathComponent(storedFileName, isDirectory: false)
+        if sourceURL.path != destinationURL.path {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        }
+
+        var renamed = attachment
+        renamed.fileName = storedFileName
+        renamed.storedFileName = storedFileName
+        return renamed
     }
 
     func recordsForBackup(_ records: [MedicalRecord]) throws -> [MedicalRecord] {
@@ -170,6 +210,29 @@ final class AttachmentStore {
 
     private func ensureDirectory() throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    }
+
+    private func uniqueFileName(_ requestedName: String, excluding sourceURL: URL) -> String {
+        let requestedURL = directoryURL.appendingPathComponent(requestedName, isDirectory: false)
+        guard fileManager.fileExists(atPath: requestedURL.path), requestedURL.path != sourceURL.path else {
+            return requestedName
+        }
+
+        let nameURL = URL(fileURLWithPath: requestedName)
+        let baseName = nameURL.deletingPathExtension().lastPathComponent
+        let fileExtension = nameURL.pathExtension
+        var suffix = 2
+        while true {
+            let candidateBase = "\(baseName) \(suffix)"
+            let candidate = fileExtension.isEmpty
+                ? candidateBase
+                : "\(candidateBase).\(fileExtension)"
+            let candidateURL = directoryURL.appendingPathComponent(candidate, isDirectory: false)
+            if !fileManager.fileExists(atPath: candidateURL.path) {
+                return candidate
+            }
+            suffix += 1
+        }
     }
 
     private func inferredKind(for contentType: UTType) -> AttachmentKind {

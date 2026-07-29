@@ -6,6 +6,7 @@ import CommonCrypto
 
 enum VaultBackupError: LocalizedError {
     case invalidPassword
+    case missingPassword
     case invalidFile
     case unsupportedVersion
     case wrongPassword
@@ -14,6 +15,8 @@ enum VaultBackupError: LocalizedError {
         switch self {
         case .invalidPassword:
             return "备份密码至少需要 8 位。"
+        case .missingPassword:
+            return "请输入管理员密码或自定义备份密码。"
         case .invalidFile:
             return "文件不是有效的“我的工具箱”备份。"
         case .unsupportedVersion:
@@ -80,7 +83,6 @@ struct VaultBackupPayload: Codable, @unchecked Sendable {
 }
 
 enum VaultBackupCrypto {
-    static let defaultPassword = "1.2.3.4."
     private static let format = "mytools-vault"
     private static let version = "1.0"
     private static let saltLength = 16
@@ -156,7 +158,7 @@ enum VaultBackupCrypto {
     }
 
     private static func normalizedPassword(_ password: String) -> String {
-        password.isEmpty ? defaultPassword : password
+        password
     }
 
     private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {

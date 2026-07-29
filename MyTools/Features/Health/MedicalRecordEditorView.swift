@@ -35,6 +35,8 @@ struct MedicalRecordEditorView: View {
     @State private var editingExpenseItem: MedicalExpenseItem?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
+    @State private var renamingAttachment: FileAttachment?
+    @State private var renameText = ""
     @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
@@ -108,6 +110,20 @@ struct MedicalRecordEditorView: View {
                 Button("确定", role: .cancel) {}
             } message: {
                 Text(errorMessage)
+            }
+            .alert(
+                "重命名附件",
+                isPresented: Binding(
+                    get: { renamingAttachment != nil },
+                    set: { if !$0 { renamingAttachment = nil } }
+                )
+            ) {
+                TextField("文件名", text: $renameText)
+                Button("取消", role: .cancel) { renamingAttachment = nil }
+                Button("保存") { renameAttachment() }
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: {
+                Text("文件格式会保持不变。")
             }
         }
     }
@@ -389,12 +405,19 @@ struct MedicalRecordEditorView: View {
             }
             ForEach(draft.record.attachments) { attachment in
                 attachmentRow(attachment)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            beginRename(attachment)
+                        } label: {
+                            Label("重命名", systemImage: "pencil")
+                        }
+                        .tint(.blue)
                         Button(role: .destructive) {
                             removeAttachment(attachment)
                         } label: {
                             Label("移除", systemImage: "trash")
                         }
+                        .tint(.red)
                     }
             }
 
@@ -535,6 +558,26 @@ struct MedicalRecordEditorView: View {
         draft.record.attachments.removeAll { $0.id == attachment.id }
         if !originalAttachmentIDs.contains(attachment.id) {
             store.deleteUncommittedAttachment(attachment)
+        }
+    }
+
+    private func beginRename(_ attachment: FileAttachment) {
+        renamingAttachment = attachment
+        renameText = attachment.fileName
+    }
+
+    private func renameAttachment() {
+        guard let attachment = renamingAttachment,
+              let index = draft.record.attachments.firstIndex(where: { $0.id == attachment.id }) else {
+            renamingAttachment = nil
+            return
+        }
+
+        do {
+            draft.record.attachments[index] = try store.renameAttachment(attachment, to: renameText)
+            renamingAttachment = nil
+        } catch {
+            reportError(error.localizedDescription)
         }
     }
 

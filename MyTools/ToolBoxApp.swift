@@ -6,15 +6,48 @@ struct ToolBoxApp: App {
     @StateObject private var auth = AuthManager()
     @StateObject private var moduleSettings = ToolModuleSettings()
     @StateObject private var stockAppearanceSettings = StockAppearanceSettings()
+    @AppStorage("app-appearance-mode-v1") private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
+    @AppStorage("app-font-size-v2") private var fontSizeRawValue = AppFontSize.system.rawValue
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(store)
-                .environmentObject(auth)
-                .environmentObject(moduleSettings)
-                .environmentObject(stockAppearanceSettings)
-                .appListSpacing()
+            ConfiguredRootView(
+                store: store,
+                auth: auth,
+                moduleSettings: moduleSettings,
+                stockAppearanceSettings: stockAppearanceSettings,
+                appearanceModeRawValue: appearanceModeRawValue,
+                fontSizeRawValue: fontSizeRawValue
+            )
         }
+    }
+}
+
+private struct ConfiguredRootView: View {
+    let store: AppStore
+    let auth: AuthManager
+    let moduleSettings: ToolModuleSettings
+    let stockAppearanceSettings: StockAppearanceSettings
+    let appearanceModeRawValue: String
+    let fontSizeRawValue: String
+    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
+
+    var body: some View {
+        RootView()
+            .environmentObject(store)
+            .environmentObject(auth)
+            .environmentObject(moduleSettings)
+            .environmentObject(stockAppearanceSettings)
+            .preferredColorScheme(
+                AppAppearanceMode(rawValue: appearanceModeRawValue)?.colorScheme
+                    ?? AppAppearanceMode.system.colorScheme
+            )
+            .environment(\.dynamicTypeSize, resolvedDynamicTypeSize)
+            .appListSpacing()
+    }
+
+    private var resolvedDynamicTypeSize: DynamicTypeSize {
+        AppFontSize(rawValue: fontSizeRawValue)?.dynamicTypeSize
+            ?? systemDynamicTypeSize
     }
 }

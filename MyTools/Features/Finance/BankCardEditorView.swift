@@ -237,6 +237,8 @@ private struct CreditCardStatementEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var statement: CreditCardStatement
     @State private var showingFileImporter = false
+    @State private var renamingAttachment: FileAttachment?
+    @State private var renameText = ""
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var didSave = false
@@ -270,6 +272,12 @@ private struct CreditCardStatementEditorView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        Button {
+                            beginRename(attachment)
+                        } label: {
+                            Label("重命名 PDF", systemImage: "pencil")
+                        }
+                        .tint(.blue)
                     } else {
                         Text("请选择一份 PDF 账单").foregroundStyle(.secondary)
                     }
@@ -279,6 +287,7 @@ private struct CreditCardStatementEditorView: View {
                             systemImage: "folder.badge.plus"
                         )
                     }
+                    .tint(statement.attachment == nil ? .accentColor : .red)
                 }
                 Section("备注") {
                     IMESafeMultilineTextField(prompt: "可选", text: $statement.note)
@@ -311,6 +320,20 @@ private struct CreditCardStatementEditorView: View {
             } message: {
                 Text(errorMessage)
             }
+            .alert(
+                "重命名附件",
+                isPresented: Binding(
+                    get: { renamingAttachment != nil },
+                    set: { if !$0 { renamingAttachment = nil } }
+                )
+            ) {
+                TextField("文件名", text: $renameText)
+                Button("取消", role: .cancel) { renamingAttachment = nil }
+                Button("保存") { renameAttachment() }
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: {
+                Text("文件格式会保持不变。")
+            }
         }
     }
 
@@ -334,6 +357,27 @@ private struct CreditCardStatementEditorView: View {
         didSave = true
         onSave(statement)
         dismiss()
+    }
+
+    private func beginRename(_ attachment: FileAttachment) {
+        renamingAttachment = attachment
+        renameText = attachment.fileName
+    }
+
+    private func renameAttachment() {
+        guard let attachment = renamingAttachment,
+              statement.attachment?.id == attachment.id else {
+            renamingAttachment = nil
+            return
+        }
+
+        do {
+            statement.attachment = try store.renameAttachment(attachment, to: renameText)
+            renamingAttachment = nil
+        } catch {
+            errorMessage = error.localizedDescription
+            showingError = true
+        }
     }
 
     private func cleanUpUncommittedAttachment() {

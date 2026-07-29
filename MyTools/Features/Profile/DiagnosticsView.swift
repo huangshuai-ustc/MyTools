@@ -55,6 +55,7 @@ struct DiagnosticsView: View {
                 } label: {
                     Label("清空诊断日志", systemImage: "trash")
                 }
+                .tint(.red)
                 .disabled(isLoading || isExporting)
             }
 
@@ -68,7 +69,7 @@ struct DiagnosticsView: View {
                 } else if let text = overview?.recentText, !text.isEmpty {
                     ScrollView(.horizontal) {
                         Text(text)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.caption2.monospaced())
                             .copyableText(text)
                             .fixedSize(horizontal: true, vertical: false)
                     }

@@ -132,10 +132,16 @@ struct CardDetailView: View {
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
-                                Button("关闭") { previewAttachment = nil }
+                                Button { previewAttachment = nil } label: {
+                                    Image(systemName: "xmark")
+                                }
+                                .accessibilityLabel("关闭预览")
                             }
                         }
                 }
+                .toolbarBackground(.visible, for: .navigationBar)
+                .presentationDragIndicator(.visible)
+                .interactiveDismissDisabled(false)
             }
 #endif
             .onChange(of: scenePhase) { _, phase in

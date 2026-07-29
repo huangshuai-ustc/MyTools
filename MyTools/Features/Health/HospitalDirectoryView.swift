@@ -42,6 +42,7 @@ struct HospitalDirectoryView: View {
                                 } label: {
                                     Label("删除", systemImage: "trash")
                                 }
+                                .tint(.red)
                             }
                         }
                 }

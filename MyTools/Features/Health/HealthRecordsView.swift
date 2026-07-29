@@ -790,12 +790,18 @@ private struct MedicalRecordDetailView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("关闭") {
+                            Button {
                                 previewAttachment = nil
+                            } label: {
+                                Image(systemName: "xmark")
                             }
+                            .accessibilityLabel("关闭预览")
                         }
                     }
             }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .presentationDragIndicator(.visible)
+            .interactiveDismissDisabled(false)
         }
 #endif
         .alert("无法打开附件", isPresented: $showingAttachmentError) {

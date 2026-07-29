@@ -16,6 +16,7 @@ struct ProfileView: View {
     @State private var importSucceeded = false
     @State private var isPreparingImport = false
     @State private var exportFilename = "备份"
+    @State private var showingPasswordChange = false
 
     var body: some View {
         NavigationStack {
@@ -23,6 +24,9 @@ struct ProfileView: View {
                 Section("管理员") {
                     if auth.isAdmin {
                         Label("管理员模式已开启", systemImage: "checkmark.shield.fill")
+                        Button("修改管理员密码") {
+                            showingPasswordChange = true
+                        }
                         Button("退出管理员模式") { auth.lock() }
                     } else {
                         Button { showAuth = true } label: {
@@ -84,8 +88,15 @@ struct ProfileView: View {
                 AuthenticationView()
                     .iOSAuthenticationSheet()
             }
+            .sheet(isPresented: $showingPasswordChange) {
+                AdminPasswordChangeView()
+                    .iOSAuthenticationSheet()
+            }
             .sheet(item: $backupPasswordMode, onDismiss: finishBackupPasswordFlow) { mode in
-                BackupPasswordView(mode: mode) { password in
+                BackupPasswordView(
+                    mode: mode,
+                    defaultPassword: auth.defaultBackupPassword
+                ) { password in
                     await handleBackupPassword(password, mode: mode)
                 }
                 .iOSAuthenticationSheet()
@@ -138,13 +149,20 @@ struct ProfileView: View {
 
     private func handleBackupPassword(_ password: String, mode: BackupPasswordMode) async -> String? {
         do {
+            auth.rememberPasswordForBackup(password)
+            let effectivePassword = password.isEmpty
+                ? auth.defaultBackupPassword
+                : password
+            guard let effectivePassword else {
+                throw VaultBackupError.missingPassword
+            }
             switch mode {
             case .export:
-                exportDocument = try await store.makeBackupDocument(password: password)
+                exportDocument = try await store.makeBackupDocument(password: effectivePassword)
                 exportFilename = backupFilename(for: Date())
             case .restore:
                 guard let pendingImportData else { throw VaultBackupError.invalidFile }
-                try await store.restoreBackup(from: pendingImportData, password: password)
+                try await store.restoreBackup(from: pendingImportData, password: effectivePassword)
                 self.pendingImportData = nil
                 importSucceeded = true
             }
@@ -202,6 +220,14 @@ struct ProfileView: View {
 private struct ProfileSettingsView: View {
     var body: some View {
         List {
+            Section("设置") {
+                NavigationLink {
+                    AppearanceSettingsView()
+                } label: {
+                    Label("外观与文字", systemImage: "textformat.size")
+                }
+            }
+
             Section("功能设置") {
                 NavigationLink {
                     HomeFeatureSettingsView()
@@ -229,6 +255,78 @@ private struct ProfileSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
 #endif
+    }
+}
+
+private struct AppearanceSettingsView: View {
+    @AppStorage("app-appearance-mode-v1") private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
+    @AppStorage("app-font-size-v2") private var fontSizeRawValue = AppFontSize.system.rawValue
+
+    var body: some View {
+        List {
+            Section("外观") {
+                Picker("颜色模式", selection: $appearanceModeRawValue) {
+                    ForEach(AppAppearanceMode.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Section("文字大小") {
+                Toggle("使用系统文字大小", isOn: systemFontSizeBinding)
+
+                Slider(
+                    value: fontSizeIndexBinding,
+                    in: 0...Double(AppFontSize.adjustable.count - 1),
+                    step: 1
+                ) {
+                    Text("字体大小")
+                } minimumValueLabel: {
+                    Image(systemName: "textformat.size.smaller")
+                } maximumValueLabel: {
+                    Image(systemName: "textformat.size.larger")
+                }
+                .disabled(fontSizeRawValue == AppFontSize.system.rawValue)
+            }
+        }
+        .navigationTitle("外观与文字")
+        .adminModeIndicator()
+        .iOSLabeledBackButton("设置")
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .listStyle(.insetGrouped)
+#endif
+    }
+
+    private var systemFontSizeBinding: Binding<Bool> {
+        Binding(
+            get: { fontSizeRawValue == AppFontSize.system.rawValue },
+            set: { usesSystemSize in
+                fontSizeRawValue = usesSystemSize
+                    ? AppFontSize.system.rawValue
+                    : AppFontSize.large.rawValue
+            }
+        )
+    }
+
+    private var fontSizeIndexBinding: Binding<Double> {
+        Binding(
+            get: {
+                Double(
+                    AppFontSize(rawValue: fontSizeRawValue)?.sliderIndex
+                        ?? AppFontSize.large.sliderIndex
+                        ?? 3
+                )
+            },
+            set: { value in
+                let index = min(
+                    max(Int(value.rounded()), 0),
+                    AppFontSize.adjustable.count - 1
+                )
+                fontSizeRawValue = AppFontSize.adjustable[index].rawValue
+            }
+        )
     }
 }
 
@@ -340,35 +438,108 @@ enum BackupPasswordMode: Int, Identifiable {
     }
 }
 
+private struct AdminPasswordChangeView: View {
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var password = ""
+    @State private var confirmation = ""
+    @State private var error = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("至少 8 位", text: $password)
+                    SecureField("再次输入", text: $confirmation)
+                } header: {
+                    Text("新管理员密码")
+                } footer: {
+                    Text("修改后原管理员密码立即失效，导出和导入备份的默认密码也会同步更新。")
+                }
+
+                if !error.isEmpty {
+                    Section {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("修改管理员密码")
+            .adminModeIndicator()
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: save)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        commitPendingTextInput {
+            guard auth.changePassword(password, confirmation: confirmation) else {
+                error = "密码至少 8 位且两次输入需一致"
+                return
+            }
+            dismiss()
+        }
+    }
+}
+
 struct BackupPasswordView: View {
     @Environment(\.dismiss) private var dismiss
     let mode: BackupPasswordMode
+    let defaultPassword: String?
     let onSubmit: (String) async -> String?
-    @State private var password = VaultBackupCrypto.defaultPassword
-    @State private var confirmation = VaultBackupCrypto.defaultPassword
+    @State private var password: String
+    @State private var confirmation: String
     @State private var error = ""
     @State private var isSubmitting = false
     @FocusState private var inputFocused: Bool
 
+    init(
+        mode: BackupPasswordMode,
+        defaultPassword: String?,
+        onSubmit: @escaping (String) async -> String?
+    ) {
+        self.mode = mode
+        self.defaultPassword = defaultPassword
+        self.onSubmit = onSubmit
+        _password = State(initialValue: defaultPassword ?? "")
+        _confirmation = State(initialValue: defaultPassword ?? "")
+    }
+
     private var canSubmit: Bool {
-        guard password.isEmpty || password.count >= 8 else { return false }
-        return mode == .restore
-            || password.isEmpty
-            || password == confirmation
+        let effectivePassword = password.isEmpty ? defaultPassword : password
+        guard let effectivePassword, effectivePassword.count >= 8 else { return false }
+        return mode == .restore || password.isEmpty || password == confirmation
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("留空时使用默认密码", text: $password)
-                        .focused($inputFocused)
+                    HStack(spacing: 8) {
+                        SecureField("备份密码", text: $password)
+                            .focused($inputFocused)
+                        Button {
+                            password = ""
+                            confirmation = ""
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .disabled(password.isEmpty && confirmation.isEmpty)
+                        .accessibilityLabel("清除备份密码")
+                    }
                     if mode == .export {
                         SecureField("再次输入", text: $confirmation)
                             .focused($inputFocused)
                     }
-                } footer: {
-                    Text(mode == .export ? "已填入默认密码.；清空后导出也会使用该默认密码。自定义密码至少 8 位。" : "已填入默认密码；清空后导入也会尝试该默认密码。")
                 }
 
                 if !error.isEmpty {

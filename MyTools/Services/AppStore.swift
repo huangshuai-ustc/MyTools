@@ -590,6 +590,10 @@ final class AppStore: ObservableObject {
         attachmentStore.delete(attachment)
     }
 
+    func renameAttachment(_ attachment: FileAttachment, to fileName: String) throws -> FileAttachment {
+        try attachmentStore.rename(attachment, to: fileName)
+    }
+
     func importSecretAttachment(from url: URL) throws -> FileAttachment {
         let attachment = try attachmentStore.importFile(from: url)
         guard attachment.contentType.conforms(to: .image)
