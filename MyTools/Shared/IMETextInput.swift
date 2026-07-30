@@ -53,13 +53,23 @@ struct IMESafeMultilineTextField: View {
     var body: some View {
 #if os(iOS)
         IMESafeUITextView(prompt: prompt, text: $text)
-            .frame(minHeight: 76)
+            .frame(
+                minHeight: IMEMultilineMetrics.minimumHeight,
+                maxHeight: IMEMultilineMetrics.maximumHeight
+            )
 #else
         TextField(prompt, text: $text, axis: .vertical)
             .lineLimit(3...6)
 #endif
     }
 }
+
+#if os(iOS)
+private enum IMEMultilineMetrics {
+    static let minimumHeight: CGFloat = 84
+    static let maximumHeight: CGFloat = 220
+}
+#endif
 
 #if os(iOS)
 private struct IMESafeUITextField: UIViewRepresentable {
@@ -192,8 +202,23 @@ private final class IMEPlaceholderTextView: UITextView {
         updatePlaceholder()
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder: NSCoder) { return nil }
     func updatePlaceholder() { placeholderLabel.isHidden = !text.isEmpty }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateScrollBehavior()
+    }
+
+    func updateScrollBehavior() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let shouldScroll = contentSize.height > bounds.height + 1
+        guard isScrollEnabled != shouldScroll else { return }
+        isScrollEnabled = shouldScroll
+        if !shouldScroll {
+            setContentOffset(.zero, animated: false)
+        }
+    }
 }
 
 private struct IMESafeUITextView: UIViewRepresentable {
@@ -208,7 +233,9 @@ private struct IMESafeUITextView: UIViewRepresentable {
         textView.font = .preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
         textView.backgroundColor = .clear
-        textView.isScrollEnabled = true
+        textView.isScrollEnabled = false
+        textView.keyboardDismissMode = .interactive
+        textView.showsVerticalScrollIndicator = true
         textView.placeholderLabel.text = prompt
         textView.text = text
         textView.updatePlaceholder()
@@ -226,6 +253,25 @@ private struct IMESafeUITextView: UIViewRepresentable {
         }
         if textView.text != text { textView.text = text }
         textView.updatePlaceholder()
+        textView.updateScrollBehavior()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: IMEPlaceholderTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width > 0 else { return nil }
+        let fittingHeight = uiView.sizeThatFits(
+            CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        ).height
+        return CGSize(
+            width: width,
+            height: min(
+                max(fittingHeight, IMEMultilineMetrics.minimumHeight),
+                IMEMultilineMetrics.maximumHeight
+            )
+        )
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -234,6 +280,7 @@ private struct IMESafeUITextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             (textView as? IMEPlaceholderTextView)?.updatePlaceholder()
+            (textView as? IMEPlaceholderTextView)?.updateScrollBehavior()
             guard textView.markedTextRange == nil else { return }
             commit(textView.text)
         }

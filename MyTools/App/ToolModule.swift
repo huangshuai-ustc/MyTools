@@ -1,6 +1,21 @@
 import SwiftUI
 
-enum ToolModule: String, CaseIterable, Identifiable {
+enum AppMetadata {
+    static var versionDescription: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "未标记版本"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "未标记构建"
+        return "\(version) (\(build))"
+    }
+}
+
+enum AppStorageKey {
+    static let appearanceMode = "app-appearance-mode-v1"
+    static let fontSize = "app-font-size-v2"
+}
+
+enum ToolModule: String, CaseIterable, Hashable, Identifiable {
     case personalFinance
     case myStocks
     case currencyExchange

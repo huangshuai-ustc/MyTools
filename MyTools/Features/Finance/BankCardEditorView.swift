@@ -207,7 +207,7 @@ struct CreditCardStatementRow: View {
                 .foregroundStyle(.red)
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 3) {
-                Text(statement.statementDate.formatted(date: .numeric, time: .omitted))
+                Text(AppDateFormatter.string(from: statement.statementDate))
                     .font(.subheadline.weight(.semibold))
                 Text(statement.attachment?.fileName ?? "尚未选择 PDF")
                     .font(.caption)

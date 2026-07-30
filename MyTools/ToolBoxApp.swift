@@ -6,8 +6,8 @@ struct ToolBoxApp: App {
     @StateObject private var auth = AuthManager()
     @StateObject private var moduleSettings = ToolModuleSettings()
     @StateObject private var stockAppearanceSettings = StockAppearanceSettings()
-    @AppStorage("app-appearance-mode-v1") private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
-    @AppStorage("app-font-size-v2") private var fontSizeRawValue = AppFontSize.system.rawValue
+    @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
+    @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
 
     var body: some Scene {
         WindowGroup {

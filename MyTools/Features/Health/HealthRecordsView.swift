@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(iOS)
-import QuickLook
-#elseif os(macOS)
+#if os(macOS)
 import AppKit
 #endif
 
@@ -524,7 +522,7 @@ private struct MedicalRecordRow: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(linkedRecordColor)
                     Spacer()
-                    Text(record.date, format: .dateTime.year().month().day())
+                    Text(AppDateFormatter.string(from: record.date))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -549,7 +547,7 @@ private struct MedicalRecordRow: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(record.visitType.badgeColor)
                 if !isFollowUp {
-                    Text(record.date, format: .dateTime.year().month().day())
+                    Text(AppDateFormatter.string(from: record.date))
                 }
             }
             .font(.subheadline)
@@ -566,6 +564,12 @@ private struct MedicalRecordRow: View {
                             .foregroundStyle(.primary)
                     }
                     .lineLimit(2)
+                } else if record.isPhysicalExam {
+                    MarkdownText(recordSummary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .accessibilityLabel("查出的问题，\(recordSummary)")
                 } else {
                     Text(recordSummary)
                         .font(.subheadline.weight(.semibold))
@@ -646,6 +650,7 @@ private struct MedicalRecordDetailView: View {
     @EnvironmentObject private var auth: AuthManager
     let recordID: UUID
     @State private var editingRecord: MedicalRecord?
+    @State private var viewingExpenseItem: MedicalExpenseItem?
     @State private var previewAttachment: FileAttachment?
     @State private var attachmentError = ""
     @State private var showingAttachmentError = false
@@ -781,10 +786,14 @@ private struct MedicalRecordDetailView: View {
                 .id(record.id)
                 .iOSLargeSheet()
         }
+        .sheet(item: $viewingExpenseItem) { item in
+            MedicalExpenseItemDetailView(item: item)
+                .iOSLargeSheet()
+        }
 #if os(iOS)
         .sheet(item: $previewAttachment) { attachment in
             NavigationStack {
-                MedicalAttachmentPreview(url: store.medicalAttachmentURL(for: attachment))
+                AttachmentPreview(url: store.medicalAttachmentURL(for: attachment))
                     .ignoresSafeArea(edges: .bottom)
                     .navigationTitle(attachment.fileName)
                     .navigationBarTitleDisplayMode(.inline)
@@ -800,8 +809,8 @@ private struct MedicalRecordDetailView: View {
                     }
             }
             .toolbarBackground(.visible, for: .navigationBar)
-            .presentationDragIndicator(.visible)
             .interactiveDismissDisabled(false)
+            .iOSLargeSheet()
         }
 #endif
         .alert("无法打开附件", isPresented: $showingAttachmentError) {
@@ -822,7 +831,7 @@ private struct MedicalRecordDetailView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(associatedRecord.hospital).font(.headline)
                                 Text(
-                                    "\(associatedRecord.visitType.title) · \(associatedRecord.date.formatted(date: .long, time: .omitted))"
+                                    "\(associatedRecord.visitType.title) · \(AppDateFormatter.string(from: associatedRecord.date))"
                                 )
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -838,12 +847,12 @@ private struct MedicalRecordDetailView: View {
             Section(informationSectionTitle) {
                 CopyableValueRow(
                     title: dayRecordDateTitle,
-                    value: record.date.formatted(date: .long, time: .omitted)
+                    value: AppDateFormatter.string(from: record.date)
                 )
                 if record.isInpatientEpisode {
                     CopyableValueRow(
                         title: "出院日期",
-                        value: (record.inpatientEndDate ?? record.date).formatted(date: .long, time: .omitted)
+                        value: AppDateFormatter.string(from: record.inpatientEndDate ?? record.date)
                     )
                     CopyableValueRow(
                         title: "住院天数",
@@ -867,25 +876,65 @@ private struct MedicalRecordDetailView: View {
                         title: "主要内容",
                         value: record.physicalExamDetails?.packageName ?? ""
                     )
-                    CopyableValueRow(title: "查出的问题", value: record.diagnosis)
+                    MarkdownValueRow(
+                        title: "查出的问题",
+                        markdown: record.diagnosis,
+                        alignment: .leading
+                    )
                 } else if record.isInpatient {
                     CopyableValueRow(title: "科室", value: record.department)
                     if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
                     if record.isInpatientDailyRecord {
-                        CopyableValueRow(title: "当天情况", value: record.chiefComplaint)
-                        CopyableValueRow(title: "当天诊疗结果", value: record.diagnosis)
-                        CopyableValueRow(title: "当天用药与操作", value: record.treatment)
+                        CopyableValueRow(
+                            title: "当天情况",
+                            value: record.chiefComplaint,
+                            alignment: .leading
+                        )
+                        CopyableValueRow(
+                            title: "当天诊疗结果",
+                            value: record.diagnosis,
+                            alignment: .leading
+                        )
+                        CopyableValueRow(
+                            title: "当天用药与操作",
+                            value: record.treatment,
+                            alignment: .leading
+                        )
                     } else {
-                        CopyableValueRow(title: "入院原因", value: record.chiefComplaint)
-                        CopyableValueRow(title: "主要诊断", value: record.diagnosis)
-                        CopyableValueRow(title: "治疗方案", value: record.treatment)
+                        CopyableValueRow(
+                            title: "入院原因",
+                            value: record.chiefComplaint,
+                            alignment: .leading
+                        )
+                        CopyableValueRow(
+                            title: "主要诊断",
+                            value: record.diagnosis,
+                            alignment: .leading
+                        )
+                        CopyableValueRow(
+                            title: "治疗方案",
+                            value: record.treatment,
+                            alignment: .leading
+                        )
                     }
                 } else {
                     CopyableValueRow(title: "科室", value: record.department)
                     if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
-                    CopyableValueRow(title: "主诉", value: record.chiefComplaint)
-                    CopyableValueRow(title: "初步诊断", value: record.diagnosis)
-                    CopyableValueRow(title: "治疗建议", value: record.treatment)
+                    CopyableValueRow(
+                        title: "主诉",
+                        value: record.chiefComplaint,
+                        alignment: .leading
+                    )
+                    CopyableValueRow(
+                        title: "初步诊断",
+                        value: record.diagnosis,
+                        alignment: .leading
+                    )
+                    CopyableValueRow(
+                        title: "治疗建议",
+                        value: record.treatment,
+                        alignment: .leading
+                    )
                 }
             }
 
@@ -1042,8 +1091,13 @@ private struct MedicalRecordDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(record.expenseItems) { item in
-                    MedicalExpenseItemRow(item: item)
-                        .appListRowStyle()
+                    Button {
+                        viewingExpenseItem = item
+                    } label: {
+                        MedicalExpenseItemRow(item: item)
+                    }
+                    .buttonStyle(.plain)
+                    .appListRowStyle()
                 }
                 if !record.expenseItems.isEmpty {
                     LabeledContent(
@@ -1130,7 +1184,7 @@ private struct MedicalPhysicalExamFollowUpRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label(
-                    record.date.formatted(date: .long, time: .omitted),
+                    AppDateFormatter.string(from: record.date),
                     systemImage: "calendar.badge.clock"
                 )
                 .font(.subheadline.weight(.semibold))
@@ -1141,10 +1195,9 @@ private struct MedicalPhysicalExamFollowUpRow: View {
                     .foregroundStyle(.secondary)
             }
             if !record.diagnosis.isEmpty {
-                Text(record.diagnosis)
+                MarkdownText(record.diagnosis)
                     .font(.subheadline)
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
             }
             HStack {
                 if !record.hospital.isEmpty {
@@ -1198,7 +1251,7 @@ private struct MedicalInpatientDayRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(isWithinRange ? .purple : .orange)
                 Spacer()
-                Text(record.date.formatted(date: .long, time: .omitted))
+                Text(AppDateFormatter.string(from: record.date))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1231,7 +1284,7 @@ private struct MedicalFollowUpRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label(
-                    record.date.formatted(date: .long, time: .omitted),
+                    AppDateFormatter.string(from: record.date),
                     systemImage: "calendar.badge.clock"
                 )
                 .font(.subheadline.weight(.semibold))
@@ -1263,7 +1316,7 @@ private struct MedicalLinkedPharmacyPurchaseRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label(
-                    record.date.formatted(date: .long, time: .omitted),
+                    AppDateFormatter.string(from: record.date),
                     systemImage: "pills.fill"
                 )
                 .font(.subheadline.weight(.semibold))
@@ -1294,64 +1347,53 @@ struct MedicalExpenseItemRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
-                Text(item.name).font(.headline)
-                if item.quantity > 0 || !item.unit.isEmpty {
-                    Text([MedicalValueFormatter.number(item.quantity), item.unit]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " "))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
-                if !item.note.isEmpty {
-                    Text(item.note).font(.caption).foregroundStyle(.secondary)
-                }
-            }
+            Text(item.name).font(.headline)
             Spacer(minLength: 8)
             Text(MedicalValueFormatter.money(item.amount))
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
         }
-        .copyableText(copyText)
-    }
-
-    private var copyText: String {
-        [
-            item.name,
-            item.quantity > 0 || !item.unit.isEmpty
-                ? [MedicalValueFormatter.number(item.quantity), item.unit]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " ")
-                : nil,
-            MedicalValueFormatter.money(item.amount),
-            item.note.isEmpty ? nil : item.note
-        ]
-        .compactMap { $0 }
-        .joined(separator: "\n")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
+private struct MedicalExpenseItemDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: MedicalExpenseItem
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("项目") {
+                    CopyableValueRow(title: "项目名称", value: item.name)
+                    CopyableValueRow(
+                        title: "金额",
+                        value: MedicalValueFormatter.money(item.amount)
+                    )
+                    CopyableValueRow(
+                        title: "数量",
+                        value: MedicalValueFormatter.number(item.quantity)
+                    )
+                    CopyableValueRow(title: "单位", value: item.unit)
+                }
+
+                if !item.note.isEmpty {
+                    Section("备注") {
+                        Text(item.note)
+                            .copyableText(item.note)
+                    }
+                }
+            }
+            .navigationTitle("费用项目")
 #if os(iOS)
-private struct MedicalAttachmentPreview: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-        init(url: URL) { self.url = url }
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-            url as NSURL
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
         }
     }
 }
-#endif

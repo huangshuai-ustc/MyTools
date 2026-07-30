@@ -165,28 +165,4 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case category
-        case fields
-        case attachments
-        case tags
-        case note
-        case createdAt
-        case updatedAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        title = try values.decodeIfPresent(String.self, forKey: .title) ?? ""
-        category = try values.decodeIfPresent(SecretCategory.self, forKey: .category) ?? .login
-        fields = try values.decodeIfPresent([SecretField].self, forKey: .fields) ?? category.defaultFields
-        attachments = try values.decodeIfPresent([FileAttachment].self, forKey: .attachments) ?? []
-        tags = try values.decodeIfPresent(String.self, forKey: .tags) ?? ""
-        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
-        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
-    }
 }

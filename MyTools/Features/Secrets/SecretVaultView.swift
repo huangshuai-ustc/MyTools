@@ -1,9 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
-#if os(iOS)
-import QuickLook
-#elseif os(macOS)
+#if os(macOS)
 import AppKit
 #endif
 
@@ -347,7 +345,7 @@ struct SecretDetailView: View {
 #if os(iOS)
         .sheet(item: $previewAttachment) { attachment in
             NavigationStack {
-                SecretAttachmentPreview(url: store.secretAttachmentURL(for: attachment))
+                AttachmentPreview(url: store.secretAttachmentURL(for: attachment))
                     .ignoresSafeArea(edges: .bottom)
                     .navigationTitle(attachment.fileName)
                     .navigationBarTitleDisplayMode(.inline)
@@ -361,8 +359,8 @@ struct SecretDetailView: View {
                     }
             }
             .toolbarBackground(.visible, for: .navigationBar)
-            .presentationDragIndicator(.visible)
             .interactiveDismissDisabled(false)
+            .iOSLargeSheet()
         }
 #endif
         .onChange(of: scenePhase) { _, phase in
@@ -466,7 +464,9 @@ struct SecretEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: SecretEditorDraft
+#if os(iOS)
     @State private var fieldEditMode: EditMode = .inactive
+#endif
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingAuthentication = false
@@ -562,9 +562,11 @@ struct SecretEditorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
+#if os(iOS)
                 ToolbarItem(placement: .automatic) {
                     EditButton()
                 }
+#endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                         .disabled(!canSave)
@@ -605,7 +607,9 @@ struct SecretEditorView: View {
                 Text("文件格式会保持不变。")
             }
         }
+#if os(iOS)
         .environment(\.editMode, $fieldEditMode)
+#endif
     }
 
     private func binding(for id: UUID, fallback: SecretField) -> Binding<SecretField> {
@@ -779,40 +783,3 @@ struct SecretEditorView: View {
         dismiss()
     }
 }
-
-#if os(iOS)
-private struct SecretAttachmentPreview: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(url: url)
-    }
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-
-        init(url: URL) {
-            self.url = url
-        }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
-            1
-        }
-
-        func previewController(
-            _ controller: QLPreviewController,
-            previewItemAt index: Int
-        ) -> QLPreviewItem {
-            url as NSURL
-        }
-    }
-}
-#endif

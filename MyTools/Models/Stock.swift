@@ -442,16 +442,6 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
             .reduce(Decimal.zero) { $0 + $1.grossAmount + $1.fees }
     }
 
-    var totalSellProceeds: Decimal {
-        transactions.lazy
-            .filter { $0.type == .sell }
-            .reduce(Decimal.zero) { $0 + $1.grossAmount - $1.fees }
-    }
-
-    var netInvestment: Decimal {
-        totalBuyCost - totalSellProceeds
-    }
-
     var netDividendIncome: Decimal {
         dividends.reduce(Decimal.zero) { $0 + $1.netAmount }
     }
@@ -493,10 +483,40 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     func canApply(_ transaction: StockTransaction) -> Bool {
-        let otherShares = transactions.lazy
-            .filter { $0.id != transaction.id }
-            .reduce(Decimal.zero) { $0 + $1.signedShares }
-        return otherShares + transaction.signedShares >= 0
+        guard transaction.quantity > 0,
+              transaction.unitPrice > 0,
+              transaction.fees >= 0 else { return false }
+        var updatedTransactions = transactions.filter { $0.id != transaction.id }
+        updatedTransactions.append(transaction)
+        return Self.hasValidTransactionOrder(updatedTransactions)
+    }
+
+    /// A sale must have an earlier purchase available at its trade date.
+    /// This prevents out-of-order historical entries from being silently ignored
+    /// by the moving-average performance calculation.
+    var hasValidTransactionOrder: Bool {
+        Self.hasValidTransactionOrder(transactions)
+    }
+
+    private static func hasValidTransactionOrder(_ transactions: [StockTransaction]) -> Bool {
+        var shares = Decimal.zero
+        for transaction in orderedTransactions(transactions) {
+            guard transaction.quantity > 0,
+                  transaction.unitPrice > 0,
+                  transaction.fees >= 0 else { return false }
+            shares += transaction.signedShares
+            if shares < 0 { return false }
+        }
+        return true
+    }
+
+    private static func orderedTransactions(_ transactions: [StockTransaction]) -> [StockTransaction] {
+        transactions.sorted {
+            if $0.tradedAt == $1.tradedAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.tradedAt < $1.tradedAt
+        }
     }
 
     private var transactionPerformance: (holdingCost: Decimal, realizedProfitLoss: Decimal) {
@@ -504,14 +524,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         var cost = Decimal.zero
         var realized = Decimal.zero
 
-        let orderedTransactions = transactions.sorted {
-            if $0.tradedAt == $1.tradedAt {
-                return $0.id.uuidString < $1.id.uuidString
-            }
-            return $0.tradedAt < $1.tradedAt
-        }
-
-        for transaction in orderedTransactions where transaction.quantity > 0 {
+        for transaction in Self.orderedTransactions(transactions) where transaction.quantity > 0 {
             switch transaction.type {
             case .buy:
                 shares += transaction.quantity
@@ -573,6 +586,10 @@ struct StockPortfolioSummary {
     let knownMarketValue: Decimal
     let profitLoss: Decimal?
     let hasMissingQuotes: Bool
+
+    var totalProfitLoss: Decimal? {
+        profitLoss.map { $0 + realizedProfitLoss }
+    }
 
     init(market: StockMarket, stocks: [StockHolding]) {
         self.market = market

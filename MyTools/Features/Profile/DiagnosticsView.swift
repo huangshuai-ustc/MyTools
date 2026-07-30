@@ -20,16 +20,10 @@ struct DiagnosticsView: View {
                         countStyle: .file
                     ))
                     if let createdAt = overview.createdAt {
-                        LabeledContent("开始记录", value: createdAt.formatted(
-                            date: .abbreviated,
-                            time: .shortened
-                        ))
+                        LabeledContent("开始记录", value: AppDateFormatter.string(from: createdAt))
                     }
                     if let modifiedAt = overview.modifiedAt {
-                        LabeledContent("最近写入", value: modifiedAt.formatted(
-                            date: .abbreviated,
-                            time: .standard
-                        ))
+                        LabeledContent("最近写入", value: AppDateFormatter.string(from: modifiedAt))
                     }
                 }
 

@@ -75,7 +75,7 @@ struct ProfileView: View {
                     Label("备份文件使用 AES-GCM 加密", systemImage: "lock.rotation")
                 }
                 Section("关于") {
-                    LabeledContent("版本", value: "MVP 2.4.1")
+                    LabeledContent("版本", value: AppMetadata.versionDescription)
                 }
             }
             .navigationTitle("我的")
@@ -259,8 +259,8 @@ private struct ProfileSettingsView: View {
 }
 
 private struct AppearanceSettingsView: View {
-    @AppStorage("app-appearance-mode-v1") private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
-    @AppStorage("app-font-size-v2") private var fontSizeRawValue = AppFontSize.system.rawValue
+    @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
+    @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
 
     var body: some View {
         List {

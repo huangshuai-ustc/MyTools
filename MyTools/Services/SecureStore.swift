@@ -16,28 +16,9 @@ private struct LocalVaultDocument: Codable {
     let vault: VaultData
     let secrets: [SecretItem]
 
-    private enum CodingKeys: String, CodingKey {
-        case vault
-        case secrets
-    }
-
     init(vault: VaultData, secrets: [SecretItem]) {
         self.vault = vault
         self.secrets = secrets
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let vault = try container.decodeIfPresent(VaultData.self, forKey: .vault) {
-            self.vault = vault
-            // Secret fields are intentionally stored as plain Codable data for now.
-            // Unknown fields from intermediate formats are ignored by Codable.
-            self.secrets = try container.decodeIfPresent([SecretItem].self, forKey: .secrets) ?? []
-        } else {
-            // Files written before the combined container stored VaultData at the top level.
-            self.vault = try VaultData(from: decoder)
-            self.secrets = []
-        }
     }
 }
 
@@ -194,6 +175,7 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     private let secureStore: SecureStore
     private var pendingWrite: PendingWrite?
     private var isWorkerScheduled = false
+    private var lastErrorCode: String?
 
     init(secureStore: SecureStore = SecureStore()) {
         self.secureStore = secureStore
@@ -217,20 +199,28 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
         let result: Result<Void, Error> = queue.sync {
             lock.lock()
             pendingWrite = nil
+            lastErrorCode = nil
             lock.unlock()
             let result = Result { try secureStore.saveVault(vault, secrets: secrets) }
             lock.lock()
             pendingWrite = nil
+            if case .success = result {
+                lastErrorCode = nil
+            }
             lock.unlock()
             return result
         }
         try result.get()
     }
 
-    func flush() async {
+    func flush() async -> String? {
         await withCheckedContinuation { continuation in
             queue.async {
-                continuation.resume()
+                self.lock.lock()
+                let errorCode = self.lastErrorCode
+                self.lastErrorCode = nil
+                self.lock.unlock()
+                continuation.resume(returning: errorCode)
             }
         }
     }
@@ -248,9 +238,21 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
 
             do {
                 try secureStore.saveVault(write.vault, secrets: write.secrets)
+                lock.lock()
+                lastErrorCode = nil
+                lock.unlock()
             } catch {
+                let errorCode = DiagnosticLogger.errorCode(error)
+                lock.lock()
+                lastErrorCode = errorCode
+                lock.unlock()
                 persistenceLogger.error(
-                    "Unable to persist local vault: \(String(describing: error), privacy: .public)"
+                    "Unable to persist local vault: \(errorCode, privacy: .public)"
+                )
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "本地存档写入失败 error=\(errorCode)",
+                    level: .error
                 )
             }
         }

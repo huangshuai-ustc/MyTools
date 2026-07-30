@@ -48,14 +48,22 @@ final class AuthManager: ObservableObject {
 
     func unlockWithBiometrics() async -> Bool {
         let context = LAContext(); var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else { return false }
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            if let error {
+                DiagnosticLogger.logError(.authentication, operation: "管理员生物识别不可用", error: error)
+            }
+            return false
+        }
         do { let success = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "验证本人身份后进入编辑模式")
             if success {
                 sessionPassword = loadPasswordFromKeychain()
                 isAdmin = true
             }
             return success
-        } catch { return false }
+        } catch {
+            DiagnosticLogger.logError(.authentication, operation: "管理员生物识别失败", error: error)
+            return false
+        }
     }
 
     func verify(password: String) -> Bool {
@@ -86,13 +94,19 @@ final class AuthManager: ObservableObject {
     func verifyWithBiometrics(reason: String = "验证本人身份后查看敏感信息") async -> Bool {
         let context = LAContext()
         var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            if let error {
+                DiagnosticLogger.logError(.authentication, operation: "敏感信息身份验证不可用", error: error)
+            }
+            return false
+        }
         do {
             return try await context.evaluatePolicy(
                 .deviceOwnerAuthentication,
                 localizedReason: reason
             )
         } catch {
+            DiagnosticLogger.logError(.authentication, operation: "敏感信息身份验证失败", error: error)
             return false
         }
     }
@@ -123,12 +137,28 @@ final class AuthManager: ObservableObject {
         let query = keychainLookupQuery
         let attributes: [String: Any] = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            DiagnosticLogger.shared.log(
+                .authentication,
+                "管理员密码未能更新系统安全存储 status=\(status)",
+                level: .warning
+            )
+            return
+        }
         guard status == errSecItemNotFound else { return }
 
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(item as CFDictionary, nil)
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            DiagnosticLogger.shared.log(
+                .authentication,
+                "管理员密码未能写入系统安全存储 status=\(addStatus)",
+                level: .warning
+            )
+            return
+        }
     }
 
     private func loadPasswordFromKeychain() -> String? {
@@ -136,8 +166,18 @@ final class AuthManager: ObservableObject {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data else {
+            if status != errSecItemNotFound {
+                DiagnosticLogger.shared.log(
+                    .authentication,
+                    "无法读取管理员备份密码 status=\(status)",
+                    level: .warning
+                )
+            }
+            return nil
+        }
         return String(data: data, encoding: .utf8)
     }
 }

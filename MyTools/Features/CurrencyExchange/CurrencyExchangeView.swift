@@ -347,7 +347,7 @@ private struct BankOfChinaExchangeRateStatus: View {
         if let updatedAt = store.exchangeRateUpdatedAt {
             LabeledContent(
                 "中国银行牌价时间",
-                value: updatedAt.formatted(date: .abbreviated, time: .shortened)
+                value: AppDateFormatter.string(from: updatedAt)
             )
         }
         if let error = store.exchangeRateError {
@@ -669,7 +669,7 @@ private struct CurrencyExchangeRecordRow: View {
                     .background(directionColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
                     .accessibilityLabel(direction.title)
                 Spacer()
-                Text(record.exchangedAt, format: .dateTime.year().month().day())
+                Text(AppDateFormatter.string(from: record.exchangedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

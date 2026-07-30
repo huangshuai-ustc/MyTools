@@ -54,17 +54,6 @@ private enum StockMarketFilter: Hashable, Identifiable {
     }
 }
 
-private enum BeijingDateFormatter {
-    static let dateTime: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        formatter.dateFormat = "yyyy年M月d日 HH:mm"
-        return formatter
-    }()
-}
-
 private enum StockSortCriterion: String, CaseIterable, Identifiable {
     case name
     case firstPurchase
@@ -328,7 +317,7 @@ struct StocksView: View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 } else if let updatedAt = store.lastStockRefreshAt {
-                    LabeledContent("最近刷新", value: BeijingDateFormatter.dateTime.string(from: updatedAt))
+                    LabeledContent("最近刷新", value: AppDateFormatter.string(from: updatedAt))
                 }
             } footer: {
                 Text("行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
@@ -486,7 +475,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     private var convertedValues: (
         holdingCost: Decimal,
         profitLoss: Decimal?,
-        realizedProfitLoss: Decimal
+        totalProfitLoss: Decimal?
     )? {
         var holdingCost = Decimal.zero
         var marketValue = Decimal.zero
@@ -502,10 +491,11 @@ private struct RenminbiPortfolioSummaryRow: View {
                 missingQuote = true
             }
         }
+        let profitLoss = missingQuote ? nil : marketValue - holdingCost
         return (
             holdingCost,
-            missingQuote ? nil : marketValue - holdingCost,
-            realizedProfitLoss
+            profitLoss,
+            profitLoss.map { $0 + realizedProfitLoss }
         )
     }
 
@@ -560,7 +550,7 @@ private struct RenminbiPortfolioSummaryRow: View {
                 HStack(spacing: 12) {
                     metric("持仓成本", value: StockValueFormatter.money(values.holdingCost, currencyCode: "CNY"))
                     metric("持仓盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
-                    metric("已变现利润（含分红）", value: StockValueFormatter.money(values.realizedProfitLoss, currencyCode: "CNY"), color: profitLossColor(values.realizedProfitLoss))
+                    metric("总盈亏", value: profitLossText(values.totalProfitLoss), color: profitLossColor(values.totalProfitLoss))
                 }
             } else {
                 Label(missingRateText, systemImage: "exclamationmark.triangle")
@@ -591,7 +581,7 @@ private struct RenminbiPortfolioSummaryRow: View {
             lines.append("\(missingCurrencies.map(\.title).joined(separator: "、"))牌价待同步。")
         }
         if let updatedAt = store.exchangeRateUpdatedAt {
-            lines.append("牌价时间：\(BeijingDateFormatter.dateTime.string(from: updatedAt))")
+            lines.append("牌价时间：\(AppDateFormatter.string(from: updatedAt))")
         }
         if let error = store.exchangeRateError, !missingCurrencies.isEmpty {
             lines.append(error)
@@ -648,7 +638,7 @@ private struct StockMarketSummaryRow: View {
             HStack(spacing: 12) {
                 summaryMetric("持仓成本", value: StockValueFormatter.money(summary.holdingCost, currencyCode: summary.market.currencyCode))
                 summaryMetric("持仓盈亏", value: profitLossText, color: profitLossColor)
-                summaryMetric("已变现利润（含分红）", value: realizedProfitLossText, color: realizedProfitLossColor)
+                summaryMetric("总盈亏", value: totalProfitLossText, color: totalProfitLossColor)
             }
         }
     }
@@ -660,12 +650,14 @@ private struct StockMarketSummaryRow: View {
         return "\(positionCount) · 占比 \(allocationText)"
     }
 
-    private var realizedProfitLossText: String {
-        StockValueFormatter.money(summary.realizedProfitLoss, currencyCode: summary.market.currencyCode)
+    private var totalProfitLossText: String {
+        guard let totalProfitLoss = summary.totalProfitLoss else { return "待同步" }
+        return StockValueFormatter.moneyMagnitude(totalProfitLoss, currencyCode: summary.market.currencyCode)
     }
 
-    private var realizedProfitLossColor: Color {
-        stockValueColor(summary.realizedProfitLoss, market: summary.market, settings: stockAppearanceSettings)
+    private var totalProfitLossColor: Color {
+        guard let totalProfitLoss = summary.totalProfitLoss else { return .secondary }
+        return stockValueColor(totalProfitLoss, market: summary.market, settings: stockAppearanceSettings)
     }
 
     private var profitLossText: String {
@@ -694,7 +686,7 @@ private struct StockSummaryMetricsHeader: View {
         HStack(spacing: 12) {
             header("持仓成本")
             header("持仓盈亏")
-            header("已变现利润（含分红）")
+            header("总盈亏")
         }
     }
 
@@ -934,7 +926,7 @@ private struct StockDetailView: View {
                     }
                 }
                 if let lastQuoteAt = stock.lastQuoteAt {
-                    LabeledContent("更新时间", value: BeijingDateFormatter.dateTime.string(from: lastQuoteAt))
+                    LabeledContent("更新时间", value: AppDateFormatter.string(from: lastQuoteAt))
                 }
                 if let source = store.quoteSources[stock.id] {
                     LabeledContent("行情来源", value: source)
@@ -1066,7 +1058,7 @@ private struct StockTransactionRow: View {
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股 × \(StockValueFormatter.price(transaction.unitPrice, currencyCode: market.currencyCode))")
                     .font(.subheadline.monospacedDigit())
-                Text(transaction.tradedAt.formatted(date: .abbreviated, time: .shortened))
+                Text(AppDateFormatter.string(from: transaction.tradedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1092,7 +1084,7 @@ private struct StockDividendRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
-                Text(dividend.receivedAt.formatted(date: .abbreviated, time: .omitted))
+                Text(AppDateFormatter.string(from: dividend.receivedAt))
                     .font(.subheadline)
                 if dividend.hasPerShareBreakdown {
                     Text("\(StockValueFormatter.quantity(dividend.quantity)) 股 × \(StockValueFormatter.price(dividend.dividendPerShare, currencyCode: market.currencyCode))/股")

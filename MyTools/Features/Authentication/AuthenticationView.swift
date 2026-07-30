@@ -186,6 +186,5 @@ struct IdentityVerificationForm: View {
                 }
             }
         }
-        .iOSAuthenticationSheet()
     }
 }

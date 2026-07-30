@@ -8,6 +8,13 @@ private let startupLogger = Logger(
     category: "Startup"
 )
 
+private enum AppStoreDefaultsKey {
+    static let usdBuyingRate = "stock-usd-cny-buying-rate-v1"
+    static let exchangeRateDate = "stock-usd-cny-buying-rate-date-v1"
+    static let buyingRates = "boc-currency-buying-rates-v1"
+    static let sellingRates = "boc-currency-selling-rates-v1"
+}
+
 private struct AppStoreInitialSnapshot: @unchecked Sendable {
     let vault: VaultData
     let secretItems: [SecretItem]
@@ -44,13 +51,13 @@ private struct AppStoreCachedRatesSnapshot: @unchecked Sendable {
 
     static func load() -> Self {
         let defaults = UserDefaults.standard
-        let usdRate = defaults.string(forKey: "stock-usd-cny-buying-rate-v1")
+        let usdRate = defaults.string(forKey: AppStoreDefaultsKey.usdBuyingRate)
             .flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }
         var buyingRates = decimalRates(
-            from: defaults.dictionary(forKey: "boc-currency-buying-rates-v1") as? [String: String]
+            from: defaults.dictionary(forKey: AppStoreDefaultsKey.buyingRates) as? [String: String]
         )
         let sellingRates = decimalRates(
-            from: defaults.dictionary(forKey: "boc-currency-selling-rates-v1") as? [String: String]
+            from: defaults.dictionary(forKey: AppStoreDefaultsKey.sellingRates) as? [String: String]
         )
         if let usdRate { buyingRates[.usd] = usdRate }
 
@@ -59,7 +66,7 @@ private struct AppStoreCachedRatesSnapshot: @unchecked Sendable {
             renminbiBuyingRates: buyingRates,
             renminbiSellingRates: sellingRates,
             exchangeRateUpdatedAt: defaults.object(
-                forKey: "stock-usd-cny-buying-rate-date-v1"
+                forKey: AppStoreDefaultsKey.exchangeRateDate
             ) as? Date
         )
     }
@@ -99,6 +106,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var isRefreshingExchangeRate = false
     @Published private(set) var isInitialDataLoaded = false
     @Published private(set) var isVaultLoadFailurePresented = false
+    @Published private(set) var persistenceError: String?
     private let persistence = VaultPersistenceCoordinator()
     private let quoteService = StockQuoteService()
     private let exchangeRateService = ForeignExchangeRateService()
@@ -107,6 +115,7 @@ final class AppStore: ObservableObject {
     private var lastExchangeRateRequestAt: Date?
     private var isRestoringBackup = false
     private var canPersistVault = true
+    private var didLogPersistenceBlocked = false
 
     init() {
         accounts = []
@@ -148,10 +157,10 @@ final class AppStore: ObservableObject {
         applyVault(snapshot.vault)
         secretItems = snapshot.secretItems
         canPersistVault = snapshot.canPersistVault
-        migrateLegacyPhysicalExamSessions()
         synchronizeLoadedInpatientDailyRecords()
         synchronizeHospitalProfilesWithMedicalRecords()
         isVaultLoadFailurePresented = !snapshot.canPersistVault
+        didLogPersistenceBlocked = false
         isInitialDataLoaded = true
         let loadSummary = "Local vault loaded from \(snapshot.vaultSource): \(snapshot.vaultByteCount) bytes; read \(snapshot.readDurationMilliseconds) ms, decode \(snapshot.decodeDurationMilliseconds) ms, total \(snapshot.loadDurationMilliseconds) ms"
         startupLogger.info("\(loadSummary, privacy: .public)")
@@ -294,7 +303,7 @@ final class AppStore: ObservableObject {
         } else {
             secretItems.append(storedItem)
         }
-        persistSecrets()
+        persist()
     }
 
     func deleteSecrets(ids: Set<UUID>) {
@@ -303,7 +312,7 @@ final class AppStore: ObservableObject {
             item.attachments.forEach(attachmentStore.delete)
         }
         secretItems.removeAll { ids.contains($0.id) }
-        persistSecrets()
+        persist()
     }
 
     func upsertMedicalRecord(_ record: MedicalRecord) {
@@ -380,61 +389,6 @@ final class AppStore: ObservableObject {
 
     func deleteHospitalProfiles(ids: Set<UUID>) {
         hospitalProfiles.removeAll { ids.contains($0.id) }
-        persist()
-    }
-
-    private func migrateLegacyPhysicalExamSessions() {
-        var migratedRecords: [MedicalRecord] = []
-        var didChange = false
-
-        for index in medicalRecords.indices {
-            guard medicalRecords[index].isPhysicalExam,
-                  var details = medicalRecords[index].physicalExamDetails,
-                  !details.sessions.isEmpty else {
-                continue
-            }
-            didChange = true
-
-            let parent = medicalRecords[index]
-            let sessions = details.sessions.sorted { $0.date < $1.date }
-            if let firstSession = sessions.first {
-                medicalRecords[index].date = MedicalRecord.normalizedDate(firstSession.date)
-                if details.completedItems.isEmpty {
-                    details.completedItems = firstSession.completedItems
-                }
-                if medicalRecords[index].diagnosis.isEmpty {
-                    medicalRecords[index].diagnosis = firstSession.result
-                }
-                if medicalRecords[index].treatment.isEmpty {
-                    medicalRecords[index].treatment = firstSession.recommendation
-                }
-                if medicalRecords[index].notes.isEmpty {
-                    medicalRecords[index].notes = firstSession.notes
-                }
-            }
-
-            for session in sessions.dropFirst() {
-                guard !medicalRecords.contains(where: { $0.id == session.id }) else { continue }
-                var child = MedicalRecord(followUpTo: parent, date: session.date)
-                child.id = session.id
-                child.hospital = session.institution.isEmpty ? parent.hospital : session.institution
-                child.physicalExamDetails = PhysicalExamDetails(
-                    packageName: details.packageName,
-                    completedItems: session.completedItems
-                )
-                child.diagnosis = session.result
-                child.treatment = session.recommendation
-                child.notes = session.notes
-                migratedRecords.append(child)
-            }
-
-            details.sessions = []
-            medicalRecords[index].physicalExamDetails = details
-            medicalRecords[index].updatedAt = Date()
-        }
-
-        guard didChange else { return }
-        medicalRecords.append(contentsOf: migratedRecords)
         persist()
     }
 
@@ -656,7 +610,9 @@ final class AppStore: ObservableObject {
     func deleteStockTransactions(ids: Set<UUID>, from stockID: UUID) -> Bool {
         guard let stockIndex = stocks.firstIndex(where: { $0.id == stockID }) else { return false }
         let remaining = stocks[stockIndex].transactions.filter { !ids.contains($0.id) }
-        guard remaining.reduce(Decimal.zero, { $0 + $1.signedShares }) >= 0 else { return false }
+        var candidate = stocks[stockIndex]
+        candidate.transactions = remaining
+        guard candidate.hasValidTransactionOrder else { return false }
         stocks[stockIndex].transactions = remaining
         persist()
         return true
@@ -716,6 +672,11 @@ final class AppStore: ObservableObject {
         if !failures.isEmpty {
             let firstReason = failures.values.first ?? "行情服务暂时不可用"
             quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
+            DiagnosticLogger.shared.log(
+                .stockQuote,
+                "行情刷新完成 success=\(successCount) failure=\(failures.count)",
+                level: .warning
+            )
         }
         if successCount > 0 { persist() }
         if successCount > 0 { lastStockRefreshAt = Date() }
@@ -755,87 +716,105 @@ final class AppStore: ObservableObject {
                 self.exchangeRateError = nil
                 self.defaults.set(
                     NSDecimalNumber(decimal: usdRate).stringValue,
-                    forKey: "stock-usd-cny-buying-rate-v1"
+                    forKey: AppStoreDefaultsKey.usdBuyingRate
                 )
                 self.defaults.set(
                     self.exchangeRateUpdatedAt,
-                    forKey: "stock-usd-cny-buying-rate-date-v1"
+                    forKey: AppStoreDefaultsKey.exchangeRateDate
                 )
                 self.defaults.set(
                     buyingRateValues.reduce(into: [String: String]()) { result, entry in
                         result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
                     },
-                    forKey: "boc-currency-buying-rates-v1"
+                    forKey: AppStoreDefaultsKey.buyingRates
                 )
                 self.defaults.set(
                     sellingRateValues.reduce(into: [String: String]()) { result, entry in
                         result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
                     },
-                    forKey: "boc-currency-selling-rates-v1"
+                    forKey: AppStoreDefaultsKey.sellingRates
                 )
             } catch {
                 self.exchangeRateError = error.localizedDescription
+                DiagnosticLogger.logError(
+                    .exchangeRate,
+                    operation: "外汇牌价刷新失败",
+                    error: error
+                )
             }
         }
     }
 
     func makeBackupDocument(password: String) async throws -> VaultBackupDocument {
-        let snapshot = VaultData(
-            accounts: accounts,
-            cards: cards,
-            stocks: stocks,
-            currencyExchangeRecords: currencyExchangeRecords,
-            medicalRecords: medicalRecords,
-            hospitalProfiles: hospitalProfiles
-        )
+        let snapshot = currentVaultData()
         let secretSnapshot = secretItems
-        let data = try await Task.detached(priority: .userInitiated) {
-            let attachmentStore = AttachmentStore()
-            var vault = snapshot
-            vault.medicalRecords = try attachmentStore.recordsForBackup(vault.medicalRecords)
-            vault.cards = try attachmentStore.cardsForBackup(vault.cards)
-            let secrets = try attachmentStore.secretsForBackup(secretSnapshot)
-            return try VaultBackupCrypto.makeBackup(
-                from: vault,
-                secrets: secrets,
-                password: password
-            )
-        }.value
+        let data: Data
+        do {
+            data = try await Task.detached(priority: .userInitiated) {
+                let attachmentStore = AttachmentStore()
+                var vault = snapshot
+                vault.medicalRecords = try attachmentStore.recordsForBackup(vault.medicalRecords)
+                vault.cards = try attachmentStore.cardsForBackup(vault.cards)
+                let secrets = try attachmentStore.secretsForBackup(secretSnapshot)
+                return try VaultBackupCrypto.makeBackup(
+                    from: vault,
+                    secrets: secrets,
+                    password: password
+                )
+            }.value
+        } catch {
+            DiagnosticLogger.logError(.backup, operation: "导出加密备份失败", error: error)
+            throw error
+        }
         return VaultBackupDocument(data: data)
     }
 
     func restoreBackup(from data: Data, password: String) async throws {
         isRestoringBackup = true
         defer { isRestoringBackup = false }
-        let restoredPayload = try await Task.detached(priority: .userInitiated) {
-            let attachmentStore = AttachmentStore()
-            var payload = try VaultBackupCrypto.restorePayload(from: data, password: password)
-            payload.vault.medicalRecords = try attachmentStore.restoreAttachments(
-                in: payload.vault.medicalRecords
-            )
-            payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
-            payload.secrets = try attachmentStore.restoreAttachments(in: payload.secrets)
-            return payload
-        }.value
-        try await Task.detached(priority: .userInitiated) { [persistence] in
-            try persistence.saveImmediately(
-                restoredPayload.vault,
-                secrets: restoredPayload.secrets
-            )
-        }.value
+        let restoredPayload: VaultBackupPayload
+        do {
+            restoredPayload = try await Task.detached(priority: .userInitiated) {
+                let attachmentStore = AttachmentStore()
+                var payload = try VaultBackupCrypto.restorePayload(from: data, password: password)
+                payload.vault.medicalRecords = try attachmentStore.restoreAttachments(
+                    in: payload.vault.medicalRecords
+                )
+                payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
+                payload.secrets = try attachmentStore.restoreAttachments(in: payload.secrets)
+                return payload
+            }.value
+            try await Task.detached(priority: .userInitiated) { [persistence] in
+                try persistence.saveImmediately(
+                    restoredPayload.vault,
+                    secrets: restoredPayload.secrets
+                )
+            }.value
+        } catch {
+            DiagnosticLogger.logError(.backup, operation: "导入加密备份失败", error: error)
+            throw error
+        }
         applyVault(restoredPayload.vault)
         secretItems = restoredPayload.secrets
         canPersistVault = true
+        didLogPersistenceBlocked = false
+        persistenceError = nil
         quoteErrors = [:]
         quoteSources = [:]
     }
 
     func flushPendingPersistence() async {
-        await persistence.flush()
+        if let errorCode = await persistence.flush() {
+            persistenceError = "本地数据未能保存（错误码：\(errorCode)）。原有档案仍然保留，请导出调试日志检查。"
+        }
     }
 
     func dismissVaultLoadFailure() {
         isVaultLoadFailurePresented = false
+    }
+
+    func dismissPersistenceError() {
+        persistenceError = nil
     }
 
     func delete(at offsets: IndexSet) {
@@ -853,24 +832,11 @@ final class AppStore: ObservableObject {
     }
     private func persist() {
         guard !isRestoringBackup, canPersistVault else {
-            if !canPersistVault {
+            if !canPersistVault, !didLogPersistenceBlocked {
+                didLogPersistenceBlocked = true
                 DiagnosticLogger.shared.log(
                     .persistence,
                     "本地存档未成功读取，已拦截写入以保护原文件",
-                    level: .error
-                )
-            }
-            return
-        }
-        persistence.schedule(currentVaultData(), secrets: secretItems)
-    }
-
-    private func persistSecrets() {
-        guard !isRestoringBackup, canPersistVault else {
-            if !canPersistVault {
-                DiagnosticLogger.shared.log(
-                    .persistence,
-                    "本地存档未成功读取，已拦截保密资料写入以保护原文件",
                     level: .error
                 )
             }

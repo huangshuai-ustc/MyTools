@@ -128,12 +128,6 @@ struct HospitalProfile: Identifiable, Codable, Equatable {
     var createdAt = Date()
     var updatedAt = Date()
 
-    // Kept as a source-compatible bridge for older callers and decoded data.
-    var institutionType: MedicalInstitutionType {
-        get { primaryInstitutionType }
-        set { institutionTypes = [newValue] }
-    }
-
     var primaryInstitutionType: MedicalInstitutionType {
         MedicalInstitutionType.allCases.first(where: { institutionTypes.contains($0) }) ?? .hospital
     }
@@ -215,34 +209,6 @@ struct MedicalExpenseItem: Identifiable, Codable, Equatable {
 
 }
 
-struct PhysicalExamSession: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var date = Date()
-    var institution = ""
-    var completedItems = ""
-    var result = ""
-    var recommendation = ""
-    var notes = ""
-
-    init(
-        id: UUID = UUID(),
-        date: Date = Date(),
-        institution: String = "",
-        completedItems: String = "",
-        result: String = "",
-        recommendation: String = "",
-        notes: String = ""
-    ) {
-        self.id = id
-        self.date = date
-        self.institution = institution
-        self.completedItems = completedItems
-        self.result = result
-        self.recommendation = recommendation
-        self.notes = notes
-    }
-}
-
 struct PhysicalExamFinding: Identifiable, Codable, Equatable {
     var id = UUID()
     var item = ""
@@ -266,44 +232,18 @@ struct PhysicalExamDetails: Codable, Equatable {
     var packageName = ""
     var reportDate: Date?
     var completedItems = ""
-    // 仅用于启动时迁移旧版嵌套检查批次。
-    var sessions: [PhysicalExamSession] = []
     var findings: [PhysicalExamFinding] = []
 
     init(
         packageName: String = "",
         reportDate: Date? = nil,
         completedItems: String = "",
-        sessions: [PhysicalExamSession] = [],
         findings: [PhysicalExamFinding] = []
     ) {
         self.packageName = packageName
         self.reportDate = reportDate
         self.completedItems = completedItems
-        self.sessions = sessions
         self.findings = findings
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case packageName, reportDate, completedItems, sessions, findings
-    }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        packageName = try values.decodeIfPresent(String.self, forKey: .packageName) ?? ""
-        reportDate = try values.decodeIfPresent(Date.self, forKey: .reportDate)
-        completedItems = try values.decodeIfPresent(String.self, forKey: .completedItems) ?? ""
-        sessions = try values.decodeIfPresent([PhysicalExamSession].self, forKey: .sessions) ?? []
-        findings = try values.decodeIfPresent([PhysicalExamFinding].self, forKey: .findings) ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(packageName, forKey: .packageName)
-        try values.encodeIfPresent(reportDate, forKey: .reportDate)
-        try values.encode(completedItems, forKey: .completedItems)
-        try values.encode(sessions, forKey: .sessions)
-        try values.encode(findings, forKey: .findings)
     }
 }
 
@@ -551,38 +491,20 @@ struct MedicalRecord: ToolEvent, Equatable {
 
 extension HospitalProfile {
     private enum CodingKeys: String, CodingKey {
-        case id, name, institutionTypes, institutionType, level, grade, category, createdAt, updatedAt
+        case id, name, institutionTypes, level, grade, category, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
-        if let types = try values.decodeIfPresent(Set<MedicalInstitutionType>.self, forKey: .institutionTypes), !types.isEmpty {
-            institutionTypes = types
-        } else {
-            institutionTypes = [
-                try values.decodeIfPresent(MedicalInstitutionType.self, forKey: .institutionType) ?? .hospital
-            ]
-        }
-        level = try values.decodeIfPresent(HospitalLevel.self, forKey: .level) ?? .unspecified
-        grade = try values.decodeIfPresent(HospitalGrade.self, forKey: .grade) ?? .unspecified
-        category = try values.decodeIfPresent(HospitalCategory.self, forKey: .category) ?? .unspecified
-        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        institutionTypes = try values.decode(Set<MedicalInstitutionType>.self, forKey: .institutionTypes)
+        level = try values.decode(HospitalLevel.self, forKey: .level)
+        grade = try values.decode(HospitalGrade.self, forKey: .grade)
+        category = try values.decode(HospitalCategory.self, forKey: .category)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
         normalizeClassification()
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(id, forKey: .id)
-        try values.encode(name, forKey: .name)
-        try values.encode(institutionTypes, forKey: .institutionTypes)
-        try values.encode(level, forKey: .level)
-        try values.encode(grade, forKey: .grade)
-        try values.encode(category, forKey: .category)
-        try values.encode(createdAt, forKey: .createdAt)
-        try values.encode(updatedAt, forKey: .updatedAt)
     }
 
     init(record: MedicalRecord) {

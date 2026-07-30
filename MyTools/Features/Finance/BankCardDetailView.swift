@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(iOS)
-import QuickLook
-#elseif os(macOS)
+#if os(macOS)
 import AppKit
 #endif
 
@@ -53,7 +51,7 @@ struct CardDetailView: View {
                     }
                     CopyableValueRow(
                         title: "开卡时间",
-                        value: card.openedAt.formatted(date: .numeric, time: .omitted)
+                        value: AppDateFormatter.string(from: card.openedAt)
                     )
                     LabeledContent("状态") {
                         CardStatusText(status: card.status)
@@ -125,7 +123,7 @@ struct CardDetailView: View {
 #if os(iOS)
             .sheet(item: $previewAttachment) { attachment in
                 NavigationStack {
-                    FinanceAttachmentPreview(url: store.financeAttachmentURL(for: attachment))
+                    AttachmentPreview(url: store.financeAttachmentURL(for: attachment))
                         .ignoresSafeArea(edges: .bottom)
                         .navigationTitle(attachment.fileName)
                         .adminModeIndicator()
@@ -140,8 +138,8 @@ struct CardDetailView: View {
                         }
                 }
                 .toolbarBackground(.visible, for: .navigationBar)
-                .presentationDragIndicator(.visible)
                 .interactiveDismissDisabled(false)
+                .iOSLargeSheet()
             }
 #endif
             .onChange(of: scenePhase) { _, phase in
@@ -210,28 +208,3 @@ struct CardDetailView: View {
 #endif
     }
 }
-
-#if os(iOS)
-private struct FinanceAttachmentPreview: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
-
-    func makeUIViewController(context: Context) -> QLPreviewController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
-
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-        init(url: URL) { self.url = url }
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-            url as NSURL
-        }
-    }
-}
-#endif

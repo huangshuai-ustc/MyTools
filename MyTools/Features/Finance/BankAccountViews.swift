@@ -128,7 +128,7 @@ struct AccountDetailView: View {
                 }
                 CopyableValueRow(
                     title: "建立日期",
-                    value: account.openedAt.formatted(date: .numeric, time: .omitted)
+                    value: AppDateFormatter.string(from: account.openedAt)
                 )
             }
 

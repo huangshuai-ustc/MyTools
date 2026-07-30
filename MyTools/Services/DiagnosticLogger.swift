@@ -18,7 +18,6 @@ enum DiagnosticLogCategory: String, Sendable {
     case exchangeRate = "外汇牌价"
     case textInput = "文字输入"
     case navigation = "页面"
-    case dataChange = "数据变更"
 }
 
 struct DiagnosticLogOverview: Sendable {
@@ -154,6 +153,15 @@ final class DiagnosticLogger: @unchecked Sendable {
         return "\(value.domain)(\(value.code))"
     }
 
+    static func logError(
+        _ category: DiagnosticLogCategory,
+        operation: String,
+        error: Error
+    ) {
+        let code = errorCode(error)
+        shared.log(category, "\(operation) error=\(code)", level: .error)
+    }
+
     private func write(
         date: Date,
         elapsed: TimeInterval,
@@ -179,6 +187,7 @@ final class DiagnosticLogger: @unchecked Sendable {
             )
             try fileHandle?.write(contentsOf: Data(line.utf8))
             if level == .error { try fileHandle?.synchronize() }
+            internalError = nil
         } catch {
             internalError = Self.errorCode(error)
         }

@@ -127,9 +127,7 @@ final class AttachmentStore {
     func recordsForBackup(_ records: [MedicalRecord]) throws -> [MedicalRecord] {
         try records.map { record in
             var copy = record
-            for index in copy.attachments.indices {
-                copy.attachments[index].backupData = try data(for: copy.attachments[index])
-            }
+            copy.attachments = try attachmentsForBackup(copy.attachments)
             return copy
         }
     }
@@ -138,13 +136,7 @@ final class AttachmentStore {
         try ensureDirectory()
         return try records.map { record in
             var copy = record
-            for index in copy.attachments.indices {
-                guard let payload = copy.attachments[index].backupData else { continue }
-                let fileURL = url(for: copy.attachments[index])
-                try payload.write(to: fileURL, options: [.atomic, .completeFileProtection])
-                copy.attachments[index].fileSize = Int64(payload.count)
-                copy.attachments[index].backupData = nil
-            }
+            copy.attachments = try restoredAttachments(copy.attachments)
             return copy
         }
     }
@@ -154,7 +146,7 @@ final class AttachmentStore {
             var copy = card
             for index in copy.statements.indices {
                 guard var attachment = copy.statements[index].attachment else { continue }
-                attachment.backupData = try data(for: attachment)
+                attachment = try attachmentForBackup(attachment)
                 copy.statements[index].attachment = attachment
             }
             return copy
@@ -176,15 +168,8 @@ final class AttachmentStore {
         return try cards.map { card in
             var copy = card
             for index in copy.statements.indices {
-                guard var attachment = copy.statements[index].attachment,
-                      let payload = attachment.backupData else { continue }
-                try payload.write(
-                    to: url(for: attachment),
-                    options: [.atomic, .completeFileProtection]
-                )
-                attachment.fileSize = Int64(payload.count)
-                attachment.backupData = nil
-                copy.statements[index].attachment = attachment
+                guard let attachment = copy.statements[index].attachment else { continue }
+                copy.statements[index].attachment = try restoredAttachment(attachment)
             }
             return copy
         }
@@ -194,18 +179,35 @@ final class AttachmentStore {
         try ensureDirectory()
         return try secrets.map { item in
             var copy = item
-            for index in copy.attachments.indices {
-                guard let payload = copy.attachments[index].backupData else { continue }
-                let attachment = copy.attachments[index]
-                try payload.write(
-                    to: url(for: attachment),
-                    options: [.atomic, .completeFileProtection]
-                )
-                copy.attachments[index].fileSize = Int64(payload.count)
-                copy.attachments[index].backupData = nil
-            }
+            copy.attachments = try restoredAttachments(copy.attachments)
             return copy
         }
+    }
+
+    private func attachmentsForBackup(_ attachments: [FileAttachment]) throws -> [FileAttachment] {
+        try attachments.map(attachmentForBackup)
+    }
+
+    private func attachmentForBackup(_ attachment: FileAttachment) throws -> FileAttachment {
+        var copy = attachment
+        copy.backupData = try data(for: attachment)
+        return copy
+    }
+
+    private func restoredAttachments(_ attachments: [FileAttachment]) throws -> [FileAttachment] {
+        try attachments.map(restoredAttachment)
+    }
+
+    private func restoredAttachment(_ attachment: FileAttachment) throws -> FileAttachment {
+        guard let payload = attachment.backupData else { return attachment }
+        try payload.write(
+            to: url(for: attachment),
+            options: [.atomic, .completeFileProtection]
+        )
+        var copy = attachment
+        copy.fileSize = Int64(payload.count)
+        copy.backupData = nil
+        return copy
     }
 
     private func ensureDirectory() throws {

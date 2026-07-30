@@ -163,7 +163,7 @@ struct MedicalRecordEditorView: View {
                     VStack(alignment: .trailing, spacing: 3) {
                         Text(associatedRecord.hospital)
                         Text(
-                            "\(associatedRecord.visitType.title) · \(associatedRecord.date.formatted(date: .abbreviated, time: .omitted))"
+                            "\(associatedRecord.visitType.title) · \(AppDateFormatter.string(from: associatedRecord.date))"
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)

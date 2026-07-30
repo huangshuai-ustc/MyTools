@@ -1,8 +1,44 @@
 import SwiftUI
 #if os(iOS)
 import UIKit
+import QuickLook
 #elseif os(macOS)
 import AppKit
+#endif
+
+#if os(iOS)
+struct AttachmentPreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(
+            _ controller: QLPreviewController,
+            previewItemAt index: Int
+        ) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
+}
 #endif
 
 struct AdminEditAccessButton: View {
@@ -99,14 +135,34 @@ struct ProtectedValueRow: View {
 struct CopyableValueRow: View {
     let title: String
     let value: String
+    var alignment: TextAlignment = .trailing
     var emptyValue = "未填写"
 
     var body: some View {
-        LabeledContent(title) {
-            Text(value.isEmpty ? emptyValue : value)
-                .multilineTextAlignment(.trailing)
-                .copyableText(value.isEmpty ? nil : value)
+        if alignment == .leading {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                valueView
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            LabeledContent(title) {
+                valueView
+            }
         }
+    }
+
+    private var valueView: some View {
+        Text(value.isEmpty ? emptyValue : value)
+            .multilineTextAlignment(alignment)
+            .frame(
+                maxWidth: .infinity,
+                alignment: alignment == .leading ? .leading : .trailing
+            )
+            .copyableText(value.isEmpty ? nil : value)
     }
 }
 
