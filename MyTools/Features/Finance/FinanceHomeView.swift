@@ -444,25 +444,6 @@ enum AccountSortOrder: String {
     }
 }
 
-enum SortDirection {
-    case ascending
-    case descending
-
-    var title: String {
-        switch self {
-        case .ascending: return "升序"
-        case .descending: return "降序"
-        }
-    }
-
-    var indicator: String {
-        switch self {
-        case .ascending: return "↑"
-        case .descending: return "↓"
-        }
-    }
-}
-
 struct AccountSortMenu: View {
     @Binding var selection: String
 

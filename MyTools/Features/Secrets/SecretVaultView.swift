@@ -26,6 +26,60 @@ private enum SecretCategoryFilter: Hashable, Identifiable {
     }
 }
 
+private enum SecretSortOrder: String {
+    case nameAscending
+    case nameDescending
+
+    var direction: SortDirection {
+        switch self {
+        case .nameAscending: return .ascending
+        case .nameDescending: return .descending
+        }
+    }
+
+    func sorted(_ items: [SecretItem]) -> [SecretItem] {
+        items.sorted { lhs, rhs in
+            let comparison = displayName(lhs).localizedStandardCompare(displayName(rhs))
+            if comparison == .orderedSame {
+                return direction == .ascending
+                    ? lhs.id.uuidString < rhs.id.uuidString
+                    : lhs.id.uuidString > rhs.id.uuidString
+            }
+            return direction == .ascending
+                ? comparison == .orderedAscending
+                : comparison == .orderedDescending
+        }
+    }
+
+    private func displayName(_ item: SecretItem) -> String {
+        item.title.isEmpty ? "未命名条目" : item.title
+    }
+}
+
+private struct SecretSortMenu: View {
+    @Binding var selection: String
+
+    private var selectedOrder: SecretSortOrder {
+        SecretSortOrder(rawValue: selection) ?? .nameAscending
+    }
+
+    var body: some View {
+        Menu {
+            Button {
+                selection = selectedOrder == .nameAscending
+                    ? SecretSortOrder.nameDescending.rawValue
+                    : SecretSortOrder.nameAscending.rawValue
+            } label: {
+                Text("名称  \(selectedOrder.direction.indicator)")
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("保密资料排序：名称，\(selectedOrder.direction.title)")
+        .help("保密资料排序：名称，\(selectedOrder.direction.title)")
+    }
+}
+
 private final class SecretEditorDraft: ObservableObject {
     @Published var item: SecretItem
 
@@ -44,6 +98,11 @@ struct SecretVaultView: View {
     @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
     @State private var isCreating = false
+    @AppStorage("secret-sort-order-v1") private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
+
+    private var selectedSortOrder: SecretSortOrder {
+        SecretSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
+    }
 
     private var canAccess: Bool {
         auth.isAdmin || isUnlocked
@@ -51,7 +110,7 @@ struct SecretVaultView: View {
 
     private var visibleItems: [SecretItem] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return store.secretItems
+        let filteredItems = store.secretItems
             .filter(categoryFilter.includes)
             .filter { item in
                 term.isEmpty
@@ -60,10 +119,7 @@ struct SecretVaultView: View {
                     || item.tags.localizedCaseInsensitiveContains(term)
                     || item.fields.contains { $0.label.localizedCaseInsensitiveContains(term) }
             }
-            .sorted {
-                if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
+        return selectedSortOrder.sorted(filteredItems)
     }
 
     var body: some View {
@@ -105,6 +161,7 @@ struct SecretVaultView: View {
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                SecretSortMenu(selection: $sortOrderRawValue)
                 if !canAccess {
                     Button {
                         showingSensitiveAccess = true

@@ -8,6 +8,25 @@ enum AppListMetrics {
     static let recordContentSpacing: CGFloat = 10
 }
 
+enum SortDirection {
+    case ascending
+    case descending
+
+    var title: String {
+        switch self {
+        case .ascending: return "升序"
+        case .descending: return "降序"
+        }
+    }
+
+    var indicator: String {
+        switch self {
+        case .ascending: return "↑"
+        case .descending: return "↓"
+        }
+    }
+}
+
 enum AppDateFormatter {
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,7 +58,7 @@ enum MarkdownRenderer {
     static func attributedString(from markdown: String) -> AttributedString {
         let normalized = normalizeInlineMath(in: markdown)
         let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
         return (try? AttributedString(markdown: normalized, options: options))
