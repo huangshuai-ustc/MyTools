@@ -401,23 +401,11 @@ struct SecretDetailView: View {
         }
 #if os(iOS)
         .sheet(item: $previewAttachment) { attachment in
-            NavigationStack {
-                AttachmentPreview(url: store.secretAttachmentURL(for: attachment))
-                    .ignoresSafeArea(edges: .bottom)
-                    .navigationTitle(attachment.fileName)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button { previewAttachment = nil } label: {
-                                Image(systemName: "xmark")
-                            }
-                            .accessibilityLabel("关闭预览")
-                        }
-                    }
-            }
-            .toolbarBackground(.visible, for: .navigationBar)
-            .interactiveDismissDisabled(false)
-            .iOSLargeSheet()
+            AttachmentPreviewSheet(
+                attachment: attachment,
+                url: store.secretAttachmentURL(for: attachment),
+                onDismiss: { previewAttachment = nil }
+            )
         }
 #endif
         .onChange(of: scenePhase) { _, phase in

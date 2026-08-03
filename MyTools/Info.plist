@@ -22,6 +22,14 @@
 	<string>1</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>用于验证管理员身份，保护银行卡信息</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.fjwyz.PersonalToolBox.stock-refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

@@ -143,6 +143,19 @@ struct CurrencyExchangeView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    store.refreshExchangeRates()
+                } label: {
+                    if store.isRefreshingExchangeRate {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(store.isRefreshingExchangeRate)
+                .accessibilityLabel("刷新中国银行结售汇牌价")
+                .help("刷新中国银行结售汇牌价")
+
                 AdminEditAccessButton()
 
                 if auth.isAdmin {
@@ -159,10 +172,10 @@ struct CurrencyExchangeView: View {
                 .iOSLargeSheet()
         }
         .refreshable {
-            store.refreshExchangeRateIfNeeded()
+            store.refreshExchangeRates()
         }
         .task {
-            store.refreshExchangeRateIfNeeded()
+            store.refreshExchangeRates()
         }
         .onChange(of: primaryCurrencyFilter) { _, currency in
             if currency == nil || currency == pairedCurrencyFilter {
@@ -347,7 +360,7 @@ private struct BankOfChinaExchangeRateStatus: View {
         if let updatedAt = store.exchangeRateUpdatedAt {
             LabeledContent(
                 "中国银行牌价时间",
-                value: AppDateFormatter.string(from: updatedAt)
+                value: AppDateFormatter.dateTimeString(from: updatedAt)
             )
         }
         if let error = store.exchangeRateError {

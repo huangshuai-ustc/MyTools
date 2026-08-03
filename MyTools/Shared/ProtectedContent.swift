@@ -1,4 +1,6 @@
 import SwiftUI
+import UniformTypeIdentifiers
+import CoreTransferable
 #if os(iOS)
 import UIKit
 import QuickLook
@@ -37,6 +39,79 @@ struct AttachmentPreview: UIViewControllerRepresentable {
         ) -> QLPreviewItem {
             url as NSURL
         }
+    }
+}
+#endif
+
+private struct AttachmentShareItem: Transferable {
+    let url: URL
+    let fileName: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .data) { item in
+            SentTransferredFile(item.url)
+        }
+        .suggestedFileName { item in
+            item.fileName
+        }
+    }
+}
+
+/// Presents an attachment through the system share sheet.
+/// The transfer representation supplies the user-facing file name while the
+/// underlying URL keeps the attachment's original extension and contents.
+struct AttachmentShareButton: View {
+    let url: URL
+    let fileName: String
+    var systemImage = "square.and.arrow.up"
+
+    var body: some View {
+        ShareLink(
+            item: AttachmentShareItem(url: url, fileName: fileName),
+            subject: Text(fileName),
+            preview: SharePreview(fileName, image: Image(systemName: previewSystemImage))
+        ) {
+            Image(systemName: systemImage)
+        }
+        .disabled(!FileManager.default.fileExists(atPath: url.path))
+        .accessibilityLabel("分享附件")
+        .help("分享附件")
+    }
+
+    private var previewSystemImage: String {
+        let contentType = UTType(filenameExtension: url.pathExtension)
+        return contentType?.conforms(to: .pdf) == true ? "doc.richtext" : "doc"
+    }
+}
+
+#if os(iOS)
+/// Shared Quick Look sheet used by every attachment detail page.
+struct AttachmentPreviewSheet: View {
+    let attachment: FileAttachment
+    let url: URL
+    let onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            AttachmentPreview(url: url)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(attachment.fileName)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        AttachmentShareButton(url: url, fileName: attachment.fileName)
+                        Button(action: onDismiss) {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("关闭预览")
+                    }
+                }
+        }
+        .adminModeIndicator()
+        .toolbarBackground(.visible, for: .navigationBar)
+        // Keep the sheet swipe-to-dismiss gesture available, like Files.app.
+        .interactiveDismissDisabled(false)
+        .iOSLargeSheet()
     }
 }
 #endif

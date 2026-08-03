@@ -792,25 +792,11 @@ private struct MedicalRecordDetailView: View {
         }
 #if os(iOS)
         .sheet(item: $previewAttachment) { attachment in
-            NavigationStack {
-                AttachmentPreview(url: store.medicalAttachmentURL(for: attachment))
-                    .ignoresSafeArea(edges: .bottom)
-                    .navigationTitle(attachment.fileName)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button {
-                                previewAttachment = nil
-                            } label: {
-                                Image(systemName: "xmark")
-                            }
-                            .accessibilityLabel("关闭预览")
-                        }
-                    }
-            }
-            .toolbarBackground(.visible, for: .navigationBar)
-            .interactiveDismissDisabled(false)
-            .iOSLargeSheet()
+            AttachmentPreviewSheet(
+                attachment: attachment,
+                url: store.medicalAttachmentURL(for: attachment),
+                onDismiss: { previewAttachment = nil }
+            )
         }
 #endif
         .alert("无法打开附件", isPresented: $showingAttachmentError) {

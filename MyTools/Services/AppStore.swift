@@ -90,6 +90,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var cards: [BankCard]
     @Published private(set) var stocks: [StockHolding]
     @Published private(set) var currencyExchangeRecords: [CurrencyExchangeRecord]
+    @Published private(set) var currencyRateAlerts: [CurrencyRateAlert]
+    @Published private(set) var stockPriceAlerts: [StockPriceAlert]
     @Published private(set) var medicalRecords: [MedicalRecord]
     @Published private(set) var hospitalProfiles: [HospitalProfile]
     @Published private(set) var secretItems: [SecretItem]
@@ -122,6 +124,8 @@ final class AppStore: ObservableObject {
         cards = []
         stocks = []
         currencyExchangeRecords = []
+        currencyRateAlerts = []
+        stockPriceAlerts = []
         medicalRecords = []
         hospitalProfiles = []
         secretItems = []
@@ -162,6 +166,7 @@ final class AppStore: ObservableObject {
         isVaultLoadFailurePresented = !snapshot.canPersistVault
         didLogPersistenceBlocked = false
         isInitialDataLoaded = true
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
         let loadSummary = "Local vault loaded from \(snapshot.vaultSource): \(snapshot.vaultByteCount) bytes; read \(snapshot.readDurationMilliseconds) ms, decode \(snapshot.decodeDurationMilliseconds) ms, total \(snapshot.loadDurationMilliseconds) ms"
         startupLogger.info("\(loadSummary, privacy: .public)")
         DiagnosticLogger.shared.log(.startup, loadSummary)
@@ -181,6 +186,8 @@ final class AppStore: ObservableObject {
         cards = vault.cards
         stocks = vault.stocks
         currencyExchangeRecords = vault.currencyExchangeRecords
+        currencyRateAlerts = vault.currencyRateAlerts
+        stockPriceAlerts = vault.stockPriceAlerts
         medicalRecords = vault.medicalRecords
         hospitalProfiles = vault.hospitalProfiles
     }
@@ -279,6 +286,56 @@ final class AppStore: ObservableObject {
             currencyExchangeRecords.append(record)
         }
         persist()
+    }
+
+    func upsertCurrencyRateAlert(_ alert: CurrencyRateAlert) {
+        guard alert.amount > 0, alert.threshold > 0 else { return }
+        if let index = currencyRateAlerts.firstIndex(where: { $0.id == alert.id }) {
+            currencyRateAlerts[index] = alert
+        } else {
+            currencyRateAlerts.append(alert)
+        }
+        AppNotificationService.shared.clearState(for: alert.id)
+        persist()
+    }
+
+    func deleteCurrencyRateAlerts(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        currencyRateAlerts.removeAll { alert in
+            if ids.contains(alert.id) {
+                AppNotificationService.shared.clearState(for: alert.id)
+                return true
+            }
+            return false
+        }
+        persist()
+    }
+
+    func upsertStockPriceAlert(_ alert: StockPriceAlert) {
+        guard let stockID = alert.stockID,
+              stocks.contains(where: { $0.id == stockID }),
+              alert.threshold > 0 else { return }
+        if let index = stockPriceAlerts.firstIndex(where: { $0.id == alert.id }) {
+            stockPriceAlerts[index] = alert
+        } else {
+            stockPriceAlerts.append(alert)
+        }
+        AppNotificationService.shared.clearState(for: alert.id)
+        persist()
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
+    }
+
+    func deleteStockPriceAlerts(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        stockPriceAlerts.removeAll { alert in
+            if ids.contains(alert.id) {
+                AppNotificationService.shared.clearState(for: alert.id)
+                return true
+            }
+            return false
+        }
+        persist()
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
     }
 
     func deleteCurrencyExchangeRecords(ids: Set<UUID>) {
@@ -588,11 +645,17 @@ final class AppStore: ObservableObject {
 
     func deleteStocks(ids: Set<UUID>) {
         stocks.removeAll { ids.contains($0.id) }
+        stockPriceAlerts.removeAll { alert in
+            guard let stockID = alert.stockID, ids.contains(stockID) else { return false }
+            AppNotificationService.shared.clearState(for: alert.id)
+            return true
+        }
         for id in ids {
             quoteErrors[id] = nil
             quoteSources[id] = nil
         }
         persist()
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
     }
 
     func upsertStockTransaction(_ transaction: StockTransaction, in stockID: UUID) -> Bool {
@@ -634,35 +697,53 @@ final class AppStore: ObservableObject {
         persist()
     }
 
-    func refreshStockQuotes() async {
+    func refreshStockQuotes(forcedMarkets: Set<StockMarket> = []) async {
         guard !isRefreshingQuotes else { return }
+        guard !Task.isCancelled else { return }
         isRefreshingQuotes = true
         quoteRefreshError = nil
         defer { isRefreshingQuotes = false }
 
-        refreshExchangeRateIfNeeded()
-        let stockSnapshot = stocks
+        let refreshDate = Date()
+        let stockSnapshot = stocks.filter { stock in
+            guard stock.hasConfiguredSymbol else { return false }
+            return forcedMarkets.contains(stock.market)
+                || StockMarketTradingCalendar.isOpen(stock.market, at: refreshDate)
+        }
         guard !stockSnapshot.isEmpty else { return }
+        if !Task.isCancelled {
+            refreshExchangeRateIfNeeded()
+        }
 
         var failures: [UUID: String] = [:]
         var successCount = 0
         let refreshedQuotes = await quoteService.fetchQuotes(for: stockSnapshot)
+        guard !Task.isCancelled else { return }
 
         let stockIndices = Dictionary(
             uniqueKeysWithValues: stocks.indices.map { (stocks[$0].id, $0) }
         )
+        var didChangePersistedQuote = false
         for stock in stockSnapshot {
             guard let quote = refreshedQuotes[stock.id] else {
                 failures[stock.id] = "行情服务暂时不可用"
                 continue
             }
             guard let index = stockIndices[stock.id] else { continue }
+            let previous = stocks[index]
             stocks[index].symbol = quote.symbol
             stocks[index].quoteName = quote.name
             stocks[index].latestPrice = quote.latestPrice
             stocks[index].previousClose = quote.previousClose
             stocks[index].changePercent = quote.changePercent
             stocks[index].lastQuoteAt = quote.updatedAt
+            if previous.symbol != quote.symbol
+                || previous.quoteName != quote.name
+                || previous.latestPrice != quote.latestPrice
+                || previous.previousClose != quote.previousClose
+                || previous.changePercent != quote.changePercent {
+                didChangePersistedQuote = true
+            }
             quoteSources[stock.id] = quote.source
             successCount += 1
         }
@@ -678,13 +759,18 @@ final class AppStore: ObservableObject {
                 level: .warning
             )
         }
-        if successCount > 0 { persist() }
-        if successCount > 0 { lastStockRefreshAt = Date() }
+        if successCount > 0 {
+            if didChangePersistedQuote {
+                persist()
+            }
+            lastStockRefreshAt = Date()
+            evaluateStockPriceAlerts()
+        }
     }
 
     func refreshExchangeRateIfNeeded() {
         if let lastExchangeRateRequestAt {
-            let retryInterval: TimeInterval = exchangeRateError == nil ? 30 * 60 : 5 * 60
+            let retryInterval: TimeInterval = exchangeRateError == nil ? 60 * 60 : 5 * 60
             guard Date().timeIntervalSince(lastExchangeRateRequestAt) >= retryInterval else { return }
         }
         refreshExchangeRates()
@@ -714,6 +800,7 @@ final class AppStore: ObservableObject {
                 self.usdRenminbiBuyingRate = usdRate
                 self.exchangeRateUpdatedAt = rates.map(\.updatedAt).max()
                 self.exchangeRateError = nil
+                self.evaluateCurrencyRateAlerts()
                 self.defaults.set(
                     NSDecimalNumber(decimal: usdRate).stringValue,
                     forKey: AppStoreDefaultsKey.usdBuyingRate
@@ -801,6 +888,8 @@ final class AppStore: ObservableObject {
         persistenceError = nil
         quoteErrors = [:]
         quoteSources = [:]
+        AppNotificationService.shared.clearAllStates()
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
     }
 
     func flushPendingPersistence() async {
@@ -852,7 +941,53 @@ final class AppStore: ObservableObject {
             stocks: stocks,
             currencyExchangeRecords: currencyExchangeRecords,
             medicalRecords: medicalRecords,
-            hospitalProfiles: hospitalProfiles
+            hospitalProfiles: hospitalProfiles,
+            currencyRateAlerts: currencyRateAlerts,
+            stockPriceAlerts: stockPriceAlerts
         )
+    }
+
+    private func evaluateCurrencyRateAlerts() {
+        for alert in currencyRateAlerts {
+            guard alert.isEnabled else {
+                _ = AppNotificationService.shared.shouldSend(for: alert.id, condition: false)
+                continue
+            }
+            guard let value = alert.convertedValue(using: renminbiBuyingRates) else { continue }
+            let condition = alert.direction.matches(value, threshold: alert.threshold)
+            guard AppNotificationService.shared.shouldSend(for: alert.id, condition: condition) else {
+                continue
+            }
+            let valueText = CurrencyExchangeValueFormatter.amount(value, currency: .cny)
+            let thresholdText = CurrencyExchangeValueFormatter.amount(alert.threshold, currency: .cny)
+            AppNotificationService.shared.send(
+                title: "换汇价格提醒",
+                body: "\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) 约合 \(valueText)，已\(alert.direction.title) \(thresholdText)。",
+                ruleID: alert.id
+            )
+        }
+    }
+
+    private func evaluateStockPriceAlerts() {
+        for alert in stockPriceAlerts {
+            guard alert.isEnabled else {
+                _ = AppNotificationService.shared.shouldSend(for: alert.id, condition: false)
+                continue
+            }
+            guard let stockID = alert.stockID,
+                  let stock = stocks.first(where: { $0.id == stockID }),
+                  let price = stock.latestPrice else { continue }
+            let condition = alert.direction.matches(price, threshold: alert.threshold)
+            guard AppNotificationService.shared.shouldSend(for: alert.id, condition: condition) else {
+                continue
+            }
+            let priceText = StockValueFormatter.price(price, currencyCode: stock.market.currencyCode)
+            let thresholdText = StockValueFormatter.price(alert.threshold, currencyCode: stock.market.currencyCode)
+            AppNotificationService.shared.send(
+                title: "股票价格提醒",
+                body: "\(stock.displayName)（\(stock.symbol)）当前 \(priceText)，已\(alert.direction.title) \(thresholdText)。",
+                ruleID: alert.id
+            )
+        }
     }
 }

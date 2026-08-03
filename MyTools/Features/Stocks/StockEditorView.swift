@@ -5,6 +5,7 @@ private final class StockEditorDraft: ObservableObject {
     @Published var symbolText: String
     @Published var nameText: String
     @Published var initialTradedAt = Date()
+    @Published var includesInitialPurchase = true
     @Published var quantityText = ""
     @Published var unitPriceText = ""
     @Published var feesText = ""
@@ -63,6 +64,17 @@ struct StockEditorView: View {
                 }
 
                 if isNew {
+                    Section("新增方式") {
+                        Toggle("记录首次买入", isOn: $draft.includesInitialPurchase)
+                        if !draft.includesInitialPurchase {
+                            Text("仅保存股票代码和行情信息，不计入持仓。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if isNew, draft.includesInitialPurchase {
                     Section("首次买入") {
                         DatePicker(
                             "购买时间：",
@@ -141,7 +153,7 @@ struct StockEditorView: View {
             return
         }
 
-        if isNew {
+        if isNew, draft.includesInitialPurchase {
             guard let quantity = DecimalTextParser.decimal(from: draft.quantityText), quantity > 0,
                   let unitPrice = DecimalTextParser.decimal(from: draft.unitPriceText), unitPrice > 0 else {
                 reportError("购买股数和每股价格必须大于零。")
@@ -171,7 +183,6 @@ struct StockEditorView: View {
         }
 
         store.upsertStock(stock)
-        Task { await store.refreshStockQuotes() }
         dismiss()
     }
 

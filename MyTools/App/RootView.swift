@@ -42,7 +42,12 @@ struct RootView: View {
         } message: {
             Text(store.persistenceError ?? "请从“我的－设置－调试”导出诊断日志。")
         }
+        .onAppear {
+            StockRefreshCoordinator.shared.attach(store: store)
+            StockRefreshCoordinator.shared.update(scenePhase: scenePhase)
+        }
         .onChange(of: scenePhase) { _, phase in
+            StockRefreshCoordinator.shared.update(scenePhase: phase)
             if phase == .background {
                 DiagnosticLogger.shared.markEnteredBackground()
                 if auth.isAdmin { auth.lock() }

@@ -67,6 +67,41 @@ enum StockMarketTradingCalendar {
         }
     }
 
+    static func sessionEnded(
+        for market: StockMarket,
+        between startDate: Date,
+        and endDate: Date
+    ) -> Bool {
+        guard endDate > startDate else { return false }
+
+        switch market {
+        case .aShare:
+            return sessionEnded(
+                between: startDate,
+                and: endDate,
+                timeZone: "Asia/Shanghai",
+                sessions: [(570, 690), (780, 900)],
+                holiday: isAShareHoliday
+            )
+        case .hongKong:
+            return sessionEnded(
+                between: startDate,
+                and: endDate,
+                timeZone: "Asia/Hong_Kong",
+                sessions: [(570, 720), (780, 960)],
+                holiday: isHongKongHoliday
+            )
+        case .unitedStates:
+            return sessionEnded(
+                between: startDate,
+                and: endDate,
+                timeZone: "America/New_York",
+                sessions: [(570, 960)],
+                holiday: isUnitedStatesHoliday
+            )
+        }
+    }
+
     private static func isOpen(
         _ date: Date,
         timeZone identifier: String,
@@ -84,6 +119,40 @@ enum StockMarketTradingCalendar {
         guard !holiday(date, calendar) else { return false }
         let localMinutes = hour * 60 + minute
         return sessions.contains { localMinutes >= $0.start && localMinutes < $0.end }
+    }
+
+    private static func sessionEnded(
+        between startDate: Date,
+        and endDate: Date,
+        timeZone identifier: String,
+        sessions: [(start: Int, end: Int)],
+        holiday: (Date, Calendar) -> Bool
+    ) -> Bool {
+        let calendar = calendar(timeZone: identifier)
+        var currentDay = calendar.startOfDay(for: startDate)
+        let finalDay = calendar.startOfDay(for: endDate)
+
+        while currentDay <= finalDay {
+            let weekday = calendar.component(.weekday, from: currentDay)
+            if (2...6).contains(weekday), !holiday(currentDay, calendar) {
+                for session in sessions {
+                    guard let sessionEnd = calendar.date(
+                        byAdding: .minute,
+                        value: session.end,
+                        to: currentDay
+                    ) else { continue }
+                    if sessionEnd > startDate, sessionEnd <= endDate {
+                        return true
+                    }
+                }
+            }
+
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else {
+                break
+            }
+            currentDay = nextDay
+        }
+        return false
     }
 
     private static func calendar(timeZone identifier: String) -> Calendar {
@@ -434,6 +503,10 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var hasPurchaseRecord: Bool {
         transactions.contains { $0.type == .buy }
+    }
+
+    var hasConfiguredSymbol: Bool {
+        !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var totalBuyCost: Decimal {

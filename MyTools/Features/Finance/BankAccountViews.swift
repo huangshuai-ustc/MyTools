@@ -149,7 +149,7 @@ struct AccountDetailView: View {
 
             if !account.note.isEmpty {
                 Section("其他") {
-                    optionalDetail("备注", account.note)
+                    optionalDetail("备注", account.note, alignment: .leading)
                 }
             }
         }
@@ -312,10 +312,10 @@ struct AccountDetailView: View {
             || !account.residentialAddressChinese.isEmpty
             || !account.residentialAddressEnglish.isEmpty {
             Section("地址信息") {
-                optionalDetail("通讯地址（中文）", account.correspondenceAddressChinese)
-                optionalDetail("通讯地址（英文）", account.correspondenceAddressEnglish)
-                optionalDetail("住宅地址（中文）", account.residentialAddressChinese)
-                optionalDetail("住宅地址（英文）", account.residentialAddressEnglish)
+                optionalDetail("通讯地址（中文）", account.correspondenceAddressChinese, alignment: .leading)
+                optionalDetail("通讯地址（英文）", account.correspondenceAddressEnglish, alignment: .leading)
+                optionalDetail("住宅地址（中文）", account.residentialAddressChinese, alignment: .leading)
+                optionalDetail("住宅地址（英文）", account.residentialAddressEnglish, alignment: .leading)
             }
         }
     }
@@ -328,11 +328,11 @@ struct AccountDetailView: View {
             || !account.iban.isEmpty
             || !account.remittanceInstructions.isEmpty {
             Section("汇入汇款资料") {
-                optionalDetail("收款银行正式名称", account.remittanceBankName)
-                optionalDetail("收款银行地址", account.remittanceBankAddress)
+                optionalDetail("收款银行正式名称", account.remittanceBankName, alignment: .leading)
+                optionalDetail("收款银行地址", account.remittanceBankAddress, alignment: .leading)
                 optionalDetail("SWIFT Code", account.swift)
                 optionalDetail("IBAN", account.iban)
-                optionalDetail("汇款说明", account.remittanceInstructions)
+                optionalDetail("汇款说明", account.remittanceInstructions, alignment: .leading)
             }
         }
     }
@@ -367,8 +367,14 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func optionalDetail(_ title: String, _ value: String) -> some View {
-        if !value.isEmpty { CopyableValueRow(title: title, value: value) }
+    private func optionalDetail(
+        _ title: String,
+        _ value: String,
+        alignment: TextAlignment = .trailing
+    ) -> some View {
+        if !value.isEmpty {
+            CopyableValueRow(title: title, value: value, alignment: alignment)
+        }
     }
 }
 

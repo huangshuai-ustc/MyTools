@@ -180,6 +180,8 @@ struct StocksView: View {
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var didAutoSelectMarket = false
+    @State private var didRefreshOnCurrentAppearance = false
+    @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
     @State private var showsNoPositionStocks = false
     @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
@@ -192,12 +194,12 @@ struct StocksView: View {
         )
     }
 
-    private var stocksWithPurchaseRecords: [StockHolding] {
-        store.stocks.filter(\.hasPurchaseRecord)
+    private var configuredStocks: [StockHolding] {
+        store.stocks.filter(\.hasConfiguredSymbol)
     }
 
     private var availableMarketFilters: [StockMarketFilter] {
-        let availableMarkets = Set(stocksWithPurchaseRecords.map(\.market))
+        let availableMarkets = Set(configuredStocks.map(\.market))
         let marketFilters = StockMarketFilter.marketCases.filter { filter in
             filter.market.map(availableMarkets.contains) ?? false
         }
@@ -205,7 +207,7 @@ struct StocksView: View {
     }
 
     private var stocksInSelectedMarket: [StockHolding] {
-        marketFilter.filtered(stocksWithPurchaseRecords)
+        marketFilter.filtered(configuredStocks)
     }
 
     private var searchFilteredStocks: [StockHolding] {
@@ -313,11 +315,19 @@ struct StocksView: View {
                 if store.isRefreshingQuotes {
                     Label("正在刷新行情", systemImage: "arrow.triangle.2.circlepath")
                         .foregroundStyle(.secondary)
-                } else if let error = store.quoteRefreshError {
+                }
+                if let error = store.quoteRefreshError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
-                } else if let updatedAt = store.lastStockRefreshAt {
-                    LabeledContent("最近刷新", value: AppDateFormatter.string(from: updatedAt))
+                }
+                LabeledContent("最新数据获取时间") {
+                    if let updatedAt = store.lastStockRefreshAt {
+                        Text(AppDateFormatter.dateTimeString(from: updatedAt))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("暂无")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } footer: {
                 Text("行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
@@ -373,23 +383,24 @@ struct StocksView: View {
             }
         }
         .onAppear {
+            StockRefreshCoordinator.shared.setStocksPageVisible(true)
             autoSelectMarketIfNeeded()
+            refreshWhenEntering()
         }
         .onChange(of: store.isInitialDataLoaded) { _, isLoaded in
             if isLoaded {
+                StockRefreshCoordinator.shared.setStocksPageVisible(true)
                 autoSelectMarketIfNeeded()
-            }
-        }
-        .task {
-            await store.refreshStockQuotes()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(300))
-                guard !Task.isCancelled else { return }
-                await store.refreshStockQuotes()
+                refreshWhenEntering()
             }
         }
         .onDisappear {
+            StockRefreshCoordinator.shared.setStocksPageVisible(false)
+            enteringRefreshTask?.cancel()
+            enteringRefreshTask = nil
             showsNoPositionStocks = false
+            didAutoSelectMarket = false
+            didRefreshOnCurrentAppearance = false
         }
     }
 
@@ -423,7 +434,7 @@ struct StocksView: View {
     }
 
     private var emptyStocksTitle: String {
-        if stocksWithPurchaseRecords.isEmpty {
+        if configuredStocks.isEmpty {
             return "暂无股票"
         }
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,7 +442,7 @@ struct StocksView: View {
     }
 
     private var emptyStocksSystemImage: String {
-        stocksWithPurchaseRecords.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
+        configuredStocks.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
     }
 
     private func deleteStocks(at offsets: IndexSet, from stocks: [StockHolding]) {
@@ -443,7 +454,7 @@ struct StocksView: View {
         guard store.isInitialDataLoaded, !didAutoSelectMarket else { return }
 
         let availableMarkets = Set(
-            stocksWithPurchaseRecords
+            configuredStocks
                 .filter { $0.currentShares > 0 }
                 .map(\.market)
         )
@@ -457,6 +468,15 @@ struct StocksView: View {
             marketFilter = .all
         }
         didAutoSelectMarket = true
+    }
+
+    private func refreshWhenEntering() {
+        guard store.isInitialDataLoaded, !didRefreshOnCurrentAppearance else { return }
+        didRefreshOnCurrentAppearance = true
+        enteringRefreshTask?.cancel()
+        enteringRefreshTask = Task { @MainActor in
+            await store.refreshStockQuotes()
+        }
     }
 }
 
@@ -581,7 +601,7 @@ private struct RenminbiPortfolioSummaryRow: View {
             lines.append("\(missingCurrencies.map(\.title).joined(separator: "、"))牌价待同步。")
         }
         if let updatedAt = store.exchangeRateUpdatedAt {
-            lines.append("牌价时间：\(AppDateFormatter.string(from: updatedAt))")
+            lines.append("牌价时间：\(AppDateFormatter.dateTimeString(from: updatedAt))")
         }
         if let error = store.exchangeRateError, !missingCurrencies.isEmpty {
             lines.append(error)
@@ -904,6 +924,9 @@ private struct StockDetailView: View {
             Button("确定", role: .cancel) {}
         } message: {
             Text(transactionError)
+        }
+        .onAppear {
+            StockRefreshCoordinator.shared.setStocksPageVisible(false)
         }
     }
 

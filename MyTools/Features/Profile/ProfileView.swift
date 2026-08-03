@@ -230,6 +230,11 @@ private struct ProfileSettingsView: View {
 
             Section("功能设置") {
                 NavigationLink {
+                    NotificationSettingsView()
+                } label: {
+                    Label("通知与提醒", systemImage: "bell.badge")
+                }
+                NavigationLink {
                     HomeFeatureSettingsView()
                 } label: {
                     Label("首页功能", systemImage: "switch.2")

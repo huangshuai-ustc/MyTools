@@ -49,6 +49,10 @@
 		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
 		A70000000000000000000001 /* Secret.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000001 /* Secret.swift */; };
 		A70000000000000000000003 /* SecretVaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000003 /* SecretVaultView.swift */; };
+		A80000000000000000000001 /* NotificationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000001 /* NotificationRule.swift */; };
+		A80000000000000000000002 /* AppNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000002 /* AppNotificationService.swift */; };
+		A80000000000000000000003 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000003 /* NotificationSettingsView.swift */; };
+		A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000004 /* StockRefreshCoordinator.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -96,6 +100,10 @@
 		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		B70000000000000000000001 /* Secret.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Secret.swift; sourceTree = "<group>"; };
 		B70000000000000000000003 /* SecretVaultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretVaultView.swift; sourceTree = "<group>"; };
+		B80000000000000000000001 /* NotificationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationRule.swift; sourceTree = "<group>"; };
+		B80000000000000000000002 /* AppNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotificationService.swift; sourceTree = "<group>"; };
+		B80000000000000000000003 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
+		B80000000000000000000004 /* StockRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockRefreshCoordinator.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -131,6 +139,7 @@
 				B20000000000000000000001 /* CurrencyExchange.swift */,
 				B40000000000000000000001 /* HealthRecord.swift */,
 				B70000000000000000000001 /* Secret.swift */,
+				B80000000000000000000001 /* NotificationRule.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -146,6 +155,8 @@
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 				B40000000000000000000002 /* AttachmentStore.swift */,
 				B60000000000000000000001 /* DiagnosticLogger.swift */,
+				B80000000000000000000002 /* AppNotificationService.swift */,
+				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -225,6 +236,7 @@
 			children = (
 				B00000000000000000000009 /* ProfileView.swift */,
 				B60000000000000000000002 /* DiagnosticsView.swift */,
+				B80000000000000000000003 /* NotificationSettingsView.swift */,
 			);
 			path = Profile;
 			sourceTree = "<group>";
@@ -371,6 +383,10 @@
 				A60000000000000000000002 /* DiagnosticsView.swift in Sources */,
 				A70000000000000000000001 /* Secret.swift in Sources */,
 				A70000000000000000000003 /* SecretVaultView.swift in Sources */,
+				A80000000000000000000001 /* NotificationRule.swift in Sources */,
+				A80000000000000000000002 /* AppNotificationService.swift in Sources */,
+				A80000000000000000000003 /* NotificationSettingsView.swift in Sources */,
+				A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
