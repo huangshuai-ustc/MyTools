@@ -218,7 +218,7 @@ private struct ProfileSettingsView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
 
     private var orderedModuleSettings: [ToolModule] {
-        moduleSettings.orderedModules.filter(\.hasSettings)
+        moduleSettings.orderedModules.filter { $0.hasSettings && moduleSettings.isVisible($0) }
     }
 
     var body: some View {

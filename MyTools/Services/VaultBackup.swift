@@ -58,10 +58,12 @@ extension UTType {
 struct VaultBackupPayload: Codable, @unchecked Sendable {
     var vault: VaultData
     var secrets: [SecretItem]
+    var includedModules: Set<ToolModule>
 
-    init(vault: VaultData, secrets: [SecretItem] = []) {
+    init(vault: VaultData, secrets: [SecretItem] = [], includedModules: Set<ToolModule> = Set(ToolModule.allCases)) {
         self.vault = vault
         self.secrets = secrets
+        self.includedModules = includedModules
     }
 }
 
@@ -82,13 +84,16 @@ enum VaultBackupCrypto {
     static func makeBackup(
         from vault: VaultData,
         secrets: [SecretItem] = [],
+        includedModules: Set<ToolModule> = Set(ToolModule.allCases),
         password: String
     ) throws -> Data {
         guard password.count >= 8 else { throw VaultBackupError.invalidPassword }
 
         let salt = randomBytes(count: saltLength)
         let key = try deriveKey(password: password, salt: salt)
-        let payload = try JSONEncoder().encode(VaultBackupPayload(vault: vault, secrets: secrets))
+        let payload = try JSONEncoder().encode(
+            VaultBackupPayload(vault: vault, secrets: secrets, includedModules: includedModules)
+        )
         let sealed = try AES.GCM.seal(payload, using: key)
         guard let combined = sealed.combined else { throw VaultBackupError.invalidFile }
 

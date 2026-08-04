@@ -18,6 +18,9 @@ struct ToolBoxApp: App {
         _moduleSettings = StateObject(wrappedValue: moduleSettings)
         let store = AppStore(moduleSettings: moduleSettings)
         _store = StateObject(wrappedValue: store)
+        moduleSettings.setVisibilityChangeHandler { [weak store] module, isVisible in
+            store?.moduleVisibilityChanged(module, isVisible: isVisible)
+        }
         StockRefreshCoordinator.shared.attach(store: store, moduleSettings: moduleSettings)
     }
 

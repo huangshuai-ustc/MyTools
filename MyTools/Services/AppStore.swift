@@ -119,6 +119,7 @@ final class AppStore: ObservableObject {
     private let defaults = UserDefaults.standard
     private weak var moduleSettings: ToolModuleSettings?
     private var lastExchangeRateRequestAt: Date?
+    private var exchangeRateTask: Task<Void, Never>?
     private var isRestoringBackup = false
     private var canPersistVault = true
     private var didLogPersistenceBlocked = false
@@ -155,6 +156,24 @@ final class AppStore: ObservableObject {
     func attach(moduleSettings: ToolModuleSettings) {
         self.moduleSettings = moduleSettings
     }
+    func moduleVisibilityChanged(_ module: ToolModule, isVisible: Bool) {
+        guard !isVisible else {
+            if module == .myStocks {
+                StockRefreshCoordinator.shared.refreshEligibilityChanged()
+            } else if module == .currencyExchange {
+                refreshExchangeRateIfNeeded()
+            }
+            return
+        }
+
+        if module == .currencyExchange {
+            exchangeRateTask?.cancel()
+            exchangeRateTask = nil
+            lastExchangeRateRequestAt = nil
+            isRefreshingExchangeRate = false
+        }
+        StockRefreshCoordinator.shared.refreshEligibilityChanged()
+    }
 
     private func isModuleVisible(_ module: ToolModule) -> Bool {
         moduleSettings?.isVisible(module) ?? true
@@ -176,8 +195,10 @@ final class AppStore: ObservableObject {
         applyVault(snapshot.vault)
         secretItems = snapshot.secretItems
         canPersistVault = snapshot.canPersistVault
-        synchronizeLoadedInpatientDailyRecords()
-        synchronizeHospitalProfilesWithMedicalRecords()
+        if isModuleVisible(.healthRecords) {
+            synchronizeLoadedInpatientDailyRecords()
+            synchronizeHospitalProfilesWithMedicalRecords()
+        }
         isVaultLoadFailurePresented = !snapshot.canPersistVault
         didLogPersistenceBlocked = false
         isInitialDataLoaded = true
@@ -188,6 +209,7 @@ final class AppStore: ObservableObject {
     }
 
     private func applyCachedRatesSnapshot(_ snapshot: AppStoreCachedRatesSnapshot) {
+        guard isModuleVisible(.currencyExchange) else { return }
         usdRenminbiBuyingRate = snapshot.usdRenminbiBuyingRate
         renminbiBuyingRates = snapshot.renminbiBuyingRates
         renminbiSellingRates = snapshot.renminbiSellingRates
@@ -739,6 +761,7 @@ final class AppStore: ObservableObject {
         var successCount = 0
         let refreshedQuotes = await quoteService.fetchQuotes(for: stockSnapshot)
         guard !Task.isCancelled else { return }
+        guard isModuleVisible(.myStocks) else { return }
 
         let stockIndices = Dictionary(
             uniqueKeysWithValues: stocks.indices.map { (stocks[$0].id, $0) }
@@ -831,6 +854,7 @@ final class AppStore: ObservableObject {
     }
 
     func refreshExchangeRateIfNeeded() {
+        guard isModuleVisible(.currencyExchange) else { return }
         if let lastExchangeRateRequestAt {
             let retryInterval: TimeInterval = exchangeRateError == nil ? 60 * 60 : 5 * 60
             guard Date().timeIntervalSince(lastExchangeRateRequestAt) >= retryInterval else { return }
@@ -843,11 +867,12 @@ final class AppStore: ObservableObject {
         guard !isRefreshingExchangeRate else { return }
         isRefreshingExchangeRate = true
         lastExchangeRateRequestAt = Date()
-        Task { [weak self] in
+        exchangeRateTask = Task { [weak self] in
             guard let self else { return }
             defer { self.isRefreshingExchangeRate = false }
             do {
                 let rates = try await self.exchangeRateService.fetchRates()
+                guard self.isModuleVisible(.currencyExchange), !Task.isCancelled else { return }
                 var buyingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
                 var sellingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
                 for rate in rates {
@@ -885,6 +910,7 @@ final class AppStore: ObservableObject {
                     forKey: AppStoreDefaultsKey.sellingRates
                 )
             } catch {
+                guard self.isModuleVisible(.currencyExchange), !Task.isCancelled else { return }
                 self.exchangeRateError = error.localizedDescription
                 DiagnosticLogger.logError(
                     .exchangeRate,
@@ -896,8 +922,27 @@ final class AppStore: ObservableObject {
     }
 
     func makeBackupDocument(password: String) async throws -> VaultBackupDocument {
-        let snapshot = currentVaultData()
-        let secretSnapshot = secretItems
+        let includedModules = Set(
+            ToolModule.allCases.filter { isModuleVisible($0) }
+        )
+        var snapshot = currentVaultData()
+        if !includedModules.contains(.personalFinance) {
+            snapshot.accounts = []
+            snapshot.cards = []
+        }
+        if !includedModules.contains(.myStocks) {
+            snapshot.stocks = []
+            snapshot.stockPriceAlerts = []
+        }
+        if !includedModules.contains(.currencyExchange) {
+            snapshot.currencyExchangeRecords = []
+            snapshot.currencyRateAlerts = []
+        }
+        if !includedModules.contains(.healthRecords) {
+            snapshot.medicalRecords = []
+            snapshot.hospitalProfiles = []
+        }
+        let secretSnapshot = includedModules.contains(.secrets) ? secretItems : []
         let data: Data
         do {
             data = try await Task.detached(priority: .userInitiated) {
@@ -909,6 +954,7 @@ final class AppStore: ObservableObject {
                 return try VaultBackupCrypto.makeBackup(
                     from: vault,
                     secrets: secrets,
+                    includedModules: includedModules,
                     password: password
                 )
             }.value
@@ -927,31 +973,52 @@ final class AppStore: ObservableObject {
             restoredPayload = try await Task.detached(priority: .userInitiated) {
                 let attachmentStore = AttachmentStore()
                 var payload = try VaultBackupCrypto.restorePayload(from: data, password: password)
-                payload.vault.medicalRecords = try attachmentStore.restoreAttachments(
-                    in: payload.vault.medicalRecords
-                )
-                payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
-                payload.secrets = try attachmentStore.restoreAttachments(in: payload.secrets)
+                if payload.includedModules.contains(.healthRecords) {
+                    payload.vault.medicalRecords = try attachmentStore.restoreAttachments(
+                        in: payload.vault.medicalRecords
+                    )
+                }
+                if payload.includedModules.contains(.personalFinance) {
+                    payload.vault.cards = try attachmentStore.restoreAttachments(in: payload.vault.cards)
+                }
+                if payload.includedModules.contains(.secrets) {
+                    payload.secrets = try attachmentStore.restoreAttachments(in: payload.secrets)
+                }
                 return payload
-            }.value
-            try await Task.detached(priority: .userInitiated) { [persistence] in
-                try persistence.saveImmediately(
-                    restoredPayload.vault,
-                    secrets: restoredPayload.secrets
-                )
             }.value
         } catch {
             DiagnosticLogger.logError(.backup, operation: "导入加密备份失败", error: error)
             throw error
         }
-        applyVault(restoredPayload.vault)
-        secretItems = restoredPayload.secrets
+        let mergedPayload = mergeBackupPayload(restoredPayload)
+        do {
+            try await Task.detached(priority: .userInitiated) { [persistence] in
+                try persistence.saveImmediately(
+                    mergedPayload.vault,
+                    secrets: mergedPayload.secrets
+                )
+            }.value
+        } catch {
+            DiagnosticLogger.logError(.backup, operation: "保存增量备份导入结果失败", error: error)
+            throw error
+        }
+        applyVault(mergedPayload.vault)
+        secretItems = mergedPayload.secrets
         canPersistVault = true
         didLogPersistenceBlocked = false
         persistenceError = nil
-        quoteErrors = [:]
-        quoteSources = [:]
-        AppNotificationService.shared.clearAllStates()
+        if restoredPayload.includedModules.contains(.myStocks) {
+            quoteErrors = [:]
+            quoteSources = [:]
+            for alert in restoredPayload.vault.stockPriceAlerts {
+                AppNotificationService.shared.clearState(for: alert.id)
+            }
+        }
+        if restoredPayload.includedModules.contains(.currencyExchange) {
+            for alert in restoredPayload.vault.currencyRateAlerts {
+                AppNotificationService.shared.clearState(for: alert.id)
+            }
+        }
         StockRefreshCoordinator.shared.refreshEligibilityChanged()
     }
 
@@ -967,6 +1034,60 @@ final class AppStore: ObservableObject {
 
     func dismissPersistenceError() {
         persistenceError = nil
+    }
+
+    private func mergeBackupPayload(_ imported: VaultBackupPayload) -> VaultBackupPayload {
+        let modules = imported.includedModules
+        var merged = currentVaultData()
+        if modules.contains(.personalFinance) {
+            merged.accounts = mergeByID(local: accounts, imported: imported.vault.accounts)
+            merged.cards = mergeByID(local: cards, imported: imported.vault.cards)
+        }
+        if modules.contains(.myStocks) {
+            merged.stocks = mergeByID(local: stocks, imported: imported.vault.stocks)
+            merged.stockPriceAlerts = mergeByID(
+                local: stockPriceAlerts,
+                imported: imported.vault.stockPriceAlerts
+            )
+        }
+        if modules.contains(.currencyExchange) {
+            merged.currencyExchangeRecords = mergeByID(
+                local: currencyExchangeRecords,
+                imported: imported.vault.currencyExchangeRecords
+            )
+            merged.currencyRateAlerts = mergeByID(
+                local: currencyRateAlerts,
+                imported: imported.vault.currencyRateAlerts
+            )
+        }
+        if modules.contains(.healthRecords) {
+            merged.medicalRecords = mergeByID(local: medicalRecords, imported: imported.vault.medicalRecords)
+            merged.hospitalProfiles = mergeByID(local: hospitalProfiles, imported: imported.vault.hospitalProfiles)
+        }
+        let secrets = modules.contains(.secrets)
+            ? mergeByID(local: secretItems, imported: imported.secrets)
+            : secretItems
+        return VaultBackupPayload(vault: merged, secrets: secrets, includedModules: modules)
+    }
+
+    private func mergeByID<Element: Identifiable>(
+        local: [Element],
+        imported: [Element]
+    ) -> [Element] where Element.ID: Hashable {
+        var result = local
+        var indices: [Element.ID: Int] = [:]
+        for index in result.indices {
+            indices[result[index].id] = index
+        }
+        for item in imported {
+            if let index = indices[item.id] {
+                result[index] = item
+            } else {
+                indices[item.id] = result.count
+                result.append(item)
+            }
+        }
+        return result
     }
 
     func delete(at offsets: IndexSet) {

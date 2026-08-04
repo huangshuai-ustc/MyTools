@@ -53,6 +53,7 @@ struct NotificationSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if moduleSettings.isVisible(.currencyExchange) {
             Section("换汇价格提醒") {
                 if store.currencyRateAlerts.isEmpty {
                     Text("暂无换汇价格提醒")
@@ -81,7 +82,9 @@ struct NotificationSettingsView: View {
                     }
                 }
             }
+            }
 
+            if moduleSettings.isVisible(.myStocks) {
             Section("股票价格提醒") {
                 if store.stockPriceAlerts.isEmpty {
                     Text("暂无股票价格提醒")
@@ -113,6 +116,7 @@ struct NotificationSettingsView: View {
                         Label("添加股票提醒", systemImage: "plus.circle")
                     }
                 }
+            }
             }
         }
         .navigationTitle("通知与提醒")

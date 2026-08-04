@@ -87,7 +87,9 @@ final class ToolModuleSettings: ObservableObject {
 
     @Published private var visibility: [String: Bool] = [:]
     @Published private(set) var orderedModules: [ToolModule]
+    @Published private(set) var visibilityRevision = 0
     private let defaults: UserDefaults
+    private var visibilityChangeHandler: (@MainActor (ToolModule, Bool) -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -103,12 +105,16 @@ final class ToolModuleSettings: ObservableObject {
 
     func isVisible(_ module: ToolModule) -> Bool { visibility[module.rawValue] ?? true }
 
+    func setVisibilityChangeHandler(_ handler: (@MainActor (ToolModule, Bool) -> Void)?) {
+        visibilityChangeHandler = handler
+    }
+
     func setVisible(_ isVisible: Bool, for module: ToolModule) {
+        guard isVisible != self.isVisible(module) else { return }
         visibility[module.rawValue] = isVisible
         defaults.set(isVisible, forKey: module.visibilityKey)
-        if module == .myStocks {
-            StockRefreshCoordinator.shared.refreshEligibilityChanged()
-        }
+        visibilityRevision &+= 1
+        visibilityChangeHandler?(module, isVisible)
     }
 
     func moveModules(from source: IndexSet, to destination: Int) {

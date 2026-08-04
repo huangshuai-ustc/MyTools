@@ -131,6 +131,9 @@ private struct DesktopRootView: View {
         .onChange(of: moduleSettings.orderedModules) { _, _ in
             normalizeSelection()
         }
+        .onChange(of: moduleSettings.visibilityRevision) { _, _ in
+            normalizeSelection()
+        }
     }
 
     @ViewBuilder

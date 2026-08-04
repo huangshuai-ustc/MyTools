@@ -15,7 +15,7 @@ enum AppStorageKey {
     static let fontSize = "app-font-size-v2"
 }
 
-enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable {
+enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case personalFinance
     case myStocks
     case currencyExchange
