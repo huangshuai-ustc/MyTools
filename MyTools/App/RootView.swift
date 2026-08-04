@@ -43,7 +43,7 @@ struct RootView: View {
             Text(store.persistenceError ?? "请从“我的－设置－调试”导出诊断日志。")
         }
         .onAppear {
-            StockRefreshCoordinator.shared.attach(store: store)
+            StockRefreshCoordinator.shared.attach(store: store, moduleSettings: moduleSettings)
             StockRefreshCoordinator.shared.update(scenePhase: scenePhase)
         }
         .onChange(of: scenePhase) { _, phase in

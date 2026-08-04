@@ -321,7 +321,7 @@ struct StocksView: View {
                         .foregroundStyle(.orange)
                 }
                 LabeledContent("最新数据获取时间") {
-                    if let updatedAt = store.lastStockRefreshAt {
+                    if let updatedAt = store.lastStockRefreshAt(for: marketFilter.market) {
                         Text(AppDateFormatter.dateTimeString(from: updatedAt))
                             .foregroundStyle(.secondary)
                     } else {
@@ -337,7 +337,7 @@ struct StocksView: View {
         .iOSLabeledBackButton("工具箱")
         .searchable(text: $query, prompt: "搜索股票名称或代码")
         .refreshable {
-            await store.refreshStockQuotes()
+            await store.refreshStockQuotes(for: marketFilter.market)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -346,7 +346,7 @@ struct StocksView: View {
                     directionRawValue: $sortDirectionRawValue
                 )
                 Button {
-                    Task { await store.refreshStockQuotes() }
+                    Task { await store.refreshStockQuotes(for: marketFilter.market) }
                 } label: {
                     if store.isRefreshingQuotes {
                         ProgressView()
@@ -475,7 +475,7 @@ struct StocksView: View {
         didRefreshOnCurrentAppearance = true
         enteringRefreshTask?.cancel()
         enteringRefreshTask = Task { @MainActor in
-            await store.refreshStockQuotes()
+            await store.refreshStockQuotes(for: marketFilter.market)
         }
     }
 }
@@ -879,7 +879,7 @@ private struct StockDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    Task { await store.refreshStockQuotes() }
+                    Task { await store.refreshStockQuotes(for: stock?.market) }
                 } label: {
                     if store.isRefreshingQuotes {
                         ProgressView()

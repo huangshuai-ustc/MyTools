@@ -15,6 +15,33 @@ struct CurrencyExchangeView: View {
         store.currencyExchangeRecords.sorted { $0.exchangedAt > $1.exchangedAt }
     }
 
+    private var availableRecordFilters: [CurrencyExchangeRecordFilter] {
+        CurrencyExchangeRecordFilter.allCases.filter { filter in
+            filter == .all || allRecords.contains(where: filter.includes)
+        }
+    }
+
+    private var availableCurrencies: [CurrencyCode] {
+        let currencies = Set(allRecords.flatMap { [$0.soldCurrency, $0.boughtCurrency] })
+        return CurrencyCode.selectableCases.filter(currencies.contains)
+    }
+
+    private var availablePairedCurrencies: [CurrencyCode] {
+        guard let primaryCurrencyFilter else { return [] }
+        let pairedCurrencies = Set(allRecords.compactMap { record -> CurrencyCode? in
+            if record.soldCurrency == primaryCurrencyFilter {
+                return record.boughtCurrency
+            }
+            if record.boughtCurrency == primaryCurrencyFilter {
+                return record.soldCurrency
+            }
+            return nil
+        })
+        return CurrencyCode.selectableCases.filter {
+            $0 != primaryCurrencyFilter && pairedCurrencies.contains($0)
+        }
+    }
+
     private var records: [CurrencyExchangeRecord] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return allRecords.filter { record in
@@ -57,7 +84,7 @@ struct CurrencyExchangeView: View {
 
             Section("记录筛选") {
                 Picker("记录分类", selection: $recordFilter) {
-                    ForEach(CurrencyExchangeRecordFilter.allCases) { filter in
+                    ForEach(availableRecordFilters) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
@@ -73,16 +100,16 @@ struct CurrencyExchangeView: View {
 
                 Picker("相关币种", selection: $primaryCurrencyFilter) {
                     Text("全部币种").tag(nil as CurrencyCode?)
-                    ForEach(CurrencyCode.selectableCases) { currency in
+                    ForEach(availableCurrencies) { currency in
                         Text(currency.title).tag(currency as CurrencyCode?)
                     }
                 }
                 .pickerStyle(.menu)
 
-                if let primaryCurrencyFilter {
+                if primaryCurrencyFilter != nil {
                     Picker("组合币种", selection: $pairedCurrencyFilter) {
                         Text("不限另一币种").tag(nil as CurrencyCode?)
-                        ForEach(CurrencyCode.selectableCases.filter { $0 != primaryCurrencyFilter }) { currency in
+                        ForEach(availablePairedCurrencies) { currency in
                             Text(currency.title).tag(currency as CurrencyCode?)
                         }
                     }
@@ -190,6 +217,22 @@ struct CurrencyExchangeView: View {
         .onChange(of: recordFilter) { _, filter in
             if filter != .all {
                 pairedCurrencyFilter = nil
+            }
+        }
+        .onChange(of: availableRecordFilters) { _, filters in
+            if !filters.contains(recordFilter) {
+                recordFilter = .all
+            }
+        }
+        .onChange(of: availableCurrencies) { _, currencies in
+            if let primaryCurrencyFilter, !currencies.contains(primaryCurrencyFilter) {
+                self.primaryCurrencyFilter = nil
+                pairedCurrencyFilter = nil
+            }
+        }
+        .onChange(of: availablePairedCurrencies) { _, currencies in
+            if let pairedCurrencyFilter, !currencies.contains(pairedCurrencyFilter) {
+                self.pairedCurrencyFilter = nil
             }
         }
     }
@@ -326,7 +369,7 @@ private struct CurrencyExchangeMonthGroup: Identifiable {
     }
 }
 
-private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable {
+private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable, Hashable {
     case all
     case buyRenminbi
     case sellRenminbi

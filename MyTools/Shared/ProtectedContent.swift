@@ -265,10 +265,10 @@ final class CopyToastCenter {
 private struct CopyToastBanner: View {
     var body: some View {
         Label("已复制到剪贴板", systemImage: "checkmark.circle.fill")
-            .font(.caption.weight(.semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 12)
             .background(.thinMaterial, in: Capsule())
             .accessibilityElement(children: .combine)
             .accessibilityLabel("已复制到剪贴板")
@@ -405,9 +405,13 @@ private struct CopyableTextModifier: ViewModifier {
         }
     }
 
+    @MainActor
     private func copy(_ value: String) {
 #if os(iOS)
         UIPasteboard.general.string = value
+        let feedback = UIImpactFeedbackGenerator(style: .light)
+        feedback.prepare()
+        feedback.impactOccurred()
 #elseif os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)

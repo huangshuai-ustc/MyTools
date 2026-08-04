@@ -15,7 +15,7 @@ enum AppStorageKey {
     static let fontSize = "app-font-size-v2"
 }
 
-enum ToolModule: String, CaseIterable, Hashable, Identifiable {
+enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable {
     case personalFinance
     case myStocks
     case currencyExchange
@@ -65,4 +65,13 @@ enum ToolModule: String, CaseIterable, Hashable, Identifiable {
     }
 
     var visibilityKey: String { "tool-module-\(rawValue)-visible" }
+
+    var hasSettings: Bool {
+        switch self {
+        case .myStocks:
+            return true
+        case .personalFinance, .currencyExchange, .healthRecords, .secrets:
+            return false
+        }
+    }
 }

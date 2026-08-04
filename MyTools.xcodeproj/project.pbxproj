@@ -53,6 +53,7 @@
 		A80000000000000000000002 /* AppNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000002 /* AppNotificationService.swift */; };
 		A80000000000000000000003 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000003 /* NotificationSettingsView.swift */; };
 		A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000004 /* StockRefreshCoordinator.swift */; };
+		A90000000000000000000001 /* StorageUsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000000000000000000001 /* StorageUsageService.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -104,6 +105,7 @@
 		B80000000000000000000002 /* AppNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotificationService.swift; sourceTree = "<group>"; };
 		B80000000000000000000003 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		B80000000000000000000004 /* StockRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockRefreshCoordinator.swift; sourceTree = "<group>"; };
+		B90000000000000000000001 /* StorageUsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageUsageService.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -157,6 +159,7 @@
 				B60000000000000000000001 /* DiagnosticLogger.swift */,
 				B80000000000000000000002 /* AppNotificationService.swift */,
 				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
+				B90000000000000000000001 /* StorageUsageService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -387,6 +390,7 @@
 				A80000000000000000000002 /* AppNotificationService.swift in Sources */,
 				A80000000000000000000003 /* NotificationSettingsView.swift in Sources */,
 				A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */,
+				A90000000000000000000001 /* StorageUsageService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

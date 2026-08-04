@@ -6,17 +6,19 @@ struct ToolBoxApp: App {
     @UIApplicationDelegateAdaptor(StockRefreshAppDelegate.self)
     private var appDelegate
 #endif
+    @StateObject private var moduleSettings: ToolModuleSettings
     @StateObject private var store: AppStore
     @StateObject private var auth = AuthManager()
-    @StateObject private var moduleSettings = ToolModuleSettings()
     @StateObject private var stockAppearanceSettings = StockAppearanceSettings()
     @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
     @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
 
     init() {
-        let store = AppStore()
+        let moduleSettings = ToolModuleSettings()
+        _moduleSettings = StateObject(wrappedValue: moduleSettings)
+        let store = AppStore(moduleSettings: moduleSettings)
         _store = StateObject(wrappedValue: store)
-        StockRefreshCoordinator.shared.attach(store: store)
+        StockRefreshCoordinator.shared.attach(store: store, moduleSettings: moduleSettings)
     }
 
     var body: some Scene {

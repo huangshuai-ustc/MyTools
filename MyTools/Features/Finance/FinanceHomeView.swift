@@ -13,12 +13,19 @@ struct HomeView: View {
         AccountSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
     }
 
+    private var availableRegionFilters: [BankRegionFilter] {
+        let regions = Set(store.accounts.map(\.region))
+        return BankRegionFilter.allCases.filter { filter in
+            filter == .all || filter.region.map(regions.contains) ?? false
+        }
+    }
+
     var body: some View {
         let snapshot = financeSnapshot
         List {
             Section {
                 Picker("银行地区", selection: $regionFilter) {
-                    ForEach(BankRegionFilter.allCases) { filter in
+                    ForEach(availableRegionFilters) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
@@ -104,6 +111,11 @@ struct HomeView: View {
         }
         .onDisappear {
             showsInactiveBanks = false
+        }
+        .onChange(of: availableRegionFilters) { _, filters in
+            if !filters.contains(regionFilter) {
+                regionFilter = .all
+            }
         }
     }
 
@@ -309,6 +321,14 @@ enum BankRegionFilter: String, CaseIterable, Identifiable {
         case .all: return "全部"
         case .domestic: return "境内"
         case .overseas: return "境外"
+        }
+    }
+
+    var region: BankRegion? {
+        switch self {
+        case .all: return nil
+        case .domestic: return .domestic
+        case .overseas: return .overseas
         }
     }
 

@@ -14,6 +14,7 @@ final class StockRefreshCoordinator {
 #endif
 
     private weak var store: AppStore?
+    private weak var moduleSettings: ToolModuleSettings?
     private var foregroundTask: Task<Void, Never>?
     private var lastAutomaticCheckAt: Date?
     private var currentScenePhase: ScenePhase = .inactive
@@ -21,8 +22,12 @@ final class StockRefreshCoordinator {
 
     private init() {}
 
-    func attach(store: AppStore) {
+    func attach(store: AppStore, moduleSettings: ToolModuleSettings? = nil) {
         self.store = store
+        if let moduleSettings {
+            self.moduleSettings = moduleSettings
+            store.attach(moduleSettings: moduleSettings)
+        }
         reconcileForegroundPolling()
     }
 
@@ -49,16 +54,26 @@ final class StockRefreshCoordinator {
     /// background evaluation; otherwise updates would invalidate every page in
     /// the navigation stack once per minute.
     func setStocksPageVisible(_ isVisible: Bool) {
-        isStocksPageVisible = isVisible
+        isStocksPageVisible = isVisible && isStockModuleVisible
         reconcileForegroundPolling()
     }
 
     func refreshEligibilityChanged() {
+        if !isStockModuleVisible {
+#if os(iOS)
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
+#endif
+        }
         reconcileForegroundPolling()
+    }
+
+    private var isStockModuleVisible: Bool {
+        moduleSettings?.isVisible(.myStocks) ?? true
     }
 
     private var shouldPollInForeground: Bool {
         guard currentScenePhase == .active,
+              isStockModuleVisible,
               let store,
               store.isInitialDataLoaded else { return false }
         return isStocksPageVisible
@@ -94,6 +109,7 @@ final class StockRefreshCoordinator {
 
     private func refreshAutomatically() async {
         guard let store,
+              isStockModuleVisible,
               store.isInitialDataLoaded,
               !store.isRefreshingQuotes else { return }
 
@@ -122,7 +138,8 @@ final class StockRefreshCoordinator {
 
     private func scheduleBackgroundRefresh() {
 #if os(iOS)
-        guard store?.stocks.contains(where: { $0.hasConfiguredSymbol }) == true else { return }
+        guard isStockModuleVisible,
+              store?.stocks.contains(where: { $0.hasConfiguredSymbol }) == true else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = Date().addingTimeInterval(60)
         do {
@@ -135,6 +152,10 @@ final class StockRefreshCoordinator {
 
 #if os(iOS)
     func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        guard isStockModuleVisible else {
+            task.setTaskCompleted(success: true)
+            return
+        }
         scheduleBackgroundRefresh()
         let work = Task { @MainActor [weak self] in
             guard let self, let store = self.store else {

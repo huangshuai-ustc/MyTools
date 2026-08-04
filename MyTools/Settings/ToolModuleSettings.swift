@@ -106,6 +106,9 @@ final class ToolModuleSettings: ObservableObject {
     func setVisible(_ isVisible: Bool, for module: ToolModule) {
         visibility[module.rawValue] = isVisible
         defaults.set(isVisible, forKey: module.visibilityKey)
+        if module == .myStocks {
+            StockRefreshCoordinator.shared.refreshEligibilityChanged()
+        }
     }
 
     func moveModules(from source: IndexSet, to destination: Int) {

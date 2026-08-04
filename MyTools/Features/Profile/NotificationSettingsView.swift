@@ -4,6 +4,7 @@ struct NotificationSettingsView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: AppNotificationService
+    @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @State private var editingCurrencyAlert: CurrencyRateAlert?
     @State private var editingStockAlert: StockPriceAlert?
 
@@ -47,7 +48,7 @@ struct NotificationSettingsView: View {
                     }
                 }
 
-                Text("价格提醒会在成功刷新牌价或股票行情后，根据阈值变化发送通知。")
+                Text("每条价格提醒只发送一次，成功触发后会自动关闭；重新开启后可以再次提醒。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -116,7 +117,6 @@ struct NotificationSettingsView: View {
         }
         .navigationTitle("通知与提醒")
         .iOSLabeledBackButton("设置")
-        .adminModeIndicator()
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)

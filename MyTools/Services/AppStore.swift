@@ -13,6 +13,8 @@ private enum AppStoreDefaultsKey {
     static let exchangeRateDate = "stock-usd-cny-buying-rate-date-v1"
     static let buyingRates = "boc-currency-buying-rates-v1"
     static let sellingRates = "boc-currency-selling-rates-v1"
+    static let stockRefreshDate = "stock-last-refresh-date-v1"
+    static let stockRefreshDatesByMarket = "stock-last-refresh-dates-by-market-v1"
 }
 
 private struct AppStoreInitialSnapshot: @unchecked Sendable {
@@ -98,6 +100,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var lastStockRefreshAt: Date?
+    @Published private(set) var lastStockRefreshAtByMarket: [StockMarket: Date] = [:]
     @Published private(set) var quoteErrors: [UUID: String] = [:]
     @Published private(set) var quoteSources: [UUID: String] = [:]
     @Published private(set) var usdRenminbiBuyingRate: Decimal?
@@ -114,12 +117,14 @@ final class AppStore: ObservableObject {
     private let exchangeRateService = ForeignExchangeRateService()
     private let attachmentStore = AttachmentStore()
     private let defaults = UserDefaults.standard
+    private weak var moduleSettings: ToolModuleSettings?
     private var lastExchangeRateRequestAt: Date?
     private var isRestoringBackup = false
     private var canPersistVault = true
     private var didLogPersistenceBlocked = false
 
-    init() {
+    init(moduleSettings: ToolModuleSettings? = nil) {
+        self.moduleSettings = moduleSettings
         accounts = []
         cards = []
         stocks = []
@@ -131,6 +136,8 @@ final class AppStore: ObservableObject {
         secretItems = []
         renminbiBuyingRates = [.cny: 1]
         renminbiSellingRates = [.cny: 1]
+        lastStockRefreshAt = defaults.object(forKey: AppStoreDefaultsKey.stockRefreshDate) as? Date
+        lastStockRefreshAtByMarket = Self.loadStockRefreshDatesByMarket(from: defaults)
 
         Task { [weak self] in
             let cachedRatesTask = Task.detached(priority: .utility) {
@@ -143,6 +150,14 @@ final class AppStore: ObservableObject {
             self.applyInitialSnapshot(snapshot)
             self.applyCachedRatesSnapshot(await cachedRatesTask.value)
         }
+    }
+
+    func attach(moduleSettings: ToolModuleSettings) {
+        self.moduleSettings = moduleSettings
+    }
+
+    private func isModuleVisible(_ module: ToolModule) -> Bool {
+        moduleSettings?.isVisible(module) ?? true
     }
 
     var currentCardCount: Int {
@@ -697,7 +712,11 @@ final class AppStore: ObservableObject {
         persist()
     }
 
-    func refreshStockQuotes(forcedMarkets: Set<StockMarket> = []) async {
+    func refreshStockQuotes(
+        for market: StockMarket? = nil,
+        forcedMarkets: Set<StockMarket> = []
+    ) async {
+        guard isModuleVisible(.myStocks) else { return }
         guard !isRefreshingQuotes else { return }
         guard !Task.isCancelled else { return }
         isRefreshingQuotes = true
@@ -707,6 +726,7 @@ final class AppStore: ObservableObject {
         let refreshDate = Date()
         let stockSnapshot = stocks.filter { stock in
             guard stock.hasConfiguredSymbol else { return false }
+            if let market, stock.market != market { return false }
             return forcedMarkets.contains(stock.market)
                 || StockMarketTradingCalendar.isOpen(stock.market, at: refreshDate)
         }
@@ -724,6 +744,7 @@ final class AppStore: ObservableObject {
             uniqueKeysWithValues: stocks.indices.map { (stocks[$0].id, $0) }
         )
         var didChangePersistedQuote = false
+        var refreshedMarkets = Set<StockMarket>()
         for stock in stockSnapshot {
             guard let quote = refreshedQuotes[stock.id] else {
                 failures[stock.id] = "行情服务暂时不可用"
@@ -745,6 +766,7 @@ final class AppStore: ObservableObject {
                 didChangePersistedQuote = true
             }
             quoteSources[stock.id] = quote.source
+            refreshedMarkets.insert(stock.market)
             successCount += 1
         }
 
@@ -763,9 +785,49 @@ final class AppStore: ObservableObject {
             if didChangePersistedQuote {
                 persist()
             }
-            lastStockRefreshAt = Date()
+            let refreshedAt = Date()
+            for market in refreshedMarkets {
+                lastStockRefreshAtByMarket[market] = refreshedAt
+            }
+            if market == nil {
+                lastStockRefreshAt = refreshedAt
+            }
+            persistStockRefreshDates()
             evaluateStockPriceAlerts()
         }
+    }
+
+    func lastStockRefreshAt(for market: StockMarket?) -> Date? {
+        if let market {
+            return lastStockRefreshAtByMarket[market]
+        }
+        return lastStockRefreshAt
+    }
+
+    private static func loadStockRefreshDatesByMarket(
+        from defaults: UserDefaults
+    ) -> [StockMarket: Date] {
+        guard let values = defaults.dictionary(
+            forKey: AppStoreDefaultsKey.stockRefreshDatesByMarket
+        ) else { return [:] }
+
+        return values.reduce(into: [StockMarket: Date]()) { result, entry in
+            guard let market = StockMarket(rawValue: entry.key),
+                  let date = entry.value as? Date else { return }
+            result[market] = date
+        }
+    }
+
+    private func persistStockRefreshDates() {
+        if let lastStockRefreshAt {
+            defaults.set(lastStockRefreshAt, forKey: AppStoreDefaultsKey.stockRefreshDate)
+        } else {
+            defaults.removeObject(forKey: AppStoreDefaultsKey.stockRefreshDate)
+        }
+        let values = lastStockRefreshAtByMarket.reduce(into: [String: Date]()) { result, entry in
+            result[entry.key.rawValue] = entry.value
+        }
+        defaults.set(values, forKey: AppStoreDefaultsKey.stockRefreshDatesByMarket)
     }
 
     func refreshExchangeRateIfNeeded() {
@@ -777,6 +839,7 @@ final class AppStore: ObservableObject {
     }
 
     func refreshExchangeRates() {
+        guard isModuleVisible(.currencyExchange) else { return }
         guard !isRefreshingExchangeRate else { return }
         isRefreshingExchangeRate = true
         lastExchangeRateRequestAt = Date()
@@ -948,6 +1011,8 @@ final class AppStore: ObservableObject {
     }
 
     private func evaluateCurrencyRateAlerts() {
+        guard isModuleVisible(.currencyExchange) else { return }
+        var triggeredAlertIDs = Set<UUID>()
         for alert in currencyRateAlerts {
             guard alert.isEnabled else {
                 _ = AppNotificationService.shared.shouldSend(for: alert.id, condition: false)
@@ -965,10 +1030,16 @@ final class AppStore: ObservableObject {
                 body: "\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) 约合 \(valueText)，已\(alert.direction.title) \(thresholdText)。",
                 ruleID: alert.id
             )
+            triggeredAlertIDs.insert(alert.id)
+        }
+        if !triggeredAlertIDs.isEmpty {
+            disableCurrencyRateAlerts(ids: triggeredAlertIDs)
         }
     }
 
     private func evaluateStockPriceAlerts() {
+        guard isModuleVisible(.myStocks) else { return }
+        var triggeredAlertIDs = Set<UUID>()
         for alert in stockPriceAlerts {
             guard alert.isEnabled else {
                 _ = AppNotificationService.shared.shouldSend(for: alert.id, condition: false)
@@ -988,6 +1059,37 @@ final class AppStore: ObservableObject {
                 body: "\(stock.displayName)（\(stock.symbol)）当前 \(priceText)，已\(alert.direction.title) \(thresholdText)。",
                 ruleID: alert.id
             )
+            triggeredAlertIDs.insert(alert.id)
+        }
+        if !triggeredAlertIDs.isEmpty {
+            disableStockPriceAlerts(ids: triggeredAlertIDs)
+        }
+    }
+
+    private func disableCurrencyRateAlerts(ids: Set<UUID>) {
+        var didChange = false
+        for index in currencyRateAlerts.indices where ids.contains(currencyRateAlerts[index].id) {
+            guard currencyRateAlerts[index].isEnabled else { continue }
+            currencyRateAlerts[index].isEnabled = false
+            AppNotificationService.shared.clearState(for: currencyRateAlerts[index].id)
+            didChange = true
+        }
+        if didChange {
+            persist()
+        }
+    }
+
+    private func disableStockPriceAlerts(ids: Set<UUID>) {
+        var didChange = false
+        for index in stockPriceAlerts.indices where ids.contains(stockPriceAlerts[index].id) {
+            guard stockPriceAlerts[index].isEnabled else { continue }
+            stockPriceAlerts[index].isEnabled = false
+            AppNotificationService.shared.clearState(for: stockPriceAlerts[index].id)
+            didChange = true
+        }
+        if didChange {
+            persist()
+            StockRefreshCoordinator.shared.refreshEligibilityChanged()
         }
     }
 }
