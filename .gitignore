@@ -6,6 +6,8 @@
 xcuserdata/
 *.xcuserdatad/
 *.xcuserstate
+/Config/Signing.local.xcconfig
+!/Config/Signing.local.xcconfig.example
 
 # Xcode workspace user data
 *.xcworkspace/xcuserdata/

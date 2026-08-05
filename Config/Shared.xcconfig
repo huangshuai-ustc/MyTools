@@ -1,0 +1,4 @@
+PRODUCT_BUNDLE_IDENTIFIER = com.example.mytools
+DEVELOPMENT_TEAM =
+
+#include? "Signing.local.xcconfig"

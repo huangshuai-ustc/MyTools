@@ -17,7 +17,7 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
     private let center = UNUserNotificationCenter.current()
     private let defaults = UserDefaults.standard
     private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "com.fjwyz.PersonalToolBox",
+        subsystem: AppMetadata.bundleIdentifier,
         category: "Notifications"
     )
     private let statePrefix = "price-alert-state-"

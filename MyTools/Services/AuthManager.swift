@@ -10,7 +10,7 @@ final class AuthManager: ObservableObject {
     @Published private(set) var isAuthenticationPresented = false
     private let defaults = UserDefaults.standard
     private let passwordKey = "admin-password-hash"
-    private let keychainService = Bundle.main.bundleIdentifier ?? "com.fjwyz.PersonalToolBox"
+    private let keychainService = AppMetadata.bundleIdentifier
     private let keychainAccount = "admin-password-backup"
     private var sessionPassword: String?
 

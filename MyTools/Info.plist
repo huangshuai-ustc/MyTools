@@ -4,7 +4,7 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.fjwyz.PersonalToolBox.stock-refresh</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).stock-refresh</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -21,7 +21,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>3.5.0</string>
+	<string>3.6.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -55,7 +55,7 @@
 			<key>UTTypeDescription</key>
 			<string>我的工具箱加密备份</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.fjwyz.mytools.backup</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).backup</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

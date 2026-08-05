@@ -33,7 +33,7 @@ final class DiagnosticLogger: @unchecked Sendable {
     static let shared = DiagnosticLogger()
 
     private let queue = DispatchQueue(
-        label: "com.fjwyz.PersonalToolBox.diagnostics",
+        label: "\(AppMetadata.bundleIdentifier).diagnostics",
         qos: .utility
     )
     private let fileManager = FileManager.default

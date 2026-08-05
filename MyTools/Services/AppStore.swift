@@ -4,7 +4,7 @@ import OSLog
 import UniformTypeIdentifiers
 
 private let startupLogger = Logger(
-    subsystem: Bundle.main.bundleIdentifier ?? "com.fjwyz.PersonalToolBox",
+    subsystem: AppMetadata.bundleIdentifier,
     category: "Startup"
 )
 

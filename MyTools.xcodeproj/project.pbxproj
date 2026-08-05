@@ -106,6 +106,8 @@
 		B80000000000000000000003 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		B80000000000000000000004 /* StockRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockRefreshCoordinator.swift; sourceTree = "<group>"; };
 		B90000000000000000000001 /* StorageUsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageUsageService.swift; sourceTree = "<group>"; };
+		BA0000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		BA0000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -115,6 +117,7 @@
 			isa = PBXGroup;
 			children = (
 				D00000000000000000000006 /* 我的工具箱 */,
+				DA0000000000000000000001 /* Config */,
 				E19E9F2D301499DA0018B621 /* 我的工具箱.app */,
 			);
 			sourceTree = "<group>";
@@ -280,6 +283,15 @@
 			path = Secrets;
 			sourceTree = "<group>";
 		};
+		DA0000000000000000000001 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				BA0000000000000000000001 /* Shared.xcconfig */,
+				BA0000000000000000000002 /* Signing.local.xcconfig.example */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -399,6 +411,7 @@
 /* Begin XCBuildConfiguration section */
 		F00000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BA0000000000000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -448,7 +461,6 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fjwyz.PersonalToolBox;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -465,6 +477,7 @@
 		};
 		F00000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BA0000000000000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -509,7 +522,6 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.fjwyz.PersonalToolBox;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

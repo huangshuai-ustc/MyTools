@@ -1,6 +1,20 @@
 import SwiftUI
 
 enum AppMetadata {
+    static let fallbackBundleIdentifier = "com.example.mytools"
+
+    static var bundleIdentifier: String {
+        Bundle.main.bundleIdentifier ?? fallbackBundleIdentifier
+    }
+
+    static var stockRefreshTaskIdentifier: String {
+        "\(bundleIdentifier).stock-refresh"
+    }
+
+    static var backupTypeIdentifier: String {
+        "\(bundleIdentifier).backup"
+    }
+
     static var versionDescription: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? "未标记版本"

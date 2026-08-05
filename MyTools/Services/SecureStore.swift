@@ -156,7 +156,7 @@ final class SecureStore {
 }
 
 private let persistenceLogger = Logger(
-    subsystem: Bundle.main.bundleIdentifier ?? "com.fjwyz.PersonalToolBox",
+    subsystem: AppMetadata.bundleIdentifier,
     category: "Persistence"
 )
 
@@ -169,7 +169,7 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     private let queue = DispatchQueue(
-        label: "com.fjwyz.PersonalToolBox.vault-persistence",
+        label: "\(AppMetadata.bundleIdentifier).vault-persistence",
         qos: .utility
     )
     private let secureStore: SecureStore

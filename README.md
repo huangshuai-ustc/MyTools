@@ -16,7 +16,7 @@
 - macOS 26.0 及以上
 - Xcode 26.0 及以上
 - Swift 6.0、SwiftUI 多平台工程
-- Bundle Identifier：`com.fjwyz.PersonalToolBox`
+- 默认 Bundle Identifier：`com.example.mytools`，可以通过本地签名配置覆盖
 - 工程文件：`MyTools.xcodeproj`
 - Scheme：`我的工具箱`
 - App 显示名称：`我的工具箱`
@@ -106,10 +106,10 @@
 - 健康附件和信用卡账单 PDF 保存在 Application Support 的附件目录；本地 JSON 只保存附件元数据，备份时会一并打包附件内容。
 - 日常档案使用原子写入，并在后台串行保存；App 进入后台时会等待排队中的保存完成。
 - 诊断日志按本地日期保留今天和昨天；每天首次写入、查看或导出诊断日志时自动清理 T-2 及更早记录。
-- 管理员可以从“我的”页面导出或导入 `.mytools` 加密备份。备份使用 PBKDF2-HMAC-SHA256 派生 256 位密钥，并使用 AES-GCM 加密；当前唯一支持的备份格式版本为 `1.0`。
+- 管理员可以从“我的”页面导出或导入 `.mytools` 加密备份。备份使用 PBKDF2-HMAC-SHA256 派生 256 位密钥，并使用 AES-GCM 加密；当前唯一支持的备份格式版本为 `1.0`，同时记录备份中包含的工具模块。
 - 当前只读取最新的本地容器和备份载荷结构，不再兼容更早的顶层 `VaultData`、旧体检嵌套批次或单选医疗机构字段。
 - 备份密码至少 8 位；密码页默认填入当前管理员密码，也可以清除后输入独立的自定义备份密码。自定义密码不会由 App 保存，丢失后无法解密备份。
-- 导入备份会替换当前全部银行、股票、换汇、健康档案、医疗机构资料和保密资料，并恢复备份中的附件。
+- 导入备份采用增量合并，不会清空未包含在备份中的工具模块或本地数据。备份中包含的模块按记录 ID 合并：已有同 ID 记录使用备份内容更新，新记录追加；对应的健康附件、信用卡账单和保密资料附件会一并恢复。
 
 ## 安全边界
 
@@ -122,15 +122,25 @@
 
 1. 在 Xcode 中打开 `MyTools.xcodeproj`。
 2. 选择 Scheme `我的工具箱`。
-3. 在 Signing & Capabilities 中选择自己的开发团队；必要时修改 Bundle Identifier。
-4. 选择 iPhone、iPad 或 My Mac 后运行。
+3. 模拟器构建可以直接使用公共配置；真机安装前，把 `Config/Signing.local.xcconfig.example` 复制为 `Config/Signing.local.xcconfig`，再填写自己的 `DEVELOPMENT_TEAM` 和唯一 Bundle Identifier。
+4. `Signing.local.xcconfig` 不会提交到 Git。不要把个人 Team ID 或专属 Bundle Identifier 写回 `project.pbxproj` 或 `Shared.xcconfig`。
+5. 选择 iPhone、iPad 或 My Mac 后运行。
 
 首次使用建议：先进入“我的”设置管理员密码，再从“金融账户”“股票投资”和“健康档案”录入数据，最后导出一份 `.mytools` 备份。
+
+## GitHub 仓库文件
+
+仓库需要保留源码、资源、`Info.plist`、`MyTools.xcodeproj/project.pbxproj`、共享 Scheme、工作区基础文件以及 `Config/Shared.xcconfig`。这些文件共同描述 Target、编译源文件、资源、系统权限和构建设置，仅上传 Swift 文件无法直接还原可编译工程。
+
+以下内容不应提交：`xcuserdata`、`*.xcuserstate`、`Signing.local.xcconfig`、`DerivedData`、`build`、`.DS_Store`、日志和本地密钥配置。项目的 `.gitignore` 已覆盖这些内容。
+
+任何人 clone 仓库后都可以使用模拟器构建。安装到 iPhone、iPad 或签名运行 macOS App 时，每位开发者都必须使用自己的 Apple Developer Team 和唯一 Bundle Identifier；Apple 不允许第三方直接复用仓库作者的开发签名。
 
 ## 工程结构
 
 ```text
 MyTools/
+├── Config/                 # 公共构建配置和本地签名示例
 ├── MyTools.xcodeproj/
 ├── README.md
 └── MyTools/

@@ -10,7 +10,7 @@ final class StockRefreshCoordinator {
     static let shared = StockRefreshCoordinator()
 
 #if os(iOS)
-    static let taskIdentifier = "com.fjwyz.PersonalToolBox.stock-refresh"
+    static let taskIdentifier = AppMetadata.stockRefreshTaskIdentifier
 #endif
 
     private weak var store: AppStore?

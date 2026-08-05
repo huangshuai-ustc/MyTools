@@ -51,7 +51,7 @@ struct VaultBackupDocument: FileDocument {
 
 extension UTType {
     static var myToolsBackup: UTType {
-        UTType(exportedAs: "com.fjwyz.mytools.backup", conformingTo: .data)
+        UTType(exportedAs: AppMetadata.backupTypeIdentifier, conformingTo: .data)
     }
 }
 
