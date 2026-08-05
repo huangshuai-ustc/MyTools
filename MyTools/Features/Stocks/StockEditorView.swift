@@ -77,9 +77,9 @@ struct StockEditorView: View {
                 if isNew, draft.includesInitialPurchase {
                     Section("首次买入") {
                         DatePicker(
-                            "购买时间：",
+                            "购买日期：",
                             selection: $draft.initialTradedAt,
-                            displayedComponents: [.date, .hourAndMinute]
+                            displayedComponents: .date
                         )
                         decimalField("购买股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                         decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
@@ -169,7 +169,8 @@ struct StockEditorView: View {
             }
             stock.transactions = [StockTransaction(
                 type: .buy,
-                tradedAt: draft.initialTradedAt,
+                tradedAt: StockTransaction.normalizedDate(draft.initialTradedAt),
+                dayOrder: 0,
                 quantity: quantity,
                 unitPrice: unitPrice,
                 fees: fees

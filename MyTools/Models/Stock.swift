@@ -41,6 +41,11 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 enum StockMarketTradingCalendar {
+    private static let additionalAShareClosures: [Int: Set<Int>] = [
+        2025: [602, 1008],
+        2026: [102, 406]
+    ]
+
     static func isOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
         switch market {
         case .aShare:
@@ -166,6 +171,10 @@ enum StockMarketTradingCalendar {
         guard let year = components.year,
               let month = components.month,
               let day = components.day else { return true }
+
+        if additionalAShareClosures[year]?.contains(month * 100 + day) == true {
+            return true
+        }
 
         if month == 1, day == 1 {
             return true
@@ -425,9 +434,20 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var type: StockTransactionType = .buy
     var tradedAt = Date()
+    var dayOrder: Int?
     var quantity: Decimal = 0
     var unitPrice: Decimal = 0
     var fees: Decimal = 0
+
+    static func normalizedDate(_ date: Date) -> Date {
+        let calendar = Calendar.autoupdatingCurrent
+        let startOfDay = calendar.startOfDay(for: date)
+        return calendar.date(byAdding: .hour, value: 12, to: startOfDay) ?? startOfDay
+    }
+
+    static func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {
+        Calendar.autoupdatingCurrent.isDate(lhs, inSameDayAs: rhs)
+    }
 
     var signedShares: Decimal {
         quantity * type.shareMultiplier
@@ -555,15 +575,6 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         return holdingProfitLoss + realizedProfitLoss
     }
 
-    func canApply(_ transaction: StockTransaction) -> Bool {
-        guard transaction.quantity > 0,
-              transaction.unitPrice > 0,
-              transaction.fees >= 0 else { return false }
-        var updatedTransactions = transactions.filter { $0.id != transaction.id }
-        updatedTransactions.append(transaction)
-        return Self.hasValidTransactionOrder(updatedTransactions)
-    }
-
     /// A sale must have an earlier purchase available at its trade date.
     /// This prevents out-of-order historical entries from being silently ignored
     /// by the moving-average performance calculation.
@@ -583,12 +594,54 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         return true
     }
 
+    var transactionsChronologically: [StockTransaction] {
+        Self.orderedTransactions(transactions)
+    }
+
+    var transactionsNewestFirst: [StockTransaction] {
+        Array(transactionsChronologically.reversed())
+    }
+
+    mutating func normalizeTransactionDay(
+        containing date: Date,
+        appending transactionID: UUID? = nil
+    ) {
+        let indices = transactions.indices.filter {
+            StockTransaction.isSameDay(transactions[$0].tradedAt, date)
+        }
+        guard !indices.isEmpty else { return }
+
+        var orderedIDs = Self.orderedTransactions(indices.map { transactions[$0] }).map(\.id)
+        if let transactionID,
+           let index = orderedIDs.firstIndex(of: transactionID) {
+            orderedIDs.remove(at: index)
+            orderedIDs.append(transactionID)
+        }
+
+        let normalizedDate = StockTransaction.normalizedDate(date)
+        for (dayOrder, transactionID) in orderedIDs.enumerated() {
+            guard let index = transactions.firstIndex(where: { $0.id == transactionID }) else {
+                continue
+            }
+            transactions[index].tradedAt = normalizedDate
+            transactions[index].dayOrder = dayOrder
+        }
+    }
+
     private static func orderedTransactions(_ transactions: [StockTransaction]) -> [StockTransaction] {
         transactions.sorted {
-            if $0.tradedAt == $1.tradedAt {
-                return $0.id.uuidString < $1.id.uuidString
+            if !StockTransaction.isSameDay($0.tradedAt, $1.tradedAt) {
+                return $0.tradedAt < $1.tradedAt
             }
-            return $0.tradedAt < $1.tradedAt
+            if let lhsOrder = $0.dayOrder,
+               let rhsOrder = $1.dayOrder,
+               lhsOrder != rhsOrder {
+                return lhsOrder < rhsOrder
+            }
+            if $0.tradedAt != $1.tradedAt {
+                return $0.tradedAt < $1.tradedAt
+            }
+            return $0.id.uuidString < $1.id.uuidString
         }
     }
 

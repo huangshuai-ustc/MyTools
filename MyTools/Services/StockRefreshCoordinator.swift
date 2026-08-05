@@ -17,6 +17,7 @@ final class StockRefreshCoordinator {
     private weak var moduleSettings: ToolModuleSettings?
     private var foregroundTask: Task<Void, Never>?
     private var lastAutomaticCheckAt: Date?
+    private var lastClosingRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
     private var currentScenePhase: ScenePhase = .inactive
     private var isStocksPageVisible = false
 
@@ -75,9 +76,25 @@ final class StockRefreshCoordinator {
         guard currentScenePhase == .active,
               isStockModuleVisible,
               let store,
-              store.isInitialDataLoaded else { return false }
+              store.isInitialDataLoaded,
+              hasRefreshableStocks(in: store) else { return false }
         return isStocksPageVisible
-            || store.stockPriceAlerts.contains(where: { $0.isEnabled })
+            || hasEnabledRefreshableAlert(in: store)
+    }
+
+    private func hasRefreshableStocks(in store: AppStore) -> Bool {
+        store.stocks.contains(where: \.hasConfiguredSymbol)
+    }
+
+    private func hasEnabledRefreshableAlert(in store: AppStore) -> Bool {
+        let refreshableStockIDs = Set(
+            store.stocks.lazy
+                .filter(\.hasConfiguredSymbol)
+                .map(\.id)
+        )
+        return store.stockPriceAlerts.contains {
+            $0.isEnabled && $0.stockID.map(refreshableStockIDs.contains) == true
+        }
     }
 
     private func reconcileForegroundPolling() {
@@ -91,18 +108,21 @@ final class StockRefreshCoordinator {
     private func startForegroundPolling() {
         guard foregroundTask == nil else { return }
         if lastAutomaticCheckAt == nil {
-            lastAutomaticCheckAt = Date()
+            // Include the previous day so reopening the app after a market
+            // close can perform the one required closing snapshot.
+            lastAutomaticCheckAt = Date().addingTimeInterval(-24 * 60 * 60)
         }
         foregroundTask = Task { @MainActor [weak self] in
             DiagnosticLogger.shared.log(.lifecycle, "股票前台轮询启动")
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                guard !Task.isCancelled, let self else { continue }
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
                 guard self.shouldPollInForeground else {
                     self.stopForegroundPolling()
                     return
                 }
                 await self.refreshAutomatically()
+                try? await Task.sleep(for: .seconds(60))
             }
         }
     }
@@ -117,16 +137,68 @@ final class StockRefreshCoordinator {
         let previousCheck = lastAutomaticCheckAt ?? now.addingTimeInterval(-60)
         lastAutomaticCheckAt = now
 
-        let endedMarkets = Set(
-            StockMarket.allCases.filter {
-                StockMarketTradingCalendar.sessionEnded(
-                    for: $0,
-                    between: previousCheck,
-                    and: now
-                )
-            }
+        let endedMarkets = closingMarketsNeedingRefresh(
+            store: store,
+            previousCheck: previousCheck,
+            now: now
         )
-        await store.refreshStockQuotes(forcedMarkets: endedMarkets)
+        if !endedMarkets.isEmpty {
+            DiagnosticLogger.shared.log(
+                .stockQuote,
+                "检测到收盘补刷市场：\(endedMarkets.map { $0.rawValue }.sorted().joined(separator: ","))"
+            )
+        }
+        await store.refreshStockQuotes(
+            forcedMarkets: endedMarkets,
+            allowClosedMissingData: false
+        )
+    }
+
+    private func closingMarketsNeedingRefresh(
+        store: AppStore,
+        previousCheck: Date,
+        now: Date
+    ) -> Set<StockMarket> {
+        var result = Set<StockMarket>()
+        for market in StockMarket.allCases {
+            guard store.stocks.contains(where: { $0.market == market && $0.hasConfiguredSymbol }) else {
+                continue
+            }
+
+            let latestQuoteAt = store.latestStockQuoteAt(for: market)
+            let quoteNeedsClosingRefresh: Bool
+            if let latestQuoteAt {
+                quoteNeedsClosingRefresh = !StockMarketTradingCalendar.isOpen(market, at: now)
+                    && StockMarketTradingCalendar.isOpen(market, at: latestQuoteAt)
+                    && StockMarketTradingCalendar.sessionEnded(
+                        for: market,
+                        between: latestQuoteAt,
+                        and: now
+                    )
+            } else {
+                quoteNeedsClosingRefresh = false
+            }
+
+            let lastRefresh = store.lastStockRefreshAt(for: market)
+            let baseline = max(previousCheck, lastRefresh ?? previousCheck)
+            let sessionEndedSinceRefresh = StockMarketTradingCalendar.sessionEnded(
+                for: market,
+                between: baseline,
+                and: now
+            )
+            guard quoteNeedsClosingRefresh || sessionEndedSinceRefresh else { continue }
+
+            // A provider may still return the same intraday quote after close.
+            // Do not turn that into a one-minute retry loop; try again on the
+            // next trading day's close instead.
+            if let lastAttempt = lastClosingRefreshAttemptAtByMarket[market],
+               now.timeIntervalSince(lastAttempt) < 12 * 60 * 60 {
+                continue
+            }
+            lastClosingRefreshAttemptAtByMarket[market] = now
+            result.insert(market)
+        }
+        return result
     }
 
     private func stopForegroundPolling() {
@@ -139,7 +211,7 @@ final class StockRefreshCoordinator {
     private func scheduleBackgroundRefresh() {
 #if os(iOS)
         guard isStockModuleVisible,
-              store?.stocks.contains(where: { $0.hasConfiguredSymbol }) == true else { return }
+              store.map(hasRefreshableStocks(in:)) == true else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = Date().addingTimeInterval(60)
         do {

@@ -330,7 +330,7 @@ struct StocksView: View {
                     }
                 }
             } footer: {
-                Text("行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
+                Text("股票行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
             }
         }
         .navigationTitle(ToolModule.myStocks.title)
@@ -399,7 +399,6 @@ struct StocksView: View {
             enteringRefreshTask?.cancel()
             enteringRefreshTask = nil
             showsNoPositionStocks = false
-            didAutoSelectMarket = false
             didRefreshOnCurrentAppearance = false
         }
     }
@@ -498,20 +497,20 @@ private struct RenminbiPortfolioSummaryRow: View {
         totalProfitLoss: Decimal?
     )? {
         var holdingCost = Decimal.zero
-        var marketValue = Decimal.zero
+        var holdingProfitLoss = Decimal.zero
         var realizedProfitLoss = Decimal.zero
         var missingQuote = false
         for stock in selectedStocks {
             guard let multiplier = renminbiMultiplier(for: stock.market) else { return nil }
             holdingCost += stock.holdingCost * multiplier
             realizedProfitLoss += stock.realizedProfitLoss * multiplier
-            if let value = stock.marketValue {
-                marketValue += value * multiplier
-            } else if stock.currentShares > 0 {
+            if let value = stock.holdingProfitLoss {
+                holdingProfitLoss += value * multiplier
+            } else if stock.latestPrice == nil && stock.currentShares > 0 {
                 missingQuote = true
             }
         }
-        let profitLoss = missingQuote ? nil : marketValue - holdingCost
+        let profitLoss = missingQuote ? nil : holdingProfitLoss
         return (
             holdingCost,
             profitLoss,
@@ -856,6 +855,7 @@ private struct StockDetailView: View {
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stockID: UUID
     @State private var editorRoute: EditorRoute?
+    @State private var showingTransactionOrderEditor = false
     @State private var transactionError = ""
     @State private var showingTransactionError = false
 
@@ -920,6 +920,10 @@ private struct StockDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingTransactionOrderEditor) {
+            StockTransactionOrderEditorView(stockID: stockID)
+                .iOSLargeSheet()
+        }
         .alert("无法删除交易", isPresented: $showingTransactionError) {
             Button("确定", role: .cancel) {}
         } message: {
@@ -931,7 +935,7 @@ private struct StockDetailView: View {
     }
 
     private func stockList(_ stock: StockHolding) -> some View {
-        let sortedTransactions = stock.transactions.sorted { $0.tradedAt > $1.tradedAt }
+        let sortedTransactions = stock.transactionsNewestFirst
         let sortedDividends = stock.dividends.sorted { $0.receivedAt > $1.receivedAt }
 
         return List {
@@ -1010,6 +1014,11 @@ private struct StockDetailView: View {
                     Button { editorRoute = .transaction(StockTransaction()) } label: {
                         Label("添加买入或卖出记录", systemImage: "plus.circle")
                     }
+                    if !stock.reorderableTransactionDayGroups.isEmpty {
+                        Button { showingTransactionOrderEditor = true } label: {
+                            Label("调整同日交易顺序", systemImage: "arrow.up.arrow.down")
+                        }
+                    }
                 } else {
                     ForEach(sortedTransactions) { transaction in
                         StockTransactionRow(transaction: transaction, market: stock.market)
@@ -1061,6 +1070,131 @@ private struct StockDetailView: View {
     private func deleteDividends(at offsets: IndexSet, sortedDividends: [StockDividend]) {
         let ids = Set(offsets.map { sortedDividends[$0].id })
         store.deleteStockDividends(ids: ids, from: stockID)
+    }
+}
+
+private struct StockTransactionDayGroup: Identifiable {
+    let date: Date
+    let transactions: [StockTransaction]
+
+    var id: Date { date }
+}
+
+private extension StockHolding {
+    var reorderableTransactionDayGroups: [StockTransactionDayGroup] {
+        let groups = Dictionary(grouping: transactionsChronologically) {
+            StockTransaction.normalizedDate($0.tradedAt)
+        }
+        return groups
+            .compactMap { date, transactions in
+                guard transactions.count > 1 else { return nil }
+                return StockTransactionDayGroup(date: date, transactions: transactions)
+            }
+            .sorted { $0.date > $1.date }
+    }
+}
+
+private struct StockTransactionOrderEditorView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+#if os(iOS)
+    @State private var editMode: EditMode = .active
+#endif
+    @State private var errorMessage = ""
+    @State private var showingError = false
+    let stockID: UUID
+
+    private var stock: StockHolding? {
+        store.stocks.first { $0.id == stockID }
+    }
+
+    private var groups: [StockTransactionDayGroup] {
+        stock?.reorderableTransactionDayGroups ?? []
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(groups) { group in
+                    Section(AppDateFormatter.string(from: group.date)) {
+                        ForEach(group.transactions) { transaction in
+                            StockTransactionOrderRow(
+                                transaction: transaction,
+                                order: group.transactions.firstIndex(where: { $0.id == transaction.id }) ?? 0,
+                                currencyCode: stock?.market.currencyCode ?? ""
+                            )
+                        }
+                        .onMove { offsets, destination in
+                            moveTransactions(
+                                in: group,
+                                from: offsets,
+                                to: destination
+                            )
+                        }
+                    }
+                }
+            }
+            .navigationTitle("当日交易顺序")
+            .adminModeIndicator()
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .listStyle(.insetGrouped)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .alert("无法调整顺序", isPresented: $showingError) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+        }
+#if os(iOS)
+        .environment(\.editMode, $editMode)
+#endif
+    }
+
+    private func moveTransactions(
+        in group: StockTransactionDayGroup,
+        from offsets: IndexSet,
+        to destination: Int
+    ) {
+        var orderedIDs = group.transactions.map(\.id)
+        orderedIDs.move(fromOffsets: offsets, toOffset: destination)
+        guard store.reorderStockTransactions(orderedIDs, in: stockID) else {
+            errorMessage = "该顺序会使某笔卖出发生在可用持仓之前。"
+            showingError = true
+            return
+        }
+    }
+}
+
+private struct StockTransactionOrderRow: View {
+    let transaction: StockTransaction
+    let order: Int
+    let currencyCode: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("第 \(order + 1) 笔")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 46, alignment: .leading)
+            Text(transaction.type.title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(transaction.type == .buy ? .blue : .orange)
+                .frame(width: 34, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(StockValueFormatter.quantity(transaction.quantity)) 股")
+                Text(StockValueFormatter.price(transaction.unitPrice, currencyCode: currencyCode))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
     }
 }
 

@@ -139,6 +139,10 @@ final class AppStore: ObservableObject {
         renminbiSellingRates = [.cny: 1]
         lastStockRefreshAt = defaults.object(forKey: AppStoreDefaultsKey.stockRefreshDate) as? Date
         lastStockRefreshAtByMarket = Self.loadStockRefreshDatesByMarket(from: defaults)
+        if let latestMarketRefresh = lastStockRefreshAtByMarket.values.max(),
+           latestMarketRefresh > (lastStockRefreshAt ?? .distantPast) {
+            lastStockRefreshAt = latestMarketRefresh
+        }
 
         Task { [weak self] in
             let cachedRatesTask = Task.detached(priority: .utility) {
@@ -697,23 +701,85 @@ final class AppStore: ObservableObject {
 
     func upsertStockTransaction(_ transaction: StockTransaction, in stockID: UUID) -> Bool {
         guard let stockIndex = stocks.firstIndex(where: { $0.id == stockID }) else { return false }
-        guard stocks[stockIndex].canApply(transaction) else { return false }
-        if let transactionIndex = stocks[stockIndex].transactions.firstIndex(where: { $0.id == transaction.id }) {
-            stocks[stockIndex].transactions[transactionIndex] = transaction
-        } else {
-            stocks[stockIndex].transactions.append(transaction)
+
+        var candidate = stocks[stockIndex]
+        let existingTransaction = candidate.transactions.first { $0.id == transaction.id }
+        if let existingTransaction {
+            candidate.normalizeTransactionDay(containing: existingTransaction.tradedAt)
         }
+
+        var storedTransaction = transaction
+        storedTransaction.tradedAt = StockTransaction.normalizedDate(transaction.tradedAt)
+        let staysOnSameDay = existingTransaction.map {
+            StockTransaction.isSameDay($0.tradedAt, transaction.tradedAt)
+        } ?? false
+        if staysOnSameDay,
+           let normalizedExisting = candidate.transactions.first(where: { $0.id == transaction.id }) {
+            storedTransaction.dayOrder = normalizedExisting.dayOrder
+        } else {
+            storedTransaction.dayOrder = nil
+        }
+
+        if let transactionIndex = candidate.transactions.firstIndex(where: { $0.id == transaction.id }) {
+            candidate.transactions[transactionIndex] = storedTransaction
+        } else {
+            candidate.transactions.append(storedTransaction)
+        }
+        candidate.normalizeTransactionDay(
+            containing: storedTransaction.tradedAt,
+            appending: staysOnSameDay ? nil : storedTransaction.id
+        )
+        guard candidate.hasValidTransactionOrder else { return false }
+
+        stocks[stockIndex] = candidate
         persist()
         return true
     }
 
     func deleteStockTransactions(ids: Set<UUID>, from stockID: UUID) -> Bool {
         guard let stockIndex = stocks.firstIndex(where: { $0.id == stockID }) else { return false }
-        let remaining = stocks[stockIndex].transactions.filter { !ids.contains($0.id) }
         var candidate = stocks[stockIndex]
-        candidate.transactions = remaining
+        let affectedDates = candidate.transactions
+            .filter { ids.contains($0.id) }
+            .map(\.tradedAt)
+        candidate.transactions.removeAll { ids.contains($0.id) }
+        affectedDates.forEach { candidate.normalizeTransactionDay(containing: $0) }
         guard candidate.hasValidTransactionOrder else { return false }
-        stocks[stockIndex].transactions = remaining
+        stocks[stockIndex] = candidate
+        persist()
+        return true
+    }
+
+    func reorderStockTransactions(_ orderedIDs: [UUID], in stockID: UUID) -> Bool {
+        guard let stockIndex = stocks.firstIndex(where: { $0.id == stockID }),
+              orderedIDs.count > 1,
+              Set(orderedIDs).count == orderedIDs.count else { return false }
+
+        var candidate = stocks[stockIndex]
+        let selectedTransactions = orderedIDs.compactMap { transactionID in
+            candidate.transactions.first { $0.id == transactionID }
+        }
+        guard selectedTransactions.count == orderedIDs.count,
+              let date = selectedTransactions.first?.tradedAt,
+              selectedTransactions.allSatisfy({ StockTransaction.isSameDay($0.tradedAt, date) }) else {
+            return false
+        }
+        let transactionsOnDate = candidate.transactions.filter {
+            StockTransaction.isSameDay($0.tradedAt, date)
+        }
+        guard Set(transactionsOnDate.map(\.id)) == Set(orderedIDs) else { return false }
+
+        let normalizedDate = StockTransaction.normalizedDate(date)
+        for (dayOrder, transactionID) in orderedIDs.enumerated() {
+            guard let index = candidate.transactions.firstIndex(where: { $0.id == transactionID }) else {
+                return false
+            }
+            candidate.transactions[index].tradedAt = normalizedDate
+            candidate.transactions[index].dayOrder = dayOrder
+        }
+        guard candidate.hasValidTransactionOrder else { return false }
+
+        stocks[stockIndex] = candidate
         persist()
         return true
     }
@@ -736,23 +802,28 @@ final class AppStore: ObservableObject {
 
     func refreshStockQuotes(
         for market: StockMarket? = nil,
-        forcedMarkets: Set<StockMarket> = []
+        forcedMarkets: Set<StockMarket> = [],
+        allowClosedMissingData: Bool = true
     ) async {
         guard isModuleVisible(.myStocks) else { return }
         guard !isRefreshingQuotes else { return }
         guard !Task.isCancelled else { return }
-        isRefreshingQuotes = true
-        quoteRefreshError = nil
-        defer { isRefreshingQuotes = false }
 
         let refreshDate = Date()
         let stockSnapshot = stocks.filter { stock in
             guard stock.hasConfiguredSymbol else { return false }
             if let market, stock.market != market { return false }
+            let quoteDataMissing = stock.latestPrice == nil
+                || stock.latestPrice.map { $0 <= 0 } == true
+                || stock.lastQuoteAt == nil
             return forcedMarkets.contains(stock.market)
+                || (allowClosedMissingData && quoteDataMissing)
                 || StockMarketTradingCalendar.isOpen(stock.market, at: refreshDate)
         }
         guard !stockSnapshot.isEmpty else { return }
+        isRefreshingQuotes = true
+        quoteRefreshError = nil
+        defer { isRefreshingQuotes = false }
         if !Task.isCancelled {
             refreshExchangeRateIfNeeded()
         }
@@ -776,16 +847,20 @@ final class AppStore: ObservableObject {
             guard let index = stockIndices[stock.id] else { continue }
             let previous = stocks[index]
             stocks[index].symbol = quote.symbol
-            stocks[index].quoteName = quote.name
+            let quoteName = quote.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !quoteName.isEmpty {
+                stocks[index].quoteName = quoteName
+            }
             stocks[index].latestPrice = quote.latestPrice
             stocks[index].previousClose = quote.previousClose
             stocks[index].changePercent = quote.changePercent
             stocks[index].lastQuoteAt = quote.updatedAt
             if previous.symbol != quote.symbol
-                || previous.quoteName != quote.name
+                || (!quoteName.isEmpty && previous.quoteName != quoteName)
                 || previous.latestPrice != quote.latestPrice
                 || previous.previousClose != quote.previousClose
-                || previous.changePercent != quote.changePercent {
+                || previous.changePercent != quote.changePercent
+                || previous.lastQuoteAt != quote.updatedAt {
                 didChangePersistedQuote = true
             }
             quoteSources[stock.id] = quote.source
@@ -797,7 +872,7 @@ final class AppStore: ObservableObject {
         for id in failures.keys { quoteSources[id] = nil }
         if !failures.isEmpty {
             let firstReason = failures.values.first ?? "行情服务暂时不可用"
-            quoteRefreshError = "\(failures.count) 只股票暂时无法刷新：\(firstReason)"
+            quoteRefreshError = "\(failures.count) 个标的暂时无法刷新：\(firstReason)"
             DiagnosticLogger.shared.log(
                 .stockQuote,
                 "行情刷新完成 success=\(successCount) failure=\(failures.count)",
@@ -812,9 +887,7 @@ final class AppStore: ObservableObject {
             for market in refreshedMarkets {
                 lastStockRefreshAtByMarket[market] = refreshedAt
             }
-            if market == nil {
-                lastStockRefreshAt = refreshedAt
-            }
+            lastStockRefreshAt = max(lastStockRefreshAt ?? .distantPast, refreshedAt)
             persistStockRefreshDates()
             evaluateStockPriceAlerts()
         }
@@ -824,7 +897,14 @@ final class AppStore: ObservableObject {
         if let market {
             return lastStockRefreshAtByMarket[market]
         }
-        return lastStockRefreshAt
+        return lastStockRefreshAtByMarket.values.max() ?? lastStockRefreshAt
+    }
+
+    func latestStockQuoteAt(for market: StockMarket) -> Date? {
+        stocks
+            .filter { $0.market == market && $0.hasConfiguredSymbol }
+            .compactMap { $0.lastQuoteAt }
+            .max()
     }
 
     private static func loadStockRefreshDatesByMarket(

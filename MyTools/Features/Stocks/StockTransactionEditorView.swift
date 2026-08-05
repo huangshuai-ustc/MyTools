@@ -45,9 +45,9 @@ struct StockTransactionEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     DatePicker(
-                        "交易时间：",
+                        "交易日期：",
                         selection: $draft.transaction.tradedAt,
-                        displayedComponents: [.date, .hourAndMinute]
+                        displayedComponents: .date
                     )
                     decimalField("交易股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                     decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
