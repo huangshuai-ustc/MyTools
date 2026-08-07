@@ -15,8 +15,22 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E00000000000000000000001"
-               BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
-               BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
+               BuildableName = "&#x65b9;&#x5bf8;.app"
+               BlueprintName = "&#x65b9;&#x5bf8;"
+               ReferencedContainer = "container:MyTools.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "ED0000000000000000000001"
+               BuildableName = "MyToolsTests.xctest"
+               BlueprintName = "MyToolsTests"
                ReferencedContainer = "container:MyTools.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -28,6 +42,17 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "ED0000000000000000000001"
+               BuildableName = "MyToolsTests.xctest"
+               BlueprintName = "MyToolsTests"
+               ReferencedContainer = "container:MyTools.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
@@ -45,8 +70,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E00000000000000000000001"
-            BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
-            BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
+            BuildableName = "&#x65b9;&#x5bf8;.app"
+            BlueprintName = "&#x65b9;&#x5bf8;"
             ReferencedContainer = "container:MyTools.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,8 +87,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E00000000000000000000001"
-            BuildableName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;.app"
-            BlueprintName = "&#x6211;&#x7684;&#x5de5;&#x5177;&#x7bb1;"
+            BuildableName = "&#x65b9;&#x5bf8;.app"
+            BlueprintName = "&#x65b9;&#x5bf8;"
             ReferencedContainer = "container:MyTools.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

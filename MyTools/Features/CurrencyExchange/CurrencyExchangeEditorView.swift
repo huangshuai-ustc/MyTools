@@ -25,7 +25,8 @@ struct CurrencyExchangeEditorView: View {
         case quotedRate, soldAmount, boughtAmount, fee
     }
 
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: CurrencyExchangeStore
+    @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: CurrencyExchangeEditorDraft
@@ -83,8 +84,8 @@ struct CurrencyExchangeEditorView: View {
                         if let effectiveRate = preview.effectiveRate {
                             LabeledContent("含手续费实际汇率", value: CurrencyExchangeValueFormatter.rate(effectiveRate))
                         }
-                        if let currentValue = preview.currentRenminbiValue(using: store.renminbiBuyingRates),
-                           let loss = preview.renminbiLoss(using: store.renminbiBuyingRates) {
+                        if let currentValue = preview.currentRenminbiValue(using: exchangeRateStore.renminbiBuyingRates),
+                           let loss = preview.renminbiLoss(using: exchangeRateStore.renminbiBuyingRates) {
                             LabeledContent("按中国银行买入价可换回", value: CurrencyExchangeValueFormatter.amount(currentValue, currency: .cny))
                             LabeledContent("\(CurrencyExchangeResult(amount: loss).title) · 当前人民币损耗") {
                                 Text(CurrencyExchangeValueFormatter.amount(
@@ -93,7 +94,7 @@ struct CurrencyExchangeEditorView: View {
                                 ))
                                     .foregroundStyle(resultColor(for: loss))
                             }
-                            if let lossRate = preview.renminbiLossRate(using: store.renminbiBuyingRates) {
+                            if let lossRate = preview.renminbiLossRate(using: exchangeRateStore.renminbiBuyingRates) {
                                 LabeledContent(
                                     "当前损耗率",
                                     value: CurrencyExchangeValueFormatter.percent(
@@ -111,7 +112,7 @@ struct CurrencyExchangeEditorView: View {
                     }
                 }
             }
-            .navigationTitle(store.currencyExchangeRecords.contains { $0.id == draft.record.id } ? "编辑换汇" : "新增换汇")
+            .navigationTitle(store.records.contains { $0.id == draft.record.id } ? "编辑换汇" : "新增换汇")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -134,7 +135,7 @@ struct CurrencyExchangeEditorView: View {
                 Text(errorMessage)
             }
             .task {
-                store.refreshExchangeRateIfNeeded()
+                exchangeRateStore.refreshIfNeeded()
             }
         }
     }
@@ -202,7 +203,7 @@ struct CurrencyExchangeEditorView: View {
         }
         var datedRecord = record
         datedRecord.exchangedAt = CurrencyExchangeRecord.noon(on: record.exchangedAt)
-        store.upsertCurrencyExchangeRecord(datedRecord)
+        store.upsertRecord(datedRecord)
         dismiss()
     }
 

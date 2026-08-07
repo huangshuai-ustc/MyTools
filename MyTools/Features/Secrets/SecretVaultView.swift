@@ -89,7 +89,7 @@ private final class SecretEditorDraft: ObservableObject {
 }
 
 struct SecretVaultView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
@@ -157,7 +157,7 @@ struct SecretVaultView: View {
             }
         }
         .navigationTitle(ToolModule.secrets.title)
-        .iOSLabeledBackButton("工具箱")
+        .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -282,7 +282,7 @@ private struct SecretAttachmentRow: View {
 }
 
 struct SecretDetailView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     let itemID: UUID
@@ -403,7 +403,7 @@ struct SecretDetailView: View {
         .sheet(item: $previewAttachment) { attachment in
             AttachmentPreviewSheet(
                 attachment: attachment,
-                url: store.secretAttachmentURL(for: attachment),
+                url: store.attachmentURL(for: attachment),
                 onDismiss: { previewAttachment = nil }
             )
         }
@@ -428,7 +428,7 @@ struct SecretDetailView: View {
     }
 
     private func openAttachment(_ attachment: FileAttachment) {
-        let url = store.secretAttachmentURL(for: attachment)
+        let url = store.attachmentURL(for: attachment)
         guard FileManager.default.fileExists(atPath: url.path) else {
             attachmentError = "附件已不在本机，请进入编辑页面重新添加。"
             showingAttachmentError = true
@@ -505,7 +505,7 @@ private struct SecretTextSelectionModifier: ViewModifier {
 }
 
 struct SecretEditorView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: SecretEditorDraft

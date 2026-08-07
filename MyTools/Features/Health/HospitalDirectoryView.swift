@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HospitalDirectoryView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: HealthStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var editingProfile: HospitalProfile?
@@ -112,7 +112,7 @@ private struct HospitalProfileRow: View {
 }
 
 private struct HospitalProfileEditorView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: HealthStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var profile: HospitalProfile

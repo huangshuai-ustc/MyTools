@@ -9,7 +9,7 @@ private final class BankCardEditorDraft: ObservableObject {
 struct CardEditorView: View {
     private enum Field: Hashable { case cvv }
 
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: BankCardEditorDraft
     @FocusState private var focusedField: Field?
@@ -233,7 +233,7 @@ struct CreditCardStatementRow: View {
 }
 
 private struct CreditCardStatementEditorView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @Environment(\.dismiss) private var dismiss
     @State private var statement: CreditCardStatement
     @State private var showingFileImporter = false

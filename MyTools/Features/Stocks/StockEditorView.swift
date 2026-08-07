@@ -22,7 +22,7 @@ struct StockEditorView: View {
         case symbol, name, quantity, price, fees
     }
 
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockEditorDraft

@@ -1,0 +1,156 @@
+import Foundation
+import Testing
+@testable import MyTools
+
+struct StockChartSeriesProcessorTests {
+    @Test func intradayKeepsOnlyLatestTradingDay() {
+        let older = StockChartFixtures.date(2026, 7, 31, hour: 15)
+        let latestStart = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 30)
+        let points = [
+            StockChartFixtures.point(at: older),
+            StockChartFixtures.point(at: latestStart),
+            StockChartFixtures.point(at: latestStart.addingTimeInterval(180))
+        ]
+
+        let visible = StockChartSeriesProcessor.visiblePoints(
+            from: points,
+            for: .intraday,
+            market: .aShare
+        )
+
+        #expect(visible.map(\.date) == Array(points.suffix(2)).map(\.date))
+    }
+
+    @Test func fiveDaysKeepsFiveObservedTradingDaysWithoutCalendarGaps() {
+        let dates = [
+            (2026, 7, 27), (2026, 7, 28), (2026, 7, 29), (2026, 7, 30),
+            (2026, 7, 31), (2026, 8, 3), (2026, 8, 4)
+        ].map { StockChartFixtures.date($0.0, $0.1, $0.2) }
+        let points = dates.map { StockChartFixtures.point(at: $0) }
+
+        let visible = StockChartSeriesProcessor.visiblePoints(
+            from: points,
+            for: .fiveDays,
+            market: .aShare
+        )
+
+        #expect(visible.map(\.date) == Array(dates.suffix(5)))
+    }
+
+    @Test func indicatorSeriesIncludesSixtyPointsBeforeVisibleRange() {
+        let start = StockChartFixtures.date(2026, 1, 1)
+        let allPoints = (0..<100).map { index in
+            StockChartFixtures.point(
+                at: start.addingTimeInterval(TimeInterval(index * 86_400)),
+                close: Double(index)
+            )
+        }
+        let visible = Array(allPoints.suffix(20))
+
+        let indicators = StockChartSeriesProcessor.indicatorPoints(
+            from: allPoints,
+            visiblePoints: visible,
+            range: .oneMonth
+        )
+
+        #expect(indicators.count == 80)
+        #expect(indicators.first?.date == allPoints[20].date)
+        #expect(indicators.last?.date == allPoints.last?.date)
+    }
+
+    @Test func incomingMinuteReplacesExistingMinuteBucket() {
+        let minute = StockChartFixtures.date(2026, 8, 3, hour: 10)
+        let existing = StockChartFixtures.point(at: minute.addingTimeInterval(5), close: 10)
+        let replacement = StockChartFixtures.point(at: minute.addingTimeInterval(55), close: 12)
+
+        let merged = StockChartSeriesProcessor.mergedPoints(
+            [existing],
+            with: [replacement],
+            kind: .intraday,
+            market: .aShare
+        )
+
+        #expect(merged == [replacement])
+    }
+
+    @Test func threeMinuteResamplingPreservesOHLCAndVolume() {
+        let bucket = Date(timeIntervalSince1970: 1_800_000_000)
+        let points = [
+            StockChartFixtures.point(
+                at: bucket,
+                open: 10,
+                high: 11,
+                low: 9,
+                close: 10.5,
+                volume: 100
+            ),
+            StockChartFixtures.point(
+                at: bucket.addingTimeInterval(60),
+                open: 10.5,
+                high: 13,
+                low: 10,
+                close: 12,
+                volume: 200
+            ),
+            StockChartFixtures.point(
+                at: bucket.addingTimeInterval(120),
+                open: 12,
+                high: 12.5,
+                low: 8,
+                close: 9,
+                volume: 300
+            )
+        ]
+
+        let result = StockChartSeriesProcessor.resampledIntradayPoints(
+            points,
+            targetMinutes: 3
+        )
+
+        #expect(result.count == 1)
+        #expect(result.first?.date == points.last?.date)
+        #expect(result.first?.open == 10)
+        #expect(result.first?.high == 13)
+        #expect(result.first?.low == 8)
+        #expect(result.first?.close == 9)
+        #expect(result.first?.volume == 600)
+    }
+
+    @Test func weeklyAggregationUsesFirstOpenLastCloseAndSummedVolume() {
+        let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+        let points = [
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026, 8, 3, timeZone: "America/New_York"
+                ),
+                open: 10,
+                high: 12,
+                low: 9,
+                close: 11,
+                volume: 100
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026, 8, 7, timeZone: "America/New_York"
+                ),
+                open: 11,
+                high: 14,
+                low: 10,
+                close: 13,
+                volume: 250
+            )
+        ]
+
+        let weekly = StockChartSeriesProcessor.weeklyPoints(
+            from: points,
+            calendar: calendar
+        )
+
+        #expect(weekly.count == 1)
+        #expect(weekly.first?.open == 10)
+        #expect(weekly.first?.high == 14)
+        #expect(weekly.first?.low == 9)
+        #expect(weekly.first?.close == 13)
+        #expect(weekly.first?.volume == 350)
+    }
+}

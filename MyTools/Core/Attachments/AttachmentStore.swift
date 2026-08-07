@@ -19,11 +19,14 @@ final class AttachmentStore {
     private let fileManager: FileManager
     private let directoryURL: URL
 
-    init(fileManager: FileManager = .default) {
+    init(
+        fileManager: FileManager = .default,
+        directoryURL: URL? = nil
+    ) {
         self.fileManager = fileManager
         let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
-        directoryURL = baseURL
+        self.directoryURL = directoryURL ?? baseURL
             .appendingPathComponent("MyTools", isDirectory: true)
             .appendingPathComponent("Attachments", isDirectory: true)
     }
@@ -80,6 +83,14 @@ final class AttachmentStore {
         return try Data(contentsOf: fileURL, options: .mappedIfSafe)
     }
 
+    func write(_ data: Data, to attachment: FileAttachment) throws {
+        try ensureDirectory()
+        try data.write(
+            to: url(for: attachment),
+            options: [.atomic, .completeFileProtection]
+        )
+    }
+
     func delete(_ attachment: FileAttachment) {
         let fileURL = url(for: attachment)
         guard fileManager.fileExists(atPath: fileURL.path) else { return }
@@ -124,90 +135,22 @@ final class AttachmentStore {
         return renamed
     }
 
-    func recordsForBackup(_ records: [MedicalRecord]) throws -> [MedicalRecord] {
-        try records.map { record in
-            var copy = record
-            copy.attachments = try attachmentsForBackup(copy.attachments)
-            return copy
+    func restoreLocation(
+        of attachment: FileAttachment,
+        to original: FileAttachment
+    ) throws {
+        guard attachment.id == original.id else {
+            throw AttachmentStoreError.invalidFile
         }
-    }
-
-    func restoreAttachments(in records: [MedicalRecord]) throws -> [MedicalRecord] {
-        try ensureDirectory()
-        return try records.map { record in
-            var copy = record
-            copy.attachments = try restoredAttachments(copy.attachments)
-            return copy
+        let sourceURL = url(for: attachment)
+        let destinationURL = url(for: original)
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            throw AttachmentStoreError.fileMissing(attachment.fileName)
         }
-    }
-
-    func cardsForBackup(_ cards: [BankCard]) throws -> [BankCard] {
-        try cards.map { card in
-            var copy = card
-            for index in copy.statements.indices {
-                guard var attachment = copy.statements[index].attachment else { continue }
-                attachment = try attachmentForBackup(attachment)
-                copy.statements[index].attachment = attachment
-            }
-            return copy
+        guard !fileManager.fileExists(atPath: destinationURL.path) else {
+            throw AttachmentStoreError.invalidFile
         }
-    }
-
-    func secretsForBackup(_ secrets: [SecretItem]) throws -> [SecretItem] {
-        try secrets.map { item in
-            var copy = item
-            for index in copy.attachments.indices {
-                copy.attachments[index].backupData = try data(for: copy.attachments[index])
-            }
-            return copy
-        }
-    }
-
-    func restoreAttachments(in cards: [BankCard]) throws -> [BankCard] {
-        try ensureDirectory()
-        return try cards.map { card in
-            var copy = card
-            for index in copy.statements.indices {
-                guard let attachment = copy.statements[index].attachment else { continue }
-                copy.statements[index].attachment = try restoredAttachment(attachment)
-            }
-            return copy
-        }
-    }
-
-    func restoreAttachments(in secrets: [SecretItem]) throws -> [SecretItem] {
-        try ensureDirectory()
-        return try secrets.map { item in
-            var copy = item
-            copy.attachments = try restoredAttachments(copy.attachments)
-            return copy
-        }
-    }
-
-    private func attachmentsForBackup(_ attachments: [FileAttachment]) throws -> [FileAttachment] {
-        try attachments.map(attachmentForBackup)
-    }
-
-    private func attachmentForBackup(_ attachment: FileAttachment) throws -> FileAttachment {
-        var copy = attachment
-        copy.backupData = try data(for: attachment)
-        return copy
-    }
-
-    private func restoredAttachments(_ attachments: [FileAttachment]) throws -> [FileAttachment] {
-        try attachments.map(restoredAttachment)
-    }
-
-    private func restoredAttachment(_ attachment: FileAttachment) throws -> FileAttachment {
-        guard let payload = attachment.backupData else { return attachment }
-        try payload.write(
-            to: url(for: attachment),
-            options: [.atomic, .completeFileProtection]
-        )
-        var copy = attachment
-        copy.fileSize = Int64(payload.count)
-        copy.backupData = nil
-        return copy
+        try fileManager.moveItem(at: sourceURL, to: destinationURL)
     }
 
     private func ensureDirectory() throws {

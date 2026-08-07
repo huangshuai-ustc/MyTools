@@ -28,7 +28,7 @@ struct StockDividendEditorView: View {
         case quantity, dividendPerShare, withholdingTax, fees
     }
 
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockDividendEditorDraft
@@ -197,7 +197,7 @@ struct StockDividendEditorView: View {
         dividend.grossAmount = grossAmount
         dividend.withholdingTax = withholdingTax
         dividend.fees = fees
-        store.upsertStockDividend(dividend, in: stock.id)
+        store.upsertDividend(dividend, in: stock.id)
         dismiss()
     }
 

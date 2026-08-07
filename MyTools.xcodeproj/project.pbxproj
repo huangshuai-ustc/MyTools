@@ -22,13 +22,13 @@
 		A0000000000000000000000D /* Stock.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000E /* Stock.swift */; };
 		A0000000000000000000000E /* StockQuoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000000F /* StockQuoteService.swift */; };
 		A0000000000000000000000F /* StocksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000010 /* StocksView.swift */; };
-		A10000000000000000000001 /* ToolModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* ToolModule.swift */; };
+		A10000000000000000000001 /* AppMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AppMetadata.swift */; };
 		A10000000000000000000002 /* ToolboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* ToolboxView.swift */; };
 		A10000000000000000000003 /* ToolModuleSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* ToolModuleSettings.swift */; };
 		A10000000000000000000004 /* StockAppearanceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* StockAppearanceSettings.swift */; };
 		A10000000000000000000005 /* IMETextInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* IMETextInput.swift */; };
 		A10000000000000000000006 /* ProtectedContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ProtectedContent.swift */; };
-		A10000000000000000000007 /* ViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* ViewModifiers.swift */; };
+		A10000000000000000000007 /* ListViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* ListViewModifiers.swift */; };
 		A10000000000000000000008 /* DecimalTextParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* DecimalTextParser.swift */; };
 		A10000000000000000000009 /* SubaccountEditorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* SubaccountEditorViews.swift */; };
 		A1000000000000000000000A /* BankCardEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* BankCardEditorView.swift */; };
@@ -64,8 +64,97 @@
 		AC0000000000000000000002 /* StockWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000002 /* StockWatchView.swift */; };
 		AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000003 /* StockTechnicalAnalysis.swift */; };
 		AC0000000000000000000004 /* StockInvestmentScoreModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000004 /* StockInvestmentScoreModel.swift */; };
+		AC0000000000000000000005 /* StockChartModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000005 /* StockChartModels.swift */; };
+		AC0000000000000000000006 /* StockChartSeriesProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000006 /* StockChartSeriesProcessor.swift */; };
+		AC0000000000000000000007 /* StockChartDiskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000007 /* StockChartDiskStore.swift */; };
+		AC0000000000000000000008 /* StockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000008 /* StockChartProvider.swift */; };
+		AC0000000000000000000009 /* TencentStockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000009 /* TencentStockChartProvider.swift */; };
+		AC000000000000000000000A /* YahooStockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000A /* YahooStockChartProvider.swift */; };
+		AC000000000000000000000B /* EastmoneyStockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000B /* EastmoneyStockChartProvider.swift */; };
+		AC000000000000000000000C /* NasdaqStockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000C /* NasdaqStockChartProvider.swift */; };
+		AC000000000000000000000D /* AppStoreBackupMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000D /* AppStoreBackupMerger.swift */; };
+		AC000000000000000000000E /* AppStoreAlertEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000E /* AppStoreAlertEvaluator.swift */; };
+		AC000000000000000000000F /* HealthRecordSynchronizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC000000000000000000000F /* HealthRecordSynchronizer.swift */; };
+		AC0000000000000000000010 /* AppStoreDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000010 /* AppStoreDependencies.swift */; };
+		AC0000000000000000000011 /* StockPortfolioEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000011 /* StockPortfolioEditor.swift */; };
+		AC0000000000000000000012 /* StockQuoteRefreshReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */; };
+		AD0000000000000000000001 /* StockChartSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000001 /* StockChartSmokeTests.swift */; };
+		AD0000000000000000000002 /* StockChartSeriesProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000003 /* StockChartSeriesProcessorTests.swift */; };
+		AD0000000000000000000003 /* StockChartFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000004 /* StockChartFixtures.swift */; };
+		AD0000000000000000000004 /* StockChartDiskStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000005 /* StockChartDiskStoreTests.swift */; };
+		AD0000000000000000000005 /* FakeStockChartProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000006 /* FakeStockChartProvider.swift */; };
+		AD0000000000000000000006 /* StockChartServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000007 /* StockChartServiceTests.swift */; };
+		AD0000000000000000000007 /* StubStockChartHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000008 /* StubStockChartHTTPClient.swift */; };
+		AD0000000000000000000008 /* StockChartProviderParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000009 /* StockChartProviderParsingTests.swift */; };
+		AD0000000000000000000009 /* StockTechnicalIndicatorsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000A /* StockTechnicalIndicatorsTests.swift */; };
+		AD000000000000000000000A /* StockInvestmentScoreModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000B /* StockInvestmentScoreModelTests.swift */; };
+		AD000000000000000000000B /* AppStoreBackupMergerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000C /* AppStoreBackupMergerTests.swift */; };
+		AD000000000000000000000C /* AppStoreAlertEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000D /* AppStoreAlertEvaluatorTests.swift */; };
+		AD000000000000000000000D /* HealthRecordSynchronizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000E /* HealthRecordSynchronizerTests.swift */; };
+		AD000000000000000000000E /* AppStoreFacadeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD000000000000000000000F /* AppStoreFacadeTests.swift */; };
+		AD000000000000000000000F /* StockPortfolioEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000010 /* StockPortfolioEditorTests.swift */; };
+		AD0000000000000000000010 /* StockQuoteRefreshReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000011 /* StockQuoteRefreshReducerTests.swift */; };
+		AE0000000000000000000001 /* StockQuoteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000001 /* StockQuoteModels.swift */; };
+		AE0000000000000000000002 /* StockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000002 /* StockQuoteProvider.swift */; };
+		AE0000000000000000000003 /* TencentStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000003 /* TencentStockQuoteProvider.swift */; };
+		AE0000000000000000000004 /* SinaStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000004 /* SinaStockQuoteProvider.swift */; };
+		AE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift */; };
+		AE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift */; };
+		AE0000000000000000000007 /* NasdaqStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000007 /* NasdaqStockQuoteProvider.swift */; };
+		AE0000000000000000000008 /* YahooStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000008 /* YahooStockQuoteProvider.swift */; };
+		AE0000000000000000000009 /* StockChartPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000009 /* StockChartPresentation.swift */; };
+		AE000000000000000000000A /* StockChartCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000A /* StockChartCanvas.swift */; };
+		AE000000000000000000000B /* MedicalRecordsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000B /* MedicalRecordsPresentation.swift */; };
+		AE000000000000000000000C /* MedicalRecordRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000C /* MedicalRecordRow.swift */; };
+		AE000000000000000000000D /* MedicalRecordDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000D /* MedicalRecordDetailView.swift */; };
+		AF0000000000000000000001 /* StubStockQuoteHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000001 /* StubStockQuoteHTTPClient.swift */; };
+		AF0000000000000000000002 /* StockQuoteProviderParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000002 /* StockQuoteProviderParsingTests.swift */; };
+		AF0000000000000000000003 /* StockQuoteServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000003 /* StockQuoteServiceTests.swift */; };
+		AF0000000000000000000004 /* StockChartPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000004 /* StockChartPresentationTests.swift */; };
+		AF0000000000000000000005 /* MedicalRecordsPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000005 /* MedicalRecordsPresentationTests.swift */; };
+		AG0000000000000000000001 /* AppStoreBackupProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000001 /* AppStoreBackupProcessor.swift */; };
+		AG0000000000000000000002 /* StockMarketTradingCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000002 /* StockMarketTradingCalendar.swift */; };
+		AG0000000000000000000003 /* StockPortfolioAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000003 /* StockPortfolioAnalytics.swift */; };
+		AG0000000000000000000004 /* StockValueFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000004 /* StockValueFormatter.swift */; };
+		AG0000000000000000000005 /* ToolModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000005 /* ToolModule.swift */; };
+		AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */; };
+		AG0000000000000000000007 /* LiveAppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000007 /* LiveAppDependencies.swift */; };
+		AH0000000000000000000001 /* StockTrendColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BH0000000000000000000001 /* StockTrendColor.swift */; };
+		AH0000000000000000000002 /* ToolModuleDestination.swift in Sources */ = {isa = PBXBuildFile; fileRef = BH0000000000000000000002 /* ToolModuleDestination.swift */; };
+		AH0000000000000000000003 /* ExchangeRateRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BH0000000000000000000003 /* ExchangeRateRepositoryTests.swift */; };
+		AI0000000000000000000001 /* AttachmentEditSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = BI0000000000000000000001 /* AttachmentEditSession.swift */; };
+		AI0000000000000000000002 /* MedicalRecordDraftValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */; };
+		AI0000000000000000000003 /* MedicalRecordEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BI0000000000000000000003 /* MedicalRecordEditingTests.swift */; };
+		AJ0000000000000000000001 /* ModuleStoreContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = BJ0000000000000000000001 /* ModuleStoreContracts.swift */; };
+		AJ0000000000000000000002 /* ExchangeRateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BJ0000000000000000000002 /* ExchangeRateStore.swift */; };
+		AJ0000000000000000000003 /* StockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BJ0000000000000000000003 /* StockStore.swift */; };
+		AK0000000000000000000001 /* HealthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BK0000000000000000000001 /* HealthStore.swift */; };
+		AL0000000000000000000001 /* FinanceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BL0000000000000000000001 /* FinanceStore.swift */; };
+		AM0000000000000000000001 /* SecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BM0000000000000000000001 /* SecretStore.swift */; };
+		AN0000000000000000000001 /* CurrencyExchangeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BN0000000000000000000001 /* CurrencyExchangeStore.swift */; };
+		AO0000000000000000000001 /* StockDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000001 /* StockDetailView.swift */; };
+		AO0000000000000000000002 /* ProfileSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000002 /* ProfileSettingsView.swift */; };
+		AO0000000000000000000003 /* StorageSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000003 /* StorageSettingsView.swift */; };
+		AO0000000000000000000004 /* AppearanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000004 /* AppearanceSettingsView.swift */; };
+		AO0000000000000000000005 /* HomeFeatureSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000005 /* HomeFeatureSettingsView.swift */; };
+		AO0000000000000000000006 /* BackupSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000006 /* BackupSettingsView.swift */; };
+		AO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */; };
+		AP0000000000000000000001 /* AppDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = BP0000000000000000000001 /* AppDateFormatting.swift */; };
+		AP0000000000000000000002 /* MarkdownRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = BP0000000000000000000002 /* MarkdownRendering.swift */; };
+		AQ0000000000000000000001 /* ModuleStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQ0000000000000000000001 /* ModuleStoreTests.swift */; };
+		AR0000000000000000000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = DR0000000000000000000001 /* InfoPlist.strings */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CD0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E00000000000000000000003 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E00000000000000000000001;
+			remoteInfo = "方寸";
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		B00000000000000000000001 /* ToolBoxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolBoxApp.swift; sourceTree = "<group>"; };
@@ -84,13 +173,13 @@
 		B0000000000000000000000E /* Stock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stock.swift; sourceTree = "<group>"; };
 		B0000000000000000000000F /* StockQuoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteService.swift; sourceTree = "<group>"; };
 		B00000000000000000000010 /* StocksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StocksView.swift; sourceTree = "<group>"; };
-		B10000000000000000000001 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
+		B10000000000000000000001 /* AppMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMetadata.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* ToolboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolboxView.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* ToolModuleSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModuleSettings.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* StockAppearanceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockAppearanceSettings.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* IMETextInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMETextInput.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* ProtectedContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedContent.swift; sourceTree = "<group>"; };
-		B10000000000000000000007 /* ViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModifiers.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* ListViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListViewModifiers.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* DecimalTextParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecimalTextParser.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* SubaccountEditorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubaccountEditorViews.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* BankCardEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCardEditorView.swift; sourceTree = "<group>"; };
@@ -116,6 +205,8 @@
 		B80000000000000000000003 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		B80000000000000000000004 /* StockRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockRefreshCoordinator.swift; sourceTree = "<group>"; };
 		B90000000000000000000001 /* StorageUsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageUsageService.swift; sourceTree = "<group>"; };
+		BA0000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		BA0000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
 		BB0000000000000000000001 /* CurrencyCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyCode.swift; sourceTree = "<group>"; };
 		BB0000000000000000000002 /* FileAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileAttachment.swift; sourceTree = "<group>"; };
 		BB0000000000000000000003 /* VaultData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultData.swift; sourceTree = "<group>"; };
@@ -126,19 +217,110 @@
 		BC0000000000000000000002 /* StockWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockWatchView.swift; sourceTree = "<group>"; };
 		BC0000000000000000000003 /* StockTechnicalAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTechnicalAnalysis.swift; sourceTree = "<group>"; };
 		BC0000000000000000000004 /* StockInvestmentScoreModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockInvestmentScoreModel.swift; sourceTree = "<group>"; };
-		BA0000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
-		BA0000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
+		BC0000000000000000000005 /* StockChartModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartModels.swift; sourceTree = "<group>"; };
+		BC0000000000000000000006 /* StockChartSeriesProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartSeriesProcessor.swift; sourceTree = "<group>"; };
+		BC0000000000000000000007 /* StockChartDiskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartDiskStore.swift; sourceTree = "<group>"; };
+		BC0000000000000000000008 /* StockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartProvider.swift; sourceTree = "<group>"; };
+		BC0000000000000000000009 /* TencentStockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentStockChartProvider.swift; sourceTree = "<group>"; };
+		BC000000000000000000000A /* YahooStockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YahooStockChartProvider.swift; sourceTree = "<group>"; };
+		BC000000000000000000000B /* EastmoneyStockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EastmoneyStockChartProvider.swift; sourceTree = "<group>"; };
+		BC000000000000000000000C /* NasdaqStockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NasdaqStockChartProvider.swift; sourceTree = "<group>"; };
+		BC000000000000000000000D /* AppStoreBackupMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupMerger.swift; sourceTree = "<group>"; };
+		BC000000000000000000000E /* AppStoreAlertEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreAlertEvaluator.swift; sourceTree = "<group>"; };
+		BC000000000000000000000F /* HealthRecordSynchronizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecordSynchronizer.swift; sourceTree = "<group>"; };
+		BC0000000000000000000010 /* AppStoreDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreDependencies.swift; sourceTree = "<group>"; };
+		BC0000000000000000000011 /* StockPortfolioEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioEditor.swift; sourceTree = "<group>"; };
+		BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteRefreshReducer.swift; sourceTree = "<group>"; };
+		BD0000000000000000000001 /* StockChartSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartSmokeTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000002 /* MyToolsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MyToolsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD0000000000000000000003 /* StockChartSeriesProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartSeriesProcessorTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000004 /* StockChartFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartFixtures.swift; sourceTree = "<group>"; };
+		BD0000000000000000000005 /* StockChartDiskStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartDiskStoreTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000006 /* FakeStockChartProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeStockChartProvider.swift; sourceTree = "<group>"; };
+		BD0000000000000000000007 /* StockChartServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartServiceTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000008 /* StubStockChartHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubStockChartHTTPClient.swift; sourceTree = "<group>"; };
+		BD0000000000000000000009 /* StockChartProviderParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartProviderParsingTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000A /* StockTechnicalIndicatorsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTechnicalIndicatorsTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000B /* StockInvestmentScoreModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockInvestmentScoreModelTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000C /* AppStoreBackupMergerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupMergerTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000D /* AppStoreAlertEvaluatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreAlertEvaluatorTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000E /* HealthRecordSynchronizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecordSynchronizerTests.swift; sourceTree = "<group>"; };
+		BD000000000000000000000F /* AppStoreFacadeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreFacadeTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000010 /* StockPortfolioEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioEditorTests.swift; sourceTree = "<group>"; };
+		BD0000000000000000000011 /* StockQuoteRefreshReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteRefreshReducerTests.swift; sourceTree = "<group>"; };
+		BE0000000000000000000001 /* StockQuoteModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteModels.swift; sourceTree = "<group>"; };
+		BE0000000000000000000002 /* StockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000003 /* TencentStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TencentStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000004 /* SinaStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SinaStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialAShareStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EastmoneyStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000007 /* NasdaqStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NasdaqStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000008 /* YahooStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YahooStockQuoteProvider.swift; sourceTree = "<group>"; };
+		BE0000000000000000000009 /* StockChartPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartPresentation.swift; sourceTree = "<group>"; };
+		BE000000000000000000000A /* StockChartCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartCanvas.swift; sourceTree = "<group>"; };
+		BE000000000000000000000B /* MedicalRecordsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordsPresentation.swift; sourceTree = "<group>"; };
+		BE000000000000000000000C /* MedicalRecordRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordRow.swift; sourceTree = "<group>"; };
+		BE000000000000000000000D /* MedicalRecordDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordDetailView.swift; sourceTree = "<group>"; };
+		BF0000000000000000000001 /* StubStockQuoteHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubStockQuoteHTTPClient.swift; sourceTree = "<group>"; };
+		BF0000000000000000000002 /* StockQuoteProviderParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteProviderParsingTests.swift; sourceTree = "<group>"; };
+		BF0000000000000000000003 /* StockQuoteServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockQuoteServiceTests.swift; sourceTree = "<group>"; };
+		BF0000000000000000000004 /* StockChartPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartPresentationTests.swift; sourceTree = "<group>"; };
+		BF0000000000000000000005 /* MedicalRecordsPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordsPresentationTests.swift; sourceTree = "<group>"; };
+		BG0000000000000000000001 /* AppStoreBackupProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupProcessor.swift; sourceTree = "<group>"; };
+		BG0000000000000000000002 /* StockMarketTradingCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockMarketTradingCalendar.swift; sourceTree = "<group>"; };
+		BG0000000000000000000003 /* StockPortfolioAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioAnalytics.swift; sourceTree = "<group>"; };
+		BG0000000000000000000004 /* StockValueFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockValueFormatter.swift; sourceTree = "<group>"; };
+		BG0000000000000000000005 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
+		BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupProcessorTests.swift; sourceTree = "<group>"; };
+		BG0000000000000000000007 /* LiveAppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAppDependencies.swift; sourceTree = "<group>"; };
+		BH0000000000000000000001 /* StockTrendColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTrendColor.swift; sourceTree = "<group>"; };
+		BH0000000000000000000002 /* ToolModuleDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModuleDestination.swift; sourceTree = "<group>"; };
+		BH0000000000000000000003 /* ExchangeRateRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateRepositoryTests.swift; sourceTree = "<group>"; };
+		BI0000000000000000000001 /* AttachmentEditSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentEditSession.swift; sourceTree = "<group>"; };
+		BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordDraftValidator.swift; sourceTree = "<group>"; };
+		BI0000000000000000000003 /* MedicalRecordEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordEditingTests.swift; sourceTree = "<group>"; };
+		BJ0000000000000000000001 /* ModuleStoreContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleStoreContracts.swift; sourceTree = "<group>"; };
+		BJ0000000000000000000002 /* ExchangeRateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateStore.swift; sourceTree = "<group>"; };
+		BJ0000000000000000000003 /* StockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockStore.swift; sourceTree = "<group>"; };
+		BK0000000000000000000001 /* HealthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthStore.swift; sourceTree = "<group>"; };
+		BL0000000000000000000001 /* FinanceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceStore.swift; sourceTree = "<group>"; };
+		BM0000000000000000000001 /* SecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretStore.swift; sourceTree = "<group>"; };
+		BN0000000000000000000001 /* CurrencyExchangeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeStore.swift; sourceTree = "<group>"; };
+		BO0000000000000000000001 /* StockDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockDetailView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000002 /* ProfileSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSettingsView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000003 /* StorageSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSettingsView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000004 /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000005 /* HomeFeatureSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeFeatureSettingsView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000006 /* BackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupSettingsView.swift; sourceTree = "<group>"; };
+		BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankOfChinaExchangeRatesView.swift; sourceTree = "<group>"; };
+		BP0000000000000000000001 /* AppDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDateFormatting.swift; sourceTree = "<group>"; };
+		BP0000000000000000000002 /* MarkdownRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendering.swift; sourceTree = "<group>"; };
+		BQ0000000000000000000001 /* ModuleStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleStoreTests.swift; sourceTree = "<group>"; };
+		BR0000000000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		BR0000000000000000000002 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		E19E9F2D301499DA0018B621 /* 我的工具箱.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "我的工具箱.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E19E9F2D301499DA0018B621 /* 方寸.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "方寸.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		ED0000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		D00000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				D00000000000000000000006 /* 我的工具箱 */,
+				D00000000000000000000006 /* 方寸 */,
+				DD0000000000000000000001 /* MyToolsTests */,
 				DA0000000000000000000001 /* Config */,
-				E19E9F2D301499DA0018B621 /* 我的工具箱.app */,
+				E19E9F2D301499DA0018B621 /* 方寸.app */,
+				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
 			sourceTree = "<group>";
 		};
@@ -158,8 +340,12 @@
 		D00000000000000000000003 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				D50000000000000000000002 /* Shared */,
 				B00000000000000000000002 /* BankCard.swift */,
 				B0000000000000000000000E /* Stock.swift */,
+				BG0000000000000000000002 /* StockMarketTradingCalendar.swift */,
+				BG0000000000000000000003 /* StockPortfolioAnalytics.swift */,
+				BG0000000000000000000004 /* StockValueFormatter.swift */,
 				B20000000000000000000001 /* CurrencyExchange.swift */,
 				B40000000000000000000001 /* HealthRecord.swift */,
 				B70000000000000000000001 /* Secret.swift */,
@@ -168,10 +354,50 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		D50000000000000000000002 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000000000000000000001 /* CurrencyCode.swift */,
+				BB0000000000000000000002 /* FileAttachment.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		D00000000000000000000004 /* Services */ = {
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000004 /* AppStore.swift */,
+				BJ0000000000000000000001 /* ModuleStoreContracts.swift */,
+				BJ0000000000000000000002 /* ExchangeRateStore.swift */,
+				BJ0000000000000000000003 /* StockStore.swift */,
+				BK0000000000000000000001 /* HealthStore.swift */,
+				BL0000000000000000000001 /* FinanceStore.swift */,
+				BM0000000000000000000001 /* SecretStore.swift */,
+				BN0000000000000000000001 /* CurrencyExchangeStore.swift */,
+				BC0000000000000000000010 /* AppStoreDependencies.swift */,
+				BG0000000000000000000001 /* AppStoreBackupProcessor.swift */,
+				BC000000000000000000000D /* AppStoreBackupMerger.swift */,
+				BC000000000000000000000E /* AppStoreAlertEvaluator.swift */,
+				BC000000000000000000000F /* HealthRecordSynchronizer.swift */,
+				BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */,
+				BC0000000000000000000011 /* StockPortfolioEditor.swift */,
+				BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */,
+				BE0000000000000000000001 /* StockQuoteModels.swift */,
+				BE0000000000000000000002 /* StockQuoteProvider.swift */,
+				BE0000000000000000000003 /* TencentStockQuoteProvider.swift */,
+				BE0000000000000000000004 /* SinaStockQuoteProvider.swift */,
+				BE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift */,
+				BE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift */,
+				BE0000000000000000000007 /* NasdaqStockQuoteProvider.swift */,
+				BE0000000000000000000008 /* YahooStockQuoteProvider.swift */,
+				BC0000000000000000000005 /* StockChartModels.swift */,
+				BC0000000000000000000006 /* StockChartSeriesProcessor.swift */,
+				BC0000000000000000000007 /* StockChartDiskStore.swift */,
+				BC0000000000000000000008 /* StockChartProvider.swift */,
+				BC0000000000000000000009 /* TencentStockChartProvider.swift */,
+				BC000000000000000000000A /* YahooStockChartProvider.swift */,
+				BC000000000000000000000B /* EastmoneyStockChartProvider.swift */,
+				BC000000000000000000000C /* NasdaqStockChartProvider.swift */,
 				BC0000000000000000000001 /* StockChartService.swift */,
 				BC0000000000000000000003 /* StockTechnicalAnalysis.swift */,
 				BC0000000000000000000004 /* StockInvestmentScoreModel.swift */,
@@ -181,11 +407,12 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
-		D00000000000000000000006 /* 我的工具箱 */ = {
+		D00000000000000000000006 /* 方寸 */ = {
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
+				DR0000000000000000000001 /* InfoPlist.strings */,
 				D10000000000000000000001 /* App */,
 				DC0000000000000000000001 /* Core */,
 				D00000000000000000000002 /* Features */,
@@ -195,7 +422,7 @@
 				D10000000000000000000003 /* Shared */,
 				C63564043010C59600EBCA46 /* Assets.xcassets */,
 			);
-			name = "我的工具箱";
+			name = "方寸";
 			path = MyTools;
 			sourceTree = "<group>";
 		};
@@ -203,7 +430,9 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000006 /* RootView.swift */,
-				B10000000000000000000001 /* ToolModule.swift */,
+				B10000000000000000000001 /* AppMetadata.swift */,
+				BG0000000000000000000007 /* LiveAppDependencies.swift */,
+				BH0000000000000000000002 /* ToolModuleDestination.swift */,
 				B10000000000000000000002 /* ToolboxView.swift */,
 			);
 			path = App;
@@ -212,6 +441,7 @@
 		D10000000000000000000002 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				BG0000000000000000000005 /* ToolModule.swift */,
 				B10000000000000000000003 /* ToolModuleSettings.swift */,
 				B10000000000000000000004 /* StockAppearanceSettings.swift */,
 			);
@@ -224,7 +454,9 @@
 				B10000000000000000000008 /* DecimalTextParser.swift */,
 				B10000000000000000000005 /* IMETextInput.swift */,
 				B10000000000000000000006 /* ProtectedContent.swift */,
-				B10000000000000000000007 /* ViewModifiers.swift */,
+				BP0000000000000000000001 /* AppDateFormatting.swift */,
+				BP0000000000000000000002 /* MarkdownRendering.swift */,
+				B10000000000000000000007 /* ListViewModifiers.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -245,7 +477,11 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000010 /* StocksView.swift */,
+				BO0000000000000000000001 /* StockDetailView.swift */,
 				BC0000000000000000000002 /* StockWatchView.swift */,
+				BE0000000000000000000009 /* StockChartPresentation.swift */,
+				BE000000000000000000000A /* StockChartCanvas.swift */,
+				BH0000000000000000000001 /* StockTrendColor.swift */,
 				B1000000000000000000000B /* StockEditorView.swift */,
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
 				B50000000000000000000001 /* StockDividendEditorView.swift */,
@@ -257,6 +493,11 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000009 /* ProfileView.swift */,
+				BO0000000000000000000002 /* ProfileSettingsView.swift */,
+				BO0000000000000000000003 /* StorageSettingsView.swift */,
+				BO0000000000000000000004 /* AppearanceSettingsView.swift */,
+				BO0000000000000000000005 /* HomeFeatureSettingsView.swift */,
+				BO0000000000000000000006 /* BackupSettingsView.swift */,
 				B60000000000000000000002 /* DiagnosticsView.swift */,
 				B80000000000000000000003 /* NotificationSettingsView.swift */,
 			);
@@ -267,6 +508,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000002 /* CurrencyExchangeView.swift */,
+				BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */,
 				B20000000000000000000003 /* CurrencyExchangeEditorView.swift */,
 			);
 			path = CurrencyExchange;
@@ -276,6 +518,9 @@
 			isa = PBXGroup;
 			children = (
 				B40000000000000000000003 /* HealthRecordsView.swift */,
+				BE000000000000000000000B /* MedicalRecordsPresentation.swift */,
+				BE000000000000000000000C /* MedicalRecordRow.swift */,
+				BE000000000000000000000D /* MedicalRecordDetailView.swift */,
 				B40000000000000000000004 /* MedicalRecordEditorView.swift */,
 				B40000000000000000000005 /* HospitalDirectoryView.swift */,
 			);
@@ -288,6 +533,15 @@
 				B70000000000000000000003 /* SecretVaultView.swift */,
 			);
 			path = Secrets;
+			sourceTree = "<group>";
+		};
+		DA0000000000000000000001 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				BA0000000000000000000001 /* Shared.xcconfig */,
+				BA0000000000000000000002 /* Signing.local.xcconfig.example */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		DC0000000000000000000001 /* Core */ = {
@@ -319,7 +573,7 @@
 		DC0000000000000000000003 /* Attachments */ = {
 			isa = PBXGroup;
 			children = (
-				BB0000000000000000000002 /* FileAttachment.swift */,
+				BI0000000000000000000001 /* AttachmentEditSession.swift */,
 				B40000000000000000000002 /* AttachmentStore.swift */,
 				BB0000000000000000000005 /* AttachmentPresentation.swift */,
 			);
@@ -337,7 +591,6 @@
 		DC0000000000000000000005 /* Currency */ = {
 			isa = PBXGroup;
 			children = (
-				BB0000000000000000000001 /* CurrencyCode.swift */,
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 				BB0000000000000000000006 /* ExchangeRateRepository.swift */,
 			);
@@ -377,21 +630,84 @@
 			path = Storage;
 			sourceTree = "<group>";
 		};
-		DA0000000000000000000001 /* Config */ = {
+		DD0000000000000000000001 /* MyToolsTests */ = {
 			isa = PBXGroup;
 			children = (
-				BA0000000000000000000001 /* Shared.xcconfig */,
-				BA0000000000000000000002 /* Signing.local.xcconfig.example */,
+				DD0000000000000000000004 /* AppStore */,
+				DE0000000000000000000001 /* Health */,
+				DQ0000000000000000000001 /* Stores */,
+				DD0000000000000000000002 /* Stocks */,
+				DD0000000000000000000003 /* TestSupport */,
 			);
-			path = Config;
+			path = MyToolsTests;
+			sourceTree = "<group>";
+		};
+		DD0000000000000000000002 /* Stocks */ = {
+			isa = PBXGroup;
+			children = (
+				BD0000000000000000000001 /* StockChartSmokeTests.swift */,
+				BD0000000000000000000003 /* StockChartSeriesProcessorTests.swift */,
+				BD0000000000000000000005 /* StockChartDiskStoreTests.swift */,
+				BD0000000000000000000007 /* StockChartServiceTests.swift */,
+				BD0000000000000000000009 /* StockChartProviderParsingTests.swift */,
+				BD000000000000000000000A /* StockTechnicalIndicatorsTests.swift */,
+				BD000000000000000000000B /* StockInvestmentScoreModelTests.swift */,
+				BD0000000000000000000010 /* StockPortfolioEditorTests.swift */,
+				BD0000000000000000000011 /* StockQuoteRefreshReducerTests.swift */,
+				BF0000000000000000000002 /* StockQuoteProviderParsingTests.swift */,
+				BF0000000000000000000003 /* StockQuoteServiceTests.swift */,
+				BF0000000000000000000004 /* StockChartPresentationTests.swift */,
+			);
+			path = Stocks;
+			sourceTree = "<group>";
+		};
+		DD0000000000000000000003 /* TestSupport */ = {
+			isa = PBXGroup;
+			children = (
+				BD0000000000000000000004 /* StockChartFixtures.swift */,
+				BD0000000000000000000006 /* FakeStockChartProvider.swift */,
+				BD0000000000000000000008 /* StubStockChartHTTPClient.swift */,
+				BF0000000000000000000001 /* StubStockQuoteHTTPClient.swift */,
+			);
+			path = TestSupport;
+			sourceTree = "<group>";
+		};
+		DD0000000000000000000004 /* AppStore */ = {
+			isa = PBXGroup;
+			children = (
+				BD000000000000000000000C /* AppStoreBackupMergerTests.swift */,
+				BD000000000000000000000D /* AppStoreAlertEvaluatorTests.swift */,
+				BD000000000000000000000E /* HealthRecordSynchronizerTests.swift */,
+				BD000000000000000000000F /* AppStoreFacadeTests.swift */,
+				BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */,
+				BH0000000000000000000003 /* ExchangeRateRepositoryTests.swift */,
+			);
+			path = AppStore;
+			sourceTree = "<group>";
+		};
+		DE0000000000000000000001 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				BF0000000000000000000005 /* MedicalRecordsPresentationTests.swift */,
+				BI0000000000000000000003 /* MedicalRecordEditingTests.swift */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
+		DQ0000000000000000000001 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				BQ0000000000000000000001 /* ModuleStoreTests.swift */,
+			);
+			path = Stores;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E00000000000000000000001 /* 我的工具箱 */ = {
+		E00000000000000000000001 /* 方寸 */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "我的工具箱" */;
+			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "方寸" */;
 			buildPhases = (
 				E00000000000000000000002 /* Sources */,
 				C63564063010DCFC00EBCA46 /* Resources */,
@@ -400,10 +716,27 @@
 			);
 			dependencies = (
 			);
-			name = "我的工具箱";
-			productName = "我的工具箱";
-			productReference = E19E9F2D301499DA0018B621 /* 我的工具箱.app */;
+			name = "方寸";
+			productName = "方寸";
+			productReference = E19E9F2D301499DA0018B621 /* 方寸.app */;
 			productType = "com.apple.product-type.application";
+		};
+		ED0000000000000000000001 /* MyToolsTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD0000000000000000000002 /* Build configuration list for PBXNativeTarget "MyToolsTests" */;
+			buildPhases = (
+				ED0000000000000000000003 /* Sources */,
+				ED0000000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CD0000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = MyToolsTests;
+			productName = MyToolsTests;
+			productReference = BD0000000000000000000002 /* MyToolsTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -429,7 +762,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				E00000000000000000000001 /* 我的工具箱 */,
+				E00000000000000000000001 /* 方寸 */,
+				ED0000000000000000000001 /* MyToolsTests */,
 			);
 		};
 /* End PBXProject section */
@@ -439,6 +773,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AR0000000000000000000001 /* InfoPlist.strings in Resources */,
 				C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -474,13 +809,15 @@
 				A0000000000000000000000D /* Stock.swift in Sources */,
 				A0000000000000000000000E /* StockQuoteService.swift in Sources */,
 				A0000000000000000000000F /* StocksView.swift in Sources */,
-				A10000000000000000000001 /* ToolModule.swift in Sources */,
+				A10000000000000000000001 /* AppMetadata.swift in Sources */,
 				A10000000000000000000002 /* ToolboxView.swift in Sources */,
 				A10000000000000000000003 /* ToolModuleSettings.swift in Sources */,
 				A10000000000000000000004 /* StockAppearanceSettings.swift in Sources */,
 				A10000000000000000000005 /* IMETextInput.swift in Sources */,
 				A10000000000000000000006 /* ProtectedContent.swift in Sources */,
-				A10000000000000000000007 /* ViewModifiers.swift in Sources */,
+				A10000000000000000000007 /* ListViewModifiers.swift in Sources */,
+				AP0000000000000000000001 /* AppDateFormatting.swift in Sources */,
+				AP0000000000000000000002 /* MarkdownRendering.swift in Sources */,
 				A10000000000000000000008 /* DecimalTextParser.swift in Sources */,
 				A10000000000000000000009 /* SubaccountEditorViews.swift in Sources */,
 				A1000000000000000000000A /* BankCardEditorView.swift in Sources */,
@@ -504,13 +841,116 @@
 				AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */,
 				AB0000000000000000000006 /* ExchangeRateRepository.swift in Sources */,
 				AC0000000000000000000001 /* StockChartService.swift in Sources */,
+				AC0000000000000000000005 /* StockChartModels.swift in Sources */,
+				AC0000000000000000000006 /* StockChartSeriesProcessor.swift in Sources */,
+				AC0000000000000000000007 /* StockChartDiskStore.swift in Sources */,
+				AC0000000000000000000008 /* StockChartProvider.swift in Sources */,
+				AC0000000000000000000009 /* TencentStockChartProvider.swift in Sources */,
+				AC000000000000000000000A /* YahooStockChartProvider.swift in Sources */,
+				AC000000000000000000000B /* EastmoneyStockChartProvider.swift in Sources */,
+				AC000000000000000000000C /* NasdaqStockChartProvider.swift in Sources */,
+				AC000000000000000000000D /* AppStoreBackupMerger.swift in Sources */,
+				AC000000000000000000000E /* AppStoreAlertEvaluator.swift in Sources */,
+				AC000000000000000000000F /* HealthRecordSynchronizer.swift in Sources */,
+				AC0000000000000000000010 /* AppStoreDependencies.swift in Sources */,
+				AC0000000000000000000011 /* StockPortfolioEditor.swift in Sources */,
+				AC0000000000000000000012 /* StockQuoteRefreshReducer.swift in Sources */,
+				AE0000000000000000000001 /* StockQuoteModels.swift in Sources */,
+				AE0000000000000000000002 /* StockQuoteProvider.swift in Sources */,
+				AE0000000000000000000003 /* TencentStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000004 /* SinaStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000007 /* NasdaqStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000008 /* YahooStockQuoteProvider.swift in Sources */,
+				AE0000000000000000000009 /* StockChartPresentation.swift in Sources */,
+				AE000000000000000000000A /* StockChartCanvas.swift in Sources */,
+				AH0000000000000000000001 /* StockTrendColor.swift in Sources */,
+				AH0000000000000000000002 /* ToolModuleDestination.swift in Sources */,
+				AE000000000000000000000B /* MedicalRecordsPresentation.swift in Sources */,
+				AE000000000000000000000C /* MedicalRecordRow.swift in Sources */,
+				AE000000000000000000000D /* MedicalRecordDetailView.swift in Sources */,
+				AG0000000000000000000001 /* AppStoreBackupProcessor.swift in Sources */,
+				AG0000000000000000000002 /* StockMarketTradingCalendar.swift in Sources */,
+				AG0000000000000000000003 /* StockPortfolioAnalytics.swift in Sources */,
+				AG0000000000000000000004 /* StockValueFormatter.swift in Sources */,
+				AG0000000000000000000005 /* ToolModule.swift in Sources */,
+				AG0000000000000000000007 /* LiveAppDependencies.swift in Sources */,
+				AI0000000000000000000001 /* AttachmentEditSession.swift in Sources */,
+				AI0000000000000000000002 /* MedicalRecordDraftValidator.swift in Sources */,
+				AJ0000000000000000000001 /* ModuleStoreContracts.swift in Sources */,
+				AJ0000000000000000000002 /* ExchangeRateStore.swift in Sources */,
+				AJ0000000000000000000003 /* StockStore.swift in Sources */,
+				AK0000000000000000000001 /* HealthStore.swift in Sources */,
+				AL0000000000000000000001 /* FinanceStore.swift in Sources */,
+				AM0000000000000000000001 /* SecretStore.swift in Sources */,
+				AN0000000000000000000001 /* CurrencyExchangeStore.swift in Sources */,
+				AO0000000000000000000001 /* StockDetailView.swift in Sources */,
+				AO0000000000000000000002 /* ProfileSettingsView.swift in Sources */,
+				AO0000000000000000000003 /* StorageSettingsView.swift in Sources */,
+				AO0000000000000000000004 /* AppearanceSettingsView.swift in Sources */,
+				AO0000000000000000000005 /* HomeFeatureSettingsView.swift in Sources */,
+				AO0000000000000000000006 /* BackupSettingsView.swift in Sources */,
+				AO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift in Sources */,
 				AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */,
 				AC0000000000000000000004 /* StockInvestmentScoreModel.swift in Sources */,
 				AC0000000000000000000002 /* StockWatchView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ED0000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD0000000000000000000001 /* StockChartSmokeTests.swift in Sources */,
+				AD0000000000000000000002 /* StockChartSeriesProcessorTests.swift in Sources */,
+				AD0000000000000000000003 /* StockChartFixtures.swift in Sources */,
+				AD0000000000000000000004 /* StockChartDiskStoreTests.swift in Sources */,
+				AD0000000000000000000005 /* FakeStockChartProvider.swift in Sources */,
+				AD0000000000000000000006 /* StockChartServiceTests.swift in Sources */,
+				AD0000000000000000000007 /* StubStockChartHTTPClient.swift in Sources */,
+				AD0000000000000000000008 /* StockChartProviderParsingTests.swift in Sources */,
+				AD0000000000000000000009 /* StockTechnicalIndicatorsTests.swift in Sources */,
+				AD000000000000000000000A /* StockInvestmentScoreModelTests.swift in Sources */,
+				AD000000000000000000000B /* AppStoreBackupMergerTests.swift in Sources */,
+				AD000000000000000000000C /* AppStoreAlertEvaluatorTests.swift in Sources */,
+				AD000000000000000000000D /* HealthRecordSynchronizerTests.swift in Sources */,
+				AD000000000000000000000E /* AppStoreFacadeTests.swift in Sources */,
+				AD000000000000000000000F /* StockPortfolioEditorTests.swift in Sources */,
+				AD0000000000000000000010 /* StockQuoteRefreshReducerTests.swift in Sources */,
+				AF0000000000000000000001 /* StubStockQuoteHTTPClient.swift in Sources */,
+				AF0000000000000000000002 /* StockQuoteProviderParsingTests.swift in Sources */,
+				AF0000000000000000000003 /* StockQuoteServiceTests.swift in Sources */,
+				AF0000000000000000000004 /* StockChartPresentationTests.swift in Sources */,
+				AF0000000000000000000005 /* MedicalRecordsPresentationTests.swift in Sources */,
+				AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */,
+				AH0000000000000000000003 /* ExchangeRateRepositoryTests.swift in Sources */,
+				AI0000000000000000000003 /* MedicalRecordEditingTests.swift in Sources */,
+				AQ0000000000000000000001 /* ModuleStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CD0000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E00000000000000000000001 /* 方寸 */;
+			targetProxy = CD0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		DR0000000000000000000001 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				BR0000000000000000000001 /* en */,
+				BR0000000000000000000002 /* zh-Hans */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
 		F00000000000000000000003 /* Debug */ = {
@@ -560,12 +1000,13 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyTools/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = MyTools;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_CFBundleDisplayName = "方寸";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
+				PRODUCT_MODULE_NAME = MyTools;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
@@ -622,11 +1063,12 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MyTools/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = MyTools;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_CFBundleDisplayName = "方寸";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
+				PRODUCT_MODULE_NAME = MyTools;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
@@ -636,6 +1078,50 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FD0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MyToolsTests;
+				PRODUCT_MODULE_NAME = MyToolsTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/方寸.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/方寸";
+				TEST_TARGET_NAME = "方寸";
+			};
+			name = Debug;
+		};
+		FD0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MyToolsTests;
+				PRODUCT_MODULE_NAME = MyToolsTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/方寸.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/方寸";
+				TEST_TARGET_NAME = "方寸";
 			};
 			name = Release;
 		};
@@ -651,11 +1137,20 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "我的工具箱" */ = {
+		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "方寸" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F00000000000000000000003 /* Debug */,
 				F00000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FD0000000000000000000002 /* Build configuration list for PBXNativeTarget "MyToolsTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FD0000000000000000000003 /* Debug */,
+				FD0000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -5,7 +5,7 @@ import AppKit
 
 struct CardDetailView: View {
     let card: BankCard
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -124,7 +124,7 @@ struct CardDetailView: View {
             .sheet(item: $previewAttachment) { attachment in
                 AttachmentPreviewSheet(
                     attachment: attachment,
-                    url: store.financeAttachmentURL(for: attachment),
+                    url: store.attachmentURL(for: attachment),
                     onDismiss: { previewAttachment = nil }
                 )
             }
@@ -182,7 +182,7 @@ struct CardDetailView: View {
             showingAttachmentError = true
             return
         }
-        let url = store.financeAttachmentURL(for: attachment)
+        let url = store.attachmentURL(for: attachment)
         guard FileManager.default.fileExists(atPath: url.path) else {
             attachmentError = "账单文件已不在本机，请编辑银行档案并重新添加。"
             showingAttachmentError = true

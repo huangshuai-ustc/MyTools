@@ -1,0 +1,320 @@
+import Foundation
+
+enum StockChartSeriesKind: String, Codable, Sendable {
+    case intraday
+    case fiveDayMinute
+    case daily
+    case weekly
+    case monthly
+}
+
+enum StockChartSeriesProcessor {
+    static func seriesKind(for range: StockChartRange) -> StockChartSeriesKind {
+        switch range {
+        case .intraday: return .intraday
+        case .fiveDays: return .fiveDayMinute
+        case .oneMonth, .threeMonths, .oneYear: return .daily
+        case .fiveYears, .tenYears: return .weekly
+        case .sinceInception: return .monthly
+        }
+    }
+
+    static func compatibleMetadataRanges(for range: StockChartRange) -> [StockChartRange] {
+        switch range {
+        case .intraday: return [.intraday]
+        case .fiveDays: return [.fiveDays]
+        case .oneMonth: return [.oneMonth, .threeMonths, .oneYear]
+        case .threeMonths: return [.threeMonths, .oneYear]
+        case .oneYear: return [.oneYear]
+        case .fiveYears: return [.fiveYears, .tenYears]
+        case .tenYears: return [.tenYears]
+        case .sinceInception: return [.sinceInception]
+        }
+    }
+
+    static func visiblePoints(
+        from storedPoints: [StockChartPoint],
+        for range: StockChartRange,
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let sortedPoints = storedPoints.sorted { $0.date < $1.date }
+        guard let latest = sortedPoints.last else { return [] }
+        let calendar = marketCalendar(market)
+
+        switch range {
+        case .intraday:
+            return pointsOnLatestTradingDay(sortedPoints, market: market)
+        case .fiveDays:
+            return pointsOnLatestTradingDays(sortedPoints, count: 5, market: market)
+        case .oneMonth:
+            return points(
+                sortedPoints,
+                since: calendar.date(byAdding: .month, value: -1, to: latest.date)
+            )
+        case .threeMonths:
+            return points(
+                sortedPoints,
+                since: calendar.date(byAdding: .month, value: -3, to: latest.date)
+            )
+        case .oneYear:
+            return points(
+                sortedPoints,
+                since: calendar.date(byAdding: .year, value: -1, to: latest.date)
+            )
+        case .fiveYears:
+            return points(
+                sortedPoints,
+                since: calendar.date(byAdding: .year, value: -5, to: latest.date)
+            )
+        case .tenYears:
+            return points(
+                sortedPoints,
+                since: calendar.date(byAdding: .year, value: -10, to: latest.date)
+            )
+        case .sinceInception:
+            return sortedPoints
+        }
+    }
+
+    static func indicatorPoints(
+        from storedPoints: [StockChartPoint],
+        visiblePoints: [StockChartPoint],
+        range: StockChartRange
+    ) -> [StockChartPoint] {
+        guard range != .sinceInception,
+              let firstVisibleDate = visiblePoints.first?.date,
+              let lastVisibleDate = visiblePoints.last?.date else {
+            return visiblePoints
+        }
+
+        let sortedPoints = storedPoints.sorted { $0.date < $1.date }
+        guard let firstVisibleIndex = sortedPoints.firstIndex(where: {
+            $0.date >= firstVisibleDate
+        }),
+        let lastVisibleIndex = sortedPoints.lastIndex(where: {
+            $0.date <= lastVisibleDate
+        }) else {
+            return visiblePoints
+        }
+
+        let warmupStartIndex = max(0, firstVisibleIndex - 60)
+        return Array(sortedPoints[warmupStartIndex...lastVisibleIndex])
+    }
+
+    static func preparedMinuteChartPoints(
+        _ rawPoints: [StockChartPoint],
+        range: StockChartRange,
+        market: StockMarket
+    ) -> (visible: [StockChartPoint], indicators: [StockChartPoint]) {
+        let completeSeries: [StockChartPoint]
+        if range == .intraday {
+            completeSeries = resampledIntradayPoints(
+                rawPoints.sorted { $0.date < $1.date },
+                targetMinutes: 3
+            )
+        } else {
+            completeSeries = rawPoints.sorted { $0.date < $1.date }
+        }
+
+        let visible: [StockChartPoint]
+        if range == .intraday {
+            visible = pointsOnLatestTradingDay(completeSeries, market: market)
+        } else {
+            visible = pointsOnLatestTradingDays(completeSeries, count: 5, market: market)
+        }
+        return (visible, completeSeries)
+    }
+
+    static func mergedPoints(
+        _ existing: [StockChartPoint],
+        with incoming: [StockChartPoint],
+        kind: StockChartSeriesKind,
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        var pointsByBucket: [Date: StockChartPoint] = [:]
+        for point in existing {
+            pointsByBucket[seriesBucket(for: point.date, kind: kind, calendar: calendar)] = point
+        }
+        for point in incoming {
+            pointsByBucket[seriesBucket(for: point.date, kind: kind, calendar: calendar)] = point
+        }
+        return pointsByBucket.values.sorted { $0.date < $1.date }
+    }
+
+    static func regularUnitedStatesSessionPoints(
+        _ points: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(.unitedStates)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else { return false }
+            let localMinutes = hour * 60 + minute
+            return localMinutes >= 570 && localMinutes <= 960
+        }
+    }
+
+    static func minimumPointCount(for range: StockChartRange) -> Int {
+        switch range {
+        case .intraday: return 1
+        case .fiveDays: return 20
+        case .oneMonth: return 6
+        case .threeMonths: return 15
+        case .oneYear: return 30
+        case .fiveYears, .tenYears, .sinceInception: return 2
+        }
+    }
+
+    static func hasRequiredCoverage(
+        _ points: [StockChartPoint],
+        for range: StockChartRange,
+        market: StockMarket
+    ) -> Bool {
+        guard points.count >= minimumPointCount(for: range) else { return false }
+        guard range == .fiveDays else { return true }
+
+        let calendar = marketCalendar(market)
+        let tradingDays = Set(points.map { calendar.startOfDay(for: $0.date) })
+        return tradingDays.count == 5
+    }
+
+    static func weeklyPoints(
+        from points: [StockChartPoint],
+        calendar: Calendar
+    ) -> [StockChartPoint] {
+        let groups = Dictionary(grouping: points) { point in
+            calendar.dateInterval(of: .weekOfYear, for: point.date)?.start
+                ?? calendar.startOfDay(for: point.date)
+        }
+        return groups.keys.sorted().compactMap { weekStart in
+            guard let group = groups[weekStart]?.sorted(by: { $0.date < $1.date }),
+                  let first = group.first,
+                  let last = group.last else { return nil }
+            let volumes = group.compactMap(\.volume)
+            return StockChartPoint(
+                date: last.date,
+                open: first.open,
+                high: group.map(\.high).max() ?? last.high,
+                low: group.map(\.low).min() ?? last.low,
+                close: last.close,
+                volume: volumes.isEmpty ? nil : volumes.reduce(0, +)
+            )
+        }
+    }
+
+    static func resampledIntradayPoints(
+        _ points: [StockChartPoint],
+        targetMinutes: Int
+    ) -> [StockChartPoint] {
+        guard targetMinutes > 1 else { return points.sorted { $0.date < $1.date } }
+        let interval = TimeInterval(targetMinutes * 60)
+        let groups = Dictionary(grouping: points) { point in
+            Int(point.date.timeIntervalSince1970 / interval)
+        }
+        return groups.keys.sorted().compactMap { bucket in
+            guard let group = groups[bucket]?.sorted(by: { $0.date < $1.date }),
+                  let first = group.first,
+                  let last = group.last else { return nil }
+            let volumes = group.compactMap(\.volume)
+            return StockChartPoint(
+                date: last.date,
+                open: first.open,
+                high: group.map(\.high).max() ?? last.high,
+                low: group.map(\.low).min() ?? last.low,
+                close: last.close,
+                volume: volumes.isEmpty ? nil : volumes.reduce(0, +)
+            )
+        }
+    }
+
+    static func pointsOnLatestTradingDay(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        guard let latest = points.last else { return [] }
+        let calendar = marketCalendar(market)
+        return points.filter { calendar.isDate($0.date, inSameDayAs: latest.date) }
+    }
+
+    static func pointsOnLatestTradingDays(
+        _ points: [StockChartPoint],
+        count: Int,
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        let days = points.reversed().reduce(into: [Date]()) { result, point in
+            let day = calendar.startOfDay(for: point.date)
+            if !result.contains(day), result.count < count { result.append(day) }
+        }
+        let retainedDays = Set(days)
+        return points.filter { retainedDays.contains(calendar.startOfDay(for: $0.date)) }
+    }
+
+    static func historicalStartDate(
+        for range: StockChartRange,
+        endingAt endDate: Date,
+        calendar: Calendar
+    ) -> Date {
+        switch range {
+        case .intraday:
+            return endDate
+        case .fiveDays:
+            return calendar.date(byAdding: .day, value: -12, to: endDate) ?? endDate
+        case .oneMonth:
+            return calendar.date(byAdding: .month, value: -4, to: endDate) ?? endDate
+        case .threeMonths:
+            return calendar.date(byAdding: .month, value: -6, to: endDate) ?? endDate
+        case .oneYear:
+            return calendar.date(byAdding: .month, value: -15, to: endDate) ?? endDate
+        case .fiveYears:
+            return calendar.date(byAdding: .month, value: -78, to: endDate) ?? endDate
+        case .tenYears:
+            return calendar.date(byAdding: .month, value: -138, to: endDate) ?? endDate
+        case .sinceInception:
+            return Date(timeIntervalSince1970: 0)
+        }
+    }
+
+    static func marketCalendar(_ market: StockMarket) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = marketTimeZone(market)
+        return calendar
+    }
+
+    static func marketTimeZone(_ market: StockMarket) -> TimeZone {
+        let identifier: String
+        switch market {
+        case .aShare: identifier = "Asia/Shanghai"
+        case .hongKong: identifier = "Asia/Hong_Kong"
+        case .unitedStates: identifier = "America/New_York"
+        }
+        return TimeZone(identifier: identifier) ?? .gmt
+    }
+
+    private static func points(
+        _ points: [StockChartPoint],
+        since startDate: Date?
+    ) -> [StockChartPoint] {
+        guard let startDate else { return points }
+        return points.filter { $0.date >= startDate }
+    }
+
+    private static func seriesBucket(
+        for date: Date,
+        kind: StockChartSeriesKind,
+        calendar: Calendar
+    ) -> Date {
+        switch kind {
+        case .intraday, .fiveDayMinute:
+            return calendar.dateInterval(of: .minute, for: date)?.start ?? date
+        case .daily:
+            return calendar.startOfDay(for: date)
+        case .weekly:
+            return calendar.dateInterval(of: .weekOfYear, for: date)?.start
+                ?? calendar.startOfDay(for: date)
+        case .monthly:
+            return calendar.dateInterval(of: .month, for: date)?.start
+                ?? calendar.startOfDay(for: date)
+        }
+    }
+}

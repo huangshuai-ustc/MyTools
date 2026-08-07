@@ -1,11 +1,7 @@
 import SwiftUI
 
-struct AdminCardsView: View {
-    var body: some View { HomeView() }
-}
-
 struct AccountDetailView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
@@ -416,7 +412,7 @@ private final class AccountEditorDraft: ObservableObject {
 }
 
 struct AccountEditorView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: AccountEditorDraft

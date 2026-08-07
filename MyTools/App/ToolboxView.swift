@@ -10,11 +10,13 @@ struct ToolboxView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("工具") {
-                    ForEach(visibleModules) { module in
-                        NavigationLink { destination(for: module) } label: { moduleRow(module) }
-                            .appListRowStyle()
+                ForEach(visibleModules) { module in
+                    NavigationLink {
+                        ToolModuleDestination(module: module)
+                    } label: {
+                        moduleRow(module)
                     }
+                    .appListRowStyle()
                 }
             }
             .overlay {
@@ -22,7 +24,7 @@ struct ToolboxView: View {
                     ContentUnavailableView("暂无已启用功能", systemImage: "square.grid.2x2")
                 }
             }
-            .navigationTitle("我的工具箱")
+            .navigationTitle("工具")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             .listStyle(.insetGrouped)
@@ -41,17 +43,6 @@ struct ToolboxView: View {
                 Text(module.title).font(.headline)
                 Text(module.subtitle).font(.subheadline).foregroundStyle(.secondary)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func destination(for module: ToolModule) -> some View {
-        switch module {
-        case .personalFinance: HomeView()
-        case .myStocks: StocksView()
-        case .currencyExchange: CurrencyExchangeView()
-        case .healthRecords: HealthRecordsView()
-        case .secrets: SecretVaultView()
         }
     }
 }

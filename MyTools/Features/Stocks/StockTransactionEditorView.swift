@@ -19,7 +19,7 @@ struct StockTransactionEditorView: View {
         case quantity, price, fees
     }
 
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockTransactionEditorDraft
@@ -130,7 +130,7 @@ struct StockTransactionEditorView: View {
         transaction.quantity = quantity
         transaction.unitPrice = unitPrice
         transaction.fees = fees
-        guard store.upsertStockTransaction(transaction, in: stock.id) else {
+        guard store.upsertTransaction(transaction, in: stock.id) else {
             reportError("这笔卖出会使持仓股数小于零，请检查交易股数。")
             return
         }

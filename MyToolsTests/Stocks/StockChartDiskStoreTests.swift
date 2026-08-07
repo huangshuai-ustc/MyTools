@@ -1,0 +1,169 @@
+import Foundation
+import Testing
+@testable import MyTools
+
+struct StockChartDiskStoreTests {
+    @Test func persistedSeriesCanBeRenderedByANewStoreInstance() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let points = samplePoints(count: 80)
+        let snapshot = StockChartSnapshot(
+            symbol: key.symbol,
+            name: "Vanguard S&P 500 ETF",
+            currencyCode: "USD",
+            previousClose: 500,
+            points: Array(points.suffix(20)),
+            indicatorPoints: points,
+            quoteUpdatedAt: points.last!.date,
+            fetchedAt: StockChartFixtures.date(2026, 8, 7),
+            source: "Test",
+            supportsCandlesticks: true
+        )
+        var writer = makeStore(directories)
+        let persisted = writer.merging(
+            snapshot,
+            range: .oneMonth,
+            for: key,
+            into: nil
+        )
+
+        writer.save(persisted, for: key)
+
+        var reader = makeStore(directories)
+        let loadedStore = reader.load(for: key)
+        let reloaded = try #require(loadedStore)
+        let rendered = try #require(
+            reader.renderedSnapshot(from: reloaded, range: .oneMonth)
+        )
+        #expect(rendered.symbol == key.symbol)
+        #expect(rendered.points == StockChartSeriesProcessor.visiblePoints(
+            from: points,
+            for: .oneMonth,
+            market: key.market
+        ))
+        #expect(rendered.indicatorPoints?.count == 80)
+        #expect(FileManager.default.fileExists(atPath: reader.persistentStoreURL(for: key).path))
+    }
+
+    @Test func legacyRangeCacheMigratesIntoPersistentTimeSeriesFile() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .aShare, symbol: "600519")
+        let points = samplePoints(count: 30)
+        let snapshot = StockChartSnapshot(
+            symbol: key.symbol,
+            name: "示例股票",
+            currencyCode: "CNY",
+            previousClose: 100,
+            points: points,
+            indicatorPoints: nil,
+            quoteUpdatedAt: points.last!.date,
+            fetchedAt: StockChartFixtures.date(2026, 8, 7),
+            source: "Legacy",
+            supportsCandlesticks: true
+        )
+        let legacyEntry = StockChartLegacyCacheEntry(
+            market: key.market,
+            symbol: key.symbol,
+            range: .oneMonth,
+            snapshot: snapshot
+        )
+        var store = makeStore(directories)
+        let legacyURL = store.legacyCacheURL(for: StockChartCacheKey(
+            market: key.market,
+            symbol: key.symbol,
+            range: .oneMonth
+        ))
+        try FileManager.default.createDirectory(
+            at: directories.legacy,
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(legacyEntry).write(to: legacyURL, options: .atomic)
+
+        let loadedStore = store.load(for: key)
+        let migrated = try #require(loadedStore)
+
+        #expect(migrated.version == StockChartPersistedStore.currentVersion)
+        #expect(migrated.series[StockChartSeriesKind.daily.rawValue] == points)
+        #expect(FileManager.default.fileExists(atPath: store.persistentStoreURL(for: key).path))
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    @Test func unsupportedPersistentStoreVersionIsIgnored() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let unsupported = StockChartPersistedStore(
+            version: StockChartPersistedStore.currentVersion + 1,
+            market: key.market,
+            symbol: key.symbol,
+            series: [:],
+            rangeMetadata: [:]
+        )
+        var store = makeStore(directories)
+        let url = store.persistentStoreURL(for: key)
+        try FileManager.default.createDirectory(
+            at: directories.persistent,
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(unsupported).write(to: url, options: .atomic)
+
+        #expect(store.load(for: key) == nil)
+    }
+
+    @Test func oldMinuteMetadataWithoutIndicatorCountRequiresRefresh() {
+        let point = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 7, hour: 10)
+        )
+        let metadata = StockChartStoredRangeMetadata(
+            symbol: "VOO",
+            name: "VOO",
+            currencyCode: "USD",
+            previousClose: 500,
+            quoteUpdatedAt: point.date,
+            fetchedAt: point.date,
+            source: "Old Cache",
+            supportsCandlesticks: true,
+            indicatorPointCount: nil
+        )
+        let persisted = StockChartPersistedStore(
+            version: 1,
+            market: .unitedStates,
+            symbol: "VOO",
+            series: [StockChartSeriesKind.intraday.rawValue: [point]],
+            rangeMetadata: [StockChartRange.intraday.rawValue: metadata]
+        )
+        let store = StockChartDiskStore()
+
+        #expect(!store.hasRequestedCoverage(in: persisted, for: .intraday))
+    }
+
+    private func samplePoints(count: Int) -> [StockChartPoint] {
+        let start = StockChartFixtures.date(2026, 5, 20)
+        return (0..<count).map { index in
+            StockChartFixtures.point(
+                at: start.addingTimeInterval(TimeInterval(index * 86_400)),
+                close: 100 + Double(index)
+            )
+        }
+    }
+
+    private func temporaryDirectories() throws -> (root: URL, persistent: URL, legacy: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MyToolsTests-\(UUID().uuidString)", isDirectory: true)
+        let persistent = root.appendingPathComponent("Persistent", isDirectory: true)
+        let legacy = root.appendingPathComponent("Legacy", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return (root, persistent, legacy)
+    }
+
+    private func makeStore(
+        _ directories: (root: URL, persistent: URL, legacy: URL)
+    ) -> StockChartDiskStore {
+        StockChartDiskStore(
+            persistentStoreDirectory: directories.persistent,
+            legacyCacheDirectory: directories.legacy
+        )
+    }
+}

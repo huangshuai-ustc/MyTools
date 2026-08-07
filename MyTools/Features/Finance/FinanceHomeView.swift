@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
@@ -85,7 +85,7 @@ struct HomeView: View {
             }
         }
         .navigationTitle(ToolModule.personalFinance.title)
-        .iOSLabeledBackButton("工具箱")
+        .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -556,27 +556,5 @@ enum CardCategoryFilter: String, CaseIterable, Identifiable {
         case .debit: return card.kind == .debit
         case .credit: return card.kind == .credit
         }
-    }
-}
-
-struct CardCategoryMenu: View {
-    @Binding var selection: String
-
-    private var isFiltering: Bool {
-        selection != CardCategoryFilter.all.rawValue
-    }
-
-    var body: some View {
-        Menu {
-            Picker("卡片分类", selection: $selection) {
-                ForEach(CardCategoryFilter.allCases) { category in
-                    Text(category.title).tag(category.rawValue)
-                }
-            }
-        } label: {
-            Image(systemName: isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-        }
-        .accessibilityLabel("银行卡分类")
-        .help("银行卡分类")
     }
 }

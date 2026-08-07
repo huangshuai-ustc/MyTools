@@ -3,7 +3,6 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var store: AppStore
-    @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @Environment(\.scenePhase) private var scenePhase
     @State private var desktopSelection: RootDestination? = .module(.personalFinance)
 
@@ -43,7 +42,6 @@ struct RootView: View {
             Text(store.persistenceError ?? "请从“我的－设置－调试”导出诊断日志。")
         }
         .onAppear {
-            StockRefreshCoordinator.shared.attach(store: store, moduleSettings: moduleSettings)
             StockRefreshCoordinator.shared.update(scenePhase: scenePhase)
         }
         .onChange(of: scenePhase) { _, phase in
@@ -68,7 +66,7 @@ struct RootView: View {
         } else {
             TabView {
                 ToolboxView()
-                    .tabItem { Label("工具箱", systemImage: "square.grid.2x2") }
+                    .tabItem { Label("工具", systemImage: "square.grid.2x2") }
                 ProfileView()
                     .tabItem { Label("我的", systemImage: "person.crop.circle") }
             }
@@ -106,11 +104,9 @@ private struct DesktopRootView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                Section("工具") {
-                    ForEach(visibleModules) { module in
-                        Label(module.title, systemImage: module.systemImage)
-                            .tag(RootDestination.module(module))
-                    }
+                ForEach(visibleModules) { module in
+                    Label(module.title, systemImage: module.systemImage)
+                        .tag(RootDestination.module(module))
                 }
 
                 Section {
@@ -118,7 +114,7 @@ private struct DesktopRootView: View {
                         .tag(RootDestination.profile)
                 }
             }
-            .navigationTitle("我的工具箱")
+            .navigationTitle("工具")
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
         } detail: {
@@ -141,23 +137,12 @@ private struct DesktopRootView: View {
         switch selection {
         case .module(let module):
             NavigationStack {
-                destination(for: module)
+                ToolModuleDestination(module: module)
             }
         case .profile:
             ProfileView()
         case nil:
             ContentUnavailableView("选择一个功能", systemImage: "square.grid.2x2")
-        }
-    }
-
-    @ViewBuilder
-    private func destination(for module: ToolModule) -> some View {
-        switch module {
-        case .personalFinance: HomeView()
-        case .myStocks: StocksView()
-        case .currencyExchange: CurrencyExchangeView()
-        case .healthRecords: HealthRecordsView()
-        case .secrets: SecretVaultView()
         }
     }
 

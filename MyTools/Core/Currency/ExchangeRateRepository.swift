@@ -1,7 +1,6 @@
 import Foundation
 
 struct ExchangeRateSnapshot: Sendable {
-    let usdRenminbiBuyingRate: Decimal?
     let renminbiBuyingRates: [CurrencyCode: Decimal]
     let renminbiSellingRates: [CurrencyCode: Decimal]
     let updatedAt: Date?
@@ -9,30 +8,46 @@ struct ExchangeRateSnapshot: Sendable {
 
 actor ExchangeRateRepository {
     private enum DefaultsKey {
-        static let usdBuyingRate = "stock-usd-cny-buying-rate-v1"
-        static let exchangeRateDate = "stock-usd-cny-buying-rate-date-v1"
         static let buyingRates = "boc-currency-buying-rates-v1"
         static let sellingRates = "boc-currency-selling-rates-v1"
+        static let updatedAt = "boc-currency-rates-date-v1"
+        static let legacyUSDBuyingRate = "stock-usd-cny-buying-rate-v1"
+        static let legacyUpdatedAt = "stock-usd-cny-buying-rate-date-v1"
     }
 
     private let service = ForeignExchangeRateService()
 
     static func loadCachedSnapshot(defaults: UserDefaults = .standard) -> ExchangeRateSnapshot {
-        let usdRate = defaults.string(forKey: DefaultsKey.usdBuyingRate)
-            .flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }
         var buyingRates = decimalRates(
             from: defaults.dictionary(forKey: DefaultsKey.buyingRates) as? [String: String]
         )
         let sellingRates = decimalRates(
             from: defaults.dictionary(forKey: DefaultsKey.sellingRates) as? [String: String]
         )
-        if let usdRate { buyingRates[.usd] = usdRate }
+        var migratedLegacyValue = false
+        if buyingRates[.usd] == nil,
+           let legacyUSD = defaults.string(forKey: DefaultsKey.legacyUSDBuyingRate)
+            .flatMap({ Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }) {
+            buyingRates[.usd] = legacyUSD
+            migratedLegacyValue = true
+        }
+        var updatedAt = defaults.object(forKey: DefaultsKey.updatedAt) as? Date
+        if updatedAt == nil,
+           let legacyUpdatedAt = defaults.object(forKey: DefaultsKey.legacyUpdatedAt) as? Date {
+            updatedAt = legacyUpdatedAt
+            migratedLegacyValue = true
+        }
+        if migratedLegacyValue {
+            defaults.set(stringRates(buyingRates), forKey: DefaultsKey.buyingRates)
+            defaults.set(updatedAt, forKey: DefaultsKey.updatedAt)
+        }
+        defaults.removeObject(forKey: DefaultsKey.legacyUSDBuyingRate)
+        defaults.removeObject(forKey: DefaultsKey.legacyUpdatedAt)
 
         return ExchangeRateSnapshot(
-            usdRenminbiBuyingRate: usdRate,
             renminbiBuyingRates: buyingRates,
             renminbiSellingRates: sellingRates,
-            updatedAt: defaults.object(forKey: DefaultsKey.exchangeRateDate) as? Date
+            updatedAt: updatedAt
         )
     }
 
@@ -45,11 +60,10 @@ actor ExchangeRateRepository {
             buyingRates[currency] = rate.renminbiBuyingPerUnit
             sellingRates[currency] = rate.renminbiSellingPerUnit
         }
-        guard let usdRate = buyingRates[.usd] else {
+        guard buyingRates[.usd] != nil else {
             throw ForeignExchangeRateError.rateUnavailable
         }
         return ExchangeRateSnapshot(
-            usdRenminbiBuyingRate: usdRate,
             renminbiBuyingRates: buyingRates,
             renminbiSellingRates: sellingRates,
             updatedAt: rates.map(\.updatedAt).max()
@@ -57,19 +71,13 @@ actor ExchangeRateRepository {
     }
 
     func save(_ snapshot: ExchangeRateSnapshot, defaults: UserDefaults = .standard) {
-        if let usdRate = snapshot.usdRenminbiBuyingRate {
-            defaults.set(
-                NSDecimalNumber(decimal: usdRate).stringValue,
-                forKey: DefaultsKey.usdBuyingRate
-            )
-        }
-        defaults.set(snapshot.updatedAt, forKey: DefaultsKey.exchangeRateDate)
+        defaults.set(snapshot.updatedAt, forKey: DefaultsKey.updatedAt)
         defaults.set(
-            stringRates(snapshot.renminbiBuyingRates),
+            Self.stringRates(snapshot.renminbiBuyingRates),
             forKey: DefaultsKey.buyingRates
         )
         defaults.set(
-            stringRates(snapshot.renminbiSellingRates),
+            Self.stringRates(snapshot.renminbiSellingRates),
             forKey: DefaultsKey.sellingRates
         )
     }
@@ -86,7 +94,7 @@ actor ExchangeRateRepository {
         }
     }
 
-    private func stringRates(_ rates: [CurrencyCode: Decimal]) -> [String: String] {
+    private static func stringRates(_ rates: [CurrencyCode: Decimal]) -> [String: String] {
         rates.reduce(into: [:]) { result, entry in
             result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
         }

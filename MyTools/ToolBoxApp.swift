@@ -29,12 +29,18 @@ struct ToolBoxApp: App {
     init() {
         let moduleSettings = ToolModuleSettings()
         _moduleSettings = StateObject(wrappedValue: moduleSettings)
-        let store = AppStore(moduleSettings: moduleSettings)
+        let store = AppStore(
+            moduleSettings: moduleSettings,
+            dependencies: .live
+        )
         _store = StateObject(wrappedValue: store)
         moduleSettings.setVisibilityChangeHandler { [weak store] module, isVisible in
             store?.moduleVisibilityChanged(module, isVisible: isVisible)
         }
-        StockRefreshCoordinator.shared.attach(store: store, moduleSettings: moduleSettings)
+        StockRefreshCoordinator.shared.attach(
+            store: store.stockStore,
+            moduleSettings: moduleSettings
+        )
     }
 
     var body: some Scene {
@@ -63,6 +69,12 @@ private struct ConfiguredRootView: View {
     var body: some View {
         RootView()
             .environmentObject(store)
+            .environmentObject(store.stockStore)
+            .environmentObject(store.exchangeRateStore)
+            .environmentObject(store.healthStore)
+            .environmentObject(store.financeStore)
+            .environmentObject(store.secretStore)
+            .environmentObject(store.currencyExchangeStore)
             .environmentObject(auth)
             .environmentObject(moduleSettings)
             .environmentObject(stockAppearanceSettings)

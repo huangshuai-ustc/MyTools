@@ -2,11 +2,6 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
-private enum MedicalCostInputSource {
-    case insurance
-    case selfPay
-}
-
 @MainActor
 private final class MedicalRecordEditorDraft: ObservableObject {
     @Published var record: MedicalRecord
@@ -28,7 +23,7 @@ private final class MedicalRecordEditorDraft: ObservableObject {
 }
 
 struct MedicalRecordEditorView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var store: HealthStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: MedicalRecordEditorDraft
@@ -40,15 +35,16 @@ struct MedicalRecordEditorView: View {
     @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
-    @State private var didSave = false
-    private let originalAttachmentIDs: Set<UUID>
+    @State private var attachmentEditSession: AttachmentEditSession
     let isNew: Bool
 
     private let suggestedTags = ["骨科", "牙科", "感冒", "发烧", "胃病", "皮肤", "眼科"]
 
     init(record: MedicalRecord, isNew: Bool) {
         _draft = StateObject(wrappedValue: MedicalRecordEditorDraft(record: record))
-        originalAttachmentIDs = Set(record.attachments.map(\.id))
+        _attachmentEditSession = State(
+            initialValue: AttachmentEditSession(originalAttachments: record.attachments)
+        )
         self.isNew = isNew
     }
 
@@ -556,7 +552,7 @@ struct MedicalRecordEditorView: View {
 
     private func removeAttachment(_ attachment: FileAttachment) {
         draft.record.attachments.removeAll { $0.id == attachment.id }
-        if !originalAttachmentIDs.contains(attachment.id) {
+        if !attachmentEditSession.isOriginal(attachment) {
             store.deleteUncommittedAttachment(attachment)
         }
     }
@@ -574,7 +570,9 @@ struct MedicalRecordEditorView: View {
         }
 
         do {
-            draft.record.attachments[index] = try store.renameAttachment(attachment, to: renameText)
+            let renamed = try store.renameAttachment(attachment, to: renameText)
+            draft.record.attachments[index] = renamed
+            attachmentEditSession.trackRename(renamed)
             renamingAttachment = nil
         } catch {
             reportError(error.localizedDescription)
@@ -641,144 +639,25 @@ struct MedicalRecordEditorView: View {
             return
         }
 
-        var record = draft.record
-        record.normalizeInstitutionClassification()
-        record.hospital = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.department = record.department.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.chiefComplaint = record.chiefComplaint.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.diagnosis = record.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
-        record.treatment = record.treatment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !record.isInpatient {
-            record.inpatientEndDate = nil
-        }
-        let normalizedDate = MedicalRecord.normalizedDate(record.date)
-        if record.isPharmacyPurchase {
-            guard !record.hospital.isEmpty, !record.expenseItems.isEmpty else {
-                reportError("请填写药房并至少添加一项药品。")
-                return
+        let result = MedicalRecordDraftValidator.validatedRecord(from: MedicalRecordDraftInput(
+            record: draft.record,
+            associatedRecord: associatedRecord,
+            existingRecords: store.medicalRecords,
+            tagsText: draft.tagsText,
+            costInputSource: draft.costInputSource,
+            insuranceCostText: draft.insuranceCostText,
+            selfPayCostText: draft.selfPayCostText,
+            updatedAt: Date()
+        ))
+        guard case .success(let record) = result else {
+            if case .failure(let error) = result {
+                reportError(error.localizedDescription)
             }
-            record.department = ""
-            record.doctor = ""
-            record.diagnosis = ""
-            record.treatment = ""
-        } else if record.isPhysicalExam {
-            guard !record.hospital.isEmpty else {
-                reportError("请填写体检机构。")
-                return
-            }
-            var details = record.physicalExamDetails ?? PhysicalExamDetails()
-            details.packageName = details.packageName.trimmingCharacters(in: .whitespacesAndNewlines)
-            details.completedItems = details.completedItems.trimmingCharacters(in: .whitespacesAndNewlines)
-            details.findings = details.findings.map { finding in
-                var finding = finding
-                finding.item = finding.item.trimmingCharacters(in: .whitespacesAndNewlines)
-                finding.result = finding.result.trimmingCharacters(in: .whitespacesAndNewlines)
-                finding.recommendation = finding.recommendation.trimmingCharacters(in: .whitespacesAndNewlines)
-                return finding
-            }
-            record.physicalExamDetails = details
-            record.department = ""
-            record.doctor = ""
-            record.chiefComplaint = ""
-        } else if record.isInpatient {
-            guard !record.hospital.isEmpty else {
-                reportError("请填写医院。")
-                return
-            }
-            if record.hasAssociatedRecord {
-                record.inpatientEndDate = nil
-            } else {
-                let endDate = MedicalRecord.normalizedDate(record.inpatientEndDate ?? record.date)
-                guard endDate >= normalizedDate else {
-                    reportError("出院日期不能早于入院日期。")
-                    return
-                }
-                record.inpatientEndDate = endDate
-            }
-        } else {
-            guard !record.hospital.isEmpty,
-                  !record.department.isEmpty,
-                  !record.chiefComplaint.isEmpty,
-                  !record.diagnosis.isEmpty else {
-                reportError("医院、科室、主诉和初步诊断为必填项。")
-                return
-            }
+            return
         }
 
-        if record.hasAssociatedRecord {
-            guard let associatedRecord else {
-                reportError("关联的原就诊记录已不存在，无法保存这条记录。")
-                return
-            }
-            guard normalizedDate >= MedicalRecord.normalizedDate(associatedRecord.date) else {
-                let message: String
-                if record.isPharmacyPurchase {
-                    message = "购药日期不能早于关联就诊日期。"
-                } else if record.isInpatient {
-                    message = "住院日记录日期不能早于入院日期。"
-                } else {
-                    message = "复诊日期不能早于原就诊日期。"
-                }
-                reportError(message)
-                return
-            }
-            if record.isInpatient,
-               let inpatientEndDate = associatedRecord.inpatientEndDate,
-               normalizedDate > MedicalRecord.normalizedDate(inpatientEndDate) {
-                reportError("住院日记录日期不能晚于出院日期。")
-                return
-            }
-            if record.isInpatientDailyRecord,
-               let parentRecordID = record.parentRecordID,
-               store.medicalRecords.contains(where: { other in
-                   other.id != record.id
-                       && other.parentRecordID == parentRecordID
-                       && other.isInpatientDailyRecord
-                       && MedicalRecord.normalizedDate(other.date) == normalizedDate
-               }) {
-                reportError("该日期已经存在住院日记录，请选择其他日期。")
-                return
-            }
-        }
-
-        let totalCost = record.expenseItemsTotal
-
-        let insuranceCost: Decimal
-        let selfPayCost: Decimal
-        switch record.paymentMethod {
-        case .selfPay:
-            insuranceCost = 0
-            selfPayCost = totalCost
-        case .medicalInsurance:
-            insuranceCost = totalCost
-            selfPayCost = 0
-        case .medicalInsuranceThenSelfPay:
-            switch draft.costInputSource {
-            case .insurance:
-                guard let value = validMixedCost(from: draft.insuranceCostText) else {
-                    reportError("医保支付仅支持数字、加减乘除和括号，且不能超过本次费用。")
-                    return
-                }
-                insuranceCost = value
-                selfPayCost = totalCost - value
-            case .selfPay:
-                guard let value = validMixedCost(from: draft.selfPayCostText) else {
-                    reportError("自费仅支持数字、加减乘除和括号，且不能超过本次费用。")
-                    return
-                }
-                selfPayCost = value
-                insuranceCost = totalCost - value
-            }
-        }
-
-        record.date = normalizedDate
-        record.totalCost = totalCost
-        record.insuranceCost = insuranceCost
-        record.selfPayCost = selfPayCost
-        record.tags = parsedTags()
-        record.updatedAt = Date()
         store.upsertMedicalRecord(record)
-        didSave = true
+        attachmentEditSession.commit()
         dismiss()
     }
 
@@ -788,9 +667,17 @@ struct MedicalRecordEditorView: View {
     }
 
     private func cleanUpUncommittedAttachments() {
-        guard !didSave else { return }
-        for attachment in draft.record.attachments where !originalAttachmentIDs.contains(attachment.id) {
-            store.deleteUncommittedAttachment(attachment)
+        let failures = attachmentEditSession.rollback(
+            currentAttachments: draft.record.attachments,
+            delete: store.deleteUncommittedAttachment,
+            restoreLocation: store.restoreAttachmentLocation
+        )
+        if !failures.isEmpty {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "取消医疗记录编辑时，附件回滚失败：\(failures.joined(separator: "；"))",
+                level: .error
+            )
         }
     }
 
@@ -856,29 +743,24 @@ struct MedicalRecordEditorView: View {
         let source = source ?? draft.costInputSource
         switch source {
         case .insurance:
-            guard let insurance = validMixedCost(from: draft.insuranceCostText) else {
+            guard let complementary = MedicalCostAllocation.complementaryText(
+                for: draft.insuranceCostText,
+                totalCost: currentItemsTotal
+            ) else {
                 draft.selfPayCostText = ""
                 return
             }
-            draft.selfPayCostText = decimalInputText(currentItemsTotal - insurance)
+            draft.selfPayCostText = complementary
         case .selfPay:
-            guard let selfPay = validMixedCost(from: draft.selfPayCostText) else {
+            guard let complementary = MedicalCostAllocation.complementaryText(
+                for: draft.selfPayCostText,
+                totalCost: currentItemsTotal
+            ) else {
                 draft.insuranceCostText = ""
                 return
             }
-            draft.insuranceCostText = decimalInputText(currentItemsTotal - selfPay)
+            draft.insuranceCostText = complementary
         }
-    }
-
-    private func validMixedCost(from text: String) -> Decimal? {
-        guard let value = DecimalTextParser.optionalExpression(from: text),
-              value >= 0,
-              value <= currentItemsTotal else { return nil }
-        return value
-    }
-
-    private func decimalInputText(_ value: Decimal) -> String {
-        NSDecimalNumber(decimal: value).stringValue
     }
 
     private func containsArithmeticOperator(_ text: String) -> Bool {

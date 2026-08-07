@@ -1,14 +1,5 @@
 import Foundation
 
-protocol ToolEvent: Identifiable, Codable {
-    var id: UUID { get set }
-    var date: Date { get set }
-    var tags: [String] { get set }
-    var notes: String { get set }
-    var createdAt: Date { get set }
-    var updatedAt: Date { get set }
-}
-
 enum MedicalVisitType: String, Codable, CaseIterable, Identifiable {
     case outpatient
     case emergency
@@ -246,7 +237,7 @@ struct PhysicalExamDetails: Codable, Equatable {
     }
 }
 
-struct MedicalRecord: ToolEvent, Equatable {
+struct MedicalRecord: Identifiable, Codable, Equatable {
     var id = UUID()
     var parentRecordID: UUID?
     var date = Date()

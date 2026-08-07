@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct NotificationSettingsView: View {
-    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var currencyStore: CurrencyExchangeStore
+    @EnvironmentObject private var stockStore: StockStore
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: AppNotificationService
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
@@ -9,7 +10,7 @@ struct NotificationSettingsView: View {
     @State private var editingStockAlert: StockPriceAlert?
 
     private var configuredStocks: [StockHolding] {
-        store.stocks
+        stockStore.stocks
             .filter(\.hasConfiguredSymbol)
             .sorted { lhs, rhs in
                 let nameComparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
@@ -55,21 +56,21 @@ struct NotificationSettingsView: View {
 
             if moduleSettings.isVisible(.currencyExchange) {
             Section("换汇价格提醒") {
-                if store.currencyRateAlerts.isEmpty {
+                if currencyStore.rateAlerts.isEmpty {
                     Text("暂无换汇价格提醒")
                         .foregroundStyle(.secondary)
                 }
                 if auth.isEditSessionReady {
-                    ForEach(store.currencyRateAlerts) { alert in
+                    ForEach(currencyStore.rateAlerts) { alert in
                         currencyAlertRow(alert)
                     }
                     .onDelete { offsets in
-                        store.deleteCurrencyRateAlerts(
-                            ids: Set(offsets.map { store.currencyRateAlerts[$0].id })
+                        currencyStore.deleteRateAlerts(
+                            ids: Set(offsets.map { currencyStore.rateAlerts[$0].id })
                         )
                     }
                 } else {
-                    ForEach(store.currencyRateAlerts) { alert in
+                    ForEach(currencyStore.rateAlerts) { alert in
                         currencyAlertRow(alert)
                     }
                 }
@@ -86,21 +87,21 @@ struct NotificationSettingsView: View {
 
             if moduleSettings.isVisible(.myStocks) {
             Section("股票价格提醒") {
-                if store.stockPriceAlerts.isEmpty {
+                if stockStore.priceAlerts.isEmpty {
                     Text("暂无股票价格提醒")
                         .foregroundStyle(.secondary)
                 }
                 if auth.isEditSessionReady {
-                    ForEach(store.stockPriceAlerts) { alert in
+                    ForEach(stockStore.priceAlerts) { alert in
                         stockAlertRow(alert)
                     }
                     .onDelete { offsets in
-                        store.deleteStockPriceAlerts(
-                            ids: Set(offsets.map { store.stockPriceAlerts[$0].id })
+                        stockStore.deletePriceAlerts(
+                            ids: Set(offsets.map { stockStore.priceAlerts[$0].id })
                         )
                     }
                 } else {
-                    ForEach(store.stockPriceAlerts) { alert in
+                    ForEach(stockStore.priceAlerts) { alert in
                         stockAlertRow(alert)
                     }
                 }
@@ -135,14 +136,14 @@ struct NotificationSettingsView: View {
         }
         .sheet(item: $editingCurrencyAlert) { alert in
             CurrencyRateAlertEditorView(alert: alert) { updated in
-                store.upsertCurrencyRateAlert(updated)
+                currencyStore.upsertRateAlert(updated)
                 requestNotificationPermissionIfNeeded()
             }
             .iOSLargeSheet()
         }
         .sheet(item: $editingStockAlert) { alert in
             StockPriceAlertEditorView(alert: alert, stocks: configuredStocks) { updated in
-                store.upsertStockPriceAlert(updated)
+                stockStore.upsertPriceAlert(updated)
                 requestNotificationPermissionIfNeeded()
             }
             .iOSLargeSheet()
@@ -170,11 +171,11 @@ struct NotificationSettingsView: View {
             Toggle(
                 "",
                 isOn: Binding(
-                    get: { store.currencyRateAlerts.first(where: { $0.id == alert.id })?.isEnabled ?? false },
+                    get: { currencyStore.rateAlerts.first(where: { $0.id == alert.id })?.isEnabled ?? false },
                     set: { enabled in
                         var updated = alert
                         updated.isEnabled = enabled
-                        store.upsertCurrencyRateAlert(updated)
+                        currencyStore.upsertRateAlert(updated)
                     }
                 )
             )
@@ -207,11 +208,11 @@ struct NotificationSettingsView: View {
             Toggle(
                 "",
                 isOn: Binding(
-                    get: { store.stockPriceAlerts.first(where: { $0.id == alert.id })?.isEnabled ?? false },
+                    get: { stockStore.priceAlerts.first(where: { $0.id == alert.id })?.isEnabled ?? false },
                     set: { enabled in
                         var updated = alert
                         updated.isEnabled = enabled
-                        store.upsertStockPriceAlert(updated)
+                        stockStore.upsertPriceAlert(updated)
                     }
                 )
             )

@@ -158,7 +158,7 @@ struct DiagnosticsView: View {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyyMMddHHmmss"
-        return "MyTools-诊断日志-\(formatter.string(from: Date())).log"
+        return "方寸-诊断日志-\(formatter.string(from: Date())).log"
     }
 }
 

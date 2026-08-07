@@ -115,12 +115,6 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
         defaults.removeObject(forKey: statePrefix + ruleID.uuidString)
     }
 
-    func clearAllStates() {
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(statePrefix) {
-            defaults.removeObject(forKey: key)
-        }
-    }
-
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,

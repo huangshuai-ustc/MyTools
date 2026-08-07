@@ -13,7 +13,7 @@ final class StockRefreshCoordinator {
     static let taskIdentifier = AppMetadata.stockRefreshTaskIdentifier
 #endif
 
-    private weak var store: AppStore?
+    private weak var store: StockStore?
     private weak var moduleSettings: ToolModuleSettings?
     private var foregroundTask: Task<Void, Never>?
     private var lastAutomaticCheckAt: Date?
@@ -23,11 +23,10 @@ final class StockRefreshCoordinator {
 
     private init() {}
 
-    func attach(store: AppStore, moduleSettings: ToolModuleSettings? = nil) {
+    func attach(store: StockStore, moduleSettings: ToolModuleSettings? = nil) {
         self.store = store
         if let moduleSettings {
             self.moduleSettings = moduleSettings
-            store.attach(moduleSettings: moduleSettings)
         }
         reconcileForegroundPolling()
     }
@@ -76,23 +75,23 @@ final class StockRefreshCoordinator {
         guard currentScenePhase == .active,
               isStockModuleVisible,
               let store,
-              store.isInitialDataLoaded,
+              store.isDataLoaded,
               hasRefreshableStocks(in: store) else { return false }
         return isStocksPageVisible
             || hasEnabledRefreshableAlert(in: store)
     }
 
-    private func hasRefreshableStocks(in store: AppStore) -> Bool {
+    private func hasRefreshableStocks(in store: StockStore) -> Bool {
         store.stocks.contains(where: \.hasConfiguredSymbol)
     }
 
-    private func hasEnabledRefreshableAlert(in store: AppStore) -> Bool {
+    private func hasEnabledRefreshableAlert(in store: StockStore) -> Bool {
         let refreshableStockIDs = Set(
             store.stocks.lazy
                 .filter(\.hasConfiguredSymbol)
                 .map(\.id)
         )
-        return store.stockPriceAlerts.contains {
+        return store.priceAlerts.contains {
             $0.isEnabled && $0.stockID.map(refreshableStockIDs.contains) == true
         }
     }
@@ -130,7 +129,7 @@ final class StockRefreshCoordinator {
     private func refreshAutomatically() async {
         guard let store,
               isStockModuleVisible,
-              store.isInitialDataLoaded,
+              store.isDataLoaded,
               !store.isRefreshingQuotes else { return }
 
         let now = Date()
@@ -148,14 +147,14 @@ final class StockRefreshCoordinator {
                 "检测到收盘补刷市场：\(endedMarkets.map { $0.rawValue }.sorted().joined(separator: ","))"
             )
         }
-        await store.refreshStockQuotes(
+        await store.refreshQuotes(
             forcedMarkets: endedMarkets,
             allowClosedMissingData: false
         )
     }
 
     private func closingMarketsNeedingRefresh(
-        store: AppStore,
+        store: StockStore,
         previousCheck: Date,
         now: Date
     ) -> Set<StockMarket> {
@@ -165,7 +164,7 @@ final class StockRefreshCoordinator {
                 continue
             }
 
-            let latestQuoteAt = store.latestStockQuoteAt(for: market)
+            let latestQuoteAt = store.latestQuoteAt(for: market)
             let quoteNeedsClosingRefresh: Bool
             if let latestQuoteAt {
                 quoteNeedsClosingRefresh = !StockMarketTradingCalendar.isOpen(market, at: now)
@@ -179,7 +178,7 @@ final class StockRefreshCoordinator {
                 quoteNeedsClosingRefresh = false
             }
 
-            let lastRefresh = store.lastStockRefreshAt(for: market)
+            let lastRefresh = store.lastRefreshAt(for: market)
             let baseline = max(previousCheck, lastRefresh ?? previousCheck)
             let sessionEndedSinceRefresh = StockMarketTradingCalendar.sessionEnded(
                 for: market,
@@ -234,7 +233,7 @@ final class StockRefreshCoordinator {
                 task.setTaskCompleted(success: false)
                 return
             }
-            for _ in 0..<20 where !store.isInitialDataLoaded {
+            for _ in 0..<20 where !store.isDataLoaded {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             guard !Task.isCancelled else {

@@ -28,7 +28,6 @@ struct StockInvestmentScore: Equatable, Sendable {
 
     let value: Int
     let unadjustedValue: Int
-    let legacyValue: Int?
     let date: Date
     let modelVersion: String
     let sampleCount: Int
@@ -117,10 +116,6 @@ enum StockInvestmentScoreModel {
         guard points.count >= 30, let latest = points.last else { return nil }
 
         let indicators = StockTechnicalIndicators.calculate(points)
-        let legacyScore = StockTechnicalScoring.calculate(
-            points,
-            modelVersion: "1.0.0"
-        )
         let averageTrueRange = averageTrueRange(points, period: 14)
             ?? max(latest.close * 0.02, 0.000_001)
         let dailyVolatility = standardDeviation(dailyReturns(points).suffix(60))
@@ -142,7 +137,7 @@ enum StockInvestmentScoreModel {
             averageTrueRange: averageTrueRange
         )
         let volume = volumeEvidence(points: points)
-        let candlestick = candlestickEvidence(from: legacyScore)
+        let candlestick = candlestickEvidence(points: points)
         let risk = riskEvidence(points: points, dailyVolatility: dailyVolatility)
 
         let trendVolumeInteraction = directionalAgreement(trend.value, volume.value)
@@ -204,7 +199,6 @@ enum StockInvestmentScoreModel {
         return StockInvestmentScore(
             value: clamp(value, 0, 100),
             unadjustedValue: clamp(unadjustedValue, 0, 100),
-            legacyValue: legacyScore?.value,
             date: latest.date,
             modelVersion: version,
             sampleCount: points.count,
@@ -395,20 +389,103 @@ enum StockInvestmentScoreModel {
         return Evidence(value: value, summary: summary)
     }
 
-    private static func candlestickEvidence(
-        from legacyScore: StockTechnicalScore?
-    ) -> Evidence {
-        guard let component = legacyScore?.components.first(where: {
-            $0.kind == .candlestick
-        }) else {
+    private static func candlestickEvidence(points: [StockChartPoint]) -> Evidence {
+        guard let latest = points.last,
+              latest.open.isFinite,
+              latest.high.isFinite,
+              latest.low.isFinite,
+              latest.high > latest.low else {
             return Evidence(value: 0, summary: "K线样本不足，按中性处理")
         }
-        let value = clamp(
-            component.score / Double(component.maximumScore) * 2 - 1,
-            -1,
-            1
-        )
-        return Evidence(value: value, summary: component.summary)
+
+        let previous = points.dropLast().last
+        let third = points.dropLast(2).last
+        let latestBody = abs(latest.close - latest.open)
+        let latestRange = latest.high - latest.low
+        let previousBody = previous.map { abs($0.close - $0.open) } ?? 0
+        let isBullishEngulfing = previous.map {
+            latest.close > latest.open
+                && $0.close < $0.open
+                && latest.open <= $0.close
+                && latest.close >= $0.open
+                && latestBody > previousBody
+        } ?? false
+        let isBearishEngulfing = previous.map {
+            latest.close < latest.open
+                && $0.close > $0.open
+                && latest.open >= $0.close
+                && latest.close <= $0.open
+                && latestBody > previousBody
+        } ?? false
+        let recentCloses = points.suffix(20).map(\.close)
+        let recentLow = recentCloses.min() ?? latest.close
+        let recentHigh = recentCloses.max() ?? latest.close
+        let recentPosition = recentHigh > recentLow
+            ? (latest.close - recentLow) / (recentHigh - recentLow)
+            : 0.5
+        let lowerShadow = min(latest.open, latest.close) - latest.low
+        let upperShadow = latest.high - max(latest.open, latest.close)
+        let isHammer = lowerShadow >= max(latestBody * 2, latestRange * 0.4)
+            && upperShadow <= latestRange * 0.2
+            && recentPosition <= 0.45
+        let isShootingStar = upperShadow >= max(latestBody * 2, latestRange * 0.4)
+            && lowerShadow <= latestRange * 0.2
+            && recentPosition >= 0.55
+
+        if candlestickMorningStar(third: third, middle: previous, latest: latest) {
+            return Evidence(value: 1, summary: "近三日形成启明星式反转形态")
+        }
+        if isBullishEngulfing {
+            return Evidence(value: 1, summary: "最新 K 线形成看涨吞没形态")
+        }
+        if isHammer {
+            return Evidence(value: 0.8, summary: "相对低位出现锤子线，下方承接增强")
+        }
+        if candlestickEveningStar(third: third, middle: previous, latest: latest) {
+            return Evidence(value: -1, summary: "近三日形成黄昏星式转弱形态")
+        }
+        if isBearishEngulfing {
+            return Evidence(value: -1, summary: "最新 K 线形成看跌吞没形态")
+        }
+        if isShootingStar {
+            return Evidence(value: -0.8, summary: "相对高位出现长上影，抛压风险增加")
+        }
+
+        let direction = (latest.close - latest.open) / latestRange
+        let closePosition = (latest.close - latest.low) / latestRange
+        let value = clamp(0.6 * direction + 0.4 * (closePosition - 0.5), -1, 1)
+        let summary = latest.close >= latest.open
+            ? "最新 K 线偏强，但未形成明确反转形态"
+            : "最新 K 线偏弱，尚无明确止跌形态"
+        return Evidence(value: value, summary: summary)
+    }
+
+    private static func candlestickMorningStar(
+        third: StockChartPoint?,
+        middle: StockChartPoint?,
+        latest: StockChartPoint
+    ) -> Bool {
+        guard let first = third, let middle else { return false }
+        let firstBody = abs(first.close - first.open)
+        let middleBody = abs(middle.close - middle.open)
+        return first.close < first.open
+            && middleBody <= firstBody * 0.5
+            && latest.close > latest.open
+            && latest.close >= (first.open + first.close) / 2
+    }
+
+    private static func candlestickEveningStar(
+        third: StockChartPoint?,
+        middle: StockChartPoint?,
+        latest: StockChartPoint
+    ) -> Bool {
+        guard let first = third, let middle else { return false }
+        let firstBody = abs(first.close - first.open)
+        let middleBody = abs(middle.close - middle.open)
+        return first.close > first.open
+            && middleBody <= firstBody * 0.5
+            && latest.close < latest.open
+            && latest.close <= (first.open + first.close) / 2
     }
 
     private static func riskEvidence(

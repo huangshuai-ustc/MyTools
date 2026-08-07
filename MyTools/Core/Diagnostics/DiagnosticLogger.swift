@@ -61,7 +61,7 @@ final class DiagnosticLogger: @unchecked Sendable {
         UserDefaults.standard.set(true, forKey: "diagnostics-session-was-active-v1")
         log(
             .lifecycle,
-            "新会话 session=\(sessionID) version=\(Self.versionDescription) os=\(ProcessInfo.processInfo.operatingSystemVersionString) previousForegroundExit=\(previousSessionWasActive)"
+            "新会话 session=\(sessionID) version=\(AppMetadata.versionDescription) os=\(ProcessInfo.processInfo.operatingSystemVersionString) previousForegroundExit=\(previousSessionWasActive)"
         )
     }
 
@@ -297,11 +297,4 @@ final class DiagnosticLogger: @unchecked Sendable {
         return formatter
     }()
 
-    private static var versionDescription: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-            ?? "unknown"
-        return "\(version)(\(build))"
-    }
 }
