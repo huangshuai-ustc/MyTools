@@ -54,6 +54,16 @@
 		A80000000000000000000003 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000003 /* NotificationSettingsView.swift */; };
 		A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000004 /* StockRefreshCoordinator.swift */; };
 		A90000000000000000000001 /* StorageUsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000000000000000000001 /* StorageUsageService.swift */; };
+		AB0000000000000000000001 /* CurrencyCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000001 /* CurrencyCode.swift */; };
+		AB0000000000000000000002 /* FileAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000002 /* FileAttachment.swift */; };
+		AB0000000000000000000003 /* VaultData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* VaultData.swift */; };
+		AB0000000000000000000004 /* AdminModeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000004 /* AdminModeViews.swift */; };
+		AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000005 /* AttachmentPresentation.swift */; };
+		AB0000000000000000000006 /* ExchangeRateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000006 /* ExchangeRateRepository.swift */; };
+		AC0000000000000000000001 /* StockChartService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000001 /* StockChartService.swift */; };
+		AC0000000000000000000002 /* StockWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000002 /* StockWatchView.swift */; };
+		AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000003 /* StockTechnicalAnalysis.swift */; };
+		AC0000000000000000000004 /* StockInvestmentScoreModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000004 /* StockInvestmentScoreModel.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -106,6 +116,16 @@
 		B80000000000000000000003 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		B80000000000000000000004 /* StockRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockRefreshCoordinator.swift; sourceTree = "<group>"; };
 		B90000000000000000000001 /* StorageUsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageUsageService.swift; sourceTree = "<group>"; };
+		BB0000000000000000000001 /* CurrencyCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyCode.swift; sourceTree = "<group>"; };
+		BB0000000000000000000002 /* FileAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileAttachment.swift; sourceTree = "<group>"; };
+		BB0000000000000000000003 /* VaultData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultData.swift; sourceTree = "<group>"; };
+		BB0000000000000000000004 /* AdminModeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminModeViews.swift; sourceTree = "<group>"; };
+		BB0000000000000000000005 /* AttachmentPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPresentation.swift; sourceTree = "<group>"; };
+		BB0000000000000000000006 /* ExchangeRateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateRepository.swift; sourceTree = "<group>"; };
+		BC0000000000000000000001 /* StockChartService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartService.swift; sourceTree = "<group>"; };
+		BC0000000000000000000002 /* StockWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockWatchView.swift; sourceTree = "<group>"; };
+		BC0000000000000000000003 /* StockTechnicalAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTechnicalAnalysis.swift; sourceTree = "<group>"; };
+		BC0000000000000000000004 /* StockInvestmentScoreModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockInvestmentScoreModel.swift; sourceTree = "<group>"; };
 		BA0000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		BA0000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -130,7 +150,6 @@
 				D20000000000000000000001 /* CurrencyExchange */,
 				D40000000000000000000001 /* Health */,
 				D10000000000000000000006 /* Profile */,
-				D10000000000000000000007 /* Authentication */,
 				D70000000000000000000001 /* Secrets */,
 			);
 			path = Features;
@@ -152,17 +171,12 @@
 		D00000000000000000000004 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				B00000000000000000000003 /* SecureStore.swift */,
 				B00000000000000000000004 /* AppStore.swift */,
-				B00000000000000000000005 /* AuthManager.swift */,
-				B0000000000000000000000D /* VaultBackup.swift */,
+				BC0000000000000000000001 /* StockChartService.swift */,
+				BC0000000000000000000003 /* StockTechnicalAnalysis.swift */,
+				BC0000000000000000000004 /* StockInvestmentScoreModel.swift */,
 				B0000000000000000000000F /* StockQuoteService.swift */,
-				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
-				B40000000000000000000002 /* AttachmentStore.swift */,
-				B60000000000000000000001 /* DiagnosticLogger.swift */,
-				B80000000000000000000002 /* AppNotificationService.swift */,
 				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
-				B90000000000000000000001 /* StorageUsageService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -173,6 +187,7 @@
 				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
 				D10000000000000000000001 /* App */,
+				DC0000000000000000000001 /* Core */,
 				D00000000000000000000002 /* Features */,
 				D00000000000000000000003 /* Models */,
 				D00000000000000000000004 /* Services */,
@@ -230,6 +245,7 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000010 /* StocksView.swift */,
+				BC0000000000000000000002 /* StockWatchView.swift */,
 				B1000000000000000000000B /* StockEditorView.swift */,
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
 				B50000000000000000000001 /* StockDividendEditorView.swift */,
@@ -245,15 +261,6 @@
 				B80000000000000000000003 /* NotificationSettingsView.swift */,
 			);
 			path = Profile;
-			sourceTree = "<group>";
-		};
-		D10000000000000000000007 /* Authentication */ = {
-			isa = PBXGroup;
-			children = (
-				B0000000000000000000000A /* AuthenticationView.swift */,
-				B30000000000000000000001 /* SensitiveAccessView.swift */,
-			);
-			path = Authentication;
 			sourceTree = "<group>";
 		};
 		D20000000000000000000001 /* CurrencyExchange */ = {
@@ -281,6 +288,93 @@
 				B70000000000000000000003 /* SecretVaultView.swift */,
 			);
 			path = Secrets;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000001 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				DC0000000000000000000002 /* Authentication */,
+				DC0000000000000000000003 /* Attachments */,
+				DC0000000000000000000004 /* Backup */,
+				DC0000000000000000000005 /* Currency */,
+				DC0000000000000000000006 /* Diagnostics */,
+				DC0000000000000000000007 /* Notifications */,
+				DC0000000000000000000008 /* Persistence */,
+				DC0000000000000000000009 /* Storage */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000002 /* Authentication */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000005 /* AuthManager.swift */,
+				B0000000000000000000000A /* AuthenticationView.swift */,
+				B30000000000000000000001 /* SensitiveAccessView.swift */,
+				BB0000000000000000000004 /* AdminModeViews.swift */,
+			);
+			path = Authentication;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000003 /* Attachments */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000000000000000000002 /* FileAttachment.swift */,
+				B40000000000000000000002 /* AttachmentStore.swift */,
+				BB0000000000000000000005 /* AttachmentPresentation.swift */,
+			);
+			path = Attachments;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000004 /* Backup */ = {
+			isa = PBXGroup;
+			children = (
+				B0000000000000000000000D /* VaultBackup.swift */,
+			);
+			path = Backup;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000005 /* Currency */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000000000000000000001 /* CurrencyCode.swift */,
+				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
+				BB0000000000000000000006 /* ExchangeRateRepository.swift */,
+			);
+			path = Currency;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000006 /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				B60000000000000000000001 /* DiagnosticLogger.swift */,
+			);
+			path = Diagnostics;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000007 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				B80000000000000000000002 /* AppNotificationService.swift */,
+			);
+			path = Notifications;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000008 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000000000000000000003 /* VaultData.swift */,
+				B00000000000000000000003 /* SecureStore.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		DC0000000000000000000009 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				B90000000000000000000001 /* StorageUsageService.swift */,
+			);
+			path = Storage;
 			sourceTree = "<group>";
 		};
 		DA0000000000000000000001 /* Config */ = {
@@ -403,6 +497,16 @@
 				A80000000000000000000003 /* NotificationSettingsView.swift in Sources */,
 				A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */,
 				A90000000000000000000001 /* StorageUsageService.swift in Sources */,
+				AB0000000000000000000001 /* CurrencyCode.swift in Sources */,
+				AB0000000000000000000002 /* FileAttachment.swift in Sources */,
+				AB0000000000000000000003 /* VaultData.swift in Sources */,
+				AB0000000000000000000004 /* AdminModeViews.swift in Sources */,
+				AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */,
+				AB0000000000000000000006 /* ExchangeRateRepository.swift in Sources */,
+				AC0000000000000000000001 /* StockChartService.swift in Sources */,
+				AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */,
+				AC0000000000000000000004 /* StockInvestmentScoreModel.swift in Sources */,
+				AC0000000000000000000002 /* StockWatchView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

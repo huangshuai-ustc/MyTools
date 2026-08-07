@@ -1,5 +1,18 @@
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+
+@MainActor
+enum AppOrientationController {
+    private(set) static var supportedOrientations: UIInterfaceOrientationMask = .all
+
+    static func allow(_ orientations: UIInterfaceOrientationMask) {
+        supportedOrientations = orientations
+    }
+}
+#endif
+
 @main
 struct ToolBoxApp: App {
 #if os(iOS)

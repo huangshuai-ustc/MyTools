@@ -54,8 +54,9 @@
 - 市场筛选入口会根据实际买入记录动态显示：没有某个市场的买入记录时不显示该市场，新增买入记录后自动出现；“全部”只包含有买入记录的股票。
 - A 股、港股、美股分别使用 CNY、HKD、USD 汇总；“全部”视图可按中国银行港币和美元现汇买入价折算人民币。
 - 市场概览显示持仓成本、持仓盈亏、已变现利润和资产占比；股票详情仍显示当前市值，缺少行情或汇率时显示“待同步”，不会按零估值。
-- 股票页面打开时刷新行情，并在页面可见期间每 300 秒自动刷新；支持下拉刷新和工具栏手动刷新。行情失败时保留最后一次成功的价格和更新时间。
-- 行情服务使用公开市场接口，并按市场提供批量请求、时间校验和缺失数据兜底；公开行情可能延迟或暂时不可用，应以交易所和券商数据为准。
+- 股票页面打开时刷新行情，并在页面可见期间每 60 秒自动刷新；支持下拉刷新和工具栏手动刷新。行情失败时保留最后一次成功的价格和更新时间。
+- 每条股票向右滑动可以直接进入看盘页，不要求管理员权限；支持分时、5 日、1 月、3 月、1 年、5 年和 10 年范围，以及走势图和 K 线切换。行情图会用不同颜色标注买入、卖出日期及成交价，并可展开为横屏图表；交易时段停留在分时页时每 30 秒更新一次。
+- 行情服务使用公开市场接口，并按市场提供批量请求、时间校验和缺失数据兜底；看盘数据只做短期内存缓存，不写入本地档案或备份。公开行情可能延迟或暂时不可用，应以交易所和券商数据为准。
 - 支持按名称或最早买入时间排序；“我的 > 设置”可以分别设置 A 股、港股和美股的涨跌颜色规则。
 
 ### 换汇记录
@@ -145,9 +146,10 @@ MyTools/
 ├── README.md
 └── MyTools/
     ├── App/                 # 根导航、工具定义和工具箱首页
-    ├── Features/            # Authentication、Finance、Stocks、CurrencyExchange、Health、Secrets、Profile
+    ├── Core/                # 认证、附件、备份、币种汇率、诊断、通知、持久化和存储
+    ├── Features/            # Finance、Stocks、CurrencyExchange、Health、Secrets、Profile
     ├── Models/              # 银行、股票、换汇、健康档案和保密资料模型
-    ├── Services/            # AppStore、存储、保密资料、备份、附件、认证和行情服务
+    ├── Services/            # AppStore、股票行情服务与模块运行协调
     ├── Settings/            # 工具模块和股票外观偏好
     └── Shared/              # 输入、金额解析、敏感字段和跨平台视图辅助
 ```
@@ -156,19 +158,21 @@ MyTools/
 
 - `ToolModule.swift`：五个工具模块的名称、图标、颜色和可见性键。
 - `AppStore.swift`：应用级数据状态、档案保存、行情刷新、附件和备份协调。
-- `BankCard.swift`、`Stock.swift`、`CurrencyExchange.swift`、`HealthRecord.swift`：各模块数据模型和计算规则。
-- `SecureStore.swift`、`AttachmentStore.swift`、`VaultBackup.swift`：本地档案、附件和加密备份；保密资料模型位于 `Models/Secret.swift`。
-- `AuthManager.swift`、`AuthenticationView.swift`、`SensitiveAccessView.swift`：管理员模式和敏感信息验证。
-- `ForeignExchangeRateService.swift`、`StockQuoteService.swift`：中国银行牌价和股票公开行情。
+- `BankCard.swift`、`Stock.swift`、`CurrencyExchange.swift`、`HealthRecord.swift`：各业务模块的数据模型和计算规则。
+- `Core/Persistence`、`Core/Attachments`、`Core/Backup`：本地档案、通用附件和加密备份基础能力。
+- `Core/Authentication`：管理员模式、身份验证和敏感信息验证。
+- `Core/Currency`：所有模块共用的币种定义和中国银行牌价能力；`StockQuoteService.swift` 仍只属于股票模块。
 
 ## 架构边界
 
-- `Models` 只保存 Codable 数据和可确定的业务计算，不直接访问文件、网络或 SwiftUI 状态。
+- `Core` 保存不归属于单个可关闭工具模块的基础能力；基础能力不能依赖某个业务模块的可见状态。
+- `Models` 只保存业务模块的 Codable 数据和可确定计算，不直接访问文件、网络或 SwiftUI 状态。
 - `AppStore` 是主线程上的应用状态协调器，负责把编辑结果交给持久化、附件和行情服务；页面不直接写本地文件。
 - `SecureStore` 负责本地 JSON 的读写，`VaultPersistenceCoordinator` 在串行后台队列合并写入，并把失败错误码回传给应用状态。
 - `AttachmentStore` 负责附件生命周期和备份数据转换；三个模块共用同一套文件安全属性和 Quick Look 预览包装器。
 - `AuthManager` 只负责管理员会话和身份验证，敏感信息查看使用独立的验证入口，不把查看权限混入编辑会话。
-- 行情和牌价服务分别承担网络请求与解析；视图只消费 AppStore 提供的缓存、状态和错误信息。
+- 股票和换汇模块都可以使用基础牌价能力；只有两个模块均关闭时才停止牌价刷新。模块开关仍分别控制各自页面、数据备份、提醒和模块专属后台任务。
+- 即时报价、历史行情和牌价服务分别承担网络请求与解析；看盘页只持有短期内存快照，不把走势图数据写入 AppStore 或本地档案。
 
 ## 当前限制
 

@@ -80,26 +80,7 @@ enum AccountStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case cny = "CNY"
-    case hkd = "HKD"
-    case cad = "CAD"
-    case chf = "CHF"
-    case eur = "EUR"
-    case gbp = "GBP"
-    case jpy = "JPY"
-    case nzd = "NZD"
-    case sgd = "SGD"
-    case thb = "THB"
-    case usd = "USD"
-    case aud = "AUD"
-
-    private static let supportedCases = Set(allCases)
-
-    static var selectableCases: [CurrencyCode] {
-        displayOrdered(supportedCases)
-    }
-
+extension CurrencyCode {
     static func preferredFinanceCases(for region: BankRegion) -> [CurrencyCode] {
         switch region {
         case .domestic:
@@ -115,78 +96,6 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
     ) -> [CurrencyCode] {
         let preferred = Set(preferredFinanceCases(for: region))
         return selectableCases(including: current).filter { !preferred.contains($0) }
-    }
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .cny: return "人民币 CNY"
-        case .hkd: return "港币 HKD"
-        case .cad: return "加拿大元 CAD"
-        case .chf: return "瑞士法郎 CHF"
-        case .eur: return "欧元 EUR"
-        case .gbp: return "英镑 GBP"
-        case .jpy: return "日元 JPY"
-        case .nzd: return "新西兰元 NZD"
-        case .sgd: return "新加坡元 SGD"
-        case .thb: return "泰国铢 THB"
-        case .usd: return "美元 USD"
-        case .aud: return "澳大利亚元 AUD"
-        }
-    }
-
-    private var chineseName: String {
-        title.replacingOccurrences(of: " \(rawValue)", with: "")
-    }
-
-    /// 中国银行外汇牌价页使用的货币名称；新增币种时在这里补充映射即可。
-    var bankOfChinaName: String? {
-        switch self {
-        case .cny: return nil
-        case .hkd: return "港币"
-        case .cad: return "加拿大元"
-        case .chf: return "瑞士法郎"
-        case .eur: return "欧元"
-        case .gbp: return "英镑"
-        case .jpy: return "日元"
-        case .nzd: return "新西兰元"
-        case .sgd: return "新加坡元"
-        case .thb: return "泰国铢"
-        case .usd: return "美元"
-        case .aud: return "澳大利亚元"
-        }
-    }
-
-    static func selectableCases(including current: CurrencyCode) -> [CurrencyCode] {
-        displayOrdered(supportedCases.union([current]))
-    }
-
-    static func selectableCases(including current: Set<CurrencyCode>) -> [CurrencyCode] {
-        displayOrdered(supportedCases.union(current))
-    }
-
-    static func displayOrdered(_ currencies: Set<CurrencyCode>) -> [CurrencyCode] {
-        let fixedPriority: [CurrencyCode: Int] = [.cny: 0, .hkd: 1, .usd: 2]
-        let locale = Locale(identifier: "zh_Hans_CN")
-
-        return currencies.sorted { lhs, rhs in
-            let lhsPriority = fixedPriority[lhs] ?? Int.max
-            let rhsPriority = fixedPriority[rhs] ?? Int.max
-            if lhsPriority != rhsPriority {
-                return lhsPriority < rhsPriority
-            }
-
-            let comparison = lhs.chineseName.compare(
-                rhs.chineseName,
-                options: [],
-                range: nil,
-                locale: locale
-            )
-            return comparison == .orderedSame
-                ? lhs.rawValue < rhs.rawValue
-                : comparison == .orderedAscending
-        }
     }
 }
 
@@ -439,80 +348,5 @@ extension BankAccount {
         return !hasNormalDebitCard
             && !hasActiveSubaccount
             && (hasHistoricalDebitCard || status != .normal)
-    }
-}
-
-struct VaultData: Codable, @unchecked Sendable {
-    var accounts: [BankAccount] = []
-    var cards: [BankCard] = []
-    var stocks: [StockHolding] = []
-    var currencyExchangeRecords: [CurrencyExchangeRecord] = []
-    var medicalRecords: [MedicalRecord] = []
-    var hospitalProfiles: [HospitalProfile] = []
-    var currencyRateAlerts: [CurrencyRateAlert] = []
-    var stockPriceAlerts: [StockPriceAlert] = []
-
-    init(
-        accounts: [BankAccount] = [],
-        cards: [BankCard] = [],
-        stocks: [StockHolding] = [],
-        currencyExchangeRecords: [CurrencyExchangeRecord] = [],
-        medicalRecords: [MedicalRecord] = [],
-        hospitalProfiles: [HospitalProfile] = [],
-        currencyRateAlerts: [CurrencyRateAlert] = [],
-        stockPriceAlerts: [StockPriceAlert] = []
-    ) {
-        self.accounts = accounts
-        self.cards = cards
-        self.stocks = stocks
-        self.currencyExchangeRecords = currencyExchangeRecords
-        self.medicalRecords = medicalRecords
-        self.hospitalProfiles = hospitalProfiles
-        self.currencyRateAlerts = currencyRateAlerts
-        self.stockPriceAlerts = stockPriceAlerts
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case accounts
-        case cards
-        case stocks
-        case currencyExchangeRecords
-        case medicalRecords
-        case hospitalProfiles
-        case currencyRateAlerts
-        case stockPriceAlerts
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        accounts = try container.decodeIfPresent([BankAccount].self, forKey: .accounts) ?? []
-        cards = try container.decodeIfPresent([BankCard].self, forKey: .cards) ?? []
-        stocks = try container.decodeIfPresent([StockHolding].self, forKey: .stocks) ?? []
-        currencyExchangeRecords = try container.decodeIfPresent(
-            [CurrencyExchangeRecord].self,
-            forKey: .currencyExchangeRecords
-        ) ?? []
-        medicalRecords = try container.decodeIfPresent([MedicalRecord].self, forKey: .medicalRecords) ?? []
-        hospitalProfiles = try container.decodeIfPresent([HospitalProfile].self, forKey: .hospitalProfiles) ?? []
-        currencyRateAlerts = try container.decodeIfPresent(
-            [CurrencyRateAlert].self,
-            forKey: .currencyRateAlerts
-        ) ?? []
-        stockPriceAlerts = try container.decodeIfPresent(
-            [StockPriceAlert].self,
-            forKey: .stockPriceAlerts
-        ) ?? []
-    }
-
-    var currentCardCount: Int {
-        cards.lazy.filter { $0.status != .closed }.count
-    }
-
-    var currentBankCount: Int {
-        let cardsByAccountID = Dictionary(grouping: cards) { $0.accountID }
-        return accounts.lazy.filter { account in
-            let linkedCards = cardsByAccountID[account.id] ?? []
-            return !account.isInactiveFinanceArchive(cards: linkedCards)
-        }.count
     }
 }

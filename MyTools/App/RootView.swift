@@ -162,6 +162,9 @@ private struct DesktopRootView: View {
     }
 
     private func normalizeSelection() {
+        if selection == .profile {
+            return
+        }
         if case .module(let module) = selection, visibleModules.contains(module) {
             return
         }

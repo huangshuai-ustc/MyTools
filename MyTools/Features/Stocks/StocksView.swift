@@ -175,6 +175,10 @@ private struct StockSortMenu: View {
 }
 
 struct StocksView: View {
+    private struct WatchRoute: Hashable {
+        let stockID: UUID
+    }
+
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
@@ -183,6 +187,7 @@ struct StocksView: View {
     @State private var didRefreshOnCurrentAppearance = false
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
+    @State private var watchRoute: WatchRoute?
     @State private var showsNoPositionStocks = false
     @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
     @AppStorage("stock-sort-direction-v2") private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
@@ -377,6 +382,9 @@ struct StocksView: View {
                 .id(stock.id)
                 .iOSLargeSheet()
         }
+        .navigationDestination(item: $watchRoute) { route in
+            StockWatchView(stockID: route.stockID)
+        }
         .onChange(of: availableMarketFilters) { _, filters in
             if !filters.contains(marketFilter) {
                 marketFilter = .all
@@ -413,6 +421,14 @@ struct StocksView: View {
             )
         }
         .appListRowStyle()
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                watchRoute = WatchRoute(stockID: stock.id)
+            } label: {
+                Label("看盘", systemImage: "chart.xyaxis.line")
+            }
+            .tint(.teal)
+        }
     }
 
     @ViewBuilder
@@ -808,9 +824,9 @@ struct StockMarketBadge: View {
 
     private var color: Color {
         switch market {
-        case .aShare: return .purple
-        case .hongKong: return .orange
-        case .unitedStates: return .teal
+        case .aShare: return .orange
+        case .hongKong: return .purple
+        case .unitedStates: return .indigo
         }
     }
 

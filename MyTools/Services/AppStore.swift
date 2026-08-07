@@ -9,10 +9,6 @@ private let startupLogger = Logger(
 )
 
 private enum AppStoreDefaultsKey {
-    static let usdBuyingRate = "stock-usd-cny-buying-rate-v1"
-    static let exchangeRateDate = "stock-usd-cny-buying-rate-date-v1"
-    static let buyingRates = "boc-currency-buying-rates-v1"
-    static let sellingRates = "boc-currency-selling-rates-v1"
     static let stockRefreshDate = "stock-last-refresh-date-v1"
     static let stockRefreshDatesByMarket = "stock-last-refresh-dates-by-market-v1"
 }
@@ -45,47 +41,6 @@ private struct AppStoreInitialSnapshot: @unchecked Sendable {
     }
 }
 
-private struct AppStoreCachedRatesSnapshot: @unchecked Sendable {
-    let usdRenminbiBuyingRate: Decimal?
-    let renminbiBuyingRates: [CurrencyCode: Decimal]
-    let renminbiSellingRates: [CurrencyCode: Decimal]
-    let exchangeRateUpdatedAt: Date?
-
-    static func load() -> Self {
-        let defaults = UserDefaults.standard
-        let usdRate = defaults.string(forKey: AppStoreDefaultsKey.usdBuyingRate)
-            .flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }
-        var buyingRates = decimalRates(
-            from: defaults.dictionary(forKey: AppStoreDefaultsKey.buyingRates) as? [String: String]
-        )
-        let sellingRates = decimalRates(
-            from: defaults.dictionary(forKey: AppStoreDefaultsKey.sellingRates) as? [String: String]
-        )
-        if let usdRate { buyingRates[.usd] = usdRate }
-
-        return Self(
-            usdRenminbiBuyingRate: usdRate,
-            renminbiBuyingRates: buyingRates,
-            renminbiSellingRates: sellingRates,
-            exchangeRateUpdatedAt: defaults.object(
-                forKey: AppStoreDefaultsKey.exchangeRateDate
-            ) as? Date
-        )
-    }
-
-    private static func decimalRates(from values: [String: String]?) -> [CurrencyCode: Decimal] {
-        guard let values else { return [:] }
-        return values.reduce(into: [:]) { result, entry in
-            guard let currency = CurrencyCode(rawValue: entry.key),
-                  let rate = Decimal(
-                    string: entry.value,
-                    locale: Locale(identifier: "en_US_POSIX")
-                  ) else { return }
-            result[currency] = rate
-        }
-    }
-}
-
 @MainActor
 final class AppStore: ObservableObject {
     @Published private(set) var accounts: [BankAccount]
@@ -114,7 +69,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var persistenceError: String?
     private let persistence = VaultPersistenceCoordinator()
     private let quoteService = StockQuoteService()
-    private let exchangeRateService = ForeignExchangeRateService()
+    private let exchangeRateRepository = ExchangeRateRepository()
     private let attachmentStore = AttachmentStore()
     private let defaults = UserDefaults.standard
     private weak var moduleSettings: ToolModuleSettings?
@@ -146,41 +101,52 @@ final class AppStore: ObservableObject {
 
         Task { [weak self] in
             let cachedRatesTask = Task.detached(priority: .utility) {
-                AppStoreCachedRatesSnapshot.load()
+                ExchangeRateRepository.loadCachedSnapshot()
             }
             let snapshot = await Task.detached(priority: .userInitiated) {
                 AppStoreInitialSnapshot.load()
             }.value
             guard let self else { return }
             self.applyInitialSnapshot(snapshot)
-            self.applyCachedRatesSnapshot(await cachedRatesTask.value)
+            self.applyExchangeRateSnapshot(await cachedRatesTask.value)
         }
     }
 
     func attach(moduleSettings: ToolModuleSettings) {
         self.moduleSettings = moduleSettings
     }
-    func moduleVisibilityChanged(_ module: ToolModule, isVisible: Bool) {
-        guard !isVisible else {
-            if module == .myStocks {
-                StockRefreshCoordinator.shared.refreshEligibilityChanged()
-            } else if module == .currencyExchange {
-                refreshExchangeRateIfNeeded()
-            }
-            return
-        }
 
-        if module == .currencyExchange {
-            exchangeRateTask?.cancel()
-            exchangeRateTask = nil
-            lastExchangeRateRequestAt = nil
-            isRefreshingExchangeRate = false
+    func moduleVisibilityChanged(_ module: ToolModule, isVisible: Bool) {
+        switch module {
+        case .myStocks:
+            StockRefreshCoordinator.shared.refreshEligibilityChanged()
+            reconcileExchangeRateCapability()
+        case .currencyExchange:
+            reconcileExchangeRateCapability()
+        case .healthRecords:
+            if isVisible, isInitialDataLoaded {
+                synchronizeLoadedInpatientDailyRecords()
+                synchronizeHospitalProfilesWithMedicalRecords()
+            }
+        case .personalFinance, .secrets:
+            break
         }
-        StockRefreshCoordinator.shared.refreshEligibilityChanged()
+    }
+
+    private func reconcileExchangeRateCapability() {
+        if isExchangeRateCapabilityNeeded {
+            refreshExchangeRateIfNeeded()
+        } else {
+            stopExchangeRateRefresh()
+        }
     }
 
     private func isModuleVisible(_ module: ToolModule) -> Bool {
         moduleSettings?.isVisible(module) ?? true
+    }
+
+    private var isExchangeRateCapabilityNeeded: Bool {
+        isModuleVisible(.currencyExchange) || isModuleVisible(.myStocks)
     }
 
     var currentCardCount: Int {
@@ -212,14 +178,14 @@ final class AppStore: ObservableObject {
         DiagnosticLogger.shared.log(.startup, loadSummary)
     }
 
-    private func applyCachedRatesSnapshot(_ snapshot: AppStoreCachedRatesSnapshot) {
-        guard isModuleVisible(.currencyExchange) else { return }
+    private func applyExchangeRateSnapshot(_ snapshot: ExchangeRateSnapshot) {
+        guard isExchangeRateCapabilityNeeded else { return }
         usdRenminbiBuyingRate = snapshot.usdRenminbiBuyingRate
         renminbiBuyingRates = snapshot.renminbiBuyingRates
         renminbiSellingRates = snapshot.renminbiSellingRates
         renminbiBuyingRates[.cny] = 1
         renminbiSellingRates[.cny] = 1
-        exchangeRateUpdatedAt = snapshot.exchangeRateUpdatedAt
+        exchangeRateUpdatedAt = snapshot.updatedAt
     }
 
     private func applyVault(_ vault: VaultData) {
@@ -934,7 +900,7 @@ final class AppStore: ObservableObject {
     }
 
     func refreshExchangeRateIfNeeded() {
-        guard isModuleVisible(.currencyExchange) else { return }
+        guard isExchangeRateCapabilityNeeded else { return }
         if let lastExchangeRateRequestAt {
             let retryInterval: TimeInterval = exchangeRateError == nil ? 60 * 60 : 5 * 60
             guard Date().timeIntervalSince(lastExchangeRateRequestAt) >= retryInterval else { return }
@@ -943,7 +909,7 @@ final class AppStore: ObservableObject {
     }
 
     func refreshExchangeRates() {
-        guard isModuleVisible(.currencyExchange) else { return }
+        guard isExchangeRateCapabilityNeeded else { return }
         guard !isRefreshingExchangeRate else { return }
         isRefreshingExchangeRate = true
         lastExchangeRateRequestAt = Date()
@@ -951,46 +917,14 @@ final class AppStore: ObservableObject {
             guard let self else { return }
             defer { self.isRefreshingExchangeRate = false }
             do {
-                let rates = try await self.exchangeRateService.fetchRates()
-                guard self.isModuleVisible(.currencyExchange), !Task.isCancelled else { return }
-                var buyingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
-                var sellingRateValues: [CurrencyCode: Decimal] = [.cny: 1]
-                for rate in rates {
-                    guard let currency = CurrencyCode(rawValue: rate.currencyCode) else { continue }
-                    buyingRateValues[currency] = rate.renminbiBuyingPerUnit
-                    sellingRateValues[currency] = rate.renminbiSellingPerUnit
-                }
-                guard let usdRate = buyingRateValues[.usd] else {
-                    throw ForeignExchangeRateError.rateUnavailable
-                }
-                self.renminbiBuyingRates = buyingRateValues
-                self.renminbiSellingRates = sellingRateValues
-                self.usdRenminbiBuyingRate = usdRate
-                self.exchangeRateUpdatedAt = rates.map(\.updatedAt).max()
+                let snapshot = try await self.exchangeRateRepository.fetchSnapshot()
+                guard self.isExchangeRateCapabilityNeeded, !Task.isCancelled else { return }
+                self.applyExchangeRateSnapshot(snapshot)
                 self.exchangeRateError = nil
                 self.evaluateCurrencyRateAlerts()
-                self.defaults.set(
-                    NSDecimalNumber(decimal: usdRate).stringValue,
-                    forKey: AppStoreDefaultsKey.usdBuyingRate
-                )
-                self.defaults.set(
-                    self.exchangeRateUpdatedAt,
-                    forKey: AppStoreDefaultsKey.exchangeRateDate
-                )
-                self.defaults.set(
-                    buyingRateValues.reduce(into: [String: String]()) { result, entry in
-                        result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
-                    },
-                    forKey: AppStoreDefaultsKey.buyingRates
-                )
-                self.defaults.set(
-                    sellingRateValues.reduce(into: [String: String]()) { result, entry in
-                        result[entry.key.rawValue] = NSDecimalNumber(decimal: entry.value).stringValue
-                    },
-                    forKey: AppStoreDefaultsKey.sellingRates
-                )
+                await self.exchangeRateRepository.save(snapshot)
             } catch {
-                guard self.isModuleVisible(.currencyExchange), !Task.isCancelled else { return }
+                guard self.isExchangeRateCapabilityNeeded, !Task.isCancelled else { return }
                 self.exchangeRateError = error.localizedDescription
                 DiagnosticLogger.logError(
                     .exchangeRate,
@@ -999,6 +933,13 @@ final class AppStore: ObservableObject {
                 )
             }
         }
+    }
+
+    private func stopExchangeRateRefresh() {
+        exchangeRateTask?.cancel()
+        exchangeRateTask = nil
+        lastExchangeRateRequestAt = nil
+        isRefreshingExchangeRate = false
     }
 
     func makeBackupDocument(password: String) async throws -> VaultBackupDocument {
