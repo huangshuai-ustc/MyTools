@@ -2,7 +2,7 @@ import Foundation
 
 enum AppMetadata {
     static let appName = "方寸"
-    static let fallbackBundleIdentifier = "com.example.mytools"
+    static let fallbackBundleIdentifier = "com.fjwyz.PersonalToolBox"
 
     static var bundleIdentifier: String {
         Bundle.main.bundleIdentifier ?? fallbackBundleIdentifier

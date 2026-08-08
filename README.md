@@ -18,7 +18,7 @@
 - macOS 26.0 及以上
 - Xcode 26.0 及以上
 - Swift 6.0、SwiftUI 多平台工程
-- 默认 Bundle Identifier：`com.example.mytools`，可以通过本地签名配置覆盖
+- 默认 Bundle Identifier：`com.fjwyz.PersonalToolBox`，可以通过本地签名配置覆盖
 - 工程文件：`MyTools.xcodeproj`
 - Scheme：`MyTools`
 - App 中文显示名称：`方寸`
@@ -128,9 +128,9 @@
 
 1. 在 Xcode 中打开 `MyTools.xcodeproj`。
 2. 选择 Scheme `MyTools`。
-3. 模拟器构建可以直接使用公共配置；真机安装前，把 `Config/Signing.local.xcconfig.example` 复制为 `Config/Signing.local.xcconfig`，再填写自己的 `DEVELOPMENT_TEAM` 和唯一 Bundle Identifier。
+3. 本仓库默认配置使用作者的 Bundle Identifier，Xcode Cloud 可直接据此归档；其他开发者在真机安装前，应把 `Config/Signing.local.xcconfig.example` 复制为 `Config/Signing.local.xcconfig`，填写自己的 `DEVELOPMENT_TEAM` 和唯一 Bundle Identifier。
 4. 在 Apple Developer 与 Xcode 的 Signing & Capabilities 中为这个 Bundle Identifier 启用 iCloud/CloudKit、Push Notifications 和 Background Modes，并创建 `iCloud.<你的 Bundle Identifier>` 容器。`MyToolsRelease.entitlements` 会按构建时的 Bundle Identifier 引用该容器。
-5. `Signing.local.xcconfig` 不会提交到 Git。不要把个人 Team ID 或专属 Bundle Identifier 写回 `project.pbxproj` 或 `Shared.xcconfig`。
+5. `Signing.local.xcconfig` 不会提交到 Git。仓库中的 `Shared.xcconfig` 保留本 App 的默认 Bundle Identifier，其他开发者使用本地配置覆盖它；Team ID 和签名证书仍由 Xcode Cloud 或本机签名设置提供。
 6. 选择 iPhone、iPad 或 My Mac 后运行。
 
 首次开启同步后，用开发签名运行 App 并新增或修改一条记录，确认 CloudKit Dashboard 的 Development 环境出现 `MyToolsEntity` 记录类型和 `MyToolsData` 自定义 Zone。上传 TestFlight 或 App Store 前，必须在 CloudKit Dashboard 执行 **Deploy Schema Changes to Production**；否则开发环境正常而正式版本无法读写。
