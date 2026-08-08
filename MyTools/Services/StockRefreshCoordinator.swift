@@ -3,6 +3,12 @@ import SwiftUI
 #if os(iOS)
 import BackgroundTasks
 import UIKit
+
+private enum StockBackgroundTaskCallbacks {
+    static func expirationHandler(for work: Task<Void, Never>) -> () -> Void {
+        { work.cancel() }
+    }
+}
 #endif
 
 @MainActor
@@ -243,9 +249,7 @@ final class StockRefreshCoordinator {
             await self.refreshAutomatically()
             task.setTaskCompleted(success: !Task.isCancelled)
         }
-        task.expirationHandler = {
-            work.cancel()
-        }
+        task.expirationHandler = StockBackgroundTaskCallbacks.expirationHandler(for: work)
     }
 #endif
 }
@@ -263,17 +267,19 @@ final class StockRefreshAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        application.registerForRemoteNotifications()
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: StockRefreshCoordinator.taskIdentifier,
-            using: nil
+            // UIApplicationDelegate and StockRefreshCoordinator are MainActor-isolated.
+            // Register on the main queue so BackgroundTasks does not invoke this
+            // closure on its default background queue and trip Swift's executor check.
+            using: .main
         ) { task in
-            Task { @MainActor in
-                guard let refreshTask = task as? BGAppRefreshTask else {
-                    task.setTaskCompleted(success: false)
-                    return
-                }
-                StockRefreshCoordinator.shared.handleBackgroundRefresh(refreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: false)
+                return
             }
+            StockRefreshCoordinator.shared.handleBackgroundRefresh(refreshTask)
         }
         return true
     }

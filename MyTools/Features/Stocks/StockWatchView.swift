@@ -410,7 +410,8 @@ struct StockWatchView: View {
                             .font(.title2.weight(.semibold).monospacedDigit())
                         if let performance = StockChartPresentation.rangePerformance(
                             snapshot: snapshot,
-                            range: selectedRange
+                            range: selectedRange,
+                            market: stock.market
                         ) {
                             HStack(spacing: 10) {
                                 Text(

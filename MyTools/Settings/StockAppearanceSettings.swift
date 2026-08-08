@@ -11,6 +11,7 @@ final class StockAppearanceSettings: ObservableObject {
     @Published private(set) var hongKongScheme: StockRiseFallColorScheme
     @Published private(set) var unitedStatesScheme: StockRiseFallColorScheme
     private let defaults: UserDefaults
+    private var changeHandler: (@MainActor () -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -28,6 +29,7 @@ final class StockAppearanceSettings: ObservableObject {
     }
 
     func setScheme(_ scheme: StockRiseFallColorScheme, for market: StockMarket) {
+        guard scheme != self.scheme(for: market) else { return }
         switch market {
         case .aShare:
             aShareScheme = scheme
@@ -39,6 +41,30 @@ final class StockAppearanceSettings: ObservableObject {
             unitedStatesScheme = scheme
             defaults.set(scheme.rawValue, forKey: Self.unitedStatesKey)
         }
+        changeHandler?()
+    }
+
+    func setChangeHandler(_ handler: (@MainActor () -> Void)?) {
+        changeHandler = handler
+    }
+
+    func applySyncedSchemes(
+        aShare: StockRiseFallColorScheme,
+        hongKong: StockRiseFallColorScheme,
+        unitedStates: StockRiseFallColorScheme
+    ) {
+        let changed = aShareScheme != aShare
+            || hongKongScheme != hongKong
+            || unitedStatesScheme != unitedStates
+        guard changed else { return }
+
+        aShareScheme = aShare
+        hongKongScheme = hongKong
+        unitedStatesScheme = unitedStates
+        defaults.set(aShare.rawValue, forKey: Self.aShareKey)
+        defaults.set(hongKong.rawValue, forKey: Self.hongKongKey)
+        defaults.set(unitedStates.rawValue, forKey: Self.unitedStatesKey)
+        changeHandler?()
     }
 
     private static func savedScheme(

@@ -15,6 +15,10 @@ enum AppMetadata {
         "\(bundleIdentifier).backup"
     }
 
+    static var iCloudContainerIdentifier: String {
+        "iCloud.\(bundleIdentifier)"
+    }
+
     static var versionDescription: String {
         let version = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"

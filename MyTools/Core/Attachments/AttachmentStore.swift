@@ -15,7 +15,7 @@ enum AttachmentStoreError: LocalizedError {
     }
 }
 
-final class AttachmentStore {
+final class AttachmentStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let directoryURL: URL
 
@@ -89,6 +89,17 @@ final class AttachmentStore {
             to: url(for: attachment),
             options: [.atomic, .completeFileProtection]
         )
+    }
+
+    func write(
+        _ data: Data,
+        to attachment: FileAttachment,
+        replacing previous: FileAttachment?
+    ) throws {
+        try write(data, to: attachment)
+        guard let previous,
+              previous.storedFileName != attachment.storedFileName else { return }
+        delete(previous)
     }
 
     func delete(_ attachment: FileAttachment) {

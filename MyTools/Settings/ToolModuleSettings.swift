@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
-enum AppAppearanceMode: String, CaseIterable, Identifiable {
+enum AppAppearanceMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case system
     case light
     case dark
@@ -26,7 +26,7 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum AppFontSize: String, CaseIterable, Identifiable {
+enum AppFontSize: String, CaseIterable, Codable, Identifiable, Sendable {
     case system
     case xSmall
     case small
@@ -90,6 +90,7 @@ final class ToolModuleSettings: ObservableObject {
     @Published private(set) var visibilityRevision = 0
     private let defaults: UserDefaults
     private var visibilityChangeHandler: (@MainActor (ToolModule, Bool) -> Void)?
+    private var preferenceChangeHandler: (@MainActor () -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -109,16 +110,64 @@ final class ToolModuleSettings: ObservableObject {
         visibilityChangeHandler = handler
     }
 
+    func setPreferenceChangeHandler(_ handler: (@MainActor () -> Void)?) {
+        preferenceChangeHandler = handler
+    }
+
     func setVisible(_ isVisible: Bool, for module: ToolModule) {
         guard isVisible != self.isVisible(module) else { return }
         visibility[module.rawValue] = isVisible
         defaults.set(isVisible, forKey: module.visibilityKey)
         visibilityRevision &+= 1
         visibilityChangeHandler?(module, isVisible)
+        preferenceChangeHandler?()
     }
 
     func moveModules(from source: IndexSet, to destination: Int) {
         orderedModules.move(fromOffsets: source, toOffset: destination)
         defaults.set(orderedModules.map(\.rawValue), forKey: Self.orderKey)
+        preferenceChangeHandler?()
+    }
+
+    var syncedModuleOrder: [ToolModule] {
+        orderedModules
+    }
+
+    var syncedModuleVisibility: [String: Bool] {
+        Dictionary(uniqueKeysWithValues: ToolModule.allCases.map {
+            ($0.rawValue, isVisible($0))
+        })
+    }
+
+    func applySyncedPreferences(
+        order: [ToolModule],
+        visibility incomingVisibility: [String: Bool]
+    ) {
+        let uniqueOrder = order.reduce(into: [ToolModule]()) { result, module in
+            if !result.contains(module) {
+                result.append(module)
+            }
+        }
+        let normalizedOrder = uniqueOrder + ToolModule.allCases.filter {
+            !uniqueOrder.contains($0)
+        }
+        if orderedModules != normalizedOrder {
+            orderedModules = normalizedOrder
+            defaults.set(normalizedOrder.map(\.rawValue), forKey: Self.orderKey)
+        }
+
+        var changedVisibility: [(ToolModule, Bool)] = []
+        for module in ToolModule.allCases {
+            guard let incoming = incomingVisibility[module.rawValue],
+                  incoming != isVisible(module) else { continue }
+            visibility[module.rawValue] = incoming
+            defaults.set(incoming, forKey: module.visibilityKey)
+            changedVisibility.append((module, incoming))
+        }
+        guard !changedVisibility.isEmpty else { return }
+        visibilityRevision &+= 1
+        for (module, isVisible) in changedVisibility {
+            visibilityChangeHandler?(module, isVisible)
+        }
     }
 }

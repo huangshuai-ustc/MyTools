@@ -20,7 +20,14 @@ extension ExchangeRateRepository: ExchangeRateProviding {
 extension AppStoreDependencies {
     @MainActor
     static var live: Self {
-        Self(
+        let attachmentStore = AttachmentStore()
+        let cloudSync = CloudSyncCoordinator(
+            defaults: .standard,
+            attachmentStore: attachmentStore,
+            containerIdentifier: AppMetadata.iCloudContainerIdentifier,
+            isSupported: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        )
+        return Self(
             initialLoader: SecureStoreInitialLoader(),
             persistence: VaultPersistenceCoordinator(),
             quoteService: StockQuoteService(),
@@ -28,8 +35,9 @@ extension AppStoreDependencies {
             alertNotifications: AppNotificationService.shared,
             stockRefreshInvalidator: StockRefreshCoordinator.shared,
             backupProcessor: AppStoreBackupProcessor(),
-            attachmentStore: AttachmentStore(),
-            defaults: .standard
+            attachmentStore: attachmentStore,
+            defaults: .standard,
+            cloudSync: cloudSync
         )
     }
 }

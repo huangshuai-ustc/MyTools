@@ -57,25 +57,23 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
     }
 
     func refreshAuthorizationStatus() {
-        center.getNotificationSettings { [weak self] settings in
-            let status = settings.authorizationStatus
-            Task { @MainActor in
-                self?.authorizationStatus = status
-            }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let settings = await center.notificationSettings()
+            authorizationStatus = settings.authorizationStatus
         }
     }
 
     func requestAuthorization() async -> Bool {
-        let granted = await withCheckedContinuation { continuation in
-            center.requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, error in
-                if let error {
-                    self?.logger.error("请求通知权限失败：\(error.localizedDescription, privacy: .public)")
-                }
-                continuation.resume(returning: granted)
-            }
+        do {
+            let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+            refreshAuthorizationStatus()
+            return granted
+        } catch {
+            logger.error("请求通知权限失败：\(error.localizedDescription, privacy: .public)")
+            refreshAuthorizationStatus()
+            return false
         }
-        refreshAuthorizationStatus()
-        return granted
     }
 
     func openSystemSettings() {
@@ -96,9 +94,12 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
 
         let identifier = "price-alert-\(ruleID.uuidString)-\(Int(Date().timeIntervalSince1970))"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        center.add(request) { [weak self] error in
-            if let error {
-                self?.logger.error("添加本地通知失败：\(error.localizedDescription, privacy: .public)")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await center.add(request)
+            } catch {
+                logger.error("添加本地通知失败：\(error.localizedDescription, privacy: .public)")
             }
         }
     }

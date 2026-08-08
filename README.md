@@ -114,21 +114,26 @@
 - 当前只读取最新的本地容器和备份载荷结构，不再兼容更早的顶层 `VaultData`、旧体检嵌套批次或单选医疗机构字段。
 - 备份密码至少 8 位；密码页默认填入当前管理员密码，也可以清除后输入独立的自定义备份密码。自定义密码不会由 App 保存，丢失后无法解密备份。
 - 导入备份采用增量合并，不会清空未包含在备份中的工具模块或本地数据。备份中包含的模块按记录 ID 合并：已有同 ID 记录使用备份内容更新，新记录追加；对应的健康附件、信用卡账单和保密资料附件会一并恢复。
+- 可在“我的 > 设置 > iCloud 同步”中主动开启 CloudKit 私有数据库同步；该功能默认关闭。银行、银行卡、股票持仓、换汇、健康档案、医疗机构、提醒、保密资料和附件按记录增量同步，多个设备需登录同一 Apple 账户。
+- 本地档案始终是离线数据源。股票行情、汇率缓存、诊断日志、管理员会话和设备认证状态不会上传；附件使用 `CKAsset`，业务 JSON 写入 CloudKit 的加密字段。关闭同步不会删除本机资料。
 
 ## 安全边界
 
 - 当前本地 JSON 档案没有应用层加密，卡号、CVV 和保密资料字段可能以明文存在于本地文件中；iOS 文件使用系统的 `completeUntilFirstUserAuthentication` 保护。附件单独存放在同一 Application Support 下。
 - App 沙盒隔离和敏感信息界面遮罩不能替代应用层加密。管理员密码当前以 SHA-256 摘要保存在 `UserDefaults`，没有独立盐值。
 - 导出备份文件经过密码加密；默认使用管理员密码，用户可以清除默认值并设置独立备份密码。管理员密码哈希保存在 `UserDefaults`，可用的明文备份密码会尝试保存在本机 Keychain 中以支持生物识别后的默认填充。
-- 当前没有 CloudKit 或 iCloud 自动同步；iCloud Drive 只用于保存或同步用户手动导出的备份文件。
+- CloudKit 同步是可选的数据副本与多设备合并能力，不能替代独立的 `.mytools` 加密备份。切换 Apple 账户，或用户从 iCloud 清除方寸数据时，App 会保留本机资料并自动关闭同步，避免误传到其他账户或重新上传已清除的数据。
 
 ## 打开与运行
 
 1. 在 Xcode 中打开 `MyTools.xcodeproj`。
 2. 选择 Scheme `方寸`。
 3. 模拟器构建可以直接使用公共配置；真机安装前，把 `Config/Signing.local.xcconfig.example` 复制为 `Config/Signing.local.xcconfig`，再填写自己的 `DEVELOPMENT_TEAM` 和唯一 Bundle Identifier。
-4. `Signing.local.xcconfig` 不会提交到 Git。不要把个人 Team ID 或专属 Bundle Identifier 写回 `project.pbxproj` 或 `Shared.xcconfig`。
-5. 选择 iPhone、iPad 或 My Mac 后运行。
+4. 在 Apple Developer 与 Xcode 的 Signing & Capabilities 中为这个 Bundle Identifier 启用 iCloud/CloudKit、Push Notifications 和 Background Modes，并创建 `iCloud.<你的 Bundle Identifier>` 容器。`方寸Release.entitlements` 会按构建时的 Bundle Identifier 引用该容器。
+5. `Signing.local.xcconfig` 不会提交到 Git。不要把个人 Team ID 或专属 Bundle Identifier 写回 `project.pbxproj` 或 `Shared.xcconfig`。
+6. 选择 iPhone、iPad 或 My Mac 后运行。
+
+首次开启同步后，用开发签名运行 App 并新增或修改一条记录，确认 CloudKit Dashboard 的 Development 环境出现 `MyToolsEntity` 记录类型和 `MyToolsData` 自定义 Zone。上传 TestFlight 或 App Store 前，必须在 CloudKit Dashboard 执行 **Deploy Schema Changes to Production**；否则开发环境正常而正式版本无法读写。
 
 首次使用建议：先进入“我的”设置管理员密码，再从“金融账户”“股票投资”和“健康档案”录入数据，最后导出一份 `.mytools` 备份。
 
@@ -162,7 +167,7 @@ MyTools/
 - `ToolModule.swift`：五个工具模块的名称、图标、颜色和可见性键。
 - `AppStore.swift`：模块 Store 装配、初始加载、持久化快照和备份恢复协调。
 - `BankCard.swift`、`Stock.swift`、`CurrencyExchange.swift`、`HealthRecord.swift`：各业务模块的数据模型和计算规则。
-- `Core/Persistence`、`Core/Attachments`、`Core/Backup`：本地档案、通用附件和加密备份基础能力。
+- `Core/Persistence`、`Core/Attachments`、`Core/Backup`、`Core/CloudSync`：本地档案、通用附件、加密备份和可选的 CloudKit 增量同步基础能力。
 - `Core/Authentication`：管理员模式、身份验证和敏感信息验证。
 - `Core/Currency`：所有模块共用的币种定义和中国银行牌价能力；`StockQuoteService.swift` 仍只属于股票模块。
 

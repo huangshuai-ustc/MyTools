@@ -52,7 +52,10 @@ struct StockChartCanvas: View {
         return Chart {
             if presentation.hasBasePriceChart,
                range == .intraday,
-               let previousClose = snapshot.previousClose,
+               let previousClose = StockChartPresentation.intradayPreviousClose(
+                snapshot: snapshot,
+                market: stock.market
+               ),
                presentation.yDomain.contains(previousClose) {
                 RuleMark(y: .value("昨收", previousClose))
                     .foregroundStyle(.secondary.opacity(0.5))
@@ -554,7 +557,8 @@ struct StockChartCanvas: View {
     private func lineColor() -> Color {
         guard let performance = StockChartPresentation.rangePerformance(
             snapshot: snapshot,
-            range: range
+            range: range,
+            market: stock.market
         ) else { return .accentColor }
         return valueColor(performance.change)
     }

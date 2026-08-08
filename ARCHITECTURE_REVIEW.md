@@ -416,7 +416,7 @@ flowchart TD
 - iOS Simulator 通用目标 build：在沙箱外访问 CoreSimulator 服务后通过；本轮未启动具体模拟器做 UI 运行验证。
 - `plutil -lint MyTools.xcodeproj/project.pbxproj`：通过。
 - `git diff --check`：通过。
-- `DEVELOPMENT_TEAM = 6Y8DN35HLK` 保持不变。
+- `DEVELOPMENT_TEAM` 仅保存在 Git 忽略的 `Config/Signing.local.xcconfig`，工程文件不包含个人 Team ID。
 - 沙箱内的 iOS 构建仍会因无法访问 `CoreSimulatorService/simdiskimaged` 而失败；同一命令在沙箱外通过，确认不是当前 Swift 源码或工程文件错误。
 
 ## 后续处理顺序

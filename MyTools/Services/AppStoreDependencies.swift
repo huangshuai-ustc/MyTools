@@ -52,5 +52,30 @@ struct AppStoreDependencies {
     let backupProcessor: any VaultBackupProcessing
     let attachmentStore: AttachmentStore
     let defaults: UserDefaults
+    let cloudSync: CloudSyncCoordinator?
 
+    @MainActor
+    init(
+        initialLoader: any VaultInitialLoading,
+        persistence: any VaultPersisting,
+        quoteService: any StockQuoteRefreshing,
+        exchangeRateRepository: any ExchangeRateProviding,
+        alertNotifications: any AlertNotificationRouting,
+        stockRefreshInvalidator: any StockRefreshInvalidating,
+        backupProcessor: any VaultBackupProcessing,
+        attachmentStore: AttachmentStore,
+        defaults: UserDefaults,
+        cloudSync: CloudSyncCoordinator? = nil
+    ) {
+        self.initialLoader = initialLoader
+        self.persistence = persistence
+        self.quoteService = quoteService
+        self.exchangeRateRepository = exchangeRateRepository
+        self.alertNotifications = alertNotifications
+        self.stockRefreshInvalidator = stockRefreshInvalidator
+        self.backupProcessor = backupProcessor
+        self.attachmentStore = attachmentStore
+        self.defaults = defaults
+        self.cloudSync = cloudSync
+    }
 }

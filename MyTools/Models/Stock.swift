@@ -40,7 +40,7 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum StockRiseFallColorScheme: String, CaseIterable, Identifiable {
+enum StockRiseFallColorScheme: String, CaseIterable, Codable, Identifiable, Sendable {
     case redRiseGreenFall
     case greenRiseRedFall
 

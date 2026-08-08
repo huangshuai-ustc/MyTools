@@ -20,6 +20,11 @@ struct ProfileSettingsView: View {
                 } label: {
                     Label("通知与提醒", systemImage: "bell.badge")
                 }
+                NavigationLink {
+                    CloudSyncSettingsView()
+                } label: {
+                    Label("iCloud 同步", systemImage: "icloud")
+                }
             }
 
             if !orderedModuleSettings.isEmpty {
@@ -71,4 +76,3 @@ struct ProfileSettingsView: View {
         }
     }
 }
-

@@ -97,26 +97,140 @@ struct StockChartPresentationTests {
         #expect(volume.yDomain.upperBound == 21_600)
     }
 
-    @Test func performanceUsesPreviousCloseOnlyForIntraday() {
+    @Test func intradayPerformanceUsesPreviousTradingDayFromHistory() {
+        let previousFriday = point(
+            day: 31,
+            month: 7,
+            hour: 16,
+            close: 100,
+            timeZone: "America/New_York"
+        )
+        let mondayPoints = [
+            point(
+                day: 3,
+                hour: 9,
+                minute: 30,
+                close: 105,
+                timeZone: "America/New_York"
+            ),
+            point(
+                day: 3,
+                hour: 16,
+                close: 110,
+                timeZone: "America/New_York"
+            )
+        ]
+        let snapshot = makeSnapshot(
+            points: mondayPoints,
+            indicatorPoints: [previousFriday] + mondayPoints,
+            previousClose: 40
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .unitedStates
+        )
+
+        #expect(performance?.change == 10)
+        #expect(performance?.percent == 0.1)
+    }
+
+    @Test func intradayPerformanceFallsBackToProviderPreviousClose() {
         let points = [
-            point(day: 6, close: 90),
+            point(day: 7, hour: 9, minute: 30, close: 105),
+            point(day: 7, hour: 15, close: 110)
+        ]
+        let snapshot = makeSnapshot(
+            points: points,
+            indicatorPoints: points,
+            previousClose: 100
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .aShare
+        )
+
+        #expect(performance?.change == 10)
+        #expect(performance?.percent == 0.1)
+    }
+
+    @Test func fiveDayPerformanceIncludesTheFirstTradingDayMove() {
+        let previousFriday = point(day: 31, month: 7, close: 90)
+        let visible = [
+            point(day: 3, close: 100),
+            point(day: 4, close: 103),
+            point(day: 5, close: 105),
+            point(day: 6, close: 108),
             point(day: 7, close: 110)
         ]
-        let snapshot = makeSnapshot(points: points, previousClose: 100)
-
-        let intraday = StockChartPresentation.rangePerformance(
-            snapshot: snapshot,
-            range: .intraday
-        )
-        let month = StockChartPresentation.rangePerformance(
-            snapshot: snapshot,
-            range: .oneMonth
+        let snapshot = makeSnapshot(
+            points: visible,
+            indicatorPoints: [previousFriday] + visible,
+            previousClose: 20
         )
 
-        #expect(intraday?.change == 10)
-        #expect(intraday?.percent == 0.1)
-        #expect(month?.change == 20)
-        #expect(month?.percent == 20.0 / 90.0)
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .fiveDays,
+            market: .aShare
+        )
+
+        #expect(performance?.change == 20)
+        #expect(performance?.percent == 20.0 / 90.0)
+    }
+
+    @Test func fiveDayPerformanceFallsBackToFirstVisiblePointWithoutHistory() {
+        let visible = [
+            point(day: 3, close: 100),
+            point(day: 7, close: 110)
+        ]
+        let snapshot = makeSnapshot(
+            points: visible,
+            indicatorPoints: visible,
+            previousClose: 20
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .fiveDays,
+            market: .aShare
+        )
+
+        #expect(performance?.change == 10)
+        #expect(performance?.percent == 0.1)
+    }
+
+    @Test func longerRangePerformanceUsesItsOwnVisibleWindow() {
+        let visible = [
+            point(day: 1, close: 80),
+            point(day: 7, close: 100)
+        ]
+        let snapshot = makeSnapshot(
+            points: visible,
+            indicatorPoints: [point(day: 31, month: 7, close: 40)] + visible,
+            previousClose: 10
+        )
+        let ranges: [StockChartRange] = [
+            .oneMonth,
+            .threeMonths,
+            .oneYear,
+            .fiveYears,
+            .tenYears,
+            .sinceInception
+        ]
+
+        for range in ranges {
+            let performance = StockChartPresentation.rangePerformance(
+                snapshot: snapshot,
+                range: range,
+                market: .aShare
+            )
+            #expect(performance?.change == 20)
+            #expect(performance?.percent == 0.25)
+        }
     }
 
     @Test func availabilityUsesIndicatorHistoryRatherThanVisiblePointCount() {
@@ -164,18 +278,21 @@ struct StockChartPresentationTests {
 
     private func point(
         day: Int,
+        month: Int = 8,
         hour: Int = 12,
         minute: Int = 0,
         close: Double = 100,
-        volume: Double? = 1_000
+        volume: Double? = 1_000,
+        timeZone: String = "Asia/Shanghai"
     ) -> StockChartPoint {
         StockChartFixtures.point(
             at: StockChartFixtures.date(
                 2026,
-                8,
+                month,
                 day,
                 hour: hour,
-                minute: minute
+                minute: minute,
+                timeZone: timeZone
             ),
             open: close - 1,
             high: close + 1,

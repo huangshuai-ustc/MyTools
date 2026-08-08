@@ -261,16 +261,56 @@ struct StockChartPresentation {
 
     static func rangePerformance(
         snapshot: StockChartSnapshot,
-        range: StockChartRange
+        range: StockChartRange,
+        market: StockMarket
     ) -> (change: Double, percent: Double)? {
-        guard let first = snapshot.points.first,
-              let latest = snapshot.latestPoint else { return nil }
-        let referencePrice = range == .intraday
-            ? snapshot.previousClose ?? first.close
-            : first.close
+        guard let latest = snapshot.latestPoint,
+              let referencePrice = rangeReferencePrice(
+                snapshot: snapshot,
+                range: range,
+                market: market
+              ) else { return nil }
         guard referencePrice != 0 else { return nil }
         let change = latest.close - referencePrice
         return (change, change / referencePrice)
+    }
+
+    static func rangeReferencePrice(
+        snapshot: StockChartSnapshot,
+        range: StockChartRange,
+        market: StockMarket
+    ) -> Double? {
+        guard let first = snapshot.points.first else { return nil }
+        let history = snapshot.indicatorPoints ?? snapshot.points
+
+        switch range {
+        case .intraday:
+            return intradayPreviousClose(
+                snapshot: snapshot,
+                market: market
+            ) ?? first.close
+        case .fiveDays:
+            return closingPrice(
+                beforeTradingDayContaining: first.date,
+                in: history,
+                market: market
+            ) ?? first.close
+        case .oneMonth, .threeMonths, .oneYear,
+             .fiveYears, .tenYears, .sinceInception:
+            return first.close
+        }
+    }
+
+    static func intradayPreviousClose(
+        snapshot: StockChartSnapshot,
+        market: StockMarket
+    ) -> Double? {
+        guard let latest = snapshot.latestPoint else { return nil }
+        return closingPrice(
+            beforeTradingDayContaining: latest.date,
+            in: snapshot.indicatorPoints ?? snapshot.points,
+            market: market
+        ) ?? snapshot.previousClose
     }
 
     static func candleWidth(pointCount: Int, isExpanded: Bool) -> CGFloat {
@@ -343,6 +383,20 @@ struct StockChartPresentation {
             guard let x = xValuesByDate[indicator.date] else { return nil }
             return StockTechnicalPlotPoint(indicator: indicator, x: x)
         }
+    }
+
+    private static func closingPrice(
+        beforeTradingDayContaining date: Date,
+        in points: [StockChartPoint],
+        market: StockMarket
+    ) -> Double? {
+        let startOfTradingDay = StockChartSeriesProcessor
+            .marketCalendar(market)
+            .startOfDay(for: date)
+        return points
+            .filter { $0.date < startOfTradingDay }
+            .max { $0.date < $1.date }?
+            .close
     }
 
     private static func transactionMarkers(

@@ -1,0 +1,713 @@
+import CloudKit
+import CryptoKit
+import Foundation
+
+actor CloudKitSyncWorker: CKSyncEngineDelegate {
+    private struct OperationFailure: LocalizedError, Sendable {
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
+    private enum Field {
+        static let kind = "kind"
+        static let entityID = "entityID"
+        static let modifiedAt = "modifiedAt"
+        static let deviceID = "deviceID"
+        static let isDeleted = "isDeleted"
+        static let schemaVersion = "schemaVersion"
+        static let payload = "encryptedPayload"
+        static let asset = "asset"
+    }
+
+    private static let recordType = "MyToolsEntity"
+    private static let zoneName = "MyToolsData"
+    private static let schemaVersion: Int64 = 1
+
+    private let container: CKContainer
+    private let attachmentStore: AttachmentStore
+    private let stateStore: CloudSyncStateStore
+    private let statusHandler: @MainActor @Sendable (CloudSyncStatus) -> Void
+    private let snapshotProvider: CloudSyncSnapshotProvider
+    private let changeHandler: CloudSyncChangeHandler
+    private let zoneID: CKRecordZone.ID
+    private var document: CloudSyncStoredDocument
+    private var currentItems: [String: CloudSyncItem] = [:]
+    private var hasStarted = false
+    private var isStarting = false
+    private var operationFailure: OperationFailure?
+    private var isPerformingRequestedOperation = false
+
+    private lazy var syncEngine: CKSyncEngine = {
+        var configuration = CKSyncEngine.Configuration(
+            database: container.privateCloudDatabase,
+            stateSerialization: document.engineState,
+            delegate: self
+        )
+        configuration.automaticallySync = true
+        configuration.subscriptionID = "mytools-private-database-v1"
+        return CKSyncEngine(configuration)
+    }()
+
+    init(
+        containerIdentifier: String,
+        attachmentStore: AttachmentStore,
+        stateStore: CloudSyncStateStore = CloudSyncStateStore(),
+        statusHandler: @escaping @MainActor @Sendable (CloudSyncStatus) -> Void,
+        snapshotProvider: @escaping CloudSyncSnapshotProvider,
+        changeHandler: @escaping CloudSyncChangeHandler
+    ) {
+        container = CKContainer(identifier: containerIdentifier)
+        self.attachmentStore = attachmentStore
+        self.stateStore = stateStore
+        self.statusHandler = statusHandler
+        self.snapshotProvider = snapshotProvider
+        self.changeHandler = changeHandler
+        zoneID = CKRecordZone.ID(
+            zoneName: Self.zoneName,
+            ownerName: CKCurrentUserDefaultName
+        )
+        var storedDocument = stateStore.load()
+        let upgradedState = storedDocument.prepareForCurrentReconciliationVersion()
+        document = storedDocument
+        if upgradedState {
+            try? stateStore.save(storedDocument)
+        }
+    }
+
+    func start() async {
+        guard !hasStarted else {
+            await synchronize()
+            return
+        }
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+
+        await statusHandler(.checkingAccount)
+        do {
+            switch try await container.accountStatus() {
+            case .available:
+                break
+            case .noAccount:
+                await statusHandler(.noAccount)
+                return
+            case .restricted:
+                await statusHandler(.restricted)
+                return
+            case .temporarilyUnavailable:
+                await statusHandler(.temporarilyUnavailable)
+                return
+            case .couldNotDetermine:
+                await statusHandler(.error("无法确认 iCloud 账户状态"))
+                return
+            @unknown default:
+                await statusHandler(.error("未知的 iCloud 账户状态"))
+                return
+            }
+
+            let currentUser = try await container.userRecordID()
+            if let previousUser = document.accountRecordName,
+               previousUser != currentUser.recordName {
+                resetSyncState(for: currentUser)
+                await statusHandler(.accountChanged)
+                return
+            }
+            if document.accountRecordName == nil {
+                document.accountRecordName = currentUser.recordName
+                saveDocument()
+            }
+
+            await statusHandler(.syncing)
+
+            try await ensureZoneExists()
+            try await fetchRemoteChanges()
+            let mergedSnapshot = try await snapshotProvider()
+            reconcileReadySnapshot(mergedSnapshot)
+            try await sendPendingChanges()
+            guard !Task.isCancelled else { return }
+            hasStarted = true
+            await statusHandler(.synced(Date()))
+        } catch is OperationFailure {
+            hasStarted = false
+        } catch {
+            hasStarted = false
+            guard !CloudSyncErrorFormatter.isCancellation(error) else { return }
+            await report(error, operation: "启动 iCloud 同步")
+        }
+    }
+
+    func reconcile(snapshot: CloudSyncSnapshot) async {
+        guard hasStarted else { return }
+        reconcileReadySnapshot(snapshot)
+    }
+
+    private func reconcileReadySnapshot(_ snapshot: CloudSyncSnapshot) {
+        currentItems = Dictionary(uniqueKeysWithValues: snapshot.items.map { ($0.key, $0) })
+
+        let now = Date()
+        var changes: [CKSyncEngine.PendingRecordZoneChange] = []
+        let currentKeys = Set(currentItems.keys)
+
+        for item in snapshot.items {
+            if item.kind == .attachment,
+               item.assetURL.map({ !FileManager.default.fileExists(atPath: $0.path) }) == true {
+                continue
+            }
+
+            let digest = Self.digest(item.payload)
+            let previous = document.entries[item.key]
+            guard previous == nil
+                    || previous?.isDeleted == true
+                    || previous?.digest != digest else { continue }
+
+            document.entries[item.key] = CloudSyncStoredEntry(
+                kind: item.kind,
+                id: item.id,
+                digest: digest,
+                modifiedAt: now,
+                deviceID: document.deviceID,
+                isDeleted: false,
+                payload: item.payload,
+                systemFields: previous?.systemFields
+            )
+            changes.append(.saveRecord(recordID(forKey: item.key)))
+        }
+
+        for (key, entry) in document.entries
+        where !entry.isDeleted && !currentKeys.contains(key) {
+            document.entries[key] = CloudSyncStoredEntry(
+                kind: entry.kind,
+                id: entry.id,
+                digest: nil,
+                modifiedAt: now,
+                deviceID: document.deviceID,
+                isDeleted: true,
+                payload: nil,
+                systemFields: entry.systemFields
+            )
+            changes.append(.saveRecord(recordID(forKey: key)))
+        }
+
+        if !changes.isEmpty {
+            syncEngine.state.add(pendingRecordZoneChanges: changes)
+        }
+        saveDocument()
+    }
+
+    func synchronize() async {
+        if !hasStarted {
+            await start()
+            return
+        }
+        await statusHandler(.syncing)
+        do {
+            try await fetchRemoteChanges()
+            let mergedSnapshot = try await snapshotProvider()
+            await reconcile(snapshot: mergedSnapshot)
+            try await sendPendingChanges()
+            await statusHandler(.synced(Date()))
+        } catch is OperationFailure {
+            return
+        } catch {
+            guard !CloudSyncErrorFormatter.isCancellation(error) else { return }
+            await report(error, operation: "手动同步")
+        }
+    }
+
+    func stop() async {
+        hasStarted = false
+        await syncEngine.cancelOperations()
+    }
+
+    func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+        switch event {
+        case .stateUpdate(let event):
+            document.engineState = event.stateSerialization
+            saveDocument()
+
+        case .accountChange(let event):
+            switch event.changeType {
+            case .signIn(let currentUser):
+                if let previousUser = document.accountRecordName,
+                   previousUser != currentUser.recordName {
+                    resetSyncState(for: currentUser)
+                    await statusHandler(.accountChanged)
+                } else {
+                    document.accountRecordName = currentUser.recordName
+                    saveDocument()
+                    await statusHandler(.checkingAccount)
+                }
+            case .signOut(let previousUser):
+                if document.accountRecordName == nil {
+                    document.accountRecordName = previousUser.recordName
+                    saveDocument()
+                }
+                await statusHandler(.noAccount)
+            case .switchAccounts(_, let currentUser):
+                resetSyncState(for: currentUser)
+                await statusHandler(.accountChanged)
+            @unknown default:
+                await statusHandler(.accountChanged)
+            }
+
+        case .fetchedDatabaseChanges(let event):
+            await handleFetchedDatabaseChanges(event, syncEngine: syncEngine)
+
+        case .fetchedRecordZoneChanges(let event):
+            await handleFetchedRecords(
+                event.modifications.map(\.record),
+                deletions: event.deletions.map(\.recordID),
+                syncEngine: syncEngine
+            )
+
+        case .sentDatabaseChanges(let event):
+            if let failure = event.failedZoneSaves.first {
+                await report(failure.error, operation: "创建 iCloud 数据区")
+            }
+
+        case .sentRecordZoneChanges(let event):
+            await handleSentRecords(event, syncEngine: syncEngine)
+
+        case .didFetchRecordZoneChanges(let event):
+            if let error = event.error {
+                await report(error, operation: "接收 iCloud 记录")
+            }
+
+        case .didFetchChanges, .didSendChanges:
+            if !isPerformingRequestedOperation, operationFailure == nil {
+                await statusHandler(.synced(Date()))
+            }
+
+        case .willFetchChanges, .willSendChanges:
+            if !isPerformingRequestedOperation {
+                operationFailure = nil
+            }
+            await statusHandler(.syncing)
+
+        case .willFetchRecordZoneChanges:
+            await statusHandler(.syncing)
+        @unknown default:
+            break
+        }
+    }
+
+    func nextRecordZoneChangeBatch(
+        _ context: CKSyncEngine.SendChangesContext,
+        syncEngine: CKSyncEngine
+    ) async -> CKSyncEngine.RecordZoneChangeBatch? {
+        let pendingChanges = syncEngine.state.pendingRecordZoneChanges.filter {
+            context.options.scope.contains($0)
+        }
+        return await CKSyncEngine.RecordZoneChangeBatch(
+            pendingChanges: pendingChanges
+        ) { [weak self] recordID in
+            await self?.recordToSave(with: recordID)
+        }
+    }
+
+    private func recordToSave(with recordID: CKRecord.ID) -> CKRecord? {
+        guard let entry = document.entries[recordID.recordName] else { return nil }
+        let record = entry.systemFields.flatMap(CKRecord.cloudSyncRecord(from:))
+            ?? CKRecord(recordType: Self.recordType, recordID: recordID)
+
+        record[Field.kind] = entry.kind.rawValue as NSString
+        record[Field.entityID] = entry.id.uuidString.lowercased() as NSString
+        record[Field.modifiedAt] = entry.modifiedAt as NSDate
+        record[Field.deviceID] = entry.deviceID as NSString
+        record[Field.isDeleted] = NSNumber(value: entry.isDeleted)
+        record[Field.schemaVersion] = NSNumber(value: Self.schemaVersion)
+
+        if entry.isDeleted {
+            record.encryptedValues[Field.payload] = nil
+            record[Field.asset] = nil
+        } else {
+            guard let payload = entry.payload else { return nil }
+            record.encryptedValues[Field.payload] = payload as NSData
+            if entry.kind == .attachment,
+               let assetURL = currentItems[recordID.recordName]?.assetURL,
+               FileManager.default.fileExists(atPath: assetURL.path) {
+                record[Field.asset] = CKAsset(fileURL: assetURL)
+            }
+        }
+        return record
+    }
+
+    private func handleFetchedDatabaseChanges(
+        _ event: CKSyncEngine.Event.FetchedDatabaseChanges,
+        syncEngine: CKSyncEngine
+    ) async {
+        guard let deletion = event.deletions.first(where: { $0.zoneID == zoneID }) else {
+            return
+        }
+        switch deletion.reason {
+        case .deleted:
+            syncEngine.state.add(
+                pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]
+            )
+            let recordChanges = document.entries.keys.map {
+                CKSyncEngine.PendingRecordZoneChange.saveRecord(recordID(forKey: $0))
+            }
+            syncEngine.state.add(pendingRecordZoneChanges: recordChanges)
+        case .purged, .encryptedDataReset:
+            document.entries = [:]
+            saveDocument()
+            operationFailure = OperationFailure(message: "iCloud 中的同步数据已被移除")
+            await statusHandler(.cloudDataRemoved)
+        @unknown default:
+            let message = "iCloud 数据区发生了未知变化"
+            operationFailure = OperationFailure(message: message)
+            await statusHandler(.error(message))
+        }
+    }
+
+    private func handleFetchedRecords(
+        _ records: [CKRecord],
+        deletions: [CKRecord.ID],
+        syncEngine: CKSyncEngine
+    ) async {
+        var changes: [CloudSyncChange] = []
+        let orderedRecords = records.sorted {
+            remoteKind(from: $0) == .attachment && remoteKind(from: $1) != .attachment
+        }
+
+        for record in orderedRecords {
+            do {
+                if let change = try acceptRemoteRecord(record, syncEngine: syncEngine) {
+                    changes.append(change)
+                }
+            } catch {
+                await report(error, operation: "处理 iCloud 记录")
+            }
+        }
+
+        for recordID in deletions {
+            guard recordID.zoneID == zoneID,
+                  let (kind, id) = parse(recordID: recordID) else { continue }
+            let key = recordID.recordName
+            let previous = document.entries[key]
+            if kind == .attachment,
+               let payload = previous?.payload,
+               let attachment = try? CloudSyncCoding.decoder().decode(FileAttachment.self, from: payload) {
+                attachmentStore.delete(attachment)
+            } else {
+                changes.append(.delete(kind: kind, id: id))
+            }
+            document.entries[key] = CloudSyncStoredEntry(
+                kind: kind,
+                id: id,
+                digest: nil,
+                modifiedAt: Date(),
+                deviceID: "server",
+                isDeleted: true,
+                payload: nil,
+                systemFields: nil
+            )
+            syncEngine.state.remove(
+                pendingRecordZoneChanges: [.saveRecord(recordID)]
+            )
+        }
+
+        saveDocument()
+        guard !changes.isEmpty else { return }
+        do {
+            try await changeHandler(changes)
+        } catch {
+            await report(error, operation: "合并 iCloud 数据")
+        }
+    }
+
+    private func acceptRemoteRecord(
+        _ record: CKRecord,
+        syncEngine: CKSyncEngine
+    ) throws -> CloudSyncChange? {
+        guard record.recordType == Self.recordType,
+              record.recordID.zoneID == zoneID,
+              let kind = remoteKind(from: record),
+              let idString = record[Field.entityID] as? String,
+              let id = UUID(uuidString: idString),
+              let modifiedAt = record[Field.modifiedAt] as? Date else {
+            return nil
+        }
+
+        let key = CloudSyncItem.key(kind: kind, id: id)
+        let isDeleted = (record[Field.isDeleted] as? NSNumber)?.boolValue ?? false
+        let deviceID = record[Field.deviceID] as? String ?? "server"
+        let payload = isDeleted ? nil : record.encryptedValues[Field.payload] as? Data
+        guard isDeleted || payload != nil else { return nil }
+
+        let digest = payload.map(Self.digest)
+        let local = document.entries[key]
+        let remoteWins = shouldAcceptRemote(
+            modifiedAt: modifiedAt,
+            deviceID: deviceID,
+            over: local
+        )
+
+        guard remoteWins else {
+            if var local {
+                local.systemFields = record.cloudSyncSystemFields()
+                document.entries[key] = local
+            }
+            syncEngine.state.add(
+                pendingRecordZoneChanges: [.saveRecord(record.recordID)]
+            )
+            return nil
+        }
+
+        let contentChanged = local?.isDeleted != isDeleted || local?.digest != digest
+        document.entries[key] = CloudSyncStoredEntry(
+            kind: kind,
+            id: id,
+            digest: digest,
+            modifiedAt: modifiedAt,
+            deviceID: deviceID,
+            isDeleted: isDeleted,
+            payload: payload,
+            systemFields: record.cloudSyncSystemFields()
+        )
+        syncEngine.state.remove(
+            pendingRecordZoneChanges: [.saveRecord(record.recordID)]
+        )
+
+        if kind == .attachment {
+            try applyRemoteAttachment(
+                record: record,
+                payload: payload,
+                previousPayload: local?.payload,
+                isDeleted: isDeleted
+            )
+            return nil
+        }
+        guard contentChanged else { return nil }
+        if isDeleted {
+            return .delete(kind: kind, id: id)
+        }
+        return payload.map { .upsert(kind: kind, id: id, payload: $0) }
+    }
+
+    private func applyRemoteAttachment(
+        record: CKRecord,
+        payload: Data?,
+        previousPayload: Data?,
+        isDeleted: Bool
+    ) throws {
+        let decoder = CloudSyncCoding.decoder()
+        let previousAttachment = previousPayload.flatMap {
+            try? decoder.decode(FileAttachment.self, from: $0)
+        }
+        if isDeleted {
+            if let previousAttachment {
+                attachmentStore.delete(previousAttachment)
+            }
+            return
+        }
+        guard let payload,
+              let attachment = try? decoder.decode(FileAttachment.self, from: payload),
+              let asset = record[Field.asset] as? CKAsset,
+              let sourceURL = asset.fileURL else { return }
+        try attachmentStore.write(
+            Data(contentsOf: sourceURL),
+            to: attachment,
+            replacing: previousAttachment
+        )
+    }
+
+    private func handleSentRecords(
+        _ event: CKSyncEngine.Event.SentRecordZoneChanges,
+        syncEngine: CKSyncEngine
+    ) async {
+        for record in event.savedRecords {
+            guard var entry = document.entries[record.recordID.recordName] else { continue }
+            entry.systemFields = record.cloudSyncSystemFields()
+            document.entries[record.recordID.recordName] = entry
+        }
+
+        for failure in event.failedRecordSaves {
+            switch failure.error.code {
+            case .serverRecordChanged:
+                if let serverRecord = failure.error.serverRecord {
+                    await handleFetchedRecords(
+                        [serverRecord],
+                        deletions: [],
+                        syncEngine: syncEngine
+                    )
+                }
+            case .unknownItem:
+                let key = failure.record.recordID.recordName
+                document.entries[key]?.systemFields = nil
+                syncEngine.state.add(
+                    pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)]
+                )
+            case .zoneNotFound:
+                syncEngine.state.add(
+                    pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]
+                )
+                syncEngine.state.add(
+                    pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)]
+                )
+            default:
+                await report(failure.error, operation: "上传 iCloud 记录")
+            }
+        }
+        saveDocument()
+    }
+
+    private func ensureZoneExists() async throws {
+        let zone = CKRecordZone(zoneID: zoneID)
+        let results = try await container.privateCloudDatabase.modifyRecordZones(
+            saving: [zone],
+            deleting: []
+        )
+        guard let result = results.saveResults[zoneID] else {
+            throw NSError(
+                domain: "MyToolsCloudSync",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "CloudKit 未返回数据区创建结果"]
+            )
+        }
+        _ = try result.get()
+        syncEngine.state.remove(pendingDatabaseChanges: [.saveZone(zone)])
+    }
+
+    private func fetchRemoteChanges() async throws {
+        operationFailure = nil
+        isPerformingRequestedOperation = true
+        defer { isPerformingRequestedOperation = false }
+
+        var options = CKSyncEngine.FetchChangesOptions()
+        options.scope = .zoneIDs([zoneID])
+        try await syncEngine.fetchChanges(options)
+        if let operationFailure { throw operationFailure }
+    }
+
+    private func sendPendingChanges() async throws {
+        operationFailure = nil
+        isPerformingRequestedOperation = true
+        defer { isPerformingRequestedOperation = false }
+
+        var options = CKSyncEngine.SendChangesOptions()
+        options.scope = .zoneIDs([zoneID])
+        try await syncEngine.sendChanges(options)
+        if let operationFailure { throw operationFailure }
+    }
+
+    private func shouldAcceptRemote(
+        modifiedAt: Date,
+        deviceID: String,
+        over local: CloudSyncStoredEntry?
+    ) -> Bool {
+        guard let local else { return true }
+        if modifiedAt != local.modifiedAt {
+            return modifiedAt > local.modifiedAt
+        }
+        return deviceID >= local.deviceID
+    }
+
+    private func recordID(forKey key: String) -> CKRecord.ID {
+        CKRecord.ID(recordName: key, zoneID: zoneID)
+    }
+
+    private func parse(recordID: CKRecord.ID) -> (CloudSyncEntityKind, UUID)? {
+        let components = recordID.recordName.split(separator: ".", maxSplits: 1)
+        guard components.count == 2,
+              let kind = CloudSyncEntityKind(rawValue: String(components[0])),
+              let id = UUID(uuidString: String(components[1])) else { return nil }
+        return (kind, id)
+    }
+
+    private func remoteKind(from record: CKRecord) -> CloudSyncEntityKind? {
+        (record[Field.kind] as? String).flatMap(CloudSyncEntityKind.init(rawValue:))
+    }
+
+    private static func digest(_ data: Data) -> Data {
+        Data(SHA256.hash(data: data))
+    }
+
+    private func saveDocument() {
+        do {
+            try stateStore.save(document)
+        } catch {
+            cloudSyncLogger.error(
+                "Unable to persist cloud sync state: \(DiagnosticLogger.errorCode(error), privacy: .public)"
+            )
+        }
+    }
+
+    private func resetSyncState(for account: CKRecord.ID) {
+        document.engineState = nil
+        document.entries = [:]
+        document.accountRecordName = account.recordName
+        saveDocument()
+    }
+
+    private func report(_ error: Error, operation: String) async {
+        guard !CloudSyncErrorFormatter.isCancellation(error) else { return }
+        let code = DiagnosticLogger.errorCode(error)
+        let message = CloudSyncErrorFormatter.message(for: error, operation: operation)
+        operationFailure = OperationFailure(message: message)
+        cloudSyncLogger.error("\(operation, privacy: .public) failed: \(code, privacy: .public)")
+        DiagnosticLogger.shared.log(
+            .persistence,
+            "\(operation)失败 error=\(code)",
+            level: .error
+        )
+        await statusHandler(.error(message))
+    }
+}
+
+enum CloudSyncErrorFormatter {
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        let value = error as NSError
+        guard value.domain == CKErrorDomain,
+              let code = CKError.Code(rawValue: value.code) else { return false }
+        if code == .operationCancelled {
+            return true
+        }
+        guard code == .partialFailure,
+              let partialErrors = value.userInfo[CKPartialErrorsByItemIDKey]
+                as? [AnyHashable: Error],
+              !partialErrors.isEmpty else { return false }
+        return partialErrors.values.allSatisfy(isCancellation)
+    }
+
+    static func message(for error: Error, operation: String) -> String {
+        let value = error as NSError
+        guard value.domain == CKErrorDomain,
+              let code = CKError.Code(rawValue: value.code) else {
+            return "\(operation)失败（\(DiagnosticLogger.errorCode(error))）"
+        }
+        return "\(operation)失败（CKErrorDomain \(code.rawValue)）：\(hint(for: code))"
+    }
+
+    private static func hint(for code: CKError.Code) -> String {
+        switch code {
+        case .missingEntitlement, .badContainer:
+            return "当前安装包缺少正确的 iCloud 容器权限，请重新签名安装。"
+        case .notAuthenticated:
+            return "设备尚未登录可用的 iCloud 账户，或 iCloud Drive 未开启。"
+        case .permissionFailure:
+            return "当前 Apple 账户没有访问此 CloudKit 容器的权限。"
+        case .networkUnavailable, .networkFailure:
+            return "网络暂时无法连接 iCloud，请检查网络后重试。"
+        case .serviceUnavailable, .requestRateLimited, .zoneBusy,
+             .accountTemporarilyUnavailable:
+            return "iCloud 服务暂时繁忙，请稍后重试。"
+        case .quotaExceeded:
+            return "iCloud 储存空间不足。"
+        case .serverRejectedRequest, .invalidArguments:
+            return "CloudKit 容器结构或环境尚未正确配置。"
+        case .changeTokenExpired:
+            return "云端变更记录已过期，请再次同步以重新对账。"
+        case .partialFailure, .batchRequestFailed:
+            return "部分记录未能同步，请查看诊断日志中的具体错误码。"
+        case .assetFileNotFound, .assetFileModified, .assetNotAvailable:
+            return "附件文件在同步期间不可用，请确认附件仍存在后重试。"
+        default:
+            return "CloudKit 返回了错误，请稍后重试并查看诊断日志。"
+        }
+    }
+}
