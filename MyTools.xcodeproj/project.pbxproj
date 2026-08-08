@@ -159,7 +159,7 @@
 			containerPortal = E00000000000000000000003 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = E00000000000000000000001;
-			remoteInfo = "方寸";
+			remoteInfo = "MyTools";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -313,8 +313,8 @@
 		C10000000000000000000006 /* CloudSyncMergerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncMergerTests.swift; sourceTree = "<group>"; };
 		C10000000000000000000007 /* CloudSyncPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncPreferences.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		C6DBE01C3026389E00025797 /* 方寸Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "方寸Release.entitlements"; sourceTree = SOURCE_ROOT; };
-		E19E9F2D301499DA0018B621 /* 方寸.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "方寸.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsRelease.entitlements; sourceTree = SOURCE_ROOT; };
+		E19E9F2D301499DA0018B621 /* MyTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -343,10 +343,10 @@
 		D00000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				D00000000000000000000006 /* 方寸 */,
+				D00000000000000000000006 /* MyTools */,
 				DD0000000000000000000001 /* MyToolsTests */,
 				DA0000000000000000000001 /* Config */,
-				E19E9F2D301499DA0018B621 /* 方寸.app */,
+				E19E9F2D301499DA0018B621 /* MyTools.app */,
 				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
 			sourceTree = "<group>";
@@ -425,10 +425,10 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
-		D00000000000000000000006 /* 方寸 */ = {
+		D00000000000000000000006 /* MyTools */ = {
 			isa = PBXGroup;
 			children = (
-				C6DBE01C3026389E00025797 /* 方寸Release.entitlements */,
+				C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */,
 				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
 				DR0000000000000000000001 /* InfoPlist.strings */,
@@ -441,7 +441,7 @@
 				D10000000000000000000003 /* Shared */,
 				C63564043010C59600EBCA46 /* Assets.xcassets */,
 			);
-			name = "方寸";
+			name = MyTools;
 			path = MyTools;
 			sourceTree = "<group>";
 		};
@@ -736,9 +736,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E00000000000000000000001 /* 方寸 */ = {
+		E00000000000000000000001 /* MyTools */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "方寸" */;
+			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "MyTools" */;
 			buildPhases = (
 				E00000000000000000000002 /* Sources */,
 				C63564063010DCFC00EBCA46 /* Resources */,
@@ -747,9 +747,9 @@
 			);
 			dependencies = (
 			);
-			name = "方寸";
-			productName = "方寸";
-			productReference = E19E9F2D301499DA0018B621 /* 方寸.app */;
+			name = MyTools;
+			productName = MyTools;
+			productReference = E19E9F2D301499DA0018B621 /* MyTools.app */;
 			productType = "com.apple.product-type.application";
 		};
 		ED0000000000000000000001 /* MyToolsTests */ = {
@@ -808,7 +808,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				E00000000000000000000001 /* 方寸 */,
+				E00000000000000000000001 /* MyTools */,
 				ED0000000000000000000001 /* MyToolsTests */,
 			);
 		};
@@ -988,7 +988,7 @@
 /* Begin PBXTargetDependency section */
 		CD0000000000000000000002 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = E00000000000000000000001 /* 方寸 */;
+			target = E00000000000000000000001 /* MyTools */;
 			targetProxy = CD0000000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -1033,7 +1033,7 @@
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = "方寸Release.entitlements";
+				CODE_SIGN_ENTITLEMENTS = MyToolsRelease.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
@@ -1101,7 +1101,7 @@
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = "方寸Release.entitlements";
+				CODE_SIGN_ENTITLEMENTS = MyToolsRelease.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
@@ -1154,8 +1154,8 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/方寸.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/方寸";
-				TEST_TARGET_NAME = "方寸";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MyTools.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MyTools";
+				TEST_TARGET_NAME = MyTools;
 			};
 			name = Debug;
 		};
@@ -1175,8 +1175,8 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/方寸.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/方寸";
-				TEST_TARGET_NAME = "方寸";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MyTools.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MyTools";
+				TEST_TARGET_NAME = MyTools;
 			};
 			name = Release;
 		};
@@ -1192,7 +1192,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "方寸" */ = {
+		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "MyTools" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F00000000000000000000003 /* Debug */,

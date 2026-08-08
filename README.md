@@ -20,12 +20,12 @@
 - Swift 6.0、SwiftUI 多平台工程
 - 默认 Bundle Identifier：`com.example.mytools`，可以通过本地签名配置覆盖
 - 工程文件：`MyTools.xcodeproj`
-- Scheme：`方寸`
+- Scheme：`MyTools`
 - App 中文显示名称：`方寸`
 - App 英文显示名称：`Fangcun`
 - 不依赖第三方 Swift Package
 
-源码目录、Swift 模块、本地数据目录和备份扩展名继续使用内部名称 `MyTools`，以保持源码与既有数据兼容；Target 和 Scheme 使用中文品牌“方寸”，英文系统显示为 `Fangcun`。版本信息以工程 `Info.plist` 和应用“我的 > 关于”页面为准。
+源码目录、Swift 模块、Target、Scheme、本地数据目录和备份扩展名统一使用内部名称 `MyTools`，以保持源码与既有数据兼容；当前 App 对外显示名称仍为“方寸”，英文系统显示为 `Fangcun`。版本信息以工程 `Info.plist` 和应用“我的 > 关于”页面为准。
 
 ## 功能
 
@@ -127,9 +127,9 @@
 ## 打开与运行
 
 1. 在 Xcode 中打开 `MyTools.xcodeproj`。
-2. 选择 Scheme `方寸`。
+2. 选择 Scheme `MyTools`。
 3. 模拟器构建可以直接使用公共配置；真机安装前，把 `Config/Signing.local.xcconfig.example` 复制为 `Config/Signing.local.xcconfig`，再填写自己的 `DEVELOPMENT_TEAM` 和唯一 Bundle Identifier。
-4. 在 Apple Developer 与 Xcode 的 Signing & Capabilities 中为这个 Bundle Identifier 启用 iCloud/CloudKit、Push Notifications 和 Background Modes，并创建 `iCloud.<你的 Bundle Identifier>` 容器。`方寸Release.entitlements` 会按构建时的 Bundle Identifier 引用该容器。
+4. 在 Apple Developer 与 Xcode 的 Signing & Capabilities 中为这个 Bundle Identifier 启用 iCloud/CloudKit、Push Notifications 和 Background Modes，并创建 `iCloud.<你的 Bundle Identifier>` 容器。`MyToolsRelease.entitlements` 会按构建时的 Bundle Identifier 引用该容器。
 5. `Signing.local.xcconfig` 不会提交到 Git。不要把个人 Team ID 或专属 Bundle Identifier 写回 `project.pbxproj` 或 `Shared.xcconfig`。
 6. 选择 iPhone、iPad 或 My Mac 后运行。
 

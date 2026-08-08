@@ -8,7 +8,7 @@ enum BankRegion: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .domestic: return "国内银行"
+        case .domestic: return "境内银行"
         case .overseas: return "境外银行"
         }
     }
