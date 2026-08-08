@@ -314,6 +314,7 @@
 		C10000000000000000000007 /* CloudSyncPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncPreferences.swift; sourceTree = "<group>"; };
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsRelease.entitlements; sourceTree = SOURCE_ROOT; };
+		C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsMacRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		E19E9F2D301499DA0018B621 /* MyTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -429,6 +430,7 @@
 			isa = PBXGroup;
 			children = (
 				C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */,
+				C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */,
 				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
 				DR0000000000000000000001 /* InfoPlist.strings */,
@@ -790,6 +792,9 @@
 							com.apple.iCloud = {
 								enabled = 1;
 							};
+							com.apple.Sandbox = {
+								enabled = 1;
+							};
 						};
 					};
 				};
@@ -1034,6 +1039,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = MyToolsRelease.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = MyToolsMacRelease.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
@@ -1102,10 +1108,12 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_ENTITLEMENTS = MyToolsRelease.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = MyToolsMacRelease.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 6Y8DN35HLK;
+				DEBUG_INFORMATION_FORMAT = dwarf-with-dsym;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;

@@ -20,10 +20,12 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
 	<key>CFBundleShortVersionString</key>
 	<string>4.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>5</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>用于验证管理员身份，保护银行卡信息</string>
 	<key>UIBackgroundModes</key>
