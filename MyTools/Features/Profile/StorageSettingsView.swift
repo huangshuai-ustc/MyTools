@@ -32,7 +32,7 @@ struct StorageDataView: View {
                 } header: {
                     Text("占用空间")
                 } footer: {
-                    Text("仅统计方寸在本机保存的应用数据，不包括 iOS 系统缓存和临时空间。")
+                    Text("仅统计\(AppMetadata.appName)在本机保存的应用数据，不包括 iOS 系统缓存和临时空间。")
                 }
 
                 Section {

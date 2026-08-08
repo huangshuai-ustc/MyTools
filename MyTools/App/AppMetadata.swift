@@ -1,6 +1,7 @@
 import Foundation
 
 enum AppMetadata {
+    static let appName = "方寸"
     static let fallbackBundleIdentifier = "com.example.mytools"
 
     static var bundleIdentifier: String {

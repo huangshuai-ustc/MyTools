@@ -1,4 +1,5 @@
 PRODUCT_BUNDLE_IDENTIFIER = com.example.mytools
+APP_DISPLAY_NAME = 方寸
 DEVELOPMENT_TEAM =
 
 #include? "Signing.local.xcconfig"

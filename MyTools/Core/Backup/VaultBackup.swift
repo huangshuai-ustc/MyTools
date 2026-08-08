@@ -18,7 +18,7 @@ enum VaultBackupError: LocalizedError {
         case .missingPassword:
             return "请输入管理员密码或自定义备份密码。"
         case .invalidFile:
-            return "文件不是有效的“方寸”备份。"
+            return "文件不是有效的“\(AppMetadata.appName)”备份。"
         case .unsupportedVersion:
             return "此备份版本不是当前支持的 1.0，无法导入。"
         case .wrongPassword:

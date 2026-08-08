@@ -147,7 +147,7 @@ final class CloudSyncCoordinator: ObservableObject {
         switch status {
         case .error(let message): message
         case .accountChanged: "为避免把本机资料上传到另一个账户，同步已自动关闭，请确认账户后重新开启。"
-        case .cloudDataRemoved: "iCloud 中的方寸同步数据已被移除。本机资料仍然保留；同步已自动关闭，确认后可以重新开启。"
+        case .cloudDataRemoved: "iCloud 中的\(AppMetadata.appName)同步数据已被移除。本机资料仍然保留；同步已自动关闭，确认后可以重新开启。"
         default: nil
         }
     }
