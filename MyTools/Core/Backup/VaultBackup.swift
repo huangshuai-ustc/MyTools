@@ -57,10 +57,14 @@ extension UTType {
 
 struct VaultBackupPayload: Codable, @unchecked Sendable {
     var vault: VaultData
-    var secrets: [SecretItem]
+    var secrets: [SecretVaultValue]
     var includedModules: Set<ToolModule>
 
-    init(vault: VaultData, secrets: [SecretItem] = [], includedModules: Set<ToolModule> = Set(ToolModule.allCases)) {
+    init(
+        vault: VaultData,
+        secrets: [SecretVaultValue] = [],
+        includedModules: Set<ToolModule> = ToolModuleCatalog.allModules
+    ) {
         self.vault = vault
         self.secrets = secrets
         self.includedModules = includedModules
@@ -83,8 +87,8 @@ enum VaultBackupCrypto {
 
     static func makeBackup(
         from vault: VaultData,
-        secrets: [SecretItem] = [],
-        includedModules: Set<ToolModule> = Set(ToolModule.allCases),
+        secrets: [SecretVaultValue] = [],
+        includedModules: Set<ToolModule> = ToolModuleCatalog.allModules,
         password: String
     ) throws -> Data {
         guard password.count >= 8 else { throw VaultBackupError.invalidPassword }

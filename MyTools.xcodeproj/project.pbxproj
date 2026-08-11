@@ -78,6 +78,8 @@
 		AC0000000000000000000010 /* AppStoreDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000010 /* AppStoreDependencies.swift */; };
 		AC0000000000000000000011 /* StockPortfolioEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000011 /* StockPortfolioEditor.swift */; };
 		AC0000000000000000000012 /* StockQuoteRefreshReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */; };
+		AT0000000000000000000001 /* StockFundamentalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BT0000000000000000000001 /* StockFundamentalService.swift */; };
+		AT0000000000000000000002 /* StockFundamentalProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BT0000000000000000000002 /* StockFundamentalProvider.swift */; };
 		AD0000000000000000000001 /* StockChartSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000001 /* StockChartSmokeTests.swift */; };
 		AD0000000000000000000002 /* StockChartSeriesProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000003 /* StockChartSeriesProcessorTests.swift */; };
 		AD0000000000000000000003 /* StockChartFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0000000000000000000004 /* StockChartFixtures.swift */; };
@@ -151,6 +153,46 @@
 		C20000000000000000000006 /* CloudSyncMergerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000006 /* CloudSyncMergerTests.swift */; };
 		C20000000000000000000007 /* CloudSyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000007 /* CloudSyncPreferences.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
+		S10000000000000000000001 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000001 /* OCRModels.swift */; };
+		S10000000000000000000002 /* OCRDocumentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000002 /* OCRDocumentLoader.swift */; };
+		S10000000000000000000003 /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000003 /* OCRService.swift */; };
+		S10000000000000000000004 /* OCRRegionSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000004 /* OCRRegionSelector.swift */; };
+		S10000000000000000000005 /* OCRCameraPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000005 /* OCRCameraPicker.swift */; };
+		S10000000000000000000006 /* OCRTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000006 /* OCRTestView.swift */; };
+		S10000000000000000000007 /* OCRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000007 /* OCRTests.swift */; };
+		U20000000000000000000001 /* FoodPlace.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000001 /* FoodPlace.swift */; };
+		U20000000000000000000002 /* FoodMapStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000002 /* FoodMapStore.swift */; };
+		U20000000000000000000003 /* FoodNavigationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000003 /* FoodNavigationService.swift */; };
+		U20000000000000000000004 /* FoodMapPresentationSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000004 /* FoodMapPresentationSupport.swift */; };
+		U20000000000000000000005 /* FoodMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000005 /* FoodMapView.swift */; };
+		U20000000000000000000006 /* FoodPlaceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000006 /* FoodPlaceDetailView.swift */; };
+		U20000000000000000000007 /* FoodPlaceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000007 /* FoodPlaceEditorView.swift */; };
+		U20000000000000000000008 /* FoodLocationPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000008 /* FoodLocationPickerView.swift */; };
+		U20000000000000000000009 /* FoodPlacesMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000009 /* FoodPlacesMapView.swift */; };
+		V20000000000000000000001 /* FoodMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = V10000000000000000000001 /* FoodMapTests.swift */; };
+		XE1000000000000000000001 /* CredentialDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000001 /* CredentialDocument.swift */; };
+		XE1000000000000000000002 /* CredentialOCRParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000002 /* CredentialOCRParser.swift */; };
+		XE1000000000000000000003 /* DocumentsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000003 /* DocumentsStore.swift */; };
+		XE1000000000000000000004 /* CredentialPresentationSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000004 /* CredentialPresentationSupport.swift */; };
+		XE1000000000000000000005 /* DocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000005 /* DocumentsView.swift */; };
+		XE1000000000000000000006 /* CredentialDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000006 /* CredentialDetailView.swift */; };
+		XE1000000000000000000007 /* CredentialEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000007 /* CredentialEditorView.swift */; };
+		XE1000000000000000000008 /* CredentialOCRView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000008 /* CredentialOCRView.swift */; };
+		XE1000000000000000000009 /* DocumentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000009 /* DocumentsTests.swift */; };
+		Y20000000000000000000001 /* BillRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000001 /* BillRecord.swift */; };
+		Y20000000000000000000002 /* BillExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000002 /* BillExchange.swift */; };
+		Y20000000000000000000003 /* BillOCRParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000003 /* BillOCRParser.swift */; };
+		Y20000000000000000000004 /* BillsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000004 /* BillsStore.swift */; };
+		Y20000000000000000000005 /* BillImportAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000005 /* BillImportAdapters.swift */; };
+		Y20000000000000000000006 /* BillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000006 /* BillsView.swift */; };
+		Y20000000000000000000007 /* BillEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000007 /* BillEditorView.swift */; };
+		Y20000000000000000000008 /* BillOCRImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000008 /* BillOCRImportView.swift */; };
+		Y20000000000000000000009 /* BillImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y10000000000000000000009 /* BillImportView.swift */; };
+		Y2000000000000000000000A /* BillsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y1000000000000000000000A /* BillsTests.swift */; };
+		Y2000000000000000000000B /* BillSpreadsheetReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y1000000000000000000000B /* BillSpreadsheetReader.swift */; };
+		Y2000000000000000000000C /* BillAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y1000000000000000000000C /* BillAnalytics.swift */; };
+		Y2000000000000000000000D /* BillAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y1000000000000000000000D /* BillAnalysisView.swift */; };
+		W20000000000000000000001 /* ChinaAdministrativeDivision.swift in Sources */ = {isa = PBXBuildFile; fileRef = W10000000000000000000001 /* ChinaAdministrativeDivision.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -280,6 +322,8 @@
 		BG0000000000000000000005 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
 		BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupProcessorTests.swift; sourceTree = "<group>"; };
 		BG0000000000000000000007 /* LiveAppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAppDependencies.swift; sourceTree = "<group>"; };
+		BT0000000000000000000001 /* StockFundamentalService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockFundamentalService.swift; sourceTree = "<group>"; };
+		BT0000000000000000000002 /* StockFundamentalProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockFundamentalProvider.swift; sourceTree = "<group>"; };
 		BH0000000000000000000001 /* StockTrendColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTrendColor.swift; sourceTree = "<group>"; };
 		BH0000000000000000000002 /* ToolModuleDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModuleDestination.swift; sourceTree = "<group>"; };
 		BH0000000000000000000003 /* ExchangeRateRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateRepositoryTests.swift; sourceTree = "<group>"; };
@@ -316,6 +360,46 @@
 		C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsMacRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		E19E9F2D301499DA0018B621 /* MyTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		R10000000000000000000001 /* OCRModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRModels.swift; sourceTree = "<group>"; };
+		R10000000000000000000002 /* OCRDocumentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRDocumentLoader.swift; sourceTree = "<group>"; };
+		R10000000000000000000003 /* OCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRService.swift; sourceTree = "<group>"; };
+		R10000000000000000000004 /* OCRRegionSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRRegionSelector.swift; sourceTree = "<group>"; };
+		R10000000000000000000005 /* OCRCameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRCameraPicker.swift; sourceTree = "<group>"; };
+		R10000000000000000000006 /* OCRTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTestView.swift; sourceTree = "<group>"; };
+		R10000000000000000000007 /* OCRTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTests.swift; sourceTree = "<group>"; };
+		U10000000000000000000001 /* FoodPlace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlace.swift; sourceTree = "<group>"; };
+		U10000000000000000000002 /* FoodMapStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapStore.swift; sourceTree = "<group>"; };
+		U10000000000000000000003 /* FoodNavigationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodNavigationService.swift; sourceTree = "<group>"; };
+		U10000000000000000000004 /* FoodMapPresentationSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapPresentationSupport.swift; sourceTree = "<group>"; };
+		U10000000000000000000005 /* FoodMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapView.swift; sourceTree = "<group>"; };
+		U10000000000000000000006 /* FoodPlaceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlaceDetailView.swift; sourceTree = "<group>"; };
+		U10000000000000000000007 /* FoodPlaceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlaceEditorView.swift; sourceTree = "<group>"; };
+		U10000000000000000000008 /* FoodLocationPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodLocationPickerView.swift; sourceTree = "<group>"; };
+		U10000000000000000000009 /* FoodPlacesMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlacesMapView.swift; sourceTree = "<group>"; };
+		V10000000000000000000001 /* FoodMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapTests.swift; sourceTree = "<group>"; };
+		W10000000000000000000001 /* ChinaAdministrativeDivision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChinaAdministrativeDivision.swift; sourceTree = "<group>"; };
+		XD1000000000000000000001 /* CredentialDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialDocument.swift; sourceTree = "<group>"; };
+		XD1000000000000000000002 /* CredentialOCRParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialOCRParser.swift; sourceTree = "<group>"; };
+		XD1000000000000000000003 /* DocumentsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsStore.swift; sourceTree = "<group>"; };
+		XD1000000000000000000004 /* CredentialPresentationSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialPresentationSupport.swift; sourceTree = "<group>"; };
+		XD1000000000000000000005 /* DocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsView.swift; sourceTree = "<group>"; };
+		XD1000000000000000000006 /* CredentialDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialDetailView.swift; sourceTree = "<group>"; };
+		XD1000000000000000000007 /* CredentialEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialEditorView.swift; sourceTree = "<group>"; };
+		XD1000000000000000000008 /* CredentialOCRView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialOCRView.swift; sourceTree = "<group>"; };
+		XD1000000000000000000009 /* DocumentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentsTests.swift; sourceTree = "<group>"; };
+		Y10000000000000000000001 /* BillRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillRecord.swift; sourceTree = "<group>"; };
+		Y10000000000000000000002 /* BillExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillExchange.swift; sourceTree = "<group>"; };
+		Y10000000000000000000003 /* BillOCRParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillOCRParser.swift; sourceTree = "<group>"; };
+		Y10000000000000000000004 /* BillsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillsStore.swift; sourceTree = "<group>"; };
+		Y10000000000000000000005 /* BillImportAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillImportAdapters.swift; sourceTree = "<group>"; };
+		Y10000000000000000000006 /* BillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillsView.swift; sourceTree = "<group>"; };
+		Y10000000000000000000007 /* BillEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillEditorView.swift; sourceTree = "<group>"; };
+		Y10000000000000000000008 /* BillOCRImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillOCRImportView.swift; sourceTree = "<group>"; };
+		Y10000000000000000000009 /* BillImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillImportView.swift; sourceTree = "<group>"; };
+		Y1000000000000000000000A /* BillsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillsTests.swift; sourceTree = "<group>"; };
+		Y1000000000000000000000B /* BillSpreadsheetReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillSpreadsheetReader.swift; sourceTree = "<group>"; };
+		Y1000000000000000000000C /* BillAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillAnalytics.swift; sourceTree = "<group>"; };
+		Y1000000000000000000000D /* BillAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillAnalysisView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -359,71 +443,12 @@
 				D10000000000000000000005 /* Stocks */,
 				D20000000000000000000001 /* CurrencyExchange */,
 				D40000000000000000000001 /* Health */,
-				D10000000000000000000006 /* Profile */,
+				U30000000000000000000001 /* FoodMap */,
 				D70000000000000000000001 /* Secrets */,
+				XF1000000000000000000001 /* Documents */,
+				Y30000000000000000000001 /* Bills */,
 			);
 			path = Features;
-			sourceTree = "<group>";
-		};
-		D00000000000000000000003 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				D50000000000000000000002 /* Shared */,
-				B00000000000000000000002 /* BankCard.swift */,
-				B0000000000000000000000E /* Stock.swift */,
-				BG0000000000000000000002 /* StockMarketTradingCalendar.swift */,
-				BG0000000000000000000003 /* StockPortfolioAnalytics.swift */,
-				BG0000000000000000000004 /* StockValueFormatter.swift */,
-				B20000000000000000000001 /* CurrencyExchange.swift */,
-				B40000000000000000000001 /* HealthRecord.swift */,
-				B70000000000000000000001 /* Secret.swift */,
-				B80000000000000000000001 /* NotificationRule.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		D00000000000000000000004 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				B00000000000000000000004 /* AppStore.swift */,
-				BJ0000000000000000000001 /* ModuleStoreContracts.swift */,
-				BJ0000000000000000000002 /* ExchangeRateStore.swift */,
-				BJ0000000000000000000003 /* StockStore.swift */,
-				BK0000000000000000000001 /* HealthStore.swift */,
-				BL0000000000000000000001 /* FinanceStore.swift */,
-				BM0000000000000000000001 /* SecretStore.swift */,
-				BN0000000000000000000001 /* CurrencyExchangeStore.swift */,
-				BC0000000000000000000010 /* AppStoreDependencies.swift */,
-				BG0000000000000000000001 /* AppStoreBackupProcessor.swift */,
-				BC000000000000000000000D /* AppStoreBackupMerger.swift */,
-				BC000000000000000000000E /* AppStoreAlertEvaluator.swift */,
-				BC000000000000000000000F /* HealthRecordSynchronizer.swift */,
-				BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */,
-				BC0000000000000000000011 /* StockPortfolioEditor.swift */,
-				BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */,
-				BE0000000000000000000001 /* StockQuoteModels.swift */,
-				BE0000000000000000000002 /* StockQuoteProvider.swift */,
-				BE0000000000000000000003 /* TencentStockQuoteProvider.swift */,
-				BE0000000000000000000004 /* SinaStockQuoteProvider.swift */,
-				BE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift */,
-				BE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift */,
-				BE0000000000000000000007 /* NasdaqStockQuoteProvider.swift */,
-				BE0000000000000000000008 /* YahooStockQuoteProvider.swift */,
-				BC0000000000000000000005 /* StockChartModels.swift */,
-				BC0000000000000000000006 /* StockChartSeriesProcessor.swift */,
-				BC0000000000000000000007 /* StockChartDiskStore.swift */,
-				BC0000000000000000000008 /* StockChartProvider.swift */,
-				BC0000000000000000000009 /* TencentStockChartProvider.swift */,
-				BC000000000000000000000A /* YahooStockChartProvider.swift */,
-				BC000000000000000000000B /* EastmoneyStockChartProvider.swift */,
-				BC000000000000000000000C /* NasdaqStockChartProvider.swift */,
-				BC0000000000000000000001 /* StockChartService.swift */,
-				BC0000000000000000000003 /* StockTechnicalAnalysis.swift */,
-				BC0000000000000000000004 /* StockInvestmentScoreModel.swift */,
-				B0000000000000000000000F /* StockQuoteService.swift */,
-				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
-			);
-			path = Services;
 			sourceTree = "<group>";
 		};
 		D00000000000000000000006 /* MyTools */ = {
@@ -431,16 +456,11 @@
 			children = (
 				C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */,
 				C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */,
-				B00000000000000000000001 /* ToolBoxApp.swift */,
 				B0000000000000000000000C /* Info.plist */,
 				DR0000000000000000000001 /* InfoPlist.strings */,
 				D10000000000000000000001 /* App */,
 				DC0000000000000000000001 /* Core */,
 				D00000000000000000000002 /* Features */,
-				D00000000000000000000003 /* Models */,
-				D00000000000000000000004 /* Services */,
-				D10000000000000000000002 /* Settings */,
-				D10000000000000000000003 /* Shared */,
 				C63564043010C59600EBCA46 /* Assets.xcassets */,
 			);
 			name = MyTools;
@@ -450,39 +470,120 @@
 		D10000000000000000000001 /* App */ = {
 			isa = PBXGroup;
 			children = (
-				B00000000000000000000006 /* RootView.swift */,
-				B10000000000000000000001 /* AppMetadata.swift */,
-				BG0000000000000000000007 /* LiveAppDependencies.swift */,
-				BH0000000000000000000002 /* ToolModuleDestination.swift */,
-				B10000000000000000000002 /* ToolboxView.swift */,
+				E10000000000000000000001 /* Bootstrap */,
+				E10000000000000000000002 /* Navigation */,
+				E10000000000000000000003 /* Modules */,
+				E10000000000000000000004 /* Composition */,
+				E10000000000000000000005 /* Settings */,
 			);
 			path = App;
 			sourceTree = "<group>";
 		};
-		D10000000000000000000002 /* Settings */ = {
+		E10000000000000000000001 /* Bootstrap */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* AppMetadata.swift */,
+				BG0000000000000000000007 /* LiveAppDependencies.swift */,
+				B00000000000000000000001 /* ToolBoxApp.swift */,
+			);
+			path = Bootstrap;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000002 /* Navigation */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000006 /* RootView.swift */,
+				BH0000000000000000000002 /* ToolModuleDestination.swift */,
+				B10000000000000000000002 /* ToolboxView.swift */,
+			);
+			path = Navigation;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000003 /* Modules */ = {
 			isa = PBXGroup;
 			children = (
 				BG0000000000000000000005 /* ToolModule.swift */,
 				B10000000000000000000003 /* ToolModuleSettings.swift */,
-				B10000000000000000000004 /* StockAppearanceSettings.swift */,
+			);
+			path = Modules;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000004 /* Composition */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000004 /* AppStore.swift */,
+				BC0000000000000000000010 /* AppStoreDependencies.swift */,
+				BG0000000000000000000001 /* AppStoreBackupProcessor.swift */,
+				BC000000000000000000000D /* AppStoreBackupMerger.swift */,
+				BC000000000000000000000E /* AppStoreAlertEvaluator.swift */,
+				BJ0000000000000000000001 /* ModuleStoreContracts.swift */,
+			);
+			path = Composition;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000005 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				E10000000000000000000006 /* Presentation */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
 		};
-		D10000000000000000000003 /* Shared */ = {
+		E10000000000000000000006 /* Presentation */ = {
 			isa = PBXGroup;
 			children = (
-				B10000000000000000000008 /* DecimalTextParser.swift */,
-				B10000000000000000000005 /* IMETextInput.swift */,
-				B10000000000000000000006 /* ProtectedContent.swift */,
-				BP0000000000000000000001 /* AppDateFormatting.swift */,
-				BP0000000000000000000002 /* MarkdownRendering.swift */,
-				B10000000000000000000007 /* ListViewModifiers.swift */,
+				B00000000000000000000009 /* ProfileView.swift */,
+				BO0000000000000000000002 /* ProfileSettingsView.swift */,
+				BO0000000000000000000003 /* StorageSettingsView.swift */,
+				BO0000000000000000000004 /* AppearanceSettingsView.swift */,
+				BO0000000000000000000005 /* HomeFeatureSettingsView.swift */,
+				BO0000000000000000000006 /* BackupSettingsView.swift */,
+				B60000000000000000000002 /* DiagnosticsView.swift */,
+				B80000000000000000000003 /* NotificationSettingsView.swift */,
+				C10000000000000000000005 /* CloudSyncSettingsView.swift */,
+				R10000000000000000000006 /* OCRTestView.swift */,
 			);
-			path = Shared;
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		D10000000000000000000004 /* Finance */ = {
+			isa = PBXGroup;
+			children = (
+				E11000000000000000000001 /* Domain */,
+				E11000000000000000000002 /* Application */,
+				E11000000000000000000003 /* Presentation */,
+			);
+			path = Finance;
+			sourceTree = "<group>";
+		};
+		D10000000000000000000005 /* Stocks */ = {
+			isa = PBXGroup;
+			children = (
+				E12000000000000000000001 /* Domain */,
+				E12000000000000000000002 /* Application */,
+				E12000000000000000000003 /* Infrastructure */,
+				E12000000000000000000006 /* Presentation */,
+			);
+			path = Stocks;
+			sourceTree = "<group>";
+		};
+		E11000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000002 /* BankCard.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		E11000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				BL0000000000000000000001 /* FinanceStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		E11000000000000000000003 /* Presentation */ = {
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000007 /* FinanceHomeView.swift */,
@@ -491,10 +592,86 @@
 				B10000000000000000000009 /* SubaccountEditorViews.swift */,
 				B1000000000000000000000A /* BankCardEditorView.swift */,
 			);
-			path = Finance;
+			path = Presentation;
 			sourceTree = "<group>";
 		};
-		D10000000000000000000005 /* Stocks */ = {
+		E12000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				B0000000000000000000000E /* Stock.swift */,
+				BG0000000000000000000002 /* StockMarketTradingCalendar.swift */,
+				BG0000000000000000000003 /* StockPortfolioAnalytics.swift */,
+				BG0000000000000000000004 /* StockValueFormatter.swift */,
+				BC0000000000000000000003 /* StockTechnicalAnalysis.swift */,
+				BC0000000000000000000004 /* StockInvestmentScoreModel.swift */,
+				BC0000000000000000000006 /* StockChartSeriesProcessor.swift */,
+				BE0000000000000000000001 /* StockQuoteModels.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				BJ0000000000000000000003 /* StockStore.swift */,
+				BC0000000000000000000011 /* StockPortfolioEditor.swift */,
+				BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */,
+				B0000000000000000000000F /* StockQuoteService.swift */,
+				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
+				BC0000000000000000000001 /* StockChartService.swift */,
+				BT0000000000000000000001 /* StockFundamentalService.swift */,
+				B10000000000000000000004 /* StockAppearanceSettings.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000003 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				E12000000000000000000004 /* Quotes */,
+				E12000000000000000000005 /* Charts */,
+				E12000000000000000000007 /* Fundamentals */,
+			);
+			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000004 /* Quotes */ = {
+			isa = PBXGroup;
+			children = (
+				BE0000000000000000000002 /* StockQuoteProvider.swift */,
+				BE0000000000000000000003 /* TencentStockQuoteProvider.swift */,
+				BE0000000000000000000004 /* SinaStockQuoteProvider.swift */,
+				BE0000000000000000000005 /* OfficialAShareStockQuoteProvider.swift */,
+				BE0000000000000000000006 /* EastmoneyStockQuoteProvider.swift */,
+				BE0000000000000000000007 /* NasdaqStockQuoteProvider.swift */,
+				BE0000000000000000000008 /* YahooStockQuoteProvider.swift */,
+			);
+			path = Quotes;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000005 /* Charts */ = {
+			isa = PBXGroup;
+			children = (
+				BC0000000000000000000005 /* StockChartModels.swift */,
+				BC0000000000000000000007 /* StockChartDiskStore.swift */,
+				BC0000000000000000000008 /* StockChartProvider.swift */,
+				BC0000000000000000000009 /* TencentStockChartProvider.swift */,
+				BC000000000000000000000A /* YahooStockChartProvider.swift */,
+				BC000000000000000000000B /* EastmoneyStockChartProvider.swift */,
+				BC000000000000000000000C /* NasdaqStockChartProvider.swift */,
+			);
+			path = Charts;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000007 /* Fundamentals */ = {
+			isa = PBXGroup;
+			children = (
+				BT0000000000000000000002 /* StockFundamentalProvider.swift */,
+			);
+			path = Fundamentals;
+			sourceTree = "<group>";
+		};
+		E12000000000000000000006 /* Presentation */ = {
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000010 /* StocksView.swift */,
@@ -507,36 +684,74 @@
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
 				B50000000000000000000001 /* StockDividendEditorView.swift */,
 			);
-			path = Stocks;
-			sourceTree = "<group>";
-		};
-		D10000000000000000000006 /* Profile */ = {
-			isa = PBXGroup;
-			children = (
-				B00000000000000000000009 /* ProfileView.swift */,
-				BO0000000000000000000002 /* ProfileSettingsView.swift */,
-				BO0000000000000000000003 /* StorageSettingsView.swift */,
-				BO0000000000000000000004 /* AppearanceSettingsView.swift */,
-				BO0000000000000000000005 /* HomeFeatureSettingsView.swift */,
-				BO0000000000000000000006 /* BackupSettingsView.swift */,
-				B60000000000000000000002 /* DiagnosticsView.swift */,
-				B80000000000000000000003 /* NotificationSettingsView.swift */,
-				C10000000000000000000005 /* CloudSyncSettingsView.swift */,
-			);
-			path = Profile;
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		D20000000000000000000001 /* CurrencyExchange */ = {
+			isa = PBXGroup;
+			children = (
+				E13000000000000000000001 /* Domain */,
+				E13000000000000000000002 /* Application */,
+				E13000000000000000000003 /* Presentation */,
+			);
+			path = CurrencyExchange;
+			sourceTree = "<group>";
+		};
+		E13000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000001 /* CurrencyExchange.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		E13000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				BN0000000000000000000001 /* CurrencyExchangeStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		E13000000000000000000003 /* Presentation */ = {
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000002 /* CurrencyExchangeView.swift */,
 				BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */,
 				B20000000000000000000003 /* CurrencyExchangeEditorView.swift */,
 			);
-			path = CurrencyExchange;
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		D40000000000000000000001 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				E14000000000000000000001 /* Domain */,
+				E14000000000000000000002 /* Application */,
+				E14000000000000000000003 /* Presentation */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
+		E14000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				B40000000000000000000001 /* HealthRecord.swift */,
+				BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		E14000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				BK0000000000000000000001 /* HealthStore.swift */,
+				BC000000000000000000000F /* HealthRecordSynchronizer.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		E14000000000000000000003 /* Presentation */ = {
 			isa = PBXGroup;
 			children = (
 				B40000000000000000000003 /* HealthRecordsView.swift */,
@@ -546,24 +761,180 @@
 				B40000000000000000000004 /* MedicalRecordEditorView.swift */,
 				B40000000000000000000005 /* HospitalDirectoryView.swift */,
 			);
-			path = Health;
+			path = Presentation;
 			sourceTree = "<group>";
 		};
-		D50000000000000000000002 /* Shared */ = {
+		U30000000000000000000001 /* FoodMap */ = {
 			isa = PBXGroup;
 			children = (
-				BB0000000000000000000001 /* CurrencyCode.swift */,
-				BB0000000000000000000002 /* FileAttachment.swift */,
+				U30000000000000000000002 /* Domain */,
+				U30000000000000000000003 /* Application */,
+				U30000000000000000000004 /* Infrastructure */,
+				U30000000000000000000005 /* Presentation */,
 			);
-			path = Shared;
+			path = FoodMap;
+			sourceTree = "<group>";
+		};
+		U30000000000000000000002 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				W10000000000000000000001 /* ChinaAdministrativeDivision.swift */,
+				U10000000000000000000001 /* FoodPlace.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		U30000000000000000000003 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				U10000000000000000000002 /* FoodMapStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		U30000000000000000000004 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				U10000000000000000000003 /* FoodNavigationService.swift */,
+			);
+			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		U30000000000000000000005 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				U10000000000000000000004 /* FoodMapPresentationSupport.swift */,
+				U10000000000000000000005 /* FoodMapView.swift */,
+				U10000000000000000000006 /* FoodPlaceDetailView.swift */,
+				U10000000000000000000007 /* FoodPlaceEditorView.swift */,
+				U10000000000000000000008 /* FoodLocationPickerView.swift */,
+				U10000000000000000000009 /* FoodPlacesMapView.swift */,
+			);
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		D70000000000000000000001 /* Secrets */ = {
 			isa = PBXGroup;
 			children = (
-				B70000000000000000000003 /* SecretVaultView.swift */,
+				E15000000000000000000001 /* Domain */,
+				E15000000000000000000002 /* Application */,
+				E15000000000000000000003 /* Presentation */,
 			);
 			path = Secrets;
+			sourceTree = "<group>";
+		};
+		E15000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				B70000000000000000000001 /* Secret.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		E15000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				BM0000000000000000000001 /* SecretStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		E15000000000000000000003 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				B70000000000000000000003 /* SecretVaultView.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
+		XF1000000000000000000001 /* Documents */ = {
+			isa = PBXGroup;
+			children = (
+				XF1000000000000000000002 /* Domain */,
+				XF1000000000000000000003 /* Application */,
+				XF1000000000000000000004 /* Presentation */,
+			);
+			path = Documents;
+			sourceTree = "<group>";
+		};
+		XF1000000000000000000002 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				XD1000000000000000000001 /* CredentialDocument.swift */,
+				XD1000000000000000000002 /* CredentialOCRParser.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		XF1000000000000000000003 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				XD1000000000000000000003 /* DocumentsStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		XF1000000000000000000004 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				XD1000000000000000000004 /* CredentialPresentationSupport.swift */,
+				XD1000000000000000000005 /* DocumentsView.swift */,
+				XD1000000000000000000006 /* CredentialDetailView.swift */,
+				XD1000000000000000000007 /* CredentialEditorView.swift */,
+				XD1000000000000000000008 /* CredentialOCRView.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000001 /* Bills */ = {
+			isa = PBXGroup;
+			children = (
+				Y30000000000000000000002 /* Domain */,
+				Y30000000000000000000003 /* Application */,
+				Y30000000000000000000004 /* Infrastructure */,
+				Y30000000000000000000005 /* Presentation */,
+			);
+			path = Bills;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000002 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				Y10000000000000000000001 /* BillRecord.swift */,
+				Y10000000000000000000002 /* BillExchange.swift */,
+				Y10000000000000000000003 /* BillOCRParser.swift */,
+				Y1000000000000000000000C /* BillAnalytics.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000003 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				Y10000000000000000000004 /* BillsStore.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000004 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				Y10000000000000000000005 /* BillImportAdapters.swift */,
+				Y1000000000000000000000B /* BillSpreadsheetReader.swift */,
+			);
+			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000005 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				Y10000000000000000000006 /* BillsView.swift */,
+				Y1000000000000000000000D /* BillAnalysisView.swift */,
+				Y10000000000000000000007 /* BillEditorView.swift */,
+				Y10000000000000000000008 /* BillOCRImportView.swift */,
+				Y10000000000000000000009 /* BillImportView.swift */,
+			);
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 		DA0000000000000000000001 /* Config */ = {
@@ -585,8 +956,11 @@
 				DC0000000000000000000005 /* Currency */,
 				DC0000000000000000000006 /* Diagnostics */,
 				DC0000000000000000000007 /* Notifications */,
+				T10000000000000000000001 /* OCR */,
 				DC0000000000000000000008 /* Persistence */,
 				DC0000000000000000000009 /* Storage */,
+				E16000000000000000000001 /* Formatting */,
+				E16000000000000000000002 /* UI */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -598,6 +972,7 @@
 				B0000000000000000000000A /* AuthenticationView.swift */,
 				B30000000000000000000001 /* SensitiveAccessView.swift */,
 				BB0000000000000000000004 /* AdminModeViews.swift */,
+				B10000000000000000000006 /* ProtectedContent.swift */,
 			);
 			path = Authentication;
 			sourceTree = "<group>";
@@ -608,6 +983,7 @@
 				BI0000000000000000000001 /* AttachmentEditSession.swift */,
 				B40000000000000000000002 /* AttachmentStore.swift */,
 				BB0000000000000000000005 /* AttachmentPresentation.swift */,
+				BB0000000000000000000002 /* FileAttachment.swift */,
 			);
 			path = Attachments;
 			sourceTree = "<group>";
@@ -625,6 +1001,8 @@
 			children = (
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 				BB0000000000000000000006 /* ExchangeRateRepository.swift */,
+				BJ0000000000000000000002 /* ExchangeRateStore.swift */,
+				BB0000000000000000000001 /* CurrencyCode.swift */,
 			);
 			path = Currency;
 			sourceTree = "<group>";
@@ -641,8 +1019,21 @@
 			isa = PBXGroup;
 			children = (
 				B80000000000000000000002 /* AppNotificationService.swift */,
+				B80000000000000000000001 /* NotificationRule.swift */,
 			);
 			path = Notifications;
+			sourceTree = "<group>";
+		};
+		T10000000000000000000001 /* OCR */ = {
+			isa = PBXGroup;
+			children = (
+				R10000000000000000000001 /* OCRModels.swift */,
+				R10000000000000000000002 /* OCRDocumentLoader.swift */,
+				R10000000000000000000003 /* OCRService.swift */,
+				R10000000000000000000004 /* OCRRegionSelector.swift */,
+				R10000000000000000000005 /* OCRCameraPicker.swift */,
+			);
+			path = OCR;
 			sourceTree = "<group>";
 		};
 		DC0000000000000000000008 /* Persistence */ = {
@@ -662,16 +1053,71 @@
 			path = Storage;
 			sourceTree = "<group>";
 		};
+		E16000000000000000000001 /* Formatting */ = {
+			isa = PBXGroup;
+			children = (
+				BP0000000000000000000001 /* AppDateFormatting.swift */,
+				B10000000000000000000008 /* DecimalTextParser.swift */,
+			);
+			path = Formatting;
+			sourceTree = "<group>";
+		};
+		E16000000000000000000002 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000005 /* IMETextInput.swift */,
+				B10000000000000000000007 /* ListViewModifiers.swift */,
+				BP0000000000000000000002 /* MarkdownRendering.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
 		DD0000000000000000000001 /* MyToolsTests */ = {
 			isa = PBXGroup;
 			children = (
 				DD0000000000000000000004 /* AppStore */,
+				T10000000000000000000002 /* Core */,
+				V30000000000000000000001 /* FoodMap */,
+				XF1000000000000000000005 /* Documents */,
+				Y30000000000000000000006 /* Bills */,
 				DE0000000000000000000001 /* Health */,
 				DQ0000000000000000000001 /* Stores */,
 				DD0000000000000000000002 /* Stocks */,
 				DD0000000000000000000003 /* TestSupport */,
 			);
 			path = MyToolsTests;
+			sourceTree = "<group>";
+		};
+		T10000000000000000000002 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				R10000000000000000000007 /* OCRTests.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		V30000000000000000000001 /* FoodMap */ = {
+			isa = PBXGroup;
+			children = (
+				V10000000000000000000001 /* FoodMapTests.swift */,
+			);
+			path = FoodMap;
+			sourceTree = "<group>";
+		};
+		XF1000000000000000000005 /* Documents */ = {
+			isa = PBXGroup;
+			children = (
+				XD1000000000000000000009 /* DocumentsTests.swift */,
+			);
+			path = Documents;
+			sourceTree = "<group>";
+		};
+		Y30000000000000000000006 /* Bills */ = {
+			isa = PBXGroup;
+			children = (
+				Y1000000000000000000000A /* BillsTests.swift */,
+			);
+			path = Bills;
 			sourceTree = "<group>";
 		};
 		DD0000000000000000000002 /* Stocks */ = {
@@ -836,6 +1282,22 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W20000000000000000000001 /* ChinaAdministrativeDivision.swift in Sources */,
+				U20000000000000000000001 /* FoodPlace.swift in Sources */,
+				U20000000000000000000002 /* FoodMapStore.swift in Sources */,
+				U20000000000000000000003 /* FoodNavigationService.swift in Sources */,
+				U20000000000000000000004 /* FoodMapPresentationSupport.swift in Sources */,
+				U20000000000000000000005 /* FoodMapView.swift in Sources */,
+				U20000000000000000000006 /* FoodPlaceDetailView.swift in Sources */,
+				U20000000000000000000007 /* FoodPlaceEditorView.swift in Sources */,
+				U20000000000000000000008 /* FoodLocationPickerView.swift in Sources */,
+				U20000000000000000000009 /* FoodPlacesMapView.swift in Sources */,
+				S10000000000000000000001 /* OCRModels.swift in Sources */,
+				S10000000000000000000002 /* OCRDocumentLoader.swift in Sources */,
+				S10000000000000000000003 /* OCRService.swift in Sources */,
+				S10000000000000000000004 /* OCRRegionSelector.swift in Sources */,
+				S10000000000000000000005 /* OCRCameraPicker.swift in Sources */,
+				S10000000000000000000006 /* OCRTestView.swift in Sources */,
 				C20000000000000000000001 /* CloudSyncModels.swift in Sources */,
 				C20000000000000000000002 /* CloudSyncStateStore.swift in Sources */,
 				C20000000000000000000003 /* CloudKitSyncWorker.swift in Sources */,
@@ -912,6 +1374,8 @@
 				AC0000000000000000000010 /* AppStoreDependencies.swift in Sources */,
 				AC0000000000000000000011 /* StockPortfolioEditor.swift in Sources */,
 				AC0000000000000000000012 /* StockQuoteRefreshReducer.swift in Sources */,
+				AT0000000000000000000001 /* StockFundamentalService.swift in Sources */,
+				AT0000000000000000000002 /* StockFundamentalProvider.swift in Sources */,
 				AE0000000000000000000001 /* StockQuoteModels.swift in Sources */,
 				AE0000000000000000000002 /* StockQuoteProvider.swift in Sources */,
 				AE0000000000000000000003 /* TencentStockQuoteProvider.swift in Sources */,
@@ -952,6 +1416,26 @@
 				AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */,
 				AC0000000000000000000004 /* StockInvestmentScoreModel.swift in Sources */,
 				AC0000000000000000000002 /* StockWatchView.swift in Sources */,
+				XE1000000000000000000001 /* CredentialDocument.swift in Sources */,
+				XE1000000000000000000002 /* CredentialOCRParser.swift in Sources */,
+				XE1000000000000000000003 /* DocumentsStore.swift in Sources */,
+				XE1000000000000000000004 /* CredentialPresentationSupport.swift in Sources */,
+				XE1000000000000000000005 /* DocumentsView.swift in Sources */,
+				XE1000000000000000000006 /* CredentialDetailView.swift in Sources */,
+				XE1000000000000000000007 /* CredentialEditorView.swift in Sources */,
+				XE1000000000000000000008 /* CredentialOCRView.swift in Sources */,
+				Y20000000000000000000001 /* BillRecord.swift in Sources */,
+				Y20000000000000000000002 /* BillExchange.swift in Sources */,
+				Y20000000000000000000003 /* BillOCRParser.swift in Sources */,
+				Y20000000000000000000004 /* BillsStore.swift in Sources */,
+				Y20000000000000000000005 /* BillImportAdapters.swift in Sources */,
+				Y20000000000000000000006 /* BillsView.swift in Sources */,
+				Y20000000000000000000007 /* BillEditorView.swift in Sources */,
+				Y20000000000000000000008 /* BillOCRImportView.swift in Sources */,
+				Y20000000000000000000009 /* BillImportView.swift in Sources */,
+				Y2000000000000000000000B /* BillSpreadsheetReader.swift in Sources */,
+				Y2000000000000000000000C /* BillAnalytics.swift in Sources */,
+				Y2000000000000000000000D /* BillAnalysisView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -959,6 +1443,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				S10000000000000000000007 /* OCRTests.swift in Sources */,
+				V20000000000000000000001 /* FoodMapTests.swift in Sources */,
 				C20000000000000000000006 /* CloudSyncMergerTests.swift in Sources */,
 				AD0000000000000000000001 /* StockChartSmokeTests.swift in Sources */,
 				AD0000000000000000000002 /* StockChartSeriesProcessorTests.swift in Sources */,
@@ -985,6 +1471,8 @@
 				AH0000000000000000000003 /* ExchangeRateRepositoryTests.swift in Sources */,
 				AI0000000000000000000003 /* MedicalRecordEditingTests.swift in Sources */,
 				AQ0000000000000000000001 /* ModuleStoreTests.swift in Sources */,
+				XE1000000000000000000009 /* DocumentsTests.swift in Sources */,
+				Y2000000000000000000000A /* BillsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1073,7 +1561,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(MYTOOLS_COMPILED_FEATURES)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1138,6 +1626,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(MYTOOLS_COMPILED_FEATURES)";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1158,7 +1647,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(MYTOOLS_COMPILED_FEATURES)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1181,6 +1670,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(MYTOOLS_COMPILED_FEATURES)";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MyTools.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MyTools";

@@ -1,2 +1,3 @@
 "CFBundleDisplayName" = "方寸";
 "CFBundleName" = "MyTools";
+"NSCameraUsageDescription" = "用于拍摄图片并识别选定区域内的文字。";

@@ -1,4 +1,82 @@
 import Foundation
+#if !MYTOOLS_FEATURE_STOCKS
+import Combine
+#endif
+
+#if !MYTOOLS_FEATURE_STOCKS
+enum StockRiseFallColorScheme: String, CaseIterable, Codable, Identifiable, Sendable {
+    case redRiseGreenFall
+    case greenRiseRedFall
+
+    var id: Self { self }
+}
+
+@MainActor
+final class StockAppearanceSettings: ObservableObject {
+    static let aShareKey = "stock-color-scheme-a-share-v1"
+    static let hongKongKey = "stock-color-scheme-hong-kong-v1"
+    static let unitedStatesKey = "stock-color-scheme-us-v1"
+
+    private(set) var aShareScheme: StockRiseFallColorScheme
+    private(set) var hongKongScheme: StockRiseFallColorScheme
+    private(set) var unitedStatesScheme: StockRiseFallColorScheme
+    private let defaults: UserDefaults
+    private var changeHandler: (@MainActor () -> Void)?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        aShareScheme = Self.savedScheme(
+            forKey: Self.aShareKey,
+            fallback: .redRiseGreenFall,
+            defaults: defaults
+        )
+        hongKongScheme = Self.savedScheme(
+            forKey: Self.hongKongKey,
+            fallback: .redRiseGreenFall,
+            defaults: defaults
+        )
+        unitedStatesScheme = Self.savedScheme(
+            forKey: Self.unitedStatesKey,
+            fallback: .greenRiseRedFall,
+            defaults: defaults
+        )
+    }
+
+    func setChangeHandler(_ handler: (@MainActor () -> Void)?) {
+        changeHandler = handler
+    }
+
+    func applySyncedSchemes(
+        aShare: StockRiseFallColorScheme,
+        hongKong: StockRiseFallColorScheme,
+        unitedStates: StockRiseFallColorScheme
+    ) {
+        let changed = aShareScheme != aShare
+            || hongKongScheme != hongKong
+            || unitedStatesScheme != unitedStates
+        guard changed else { return }
+        aShareScheme = aShare
+        hongKongScheme = hongKong
+        unitedStatesScheme = unitedStates
+        defaults.set(aShare.rawValue, forKey: Self.aShareKey)
+        defaults.set(hongKong.rawValue, forKey: Self.hongKongKey)
+        defaults.set(unitedStates.rawValue, forKey: Self.unitedStatesKey)
+        changeHandler?()
+    }
+
+    private static func savedScheme(
+        forKey key: String,
+        fallback: StockRiseFallColorScheme,
+        defaults: UserDefaults
+    ) -> StockRiseFallColorScheme {
+        guard let rawValue = defaults.string(forKey: key),
+              let value = StockRiseFallColorScheme(rawValue: rawValue) else {
+            return fallback
+        }
+        return value
+    }
+}
+#endif
 
 struct CloudSyncAppPreferences: Codable, Equatable, Sendable {
     static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!

@@ -73,8 +73,10 @@ struct StockChartPresentationTests {
 
         let selections = presentation.transactionSelections(at: chartPoint)
 
-        #expect(selections.first { $0.type == .buy }?.averagePrice == 12)
-        #expect(selections.first { $0.type == .sell }?.averagePrice == 14)
+        let buy = selections.first { $0.type == .buy }
+        let sell = selections.first { $0.type == .sell }
+        #expect(buy?.averagePrice == 12)
+        #expect(sell?.averagePrice == 14)
     }
 
     @Test func indicatorDomainsTakePriorityOverPriceDomain() {

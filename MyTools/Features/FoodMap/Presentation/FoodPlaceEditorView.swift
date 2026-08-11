@@ -1,0 +1,359 @@
+#if MYTOOLS_FEATURE_FOOD_MAP
+import PhotosUI
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct FoodPlaceEditorView: View {
+    @EnvironmentObject private var store: FoodMapStore
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: FoodPlace
+    @State private var tagsText: String
+    @State private var selectedProvince: String
+    @State private var selectedCity: String
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var showingFileImporter = false
+    @State private var showingLocationPicker = false
+    @State private var showingAuthentication = false
+    @State private var errorMessage: String?
+    @State private var attachmentSession: AttachmentEditSession
+    @State private var didFinish = false
+
+    init(place: FoodPlace) {
+        let location = place.administrativeLocation
+        _draft = State(initialValue: place)
+        _tagsText = State(initialValue: place.tags.joined(separator: "，"))
+        _selectedProvince = State(initialValue: location?.province ?? "")
+        _selectedCity = State(initialValue: location?.city ?? "")
+        _attachmentSession = State(
+            initialValue: AttachmentEditSession(originalAttachments: place.photos)
+        )
+    }
+
+    private var isExisting: Bool {
+        store.places.contains { $0.id == draft.id }
+    }
+
+    private var selectedProvinceCities: [String] {
+        ChinaAdministrativeDivisions.cities(in: selectedProvince)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("美食信息") {
+                    IMESafeTextField(prompt: "食物名称（必填）", text: $draft.foodName)
+                    IMESafeTextField(prompt: "店名", text: $draft.shopName)
+                    Picker("状态", selection: $draft.status) {
+                        ForEach(FoodPlaceStatus.allCases) { status in
+                            Label(status.title, systemImage: status.systemImage).tag(status)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if draft.status == .tried {
+                        DatePicker(
+                            "吃过日期",
+                            selection: visitedAtBinding,
+                            displayedComponents: .date
+                        )
+                    }
+                }
+
+                Section("地点") {
+                    Picker("省级行政区", selection: $selectedProvince) {
+                        Text("不填写（国外）").tag("")
+                        ForEach(ChinaAdministrativeDivisions.provinces) { province in
+                            Text(province.name).tag(province.name)
+                        }
+                    }
+                    .onChange(of: selectedProvince) { _, province in
+                        provinceDidChange(to: province)
+                    }
+
+                    if !selectedProvince.isEmpty {
+                        Picker("城市", selection: $selectedCity) {
+                            Text("请选择").tag("")
+                            ForEach(selectedProvinceCities, id: \.self) { city in
+                                Text(city).tag(city)
+                            }
+                        }
+                    }
+                    IMESafeMultilineTextField(prompt: "详细地址", text: $draft.address)
+                        .lineLimit(1...3)
+
+                    if draft.coordinate?.isValid == true {
+                        FoodLocationCard(place: draft)
+                            .padding(.vertical, 4)
+                        Button(role: .destructive) {
+                            draft.coordinate = nil
+                        } label: {
+                            Label("移除地图定位", systemImage: "location.slash")
+                        }
+                    }
+
+                    Button {
+                        showingLocationPicker = true
+                    } label: {
+                        Label(
+                            draft.coordinate == nil ? "选择地图位置" : "重新选择地图位置",
+                            systemImage: "mappin.and.ellipse"
+                        )
+                    }
+                }
+
+                Section("图片") {
+                    if draft.photos.isEmpty {
+                        Text("未添加图片").foregroundStyle(.secondary)
+                    }
+                    ForEach(draft.photos) { photo in
+                        HStack(spacing: 12) {
+                            FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 54)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(photo.fileName).lineLimit(2)
+                                Text(photo.displaySize).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                removePhoto(photo)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .accessibilityLabel("移除图片")
+                        }
+                    }
+
+                    PhotosPicker(
+                        selection: $selectedPhotoItems,
+                        maxSelectionCount: max(0, 10 - draft.photos.count),
+                        matching: .images
+                    ) {
+                        Label("从照片选择", systemImage: "photo.on.rectangle.angled")
+                    }
+                    .disabled(draft.photos.count >= 10)
+
+                    Button {
+                        showingFileImporter = true
+                    } label: {
+                        Label("导入图片文件", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(draft.photos.count >= 10)
+                }
+
+                Section("分类") {
+                    IMESafeTextField(prompt: "标签，用逗号分隔", text: $tagsText)
+                }
+
+                Section("信息来源") {
+                    IMESafeTextField(
+                        prompt: "来源名称，如朋友推荐、小红书",
+                        text: $draft.sourceTitle
+                    )
+                    IMESafeTextField(
+                        prompt: "来源链接",
+                        text: $draft.sourceURL,
+                        mode: .url
+                    )
+                }
+
+                Section("备注") {
+                    IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
+                }
+            }
+            .navigationTitle(isExisting ? "编辑美食" : "新增美食")
+            .adminModeIndicator()
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: cancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: requestSave)
+                }
+            }
+            .sheet(isPresented: $showingLocationPicker) {
+                FoodLocationPickerView(place: draft) { selection in
+                    apply(selection)
+                    showingLocationPicker = false
+                }
+                .iOSLargeSheet()
+            }
+            .sheet(isPresented: $showingAuthentication) {
+                AuthenticationView(onAuthenticated: saveAfterAuthentication)
+                    .iOSAuthenticationSheet()
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: true,
+                onCompletion: importFiles
+            )
+            .onChange(of: selectedPhotoItems) { _, items in
+                guard !items.isEmpty else { return }
+                Task { await importPhotos(items) }
+            }
+            .onChange(of: draft.status) { _, status in
+                if status == .tried, draft.visitedAt == nil {
+                    draft.visitedAt = Date()
+                } else if status != .tried {
+                    draft.visitedAt = nil
+                }
+            }
+            .onDisappear {
+                guard !didFinish else { return }
+                rollbackAttachments()
+            }
+            .alert(
+                "无法完成操作",
+                isPresented: Binding(
+                    get: { errorMessage != nil },
+                    set: { if !$0 { errorMessage = nil } }
+                )
+            ) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    private var visitedAtBinding: Binding<Date> {
+        Binding(
+            get: { draft.visitedAt ?? Date() },
+            set: { draft.visitedAt = $0 }
+        )
+    }
+
+    private func apply(_ selection: FoodLocationSelection) {
+        draft.coordinate = selection.coordinate
+        if let location = selection.administrativeLocation {
+            selectedProvince = location.province
+            selectedCity = location.city
+        }
+        if draft.shopName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.shopName = selection.name
+        }
+        if !selection.address.isEmpty {
+            draft.address = selection.address
+        }
+    }
+
+    private func importFiles(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get().prefix(max(0, 10 - draft.photos.count)) {
+                draft.photos.append(try store.importPhoto(from: url))
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        defer { selectedPhotoItems = [] }
+        for item in items.prefix(max(0, 10 - draft.photos.count)) {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    throw AttachmentStoreError.invalidFile
+                }
+                let contentType = item.supportedContentTypes.first ?? .jpeg
+                let suffix = contentType.preferredFilenameExtension ?? "jpg"
+                let name = "美食照片-\(UUID().uuidString.prefix(8)).\(suffix)"
+                draft.photos.append(
+                    try store.savePhoto(data: data, fileName: name, contentType: contentType)
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func removePhoto(_ photo: FileAttachment) {
+        draft.photos.removeAll { $0.id == photo.id }
+        if !attachmentSession.isOriginal(photo) {
+            store.deleteUncommittedPhoto(photo)
+        }
+    }
+
+    private func requestSave() {
+        commitPendingTextInput { validateAndRequestSave() }
+    }
+
+    private func validateAndRequestSave() {
+        guard !draft.foodName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "请填写食物名称。"
+            return
+        }
+        if !selectedProvince.isEmpty,
+           ChinaAdministrativeDivisions.location(
+               province: selectedProvince,
+               city: selectedCity
+           ) == nil {
+            errorMessage = "请选择城市；国外地点请将省级行政区设为不填写。"
+            return
+        }
+        if !draft.sourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           FoodSourceLink.url(from: draft.sourceURL) == nil {
+            errorMessage = "来源链接格式不正确。"
+            return
+        }
+        guard auth.isAdmin else {
+            showingAuthentication = true
+            return
+        }
+        save()
+    }
+
+    private func saveAfterAuthentication() {
+        showingAuthentication = false
+        save()
+    }
+
+    private func save() {
+        draft.administrativeLocation = ChinaAdministrativeDivisions.location(
+            province: selectedProvince,
+            city: selectedCity
+        )
+        draft.tags = tagsText
+            .components(separatedBy: CharacterSet(charactersIn: ",，、"))
+        store.upsert(draft)
+        attachmentSession.commit()
+        didFinish = true
+        dismiss()
+    }
+
+    private func provinceDidChange(to province: String) {
+        let cities = ChinaAdministrativeDivisions.cities(in: province)
+        if cities.count == 1 {
+            selectedCity = cities[0]
+        } else if !cities.contains(selectedCity) {
+            selectedCity = ""
+        }
+    }
+
+    private func cancel() {
+        rollbackAttachments()
+        didFinish = true
+        dismiss()
+    }
+
+    private func rollbackAttachments() {
+        let failures = attachmentSession.rollback(
+            currentAttachments: draft.photos,
+            delete: store.deleteUncommittedPhoto,
+            restoreLocation: store.restorePhotoLocation
+        )
+        if !failures.isEmpty {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "取消美食记录编辑时，图片回滚失败：\(failures.joined(separator: "；"))",
+                level: .error
+            )
+        }
+    }
+}
+
+#endif

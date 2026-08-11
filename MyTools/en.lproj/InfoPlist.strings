@@ -1,2 +1,3 @@
 "CFBundleDisplayName" = "Fangcun";
 "CFBundleName" = "MyTools";
+"NSCameraUsageDescription" = "Camera access is used to capture images for text recognition.";

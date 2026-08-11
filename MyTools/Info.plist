@@ -22,12 +22,21 @@
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>iosamap</string>
+		<string>baidumap</string>
+		<string>qqmap</string>
+		<string>comgooglemaps</string>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>4.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>5</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>用于验证管理员身份，保护银行卡信息</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄图片并识别选定区域内的文字</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

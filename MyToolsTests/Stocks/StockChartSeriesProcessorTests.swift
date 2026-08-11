@@ -3,6 +3,135 @@ import Testing
 @testable import MyTools
 
 struct StockChartSeriesProcessorTests {
+    @Test func latestTradingDaySkipsWeekendPlaceholder() throws {
+        let friday = StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 16,
+            timeZone: "America/New_York"
+        )
+        let saturdayPlaceholder = StockChartFixtures.date(
+            2026,
+            8,
+            8,
+            hour: 12,
+            timeZone: "America/New_York"
+        )
+        let points = [
+            StockChartFixtures.point(at: friday, close: 123, volume: 10_000),
+            StockChartFixtures.point(
+                at: saturdayPlaceholder,
+                open: 123,
+                high: 123,
+                low: 123,
+                close: 123,
+                volume: 0
+            )
+        ]
+
+        let visible = StockChartSeriesProcessor.pointsOnLatestTradingDay(
+            points,
+            market: .unitedStates,
+            at: saturdayPlaceholder
+        )
+
+        #expect(visible == [points[0]])
+
+        let snapshot = StockChartSnapshot(
+            symbol: "VOO",
+            name: "Test ETF",
+            currencyCode: "USD",
+            previousClose: 122,
+            points: points,
+            indicatorPoints: nil,
+            quoteUpdatedAt: points.last!.date,
+            fetchedAt: saturdayPlaceholder,
+            source: "Test",
+            supportsCandlesticks: true
+        )
+        let normalized = StockChartSeriesProcessor.normalizedSnapshot(
+            snapshot,
+            range: .oneMonth,
+            market: .unitedStates,
+            at: saturdayPlaceholder
+        )
+        #expect(normalized?.latestPoint == points.first)
+        #expect(normalized?.quoteUpdatedAt == points.first?.date)
+    }
+
+    @Test func latestTradingDaySkipsRepeatedZeroVolumePlaceholders() {
+        let friday = StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 16,
+            timeZone: "America/New_York"
+        )
+        let saturday = StockChartFixtures.date(
+            2026,
+            8,
+            8,
+            hour: 12,
+            timeZone: "America/New_York"
+        )
+        let points = [
+            StockChartFixtures.point(at: friday, close: 123, volume: 10_000),
+            StockChartFixtures.point(
+                at: saturday,
+                open: 123,
+                high: 123,
+                low: 123,
+                close: 123,
+                volume: 0
+            ),
+            StockChartFixtures.point(
+                at: saturday.addingTimeInterval(300),
+                open: 123,
+                high: 123,
+                low: 123,
+                close: 123,
+                volume: 0
+            )
+        ]
+
+        #expect(
+            StockChartSeriesProcessor.pointsOnLatestTradingDay(
+                points,
+                market: .unitedStates,
+                at: saturday
+            ) == [points[0]]
+        )
+    }
+
+    @Test func finalSessionEndsOnlyAfterAfternoonClose() {
+        let lunch = StockChartFixtures.date(2026, 8, 3, hour: 11, minute: 31)
+        let close = StockChartFixtures.date(2026, 8, 3, hour: 15, minute: 1)
+        let morning = StockChartFixtures.date(2026, 8, 3, hour: 11, minute: 0)
+        let afternoon = StockChartFixtures.date(2026, 8, 3, hour: 14, minute: 59)
+
+        #expect(
+            !StockMarketTradingCalendar.finalSessionEnded(
+                for: .aShare,
+                between: morning,
+                and: lunch
+            )
+        )
+        #expect(
+            StockMarketTradingCalendar.finalSessionEnded(
+                for: .aShare,
+                between: afternoon,
+                and: close
+            )
+        )
+        #expect(
+            StockMarketTradingCalendar.latestCompletedFinalSessionEnd(
+                for: .aShare,
+                at: close
+            ) == StockChartFixtures.date(2026, 8, 3, hour: 15)
+        )
+    }
+
     @Test func intradayKeepsOnlyLatestTradingDay() {
         let older = StockChartFixtures.date(2026, 7, 31, hour: 15)
         let latestStart = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 30)

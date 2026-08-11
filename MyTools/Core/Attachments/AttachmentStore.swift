@@ -57,7 +57,7 @@ final class AttachmentStore: @unchecked Sendable {
             ? id.uuidString.lowercased()
             : "\(id.uuidString.lowercased()).\(fileExtension)"
         let destinationURL = directoryURL.appendingPathComponent(storedFileName, isDirectory: false)
-        try data.write(to: destinationURL, options: [.atomic, .completeFileProtection])
+        try data.write(to: destinationURL, options: Self.writingOptions)
 
         return FileAttachment(
             id: id,
@@ -87,7 +87,7 @@ final class AttachmentStore: @unchecked Sendable {
         try ensureDirectory()
         try data.write(
             to: url(for: attachment),
-            options: [.atomic, .completeFileProtection]
+            options: Self.writingOptions
         )
     }
 
@@ -166,6 +166,14 @@ final class AttachmentStore: @unchecked Sendable {
 
     private func ensureDirectory() throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+    }
+
+    private static var writingOptions: Data.WritingOptions {
+#if os(iOS)
+        [.atomic, .completeFileProtection]
+#else
+        [.atomic]
+#endif
     }
 
     private func uniqueFileName(_ requestedName: String, excluding sourceURL: URL) -> String {

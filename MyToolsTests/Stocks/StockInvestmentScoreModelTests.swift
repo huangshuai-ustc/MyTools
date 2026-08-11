@@ -11,18 +11,65 @@ struct StockInvestmentScoreModelTests {
         ) == nil)
     }
 
-    @Test func versionTwoScoreIsBoundedAndDescribesItsEvidence() throws {
+    @Test func scoreIsBoundedAndDescribesItsEvidence() throws {
         let points = pricePoints(count: 120, direction: 1)
 
         let score = try #require(StockInvestmentScoreModel.calculate(
             StockInvestmentScoreInput(pricePoints: points)
         ))
 
-        #expect(score.modelVersion == "2.0.0")
+        #expect(score.modelVersion == "3.0.0")
         #expect((0...100).contains(score.value))
         #expect((0...100).contains(score.unadjustedValue))
         #expect(score.sampleCount == 120)
-        #expect(score.factors.count == 6)
+        #expect(score.factors.count == 9)
+    }
+
+    @Test func fundamentalsChangeInvestmentOpportunityAndConfidence() throws {
+        let points = pricePoints(count: 150, direction: 1)
+        let favorable = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(
+                pricePoints: points,
+                fundamentals: StockFundamentalSnapshot(
+                    asOfDate: points.last!.date,
+                    source: "Test",
+                    priceEarningsRatioTTM: 12,
+                    priceBookRatioMRQ: 1.2,
+                    dividendYield: 0.04,
+                    returnOnEquity: 0.20,
+                    netProfitMargin: 0.15,
+                    revenueGrowth: 0.15,
+                    earningsGrowth: 0.20
+                )
+            )
+        ))
+        let unfavorable = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(
+                pricePoints: points,
+                fundamentals: StockFundamentalSnapshot(
+                    asOfDate: points.last!.date,
+                    source: "Test",
+                    priceEarningsRatioTTM: 80,
+                    priceBookRatioMRQ: 8,
+                    dividendYield: 0.01,
+                    returnOnEquity: 0.03,
+                    netProfitMargin: 0.02,
+                    revenueGrowth: -0.20,
+                    earningsGrowth: -0.25
+                )
+            )
+        ))
+        let withoutFundamentals = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(pricePoints: points)
+        ))
+
+        #expect(favorable.value > unfavorable.value)
+        #expect(favorable.fundamentalMetricCount == 7)
+        #expect(favorable.fundamentals?.priceEarningsRatioTTM == 12)
+        #expect(favorable.confidenceValue > withoutFundamentals.confidenceValue)
+        #expect(favorable.factors.contains { $0.kind == .valuation })
+        #expect(favorable.factors.contains { $0.kind == .quality })
+        #expect(favorable.factors.contains { $0.kind == .growth })
     }
 
     @Test func persistentRiseScoresAbovePersistentDecline() throws {

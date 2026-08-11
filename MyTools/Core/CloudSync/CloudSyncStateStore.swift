@@ -5,6 +5,7 @@ import OSLog
 struct CloudSyncStoredEntry: Codable, Sendable {
     let kind: CloudSyncEntityKind
     let id: UUID
+    var module: ToolModule? = nil
     var digest: Data?
     var modifiedAt: Date
     var deviceID: String

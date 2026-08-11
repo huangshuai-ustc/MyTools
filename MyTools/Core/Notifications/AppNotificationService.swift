@@ -8,8 +8,32 @@ import UIKit
 import AppKit
 #endif
 
+struct ScheduledLocalNotification: Equatable, Sendable {
+    let identifier: String
+    let title: String
+    let body: String
+    let fireDate: Date
+}
+
 @MainActor
-final class AppNotificationService: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+protocol LocalNotificationScheduling {
+    func replaceScheduledNotifications(
+        _ notifications: [ScheduledLocalNotification],
+        identifierPrefix: String
+    )
+}
+
+@MainActor
+struct DisabledLocalNotificationScheduler: LocalNotificationScheduling {
+    func replaceScheduledNotifications(
+        _ notifications: [ScheduledLocalNotification],
+        identifierPrefix: String
+    ) {}
+}
+
+@MainActor
+final class AppNotificationService: NSObject, ObservableObject, UNUserNotificationCenterDelegate,
+    LocalNotificationScheduling {
     static let shared = AppNotificationService()
 
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -21,6 +45,8 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
         category: "Notifications"
     )
     private let statePrefix = "price-alert-state-"
+    private var scheduledReplacementTasks: [String: Task<Void, Never>] = [:]
+    private var scheduledReplacementTokens: [String: UUID] = [:]
 
     private override init() {
         super.init()
@@ -114,6 +140,57 @@ final class AppNotificationService: NSObject, ObservableObject, UNUserNotificati
 
     func clearState(for ruleID: UUID) {
         defaults.removeObject(forKey: statePrefix + ruleID.uuidString)
+    }
+
+    func replaceScheduledNotifications(
+        _ notifications: [ScheduledLocalNotification],
+        identifierPrefix: String
+    ) {
+        let previousTask = scheduledReplacementTasks[identifierPrefix]
+        let token = UUID()
+        scheduledReplacementTokens[identifierPrefix] = token
+        let task = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard let self else { return }
+            let pending = await center.pendingNotificationRequests()
+            let staleIdentifiers = pending
+                .map(\.identifier)
+                .filter { $0.hasPrefix(identifierPrefix) }
+            if !staleIdentifiers.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: staleIdentifiers)
+            }
+
+            let calendar = Calendar.autoupdatingCurrent
+            for notification in notifications where notification.fireDate > Date() {
+                let content = UNMutableNotificationContent()
+                content.title = notification.title
+                content.body = notification.body
+                content.sound = .default
+                let components = calendar.dateComponents(
+                    [.year, .month, .day, .hour, .minute],
+                    from: notification.fireDate
+                )
+                let trigger = UNCalendarNotificationTrigger(
+                    dateMatching: components,
+                    repeats: false
+                )
+                let request = UNNotificationRequest(
+                    identifier: notification.identifier,
+                    content: content,
+                    trigger: trigger
+                )
+                do {
+                    try await center.add(request)
+                } catch {
+                    logger.error("添加预约通知失败：\(error.localizedDescription, privacy: .public)")
+                }
+            }
+            if scheduledReplacementTokens[identifierPrefix] == token {
+                scheduledReplacementTokens[identifierPrefix] = nil
+                scheduledReplacementTasks[identifierPrefix] = nil
+            }
+        }
+        scheduledReplacementTasks[identifierPrefix] = task
     }
 
     nonisolated func userNotificationCenter(

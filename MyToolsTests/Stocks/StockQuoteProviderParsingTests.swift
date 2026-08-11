@@ -108,6 +108,126 @@ struct StockQuoteProviderParsingTests {
         #expect(quote?.source == "东方财富")
     }
 
+    @Test func eastmoneyFundamentalsApplyRatioScaleFromPayload() async throws {
+        let fetchedAt = StockChartFixtures.date(2026, 8, 10)
+        let data = try json([
+            "data": [
+                "f162": "1547",
+                "f167": 715
+            ]
+        ])
+        let client = StubStockQuoteHTTPClient(responseData: data)
+        let provider = EastmoneyStockFundamentalProvider(
+            httpClient: client,
+            now: { fetchedAt }
+        )
+
+        let snapshot = await provider.fetchFundamentals(
+            for: makeStock(market: .aShare, symbol: "600519")
+        )
+
+        #expect(snapshot?.priceEarningsRatioTTM == 15.47)
+        #expect(snapshot?.priceBookRatioMRQ == 7.15)
+        #expect(snapshot?.source == "东方财富")
+        #expect(snapshot?.asOfDate == fetchedAt)
+        let request = await client.recordedRequests().first
+        #expect(request?.url?.query?.contains("f162") == true)
+        #expect(request?.url?.query?.contains("f167") == true)
+    }
+
+    @Test func yahooFundamentalsParseTimeseriesAndDeriveFinancialMetrics() async throws {
+        let data = try json([
+            "timeseries": [
+                "result": [
+                    timeSeries(
+                        type: "trailingPeRatio",
+                        values: [("2026-08-07", 24.5)]
+                    ),
+                    timeSeries(
+                        type: "trailingPbRatio",
+                        values: [("2026-08-07", 4.25)]
+                    ),
+                    directTimeSeries(
+                        type: "trailingDividendYield",
+                        values: [("2026-07-31", 0.012)]
+                    ),
+                    timeSeries(
+                        type: "annualTotalRevenue",
+                        values: [("2024-12-31", 1_000), ("2025-12-31", 1_200)]
+                    ),
+                    timeSeries(
+                        type: "annualNetIncome",
+                        values: [("2024-12-31", 100), ("2025-12-31", 120)]
+                    ),
+                    timeSeries(
+                        type: "annualStockholdersEquity",
+                        values: [("2025-12-31", 600)]
+                    )
+                ]
+            ]
+        ])
+        let client = StubStockQuoteHTTPClient(responseData: data)
+        let provider = YahooStockFundamentalProvider(
+            httpClient: client,
+            now: { StockChartFixtures.date(2026, 8, 10) }
+        )
+
+        let snapshot = await provider.fetchFundamentals(
+            for: makeStock(market: .unitedStates, symbol: "AAPL")
+        )
+
+        #expect(snapshot?.priceEarningsRatioTTM == 24.5)
+        #expect(snapshot?.priceBookRatioMRQ == 4.25)
+        #expect(snapshot?.dividendYield == 0.012)
+        #expect(snapshot?.returnOnEquity == 0.2)
+        #expect(snapshot?.netProfitMargin == 0.1)
+        #expect(snapshot.map { abs($0.revenueGrowth! - 0.2) < 0.000_001 } == true)
+        #expect(snapshot.map { abs($0.earningsGrowth! - 0.2) < 0.000_001 } == true)
+        #expect(snapshot?.availableMetricCount == 7)
+        let request = await client.recordedRequests().first
+        #expect(request?.url?.host == "query2.finance.yahoo.com")
+        #expect(request?.url?.path.contains("fundamentals-timeseries") == true)
+    }
+
+    @Test func fundamentalServiceMergesProvidersAndHonorsCache() async throws {
+        let fetchedAt = StockChartFixtures.date(2026, 8, 10)
+        let eastmoney = StubStockFundamentalProvider(snapshot: StockFundamentalSnapshot(
+            asOfDate: fetchedAt,
+            source: "东方财富",
+            priceEarningsRatioTTM: 15,
+            priceBookRatioMRQ: 2
+        ))
+        let yahoo = StubStockFundamentalProvider(snapshot: StockFundamentalSnapshot(
+            asOfDate: fetchedAt,
+            source: "Yahoo Finance",
+            dividendYield: 0.03,
+            returnOnEquity: 0.18
+        ))
+        let service = StockFundamentalService(
+            providers: StockFundamentalProviders(eastmoney: eastmoney, yahoo: yahoo),
+            now: { fetchedAt },
+            cacheLifetime: 24 * 60 * 60
+        )
+        let stock = makeStock(market: .aShare, symbol: "600519")
+
+        let first = await service.fundamentals(for: stock, forceRefresh: false)
+        _ = await service.fundamentals(for: stock, forceRefresh: false)
+
+        #expect(first?.priceEarningsRatioTTM == 15)
+        #expect(first?.priceBookRatioMRQ == 2)
+        #expect(first?.dividendYield == 0.03)
+        #expect(first?.returnOnEquity == 0.18)
+        #expect(first?.source.contains("东方财富") == true)
+        #expect(first?.source.contains("Yahoo Finance") == true)
+        #expect(await eastmoney.requestCount() == 1)
+        #expect(await yahoo.requestCount() == 1)
+
+        _ = await service.fundamentals(for: stock, forceRefresh: true)
+
+        #expect(await eastmoney.requestCount() == 2)
+        #expect(await yahoo.requestCount() == 2)
+    }
+
     @Test func nasdaqPrefersRegularSessionOverExtendedSession() async throws {
         let primary = nasdaqPrice(
             price: "$105.00",
@@ -240,6 +360,36 @@ struct StockQuoteProviderParsingTests {
         try JSONSerialization.data(withJSONObject: object)
     }
 
+    private func timeSeries(
+        type: String,
+        values: [(String, Double)]
+    ) -> [String: Any] {
+        [
+            "meta": ["type": [type]],
+            type: values.map { date, value in
+                [
+                    "asOfDate": date,
+                    "reportedValue": ["raw": value]
+                ]
+            }
+        ]
+    }
+
+    private func directTimeSeries(
+        type: String,
+        values: [(String, Double)]
+    ) -> [String: Any] {
+        [
+            "meta": ["type": [type]],
+            type: values.map { date, value in
+                [
+                    "asOfDate": date,
+                    "dataValue": value
+                ]
+            }
+        ]
+    }
+
     private func nasdaqPrice(
         price: String,
         change: String,
@@ -253,5 +403,23 @@ struct StockQuoteProviderParsingTests {
             "lastTradeTimestamp": timestamp,
             "isRealTime": true
         ]
+    }
+}
+
+private actor StubStockFundamentalProvider: StockFundamentalProviding {
+    private let snapshot: StockFundamentalSnapshot?
+    private var requests = 0
+
+    init(snapshot: StockFundamentalSnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    func fetchFundamentals(for stock: StockHolding) async -> StockFundamentalSnapshot? {
+        requests += 1
+        return snapshot
+    }
+
+    func requestCount() -> Int {
+        requests
     }
 }

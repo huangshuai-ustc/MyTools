@@ -3,7 +3,7 @@ import OSLog
 
 struct LocalVaultLoadResult: @unchecked Sendable {
     let vault: VaultData
-    let secrets: [SecretItem]
+    let secrets: [SecretVaultValue]
     let byteCount: Int
     let source: String
     let canPersist: Bool
@@ -14,9 +14,9 @@ struct LocalVaultLoadResult: @unchecked Sendable {
 
 private struct LocalVaultDocument: Codable {
     let vault: VaultData
-    let secrets: [SecretItem]
+    let secrets: [SecretVaultValue]
 
-    init(vault: VaultData, secrets: [SecretItem]) {
+    init(vault: VaultData, secrets: [SecretVaultValue]) {
         self.vault = vault
         self.secrets = secrets
     }
@@ -98,7 +98,7 @@ final class SecureStore {
         )
     }
 
-    func saveVault(_ vault: VaultData, secrets: [SecretItem] = []) throws {
+    func saveVault(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
         try writeVaultFile(LocalVaultDocument(vault: vault, secrets: secrets))
     }
 
@@ -129,7 +129,7 @@ final class SecureStore {
 
     private func loadResult(
         vault: VaultData,
-        secrets: [SecretItem],
+        secrets: [SecretVaultValue],
         byteCount: Int,
         source: String,
         canPersist: Bool,
@@ -164,7 +164,7 @@ private let persistenceLogger = Logger(
 final class VaultPersistenceCoordinator: @unchecked Sendable {
     private struct PendingWrite: @unchecked Sendable {
         let vault: VaultData
-        let secrets: [SecretItem]
+        let secrets: [SecretVaultValue]
     }
 
     private let lock = NSLock()
@@ -181,7 +181,7 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
         self.secureStore = secureStore
     }
 
-    func schedule(_ vault: VaultData, secrets: [SecretItem] = []) {
+    func schedule(_ vault: VaultData, secrets: [SecretVaultValue] = []) {
         lock.lock()
         pendingWrite = PendingWrite(vault: vault, secrets: secrets)
         let shouldScheduleWorker = !isWorkerScheduled
@@ -195,7 +195,7 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     }
 
     /// Used by restore operations that must report a write failure before replacing live data.
-    func saveImmediately(_ vault: VaultData, secrets: [SecretItem] = []) throws {
+    func saveImmediately(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
         let result: Result<Void, Error> = queue.sync {
             lock.lock()
             pendingWrite = nil

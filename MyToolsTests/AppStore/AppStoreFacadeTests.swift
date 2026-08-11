@@ -72,6 +72,41 @@ struct AppStoreFacadeTests {
         #expect(persistence.scheduleCount == 1)
     }
 
+    @Test func redundantDataCleanupSkipsDisabledModulesAndPersistsOnce() {
+        let defaults = Self.makeDefaults()
+        let settings = ToolModuleSettings(defaults: defaults)
+        settings.setVisible(false, for: .documents)
+        let persistence = RecordingVaultPersistence()
+        let staleDate = Date(timeIntervalSince1970: 1_000)
+        let document = CredentialDocument(
+            type: .propertyOwnershipCertificate,
+            legacyDateOfBirth: staleDate
+        )
+        let store = AppStore(
+            initialVault: VaultData(credentialDocuments: [document]),
+            moduleSettings: settings,
+            dependencies: Self.dependencies(defaults: defaults, persistence: persistence)
+        )
+
+        #expect(store.scanRedundantData().isEmpty)
+        #expect(store.cleanupRedundantData().isEmpty)
+        #expect(store.documentsStore.documents.first?.legacyDateOfBirth == staleDate)
+        #expect(persistence.scheduleCount == 0)
+
+        settings.setVisible(true, for: .documents)
+        let report = store.scanRedundantData()
+        let cleanupReport = store.cleanupRedundantData()
+
+        #expect(report.findings.map(\.ruleID) == ["legacy-date-of-birth"])
+        #expect(cleanupReport == report)
+        #expect(store.documentsStore.documents.first?.legacyDateOfBirth == nil)
+        #expect(
+            store.documentsStore.documents.first?.fields.first { $0.label == "出生日期" }?.value
+                == AppDateFormatter.string(from: staleDate)
+        )
+        #expect(persistence.scheduleCount == 1)
+    }
+
     @Test func stockMutationUsesModuleStoreAndSchedulesPersistence() {
         let defaults = Self.makeDefaults()
         let persistence = RecordingVaultPersistence()

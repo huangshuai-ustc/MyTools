@@ -93,4 +93,35 @@ struct AppStoreBackupProcessorTests {
         #expect(restoredStatement.backupData == nil)
         #expect(restoredSecret.backupData == nil)
     }
+
+    @Test func disabledModuleAttachmentsAreFilteredBeforeRestore() async throws {
+        let attachmentStore = AttachmentStore()
+        let attachment = try attachmentStore.save(
+            data: Data("health-report".utf8),
+            originalFileName: "health.pdf",
+            contentType: .pdf
+        )
+        defer { attachmentStore.delete(attachment) }
+
+        var record = MedicalRecord()
+        record.attachments = [attachment]
+        let processor = AppStoreBackupProcessor()
+        let backup = try await processor.makeBackup(
+            vault: VaultData(medicalRecords: [record]),
+            secrets: [],
+            includedModules: [.healthRecords],
+            password: "test-password"
+        )
+
+        attachmentStore.delete(attachment)
+        let payload = try await processor.restorePayload(
+            from: backup,
+            password: "test-password",
+            enabledModules: [.personalFinance]
+        )
+
+        #expect(payload.includedModules.isEmpty)
+        #expect(payload.vault.medicalRecords.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: attachmentStore.url(for: attachment).path))
+    }
 }

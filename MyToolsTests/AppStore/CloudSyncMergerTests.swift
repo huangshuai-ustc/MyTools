@@ -4,6 +4,45 @@ import Testing
 @testable import MyTools
 
 struct CloudSyncMergerTests {
+    @Test func snapshotContainsOnlyEnabledModuleEntities() throws {
+        var account = BankAccount()
+        account.name = "Account"
+        var stock = StockHolding()
+        stock.symbol = "TEST"
+        var record = MedicalRecord()
+        record.hospital = "Hospital"
+        let snapshot = try CloudSyncSnapshotBuilder.make(
+            vault: VaultData(
+                accounts: [account],
+                stocks: [stock],
+                medicalRecords: [record]
+            ),
+            secrets: [SecretItem(title: "Secret")],
+            attachmentStore: AttachmentStore(),
+            enabledModules: [.personalFinance]
+        )
+
+        #expect(Set(snapshot.items.map(\.kind)) == [.bankAccount])
+        #expect(snapshot.participatingModules == [.personalFinance])
+    }
+
+    @Test func remoteChangesForDisabledModulesAreIgnored() throws {
+        var localRecord = MedicalRecord()
+        localRecord.hospital = "Local"
+        var remoteRecord = localRecord
+        remoteRecord.hospital = "Remote"
+        let payload = try CloudSyncCoding.encoder().encode(remoteRecord)
+
+        let result = try CloudSyncMerger.apply(
+            [.upsert(kind: .medicalRecord, id: remoteRecord.id, payload: payload)],
+            to: VaultData(medicalRecords: [localRecord]),
+            secrets: [],
+            enabledModules: [.personalFinance]
+        )
+
+        #expect(result.vault.medicalRecords == [localRecord])
+    }
+
     @MainActor
     @Test func preferenceSnapshotRoundTripsThroughCloudPayload() throws {
         let defaults = makeDefaults()
@@ -71,13 +110,11 @@ struct CloudSyncMergerTests {
 
         try bridge.apply(preferences)
 
-        #expect(moduleSettings.orderedModules == [
-            .healthRecords,
-            .myStocks,
-            .personalFinance,
-            .currencyExchange,
-            .secrets
-        ])
+        let expectedOrder: [ToolModule] = [.healthRecords, .myStocks]
+            + CompiledToolModules.ordered.filter { module in
+                module != .healthRecords && module != .myStocks
+            }
+        #expect(moduleSettings.orderedModules == expectedOrder)
         #expect(!moduleSettings.isVisible(.healthRecords))
         #expect(!moduleSettings.isVisible(.myStocks))
         #expect(moduleSettings.isVisible(.personalFinance))

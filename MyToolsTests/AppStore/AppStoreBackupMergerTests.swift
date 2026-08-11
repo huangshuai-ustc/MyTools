@@ -115,4 +115,30 @@ struct AppStoreBackupMergerTests {
         #expect(merged.secrets.map(\.id) == [existingID, appendedID])
         #expect(merged.secrets.map(\.title) == ["Imported", "New"])
     }
+
+    @Test func disabledModulesAreExcludedFromImportedPayload() {
+        var localHealth = MedicalRecord()
+        localHealth.hospital = "Local"
+        var importedHealth = localHealth
+        importedHealth.hospital = "Imported"
+        var importedAccount = BankAccount()
+        importedAccount.name = "Imported account"
+
+        let merged = AppStoreBackupMerger.merge(
+            localVault: VaultData(medicalRecords: [localHealth]),
+            localSecrets: [],
+            imported: VaultBackupPayload(
+                vault: VaultData(
+                    accounts: [importedAccount],
+                    medicalRecords: [importedHealth]
+                ),
+                includedModules: [.personalFinance, .healthRecords]
+            ),
+            enabledModules: [.personalFinance]
+        )
+
+        #expect(merged.vault.accounts == [importedAccount])
+        #expect(merged.vault.medicalRecords == [localHealth])
+        #expect(merged.includedModules == [.personalFinance])
+    }
 }

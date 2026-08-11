@@ -33,6 +33,10 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private let zoneID: CKRecordZone.ID
     private var document: CloudSyncStoredDocument
     private var currentItems: [String: CloudSyncItem] = [:]
+    // Treat feature data as inactive until the first local snapshot supplies the
+    // compiled and visible module set. This prevents startup fetches from
+    // restoring attachments for a disabled module.
+    private var activeModules: Set<ToolModule> = []
     private var hasStarted = false
     private var isStarting = false
     private var operationFailure: OperationFailure?
@@ -123,7 +127,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             try await ensureZoneExists()
             try await fetchRemoteChanges()
             let mergedSnapshot = try await snapshotProvider()
-            reconcileReadySnapshot(mergedSnapshot)
+            await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
             guard !Task.isCancelled else { return }
             hasStarted = true
@@ -139,11 +143,28 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     func reconcile(snapshot: CloudSyncSnapshot) async {
         guard hasStarted else { return }
-        reconcileReadySnapshot(snapshot)
+        await reconcileReadySnapshot(snapshot)
     }
 
-    private func reconcileReadySnapshot(_ snapshot: CloudSyncSnapshot) {
+    private func reconcileReadySnapshot(_ snapshot: CloudSyncSnapshot) async {
+        let previouslyActiveModules = activeModules
+        activeModules = snapshot.participatingModules
         currentItems = Dictionary(uniqueKeysWithValues: snapshot.items.map { ($0.key, $0) })
+
+        let activatedModules = activeModules.subtracting(previouslyActiveModules)
+        if !activatedModules.isEmpty {
+            await restoreAttachments(for: activatedModules)
+            let changes = changesForActivatedModules(activatedModules)
+            if !changes.isEmpty {
+                do {
+                    try await changeHandler(changes)
+                    saveDocument()
+                    return
+                } catch {
+                    await report(error, operation: "恢复已重新开启模块的 iCloud 数据")
+                }
+            }
+        }
 
         let now = Date()
         var changes: [CKSyncEngine.PendingRecordZoneChange] = []
@@ -164,6 +185,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             document.entries[item.key] = CloudSyncStoredEntry(
                 kind: item.kind,
                 id: item.id,
+                module: item.module,
                 digest: digest,
                 modifiedAt: now,
                 deviceID: document.deviceID,
@@ -175,10 +197,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
 
         for (key, entry) in document.entries
-        where !entry.isDeleted && !currentKeys.contains(key) {
+        where isActiveEntry(kind: entry.kind, key: key)
+            && !entry.isDeleted
+            && !currentKeys.contains(key) {
             document.entries[key] = CloudSyncStoredEntry(
                 kind: entry.kind,
                 id: entry.id,
+                module: entry.module,
                 digest: nil,
                 modifiedAt: now,
                 deviceID: document.deviceID,
@@ -193,6 +218,25 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             syncEngine.state.add(pendingRecordZoneChanges: changes)
         }
         saveDocument()
+    }
+
+    private func changesForActivatedModules(
+        _ modules: Set<ToolModule>
+    ) -> [CloudSyncChange] {
+        document.entries.values
+            .filter { entry in
+                guard let module = entry.kind.module else { return false }
+                return modules.contains(module) && entry.deviceID != document.deviceID
+            }
+            .sorted { $0.modifiedAt < $1.modifiedAt }
+            .compactMap { entry in
+                if entry.kind == .attachment { return nil }
+                if entry.isDeleted {
+                    return .delete(kind: entry.kind, id: entry.id)
+                }
+                guard let payload = entry.payload else { return nil }
+                return .upsert(kind: entry.kind, id: entry.id, payload: payload)
+            }
     }
 
     func synchronize() async {
@@ -297,7 +341,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
         let pendingChanges = syncEngine.state.pendingRecordZoneChanges.filter {
-            context.options.scope.contains($0)
+            guard context.options.scope.contains($0) else { return false }
+            switch $0 {
+            case .saveRecord(let recordID), .deleteRecord(let recordID):
+                guard let (kind, _) = parse(recordID: recordID) else { return true }
+                return isActiveEntry(kind: kind, key: recordID.recordName)
+            @unknown default:
+                return true
+            }
         }
         return await CKSyncEngine.RecordZoneChangeBatch(
             pendingChanges: pendingChanges
@@ -368,7 +419,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     ) async {
         var changes: [CloudSyncChange] = []
         let orderedRecords = records.sorted {
-            remoteKind(from: $0) == .attachment && remoteKind(from: $1) != .attachment
+            remoteKind(from: $0) != .attachment && remoteKind(from: $1) == .attachment
         }
 
         for record in orderedRecords {
@@ -384,6 +435,24 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         for recordID in deletions {
             guard recordID.zoneID == zoneID,
                   let (kind, id) = parse(recordID: recordID) else { continue }
+            guard isActiveEntry(kind: kind, key: recordID.recordName) else {
+                let previous = document.entries[recordID.recordName]
+                document.entries[recordID.recordName] = CloudSyncStoredEntry(
+                    kind: kind,
+                    id: id,
+                    module: previous?.module ?? kind.module ?? attachmentModule(for: id),
+                    digest: nil,
+                    modifiedAt: Date(),
+                    deviceID: "server",
+                    isDeleted: true,
+                    payload: nil,
+                    systemFields: previous?.systemFields
+                )
+                syncEngine.state.remove(
+                    pendingRecordZoneChanges: [.saveRecord(recordID)]
+                )
+                continue
+            }
             let key = recordID.recordName
             let previous = document.entries[key]
             if kind == .attachment,
@@ -396,6 +465,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             document.entries[key] = CloudSyncStoredEntry(
                 kind: kind,
                 id: id,
+                module: previous?.module ?? attachmentModule(for: id),
                 digest: nil,
                 modifiedAt: Date(),
                 deviceID: "server",
@@ -431,6 +501,18 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
 
         let key = CloudSyncItem.key(kind: kind, id: id)
+        let module = kind.module ?? attachmentModule(for: id)
+        guard isActiveEntry(kind: kind, key: key, module: module) else {
+            storeInactiveRemoteRecord(
+                record: record,
+                kind: kind,
+                id: id,
+                module: module,
+                syncEngine: syncEngine
+            )
+            return nil
+        }
+
         let isDeleted = (record[Field.isDeleted] as? NSNumber)?.boolValue ?? false
         let deviceID = record[Field.deviceID] as? String ?? "server"
         let payload = isDeleted ? nil : record.encryptedValues[Field.payload] as? Data
@@ -459,6 +541,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         document.entries[key] = CloudSyncStoredEntry(
             kind: kind,
             id: id,
+            module: module,
             digest: digest,
             modifiedAt: modifiedAt,
             deviceID: deviceID,
@@ -484,6 +567,136 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             return .delete(kind: kind, id: id)
         }
         return payload.map { .upsert(kind: kind, id: id, payload: $0) }
+    }
+
+    private func storeInactiveRemoteRecord(
+        record: CKRecord,
+        kind: CloudSyncEntityKind,
+        id: UUID,
+        module: ToolModule?,
+        syncEngine: CKSyncEngine
+    ) {
+        let key = CloudSyncItem.key(kind: kind, id: id)
+        let isDeleted = (record[Field.isDeleted] as? NSNumber)?.boolValue ?? false
+        let payload = isDeleted ? nil : record.encryptedValues[Field.payload] as? Data
+        guard isDeleted || payload != nil else { return }
+        let modifiedAt = record[Field.modifiedAt] as? Date ?? Date()
+        let deviceID = record[Field.deviceID] as? String ?? "server"
+        let digest = payload.map(Self.digest)
+        guard shouldAcceptRemote(
+            modifiedAt: modifiedAt,
+            deviceID: deviceID,
+            over: document.entries[key]
+        ) else { return }
+        document.entries[key] = CloudSyncStoredEntry(
+            kind: kind,
+            id: id,
+            module: module,
+            digest: digest,
+            modifiedAt: modifiedAt,
+            deviceID: deviceID,
+            isDeleted: isDeleted,
+            payload: payload,
+            systemFields: record.cloudSyncSystemFields()
+        )
+        syncEngine.state.remove(
+            pendingRecordZoneChanges: [.saveRecord(record.recordID)]
+        )
+    }
+
+    private func isActiveEntry(
+        kind: CloudSyncEntityKind,
+        key: String,
+        module: ToolModule? = nil
+    ) -> Bool {
+        if kind == .attachment {
+            let owner = module ?? currentItems[key]?.module ?? document.entries[key]?.module
+            if let owner {
+                return activeModules.contains(owner)
+            }
+            return ToolModuleCatalog.definitions.contains {
+                $0.ownsAttachments && activeModules.contains($0.module)
+            }
+        }
+        return kind.isIncluded(in: activeModules)
+    }
+
+    private func attachmentModule(for id: UUID) -> ToolModule? {
+        let owners: Set<ToolModule> = document.entries.values.reduce(into: []) { result, entry in
+            guard !entry.isDeleted, let payload = entry.payload else { return }
+            let decoder = CloudSyncCoding.decoder()
+            switch entry.kind {
+            case .bankCard:
+#if MYTOOLS_FEATURE_FINANCE
+                guard let card = try? decoder.decode(BankCard.self, from: payload) else { return }
+                if card.statements.contains(where: { $0.attachment?.id == id }) {
+                    result.insert(.personalFinance)
+                }
+#endif
+                break
+            case .medicalRecord:
+#if MYTOOLS_FEATURE_HEALTH
+                guard let record = try? decoder.decode(MedicalRecord.self, from: payload) else { return }
+                if record.attachments.contains(where: { $0.id == id }) {
+                    result.insert(.healthRecords)
+                }
+#endif
+                break
+            case .foodPlace:
+#if MYTOOLS_FEATURE_FOOD_MAP
+                guard let place = try? decoder.decode(FoodPlace.self, from: payload) else { return }
+                if place.photos.contains(where: { $0.id == id }) {
+                    result.insert(.foodMap)
+                }
+#endif
+                break
+            case .secretItem:
+#if MYTOOLS_FEATURE_SECRETS
+                guard let secret = try? decoder.decode(SecretItem.self, from: payload) else { return }
+                if secret.attachments.contains(where: { $0.id == id }) {
+                    result.insert(.secrets)
+                }
+#endif
+                break
+            case .credentialDocument:
+#if MYTOOLS_FEATURE_DOCUMENTS
+                guard let document = try? decoder.decode(CredentialDocument.self, from: payload) else {
+                    return
+                }
+                if document.attachments.contains(where: { $0.file.id == id }) {
+                    result.insert(.documents)
+                }
+#endif
+                break
+            default:
+                break
+            }
+        }
+        return owners.sorted { $0.rawValue < $1.rawValue }.first
+    }
+
+    private func restoreAttachments(for modules: Set<ToolModule>) async {
+        let entries = document.entries.values.filter { entry in
+            entry.kind == .attachment
+                && !entry.isDeleted
+                && entry.deviceID != document.deviceID
+                && entry.module.map(modules.contains) == true
+        }
+        for entry in entries {
+            do {
+                let record = try await container.privateCloudDatabase.record(
+                    for: recordID(forKey: CloudSyncItem.key(kind: entry.kind, id: entry.id))
+                )
+                try applyRemoteAttachment(
+                    record: record,
+                    payload: entry.payload,
+                    previousPayload: nil,
+                    isDeleted: false
+                )
+            } catch {
+                await report(error, operation: "恢复 iCloud 附件")
+            }
+        }
     }
 
     private func applyRemoteAttachment(
