@@ -38,7 +38,8 @@ enum SecretCategory: String, Codable, CaseIterable, Identifiable, Sendable {
         case .login:
             return [
                 SecretField(label: "用户名", kind: .username),
-                SecretField(label: "密码", kind: .password)
+                SecretField(label: "密码", kind: .password),
+                SecretField(label: "URL", kind: .url)
             ]
         case .email:
             return [
@@ -66,6 +67,20 @@ enum SecretCategory: String, Codable, CaseIterable, Identifiable, Sendable {
             ]
         case .other:
             return [SecretField(label: "保密内容", kind: .password)]
+        }
+    }
+}
+
+enum SecretPurpose: String, Codable, CaseIterable, Identifiable, Sendable {
+    case personal
+    case work
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .personal: return "个人"
+        case .work: return "工作"
         }
     }
 }
@@ -104,9 +119,30 @@ enum SecretFieldKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     var defaultIsSensitive: Bool {
+        true
+    }
+}
+
+enum SecretFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable {
+    case text
+    case date
+    case url
+
+    var id: Self { self }
+
+    var title: String {
         switch self {
-        case .url, .date: return false
-        default: return true
+        case .text: return "文本"
+        case .date: return "日期"
+        case .url: return "网址"
+        }
+    }
+
+    init(kind: SecretFieldKind) {
+        switch kind {
+        case .date: self = .date
+        case .url: self = .url
+        default: self = .text
         }
     }
 }
@@ -116,6 +152,7 @@ struct SecretField: Identifiable, Codable, Equatable, Sendable {
     var label = ""
     var value = ""
     var kind: SecretFieldKind = .text
+    var inputType: SecretFieldInputType = .text
     var isSensitive = true
 
     init(
@@ -123,13 +160,69 @@ struct SecretField: Identifiable, Codable, Equatable, Sendable {
         label: String = "",
         value: String = "",
         kind: SecretFieldKind = .text,
+        inputType: SecretFieldInputType? = nil,
         isSensitive: Bool? = nil
     ) {
         self.id = id
         self.label = label
         self.value = value
         self.kind = kind
+        self.inputType = inputType ?? SecretFieldInputType(kind: kind)
         self.isSensitive = isSensitive ?? kind.defaultIsSensitive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, label, value, kind, inputType, isSensitive
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decodeIfPresent(SecretFieldKind.self, forKey: .kind) ?? .text
+        self.init(
+            id: try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+            label: try container.decodeIfPresent(String.self, forKey: .label) ?? "",
+            value: try container.decodeIfPresent(String.self, forKey: .value) ?? "",
+            kind: kind,
+            inputType: try container.decodeIfPresent(SecretFieldInputType.self, forKey: .inputType)
+                ?? SecretFieldInputType(kind: kind),
+            isSensitive: try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? kind.defaultIsSensitive
+        )
+    }
+}
+
+struct SecretFieldTemplate: Codable, Equatable, Identifiable, Sendable {
+    var category: SecretCategory
+    var fields: [SecretField]
+
+    var id: SecretCategory { category }
+
+    static var defaultTemplates: [Self] {
+        SecretCategory.allCases.map { Self(category: $0, fields: $0.defaultFields) }
+    }
+
+    func makeFields() -> [SecretField] {
+        fields.map { field in
+            SecretField(
+                label: field.label,
+                kind: field.kind,
+                inputType: field.inputType,
+                isSensitive: field.isSensitive
+            )
+        }
+    }
+
+    func normalized() -> Self {
+        Self(
+            category: category,
+            fields: fields.map {
+                SecretField(
+                    label: $0.label,
+                    kind: $0.kind,
+                    inputType: $0.inputType,
+                    isSensitive: $0.isSensitive
+                )
+            }
+        )
     }
 }
 
@@ -137,6 +230,7 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title = ""
     var category: SecretCategory = .login
+    var purpose: SecretPurpose = .personal
     var fields: [SecretField] = SecretCategory.login.defaultFields
     var attachments: [FileAttachment] = []
     var tags = ""
@@ -148,6 +242,7 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
         id: UUID = UUID(),
         title: String = "",
         category: SecretCategory = .login,
+        purpose: SecretPurpose = .personal,
         fields: [SecretField]? = nil,
         attachments: [FileAttachment] = [],
         tags: String = "",
@@ -158,12 +253,41 @@ struct SecretItem: Identifiable, Codable, Equatable, Sendable {
         self.id = id
         self.title = title
         self.category = category
+        self.purpose = purpose
         self.fields = fields ?? category.defaultFields
         self.attachments = attachments
         self.tags = tags
         self.note = note
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case category
+        case purpose
+        case fields
+        case attachments
+        case tags
+        case note
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        category = try container.decodeIfPresent(SecretCategory.self, forKey: .category) ?? .login
+        purpose = try container.decodeIfPresent(SecretPurpose.self, forKey: .purpose) ?? .personal
+        fields = try container.decodeIfPresent([SecretField].self, forKey: .fields)
+            ?? category.defaultFields
+        attachments = try container.decodeIfPresent([FileAttachment].self, forKey: .attachments) ?? []
+        tags = try container.decodeIfPresent(String.self, forKey: .tags) ?? ""
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 
 }

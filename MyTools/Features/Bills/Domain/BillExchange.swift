@@ -29,6 +29,85 @@ struct BillExchangeDocument: Codable, Equatable, Sendable {
     }
 }
 
+enum BillExportPeriod: String, CaseIterable, Identifiable, Sendable {
+    case oneMonth
+    case threeMonths
+    case sixMonths
+    case oneYear
+    case all
+    case custom
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .oneMonth: return "近一月"
+        case .threeMonths: return "近三月"
+        case .sixMonths: return "近半年"
+        case .oneYear: return "近一年"
+        case .all: return "全部"
+        case .custom: return "自定义"
+        }
+    }
+
+    func dateRange(
+        customStart: Date,
+        customEnd: Date,
+        calendar: Calendar = .autoupdatingCurrent,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        if self == .all { return nil }
+        let dates: (Date, Date)
+        if self == .custom {
+            dates = (customStart, customEnd)
+        } else {
+            let months: Int
+            switch self {
+            case .oneMonth: months = 1
+            case .threeMonths: months = 3
+            case .sixMonths: months = 6
+            case .oneYear: months = 12
+            case .all, .custom: return nil
+            }
+            dates = (calendar.date(byAdding: .month, value: -months, to: now) ?? now, now)
+        }
+        let start = calendar.startOfDay(for: dates.0)
+        let end = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: dates.1) ?? dates.1
+        guard start <= end else { return nil }
+        return start...end
+    }
+}
+
+struct BillExportFilter: Sendable {
+    var period: BillExportPeriod = .oneMonth
+    var customStart = Date()
+    var customEnd = Date()
+    var providerName: String?
+    var category: BillCategory?
+    var direction: BillDirection?
+
+    func records(
+        from records: [BillRecord],
+        calendar: Calendar = .autoupdatingCurrent,
+        now: Date = Date()
+    ) -> [BillRecord] {
+        let dateRange = period.dateRange(
+            customStart: customStart,
+            customEnd: customEnd,
+            calendar: calendar,
+            now: now
+        )
+        if period == .custom && dateRange == nil { return [] }
+        return records.filter { record in
+            if let dateRange, !dateRange.contains(record.occurredAt) { return false }
+            if let providerName, record.origin.providerName != providerName { return false }
+            if let category, record.category != category { return false }
+            if let direction, record.direction != direction { return false }
+            return true
+        }
+    }
+}
+
 struct BillExchangeSource: Codable, Equatable, Sendable {
     var providerIdentifier: String
     var providerName: String

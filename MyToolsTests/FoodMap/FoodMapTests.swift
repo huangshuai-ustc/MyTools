@@ -5,6 +5,10 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct FoodMapTests {
+    @Test func foodStatusesOnlyExposeTriedAndWantToTry() {
+        #expect(FoodPlaceStatus.allCases == [.tried, .wantToTry])
+    }
+
     @Test func storeNormalizesValuesAndOwnsPhotoLifecycle() throws {
         let fileManager = FileManager.default
         let directoryURL = fileManager.temporaryDirectory

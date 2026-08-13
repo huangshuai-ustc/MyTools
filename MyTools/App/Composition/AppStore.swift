@@ -135,6 +135,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_SECRETS
         secretStore = SecretStore(
             secretItems: secretItems,
+            fieldTemplates: initialVault?.secretFieldTemplates ?? [],
             attachmentStore: attachmentStore
         )
 #endif
@@ -261,7 +262,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         retainedSecrets = snapshot.secrets
         applyVault(snapshot.vault)
 #if MYTOOLS_FEATURE_SECRETS
-        secretStore.replace(secretItems: snapshot.secrets)
+        secretStore.replace(
+            secretItems: snapshot.secrets,
+            fieldTemplates: snapshot.vault.secretFieldTemplates
+        )
 #endif
         canPersistVault = snapshot.canPersist
 #if MYTOOLS_FEATURE_HEALTH
@@ -377,7 +381,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         applyVault(mergedPayload.vault)
         retainedSecrets = mergedPayload.secrets
 #if MYTOOLS_FEATURE_SECRETS
-        secretStore.replace(secretItems: mergedPayload.secrets)
+        secretStore.replace(
+            secretItems: mergedPayload.secrets,
+            fieldTemplates: mergedPayload.vault.secretFieldTemplates
+        )
 #endif
         canPersistVault = true
         didLogPersistenceBlocked = false
@@ -477,6 +484,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_BILLS
         vault.billRecords = billsStore.records
 #endif
+#if MYTOOLS_FEATURE_SECRETS
+        vault.secretFieldTemplates = secretStore.fieldTemplates
+#endif
         return vault
     }
 
@@ -528,7 +538,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         applyVault(merged.vault)
         retainedSecrets = merged.secrets
 #if MYTOOLS_FEATURE_SECRETS
-        secretStore.replace(secretItems: merged.secrets)
+        secretStore.replace(
+            secretItems: merged.secrets,
+            fieldTemplates: merged.vault.secretFieldTemplates
+        )
 #endif
         if let incomingPreferences {
             try cloudSyncPreferences.apply(incomingPreferences)

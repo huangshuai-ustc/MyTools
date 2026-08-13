@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class SecretStore: ObservableObject {
     @Published private(set) var secretItems: [SecretItem]
+    @Published private(set) var fieldTemplates: [SecretFieldTemplate]
 
     private let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
@@ -12,9 +13,11 @@ final class SecretStore: ObservableObject {
 
     init(
         secretItems: [SecretItem] = [],
+        fieldTemplates: [SecretFieldTemplate] = SecretFieldTemplate.defaultTemplates,
         attachmentStore: AttachmentStore
     ) {
         self.secretItems = secretItems
+        self.fieldTemplates = Self.normalizedTemplates(fieldTemplates)
         self.attachmentStore = attachmentStore
     }
 
@@ -22,8 +25,35 @@ final class SecretStore: ObservableObject {
         self.mutationNotifier = mutationNotifier
     }
 
-    func replace(secretItems: [SecretItem]) {
+    func replace(
+        secretItems: [SecretItem],
+        fieldTemplates: [SecretFieldTemplate]? = nil
+    ) {
         self.secretItems = secretItems
+        if let fieldTemplates {
+            self.fieldTemplates = Self.normalizedTemplates(fieldTemplates)
+        }
+    }
+
+    func fieldTemplate(for category: SecretCategory) -> SecretFieldTemplate {
+        fieldTemplates.first(where: { $0.category == category })
+            ?? SecretFieldTemplate(category: category, fields: category.defaultFields)
+    }
+
+    func makeFields(for category: SecretCategory) -> [SecretField] {
+        fieldTemplate(for: category).makeFields()
+    }
+
+    func upsertFieldTemplate(_ template: SecretFieldTemplate) {
+        guard !isRestoringBackup else { return }
+        let normalized = template.normalized()
+        if let index = fieldTemplates.firstIndex(where: { $0.category == normalized.category }) {
+            fieldTemplates[index] = normalized
+        } else {
+            fieldTemplates.append(normalized)
+        }
+        fieldTemplates = Self.normalizedTemplates(fieldTemplates)
+        didMutate()
     }
 
     func setBackupRestoreInProgress(_ isRestoring: Bool) {
@@ -57,6 +87,24 @@ final class SecretStore: ObservableObject {
         }
         secretItems.removeAll { ids.contains($0.id) }
         didMutate()
+    }
+
+    func importSecrets(_ items: [SecretItem]) -> (inserted: Int, skipped: Int) {
+        guard !items.isEmpty, !isRestoringBackup else { return (0, items.count) }
+        var signatures = Set(secretItems.map(Self.importSignature))
+        var inserted = 0
+        var skipped = 0
+        for item in items {
+            let signature = Self.importSignature(item)
+            guard signatures.insert(signature).inserted else {
+                skipped += 1
+                continue
+            }
+            secretItems.append(item)
+            inserted += 1
+        }
+        if inserted > 0 { didMutate() }
+        return (inserted, skipped)
     }
 
     func importSecretAttachment(from url: URL) throws -> FileAttachment {
@@ -101,6 +149,25 @@ final class SecretStore: ObservableObject {
 
     private func didMutate() {
         mutationNotifier?.moduleStoreDidMutate()
+    }
+
+    private static func normalizedTemplates(_ templates: [SecretFieldTemplate]) -> [SecretFieldTemplate] {
+        var byCategory = Dictionary(uniqueKeysWithValues: templates.map { ($0.category, $0.normalized()) })
+        for fallback in SecretFieldTemplate.defaultTemplates where byCategory[fallback.category] == nil {
+            byCategory[fallback.category] = fallback
+        }
+        return SecretCategory.allCases.compactMap { byCategory[$0] }
+    }
+
+    private static func importSignature(_ item: SecretItem) -> String {
+        let fieldValues = item.fields.map {
+            "\($0.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())=\($0.value)"
+        }.joined(separator: "\u{1f}")
+        return [
+            item.category.rawValue,
+            item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            fieldValues
+        ].joined(separator: "\u{1e}")
     }
 }
 

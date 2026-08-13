@@ -35,7 +35,7 @@ enum CredentialOCRParser {
         var suggestion = CredentialOCRSuggestion()
 
         suggestion.holderName = value(
-            afterAny: ["持有人姓名", "姓名", "权利人"],
+            afterAny: ["新生儿姓名", "儿童姓名", "持有人姓名", "姓名", "权利人"],
             in: lines,
             stoppingAt: recognizedLabels
         )
@@ -81,7 +81,10 @@ enum CredentialOCRParser {
         if let birthDate {
             suggestion.fieldValues["出生日期"] = AppDateFormatter.string(from: birthDate)
         }
-        if suggestion.issuedAt == nil, type == .identityCard {
+        // Chinese credential validity periods normally begin on the issue date.
+        // Use the printed start date as a confirmable issue-date candidate when
+        // OCR did not find a separate issue-date label.
+        if suggestion.issuedAt == nil {
             suggestion.issuedAt = suggestion.validityStart
         }
 
@@ -119,7 +122,9 @@ enum CredentialOCRParser {
             patterns = [#"(?<![A-Z0-9])[CW][0-9]{8,10}(?![A-Z0-9])"#]
         case .driversLicense:
             patterns = [#"(?<!\d)\d{17}[0-9Xx](?!\w)"#]
-        case .educationCertificate, .degreeCertificate, .propertyOwnershipCertificate, .other:
+        case .educationCertificate, .degreeCertificate, .propertyOwnershipCertificate,
+             .birthMedicalCertificate, .vaccinationCertificate,
+             .professionalQualificationCertificate, .other:
             patterns = []
         }
         let normalized = text.uppercased().replacingOccurrences(of: " ", with: "")
@@ -290,25 +295,21 @@ extension CredentialDocument {
         if let value = suggestion.issuingAuthority { issuingAuthority = value }
         if let value = suggestion.issuedAt { issuedAt = value }
 
-        if type == .identityCard {
-            if let startDate = suggestion.validityStart {
-                issuedAt = startDate
-            }
-            if suggestion.isPermanent {
-                validity = CredentialValidity(kind: .permanent)
-            } else if let startDate = suggestion.validityStart,
-                      let endDate = suggestion.validityEnd,
-                      let term = CredentialValidityKind.identityCardTerm(
-                          from: startDate,
-                          to: endDate,
-                          calendar: calendar
-                      ) {
-                validity = CredentialValidity(kind: term)
-            }
-        } else if suggestion.isPermanent {
+        if suggestion.isPermanent {
             validity.kind = .permanent
             validity.startDate = suggestion.validityStart
             validity.endDate = nil
+        } else if let validityStart = suggestion.validityStart,
+                  let endDate = suggestion.validityEnd,
+                  let term = CredentialValidityKind.fixedTerm(
+                      for: type,
+                      from: suggestion.issuedAt ?? validityStart,
+                      to: endDate,
+                      calendar: calendar
+                  ) {
+            // Fixed-term expiry is always measured from the mandatory issue date.
+            issuedAt = issuedAt ?? validityStart
+            validity = CredentialValidity(kind: term)
         } else if suggestion.validityStart != nil || suggestion.validityEnd != nil {
             validity.kind = .dateRange
             validity.startDate = suggestion.validityStart

@@ -13,7 +13,6 @@ extension FoodPlaceStatus {
         switch self {
         case .tried: return .green
         case .wantToTry: return .pink
-        case .notTried: return .orange
         }
     }
 }

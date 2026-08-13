@@ -81,9 +81,10 @@ struct CloudSyncSnapshot: Sendable {
     let items: [CloudSyncItem]
     let participatingModules: Set<ToolModule>
 
-    init(items: [CloudSyncItem], participatingModules: Set<ToolModule> = ToolModuleCatalog.allModules) {
+    init(items: [CloudSyncItem], participatingModules: Set<ToolModule> = ToolModuleCatalog.cloudSyncModules) {
         self.items = items
         self.participatingModules = CompiledToolModules.available(from: participatingModules)
+            .intersection(ToolModuleCatalog.cloudSyncModules)
     }
 
     static let empty = CloudSyncSnapshot(items: [])
@@ -120,6 +121,7 @@ enum CloudSyncSnapshotBuilder {
         enabledModules: Set<ToolModule> = ToolModuleCatalog.allModules
     ) throws -> CloudSyncSnapshot {
         let enabledModules = CompiledToolModules.available(from: enabledModules)
+            .intersection(ToolModuleCatalog.cloudSyncModules)
         let encoder = CloudSyncCoding.encoder()
         var items: [CloudSyncItem] = []
 
@@ -377,6 +379,7 @@ enum CloudSyncMerger {
         var vault = vault
         var secrets = secrets
         let enabledModules = CompiledToolModules.available(from: enabledModules)
+            .intersection(ToolModuleCatalog.cloudSyncModules)
         let decoder = CloudSyncCoding.decoder()
 
         for change in changes {

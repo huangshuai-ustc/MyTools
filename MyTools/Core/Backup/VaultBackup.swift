@@ -63,7 +63,7 @@ struct VaultBackupPayload: Codable, @unchecked Sendable {
     init(
         vault: VaultData,
         secrets: [SecretVaultValue] = [],
-        includedModules: Set<ToolModule> = ToolModuleCatalog.allModules
+        includedModules: Set<ToolModule> = ToolModuleCatalog.backupModules
     ) {
         self.vault = vault
         self.secrets = secrets
@@ -88,7 +88,7 @@ enum VaultBackupCrypto {
     static func makeBackup(
         from vault: VaultData,
         secrets: [SecretVaultValue] = [],
-        includedModules: Set<ToolModule> = ToolModuleCatalog.allModules,
+        includedModules: Set<ToolModule> = ToolModuleCatalog.backupModules,
         password: String
     ) throws -> Data {
         guard password.count >= 8 else { throw VaultBackupError.invalidPassword }

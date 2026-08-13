@@ -99,6 +99,9 @@ struct SecretVaultView: View {
     @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
     @State private var isCreating = false
+    @State private var showingPasswordImportPage = false
+    @State private var importResult: String?
+    @State private var showingImportResult = false
     @AppStorage("secret-sort-order-v1") private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
 
     private var selectedSortOrder: SecretSortOrder {
@@ -180,6 +183,17 @@ struct SecretVaultView: View {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("添加保密条目")
+                    .contextMenu {
+                        Menu {
+                            Button {
+                                showingPasswordImportPage = true
+                            } label: {
+                                Label("Apple 密码 CSV", systemImage: "key.fill")
+                            }
+                        } label: {
+                            Label("从文件导入", systemImage: "square.and.arrow.down")
+                        }
+                    }
                 }
             }
         }
@@ -196,6 +210,19 @@ struct SecretVaultView: View {
             SecretEditorView(item: item, isNew: isCreating)
                 .id(item.id)
                 .iOSLargeSheet()
+        }
+        .sheet(isPresented: $showingPasswordImportPage) {
+            SecretPasswordImportView { items in
+                let result = store.importSecrets(items)
+                importResult = "已导入 \(result.inserted) 条，跳过重复记录 \(result.skipped) 条。"
+                showingImportResult = true
+            }
+            .iOSLargeSheet()
+        }
+        .alert("密码导入结果", isPresented: $showingImportResult) {
+            Button("确定", role: .cancel) { showingImportResult = false }
+        } message: {
+            Text(importResult ?? "")
         }
         .onChange(of: auth.isAdmin) { _, isAdmin in
             if isAdmin {
@@ -229,15 +256,249 @@ private struct SecretItemRow: View {
                 Text(item.title.isEmpty ? "未命名条目" : item.title)
                     .font(.headline)
                     .lineLimit(1)
-                Text(item.category.title)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(item.category.title)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    SecretPurposeTag(purpose: item.purpose)
+                }
             }
             Spacer(minLength: 4)
             Image(systemName: "lock.fill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct SecretPurposeTag: View {
+    let purpose: SecretPurpose
+
+    var body: some View {
+        Text(purpose.title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(purpose == .work ? .indigo : .green)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                (purpose == .work ? Color.indigo : Color.green).opacity(0.14),
+                in: RoundedRectangle(cornerRadius: 4)
+            )
+    }
+}
+
+private struct SecretPasswordImportView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingFileImporter = false
+    @State private var preview: ApplePasswordImportPreview?
+    @State private var errorMessage: String?
+    let onImport: ([SecretItem]) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("密码文件") {
+                    Button {
+                        showingFileImporter = true
+                    } label: {
+                        Label("选择 Apple 密码 CSV", systemImage: "doc.badge.plus")
+                    }
+                    if let preview {
+                        LabeledContent("文件名", value: preview.fileName)
+                        LabeledContent("待导入", value: "\(preview.items.count) 条")
+                    }
+                }
+                if let preview {
+                    Section("导入预览") {
+                        ForEach(preview.items.prefix(20)) { item in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title).font(.body.weight(.medium))
+                                Text(item.fields.first(where: { $0.label == "用户名" })?.value ?? "")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(item.fields.first(where: { $0.label == "URL" })?.value ?? "")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if preview.items.count > 20 {
+                            Text("另有 \(preview.items.count - 20) 条将在确认后导入")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("导入 Apple 密码")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("导入") {
+                        guard let preview else { return }
+                        onImport(preview.items)
+                        dismiss()
+                    }
+                    .disabled(preview == nil)
+                }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.commaSeparatedText, .plainText],
+                allowsMultipleSelection: false,
+                onCompletion: loadFile
+            )
+            .alert("无法读取密码文件", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    private func loadFile(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            preview = try ApplePasswordImporter.decode(
+                data: Data(contentsOf: url),
+                fileName: url.lastPathComponent
+            )
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+/* Legacy preview is now handled by SecretPasswordImportView. */
+private struct ApplePasswordImportPreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let preview: ApplePasswordImportPreview
+    let onImport: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("文件") {
+                    LabeledContent("名称", value: preview.fileName)
+                    LabeledContent("可导入", value: "\(preview.items.count) 条")
+                }
+                Section("预览") {
+                    ForEach(preview.items.prefix(20)) { item in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.title).font(.body.weight(.medium))
+                            Text(item.fields.first(where: { $0.label == "URL" })?.value ?? "")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("导入 Apple 密码")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("导入", action: onImport)
+                }
+            }
+        }
+    }
+}
+
+private struct SecretFieldTemplateEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let category: SecretCategory
+    @State private var fields: [SecretField]
+    @State private var showingNewField = false
+    @State private var newFieldName = ""
+    let onSave: (SecretFieldTemplate) -> Void
+
+    init(category: SecretCategory, template: SecretFieldTemplate, onSave: @escaping (SecretFieldTemplate) -> Void) {
+        self.category = category
+        _fields = State(initialValue: template.fields)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach($fields) { $field in
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("字段名称", text: $field.label)
+                            HStack {
+                                Picker("输入形式", selection: $field.inputType) {
+                                    ForEach(SecretFieldInputType.allCases) { inputType in
+                                        Text(inputType.title).tag(inputType)
+                                    }
+                                }
+                                Toggle("隐藏", isOn: $field.isSensitive)
+                                    .labelsHidden()
+                                    .accessibilityLabel("默认隐藏内容")
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .onDelete { fields.remove(atOffsets: $0) }
+                    .onMove { fields.move(fromOffsets: $0, toOffset: $1) }
+                } header: {
+                    Text("字段模板 · \(category.title)")
+                } footer: {
+                    Text("模板只保存字段定义；新建条目时会生成空白字段。")
+                }
+
+                Section {
+                    Button {
+                        newFieldName = ""
+                        showingNewField = true
+                    } label: {
+                        Label("添加模板字段", systemImage: "plus.circle")
+                    }
+                }
+            }
+#if os(iOS)
+            .environment(\.editMode, .constant(.active))
+#endif
+            .navigationTitle("字段模板")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let cleaned = fields.filter {
+                            !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }.map {
+                            SecretField(
+                                label: $0.label.trimmingCharacters(in: .whitespacesAndNewlines),
+                                kind: $0.kind,
+                                inputType: $0.inputType,
+                                isSensitive: $0.isSensitive
+                            )
+                        }
+                        onSave(SecretFieldTemplate(category: category, fields: cleaned))
+                        dismiss()
+                    }
+                    .disabled(fields.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                }
+            }
+            .alert("添加模板字段", isPresented: $showingNewField) {
+                TextField("字段名称", text: $newFieldName)
+                Button("取消", role: .cancel) {}
+                Button("添加") {
+                    let label = newFieldName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !label.isEmpty else { return }
+                    fields.append(SecretField(label: label, kind: .text, isSensitive: true))
+                }
+            }
         }
     }
 }
@@ -309,6 +570,7 @@ struct SecretDetailView: View {
                 Form {
                     Section {
                         LabeledContent("分类", value: item.category.title)
+                        LabeledContent("用途", value: item.purpose.title)
                         if !item.tags.isEmpty {
                             LabeledContent(
                                 "标签",
@@ -473,12 +735,27 @@ private struct SecretFieldValueRow: View {
                     .accessibilityLabel(isRevealed ? "隐藏字段" : "显示字段")
                 }
             }
-            Text(displayValue)
-                .fontDesign(isRevealed ? .monospaced : .default)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(field.kind.isMultiline ? 8 : 2)
-                .copyableText(isRevealed ? field.value : nil)
+            if isRevealed,
+               field.inputType == .url,
+               !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let url = URL(string: field.value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                Link(destination: url) {
+                    Text(displayValue)
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(.blue)
+                        .underline()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(2)
+                }
+                .copyableText(field.value)
+            } else {
+                Text(displayValue)
+                    .fontDesign(isRevealed ? .monospaced : .default)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(field.kind.isMultiline ? 8 : 2)
+                    .copyableText(isRevealed ? field.value : nil)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -510,12 +787,15 @@ struct SecretEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: SecretEditorDraft
-#if os(iOS)
-    @State private var fieldEditMode: EditMode = .inactive
-#endif
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingAuthentication = false
+    @State private var showingFieldNameEditor = false
+    @State private var showingNewFieldNameEditor = false
+    @State private var showingTemplateEditor = false
+    @State private var editingFieldID: UUID?
+    @State private var fieldNameDraft = ""
+    @State private var newFieldNameDraft = ""
     @State private var renamingAttachment: FileAttachment?
     @State private var renameText = ""
     @State private var showingError = false
@@ -541,42 +821,60 @@ struct SecretEditorView: View {
         NavigationStack {
             Form {
                 Section("条目信息") {
-                    LabeledContent("名称：") {
+                    LabeledContent("名称") {
                         IMESafeTextField(prompt: "例如 Cloudflare", text: $draft.item.title, alignment: .trailing)
                     }
-                    Picker("分类：", selection: $draft.item.category) {
+                    Picker("分类", selection: $draft.item.category) {
                         ForEach(SecretCategory.allCases) { category in
                             Label(category.title, systemImage: category.systemImage).tag(category)
                         }
                     }
                     .onChange(of: draft.item.category) { oldCategory, newCategory in
-                        guard isNew, fieldsMatchDefault(draft.item.fields, for: oldCategory) else { return }
-                        draft.item.fields = newCategory.defaultFields
+                        guard isNew,
+                              fieldsMatchTemplate(draft.item.fields, template: store.fieldTemplate(for: oldCategory)) else {
+                            return
+                        }
+                        draft.item.fields = store.makeFields(for: newCategory)
                     }
-                    LabeledContent("标签：") {
+                    Picker("用途", selection: $draft.item.purpose) {
+                        ForEach(SecretPurpose.allCases) { purpose in
+                            Text(purpose.title).tag(purpose)
+                        }
+                    }
+                    LabeledContent("标签") {
                         IMESafeTextField(prompt: "可选，用逗号分隔", text: $draft.item.tags, alignment: .trailing)
                     }
                 }
 
-                Section("字段") {
+                Section {
                     ForEach(draft.item.fields) { field in
                         let fieldBinding = binding(for: field.id, fallback: field)
-                        VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("字段名称：") {
-                                IMESafeTextField(
-                                    prompt: "例如授权姓名",
-                                    text: fieldBinding.label,
-                                    alignment: .trailing
-                                )
+                        fieldEditorRow(field: fieldBinding)
+                            .padding(.vertical, 4)
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    fieldBinding.wrappedValue.isSensitive.toggle()
+                                } label: {
+                                    Label(
+                                        fieldBinding.wrappedValue.isSensitive ? "显示" : "隐藏",
+                                        systemImage: fieldBinding.wrappedValue.isSensitive ? "eye" : "eye.slash"
+                                    )
+                                }
+                                .tint(.blue)
+                                Button {
+                                    beginFieldNameEdit(field)
+                                } label: {
+                                    Label("编辑名称", systemImage: "pencil")
+                                }
+                                .tint(.orange)
                             }
-                            Picker("输入形式：", selection: inputStyleBinding(for: fieldBinding)) {
-                                Text("单行文本").tag(SecretFieldKind.text)
-                                Text("多行文本").tag(SecretFieldKind.multiline)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    draft.item.fields.removeAll { $0.id == field.id }
+                                } label: {
+                                    Label("删除字段", systemImage: "trash")
+                                }
                             }
-                            Toggle("查看时隐藏内容", isOn: fieldBinding.isSensitive)
-                            fieldValueEditor(field: fieldBinding)
-                        }
-                        .padding(.vertical, 4)
                     }
                     .onDelete { offsets in
                         draft.item.fields.remove(atOffsets: offsets)
@@ -584,8 +882,22 @@ struct SecretEditorView: View {
                     .onMove { source, destination in
                         draft.item.fields.move(fromOffsets: source, toOffset: destination)
                     }
+                } header: {
+                    HStack {
+                        Text("字段")
+                        Spacer()
+                        Button("字段模板") {
+                            showingTemplateEditor = true
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.blue)
+                        .underline()
+                    }
+                }
+                Section {
                     Button {
-                        draft.item.fields.append(SecretField(label: "新字段", kind: .text))
+                        newFieldNameDraft = ""
+                        showingNewFieldNameEditor = true
                     } label: {
                         Label("添加字段", systemImage: "plus.circle")
                     }
@@ -608,11 +920,6 @@ struct SecretEditorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
-#if os(iOS)
-                ToolbarItem(placement: .automatic) {
-                    EditButton()
-                }
-#endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                         .disabled(!canSave)
@@ -621,6 +928,35 @@ struct SecretEditorView: View {
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
                     .iOSAuthenticationSheet()
+            }
+            .alert("编辑字段名称", isPresented: $showingFieldNameEditor) {
+                TextField("字段名称", text: $fieldNameDraft)
+                Button("取消", role: .cancel) {}
+                Button("保存") { saveFieldName() }
+            } message: {
+                Text("固定字段名称不会直接修改；保存后只更新显示名称。")
+            }
+            .alert("添加字段", isPresented: $showingNewFieldNameEditor) {
+                TextField("字段名称", text: $newFieldNameDraft)
+                Button("取消", role: .cancel) {}
+                Button("添加") { addNewField() }
+            } message: {
+                Text("请输入新字段的显示名称。")
+            }
+            .sheet(isPresented: $showingTemplateEditor) {
+                SecretFieldTemplateEditorView(
+                    category: draft.item.category,
+                    template: store.fieldTemplate(for: draft.item.category)
+                ) { template in
+                    let previousTemplate = store.fieldTemplate(for: draft.item.category)
+                    let shouldRefreshDraft = isNew
+                        && fieldsMatchTemplate(draft.item.fields, template: previousTemplate)
+                    store.upsertFieldTemplate(template)
+                    if shouldRefreshDraft {
+                        draft.item.fields = template.makeFields()
+                    }
+                }
+                .iOSLargeSheet()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -653,9 +989,6 @@ struct SecretEditorView: View {
                 Text("文件格式会保持不变。")
             }
         }
-#if os(iOS)
-        .environment(\.editMode, $fieldEditMode)
-#endif
     }
 
     private func binding(for id: UUID, fallback: SecretField) -> Binding<SecretField> {
@@ -672,35 +1005,86 @@ struct SecretEditorView: View {
         )
     }
 
-    private func inputStyleBinding(for field: Binding<SecretField>) -> Binding<SecretFieldKind> {
-        Binding(
-            get: {
-                field.wrappedValue.kind.isMultiline ? .multiline : .text
-            },
-            set: { style in
-                field.wrappedValue.kind = style
+    @ViewBuilder
+    private func fieldEditorRow(field: Binding<SecretField>) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(field.wrappedValue.label.isEmpty ? "未命名字段" : field.wrappedValue.label)
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
+            switch field.wrappedValue.inputType {
+            case .date:
+                DatePicker(
+                    "",
+                    selection: dateBinding(for: field),
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .datePickerStyle(.compact)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .text, .url:
+                IMESafeMultilineTextField(
+                    prompt: "请在此处键入\(field.wrappedValue.label)",
+                    text: field.value,
+                    minHeight: 34,
+                    maxHeight: 180
+                )
             }
+        }
+        .onChange(of: field.wrappedValue.value) { _, value in
+            if field.wrappedValue.inputType == .text,
+               value.contains(where: { $0.isNewline }) {
+                field.wrappedValue.kind = .multiline
+            } else if field.wrappedValue.inputType == .text,
+                      field.wrappedValue.kind == .multiline {
+                field.wrappedValue.kind = .text
+            }
+        }
+    }
+
+    private func dateBinding(for field: Binding<SecretField>) -> Binding<Date> {
+        Binding(
+            get: { Self.dateFormatter.date(from: field.wrappedValue.value) ?? Date() },
+            set: { field.wrappedValue.value = Self.dateFormatter.string(from: $0) }
         )
     }
 
-    private func fieldsMatchDefault(_ fields: [SecretField], for category: SecretCategory) -> Bool {
-        let defaults = category.defaultFields
-        guard fields.count == defaults.count else { return false }
-        return zip(fields, defaults).allSatisfy { field, template in
-            field.label == template.label
-                && field.value.isEmpty
-                && field.kind == template.kind
-                && field.isSensitive == template.isSensitive
-        }
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private func beginFieldNameEdit(_ field: SecretField) {
+        editingFieldID = field.id
+        fieldNameDraft = field.label
+        showingFieldNameEditor = true
     }
 
-    @ViewBuilder
-    private func fieldValueEditor(field: Binding<SecretField>) -> some View {
-        if field.wrappedValue.kind.isMultiline {
-            IMESafeMultilineTextField(prompt: "字段内容", text: field.value)
-        } else {
-            IMESafeTextField(prompt: "字段内容", text: field.value, alignment: .leading)
-        }
+    private func saveFieldName() {
+        guard let editingFieldID else { return }
+        let label = fieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, let index = draft.item.fields.firstIndex(where: { $0.id == editingFieldID }) else { return }
+        draft.item.fields[index].label = label
+        self.editingFieldID = nil
+    }
+
+    private func addNewField() {
+        let label = newFieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return }
+        draft.item.fields.append(SecretField(label: label, kind: .text, inputType: .text, isSensitive: true))
+    }
+
+    private func fieldsMatchTemplate(_ fields: [SecretField], template: SecretFieldTemplate) -> Bool {
+        let normalizedFields = fields
+            .filter { $0.value.isEmpty }
+            .map { "\($0.label)|\($0.kind.rawValue)|\($0.inputType.rawValue)|\($0.isSensitive)" }
+            .sorted()
+        let normalizedTemplate = template.fields
+            .map { "\($0.label)|\($0.kind.rawValue)|\($0.inputType.rawValue)|\($0.isSensitive)" }
+            .sorted()
+        return fields.count == template.fields.count && normalizedFields == normalizedTemplate
     }
 
     private var attachmentSection: some View {

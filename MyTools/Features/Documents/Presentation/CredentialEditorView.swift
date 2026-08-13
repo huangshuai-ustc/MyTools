@@ -37,7 +37,9 @@ struct CredentialEditorView: View {
 
     private var canSave: Bool {
         (draft.type != .other || !draft.customTypeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && (draft.type != .identityCard || draft.validity.kind != .unspecified)
+            && draft.issuedAt != nil
+            && CredentialValidityKind.isAllowed(draft.validity.kind, for: draft.type)
+            && (draft.validity.kind != .dateRange || draft.validity.endDate != nil)
             && draft.fields.allSatisfy {
                 !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -154,60 +156,47 @@ struct CredentialEditorView: View {
             labeledField("持有人", prompt: "姓名或权利人", text: $draft.holderName)
             labeledField("证件号码", prompt: "可选", text: $draft.documentNumber)
             labeledField("签发机构", prompt: "可选", text: $draft.issuingAuthority)
-            optionalDateRow("签发日期", date: $draft.issuedAt)
+            requiredDateRow("签发日期", date: $draft.issuedAt)
+                .onChange(of: draft.issuedAt) { _, value in
+                    if draft.validity.kind == .dateRange {
+                        draft.validity.startDate = value
+                    }
+                }
         }
     }
 
     private var validitySection: some View {
         Section("有效期") {
-            if draft.type == .identityCard {
-                Picker("身份证期限", selection: $draft.validity.kind) {
-                    if draft.validity.kind == .unspecified {
-                        Text("请选择期限（必填）")
-                            .tag(CredentialValidityKind.unspecified)
-                            .disabled(true)
-                    }
-                    ForEach(identityCardValidityOptions) { kind in
-                        Text(
-                            kind == .dateRange
-                                ? "固定期限（已有记录）"
-                                : kind.title
-                        )
-                        .tag(kind)
-                    }
+            Picker("期限", selection: $draft.validity.kind) {
+                if draft.validity.kind == .unspecified {
+                    Text("请选择期限（必填）")
+                        .tag(CredentialValidityKind.unspecified)
+                        .disabled(true)
                 }
-                .pickerStyle(.menu)
-                .onChange(of: draft.validity.kind) { _, kind in
-                    validityKindDidChange(kind)
+                ForEach(validityOptions) { kind in
+                    Text(kind == .dateRange ? "固定期限（已有记录）" : kind.title).tag(kind)
                 }
-                if draft.validity.kind.durationYears != nil {
-                    if let endDate = draft.expirationDate() {
-                        LabeledContent("自动计算到期日", value: AppDateFormatter.string(from: endDate))
-                    } else {
-                        Text("设置签发日期后自动计算到期日。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if draft.validity.kind == .dateRange {
-                    optionalDateRow("开始日期", date: $draft.validity.startDate)
-                    expirationDatePicker
+            }
+            .pickerStyle(.menu)
+            .onChange(of: draft.validity.kind) { _, kind in
+                validityKindDidChange(kind)
+            }
+            if draft.validity.kind.durationYears != nil {
+                if let endDate = draft.expirationDate() {
+                    LabeledContent("自动计算到期日", value: AppDateFormatter.string(from: endDate))
+                    Text(CredentialValidityKind.endDateRule(for: draft.type).title)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("到期日将从签发日期自动计算。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-            } else {
-                Picker("期限", selection: $draft.validity.kind) {
-                    ForEach(CredentialValidityKind.standardOptions) { kind in
-                        Text(kind.title).tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: draft.validity.kind) { _, kind in
-                    validityKindDidChange(kind)
-                }
-                if draft.validity.kind == .dateRange || draft.validity.kind == .permanent {
-                    optionalDateRow("开始日期", date: $draft.validity.startDate)
-                }
-                if draft.validity.kind == .dateRange {
-                    expirationDatePicker
-                }
+            } else if draft.validity.kind == .dateRange {
+                LabeledContent("有效期起始", value: issuedDateText)
+                expirationDatePicker
+            } else if draft.validity.kind == .permanent {
+                LabeledContent("生效日期", value: issuedDateText)
             }
 
             if draft.expirationDate() != nil {
@@ -223,11 +212,16 @@ struct CredentialEditorView: View {
         }
     }
 
-    private var identityCardValidityOptions: [CredentialValidityKind] {
-        if draft.validity.kind == .dateRange {
-            return CredentialValidityKind.identityCardOptions.dropLast() + [.dateRange, .permanent]
+    private var validityOptions: [CredentialValidityKind] {
+        var options = CredentialValidityKind.options(for: draft.type)
+        if draft.validity.kind == .dateRange && !options.contains(.dateRange) {
+            options.insert(.dateRange, at: 0)
         }
-        return CredentialValidityKind.identityCardOptions
+        return options
+    }
+
+    private var issuedDateText: String {
+        draft.issuedAt.map { AppDateFormatter.string(from: $0) } ?? "请先填写签发日期"
     }
 
     private var expirationDatePicker: some View {
@@ -373,6 +367,17 @@ struct CredentialEditorView: View {
         }
     }
 
+    private func requiredDateRow(_ title: String, date: Binding<Date?>) -> some View {
+        DatePicker(
+            title,
+            selection: Binding(
+                get: { date.wrappedValue ?? Date() },
+                set: { date.wrappedValue = $0 }
+            ),
+            displayedComponents: .date
+        )
+    }
+
     private func fieldBinding(for id: UUID, fallback: CredentialField) -> Binding<CredentialField> {
         Binding(
             get: { draft.fields.first(where: { $0.id == id }) ?? fallback },
@@ -403,20 +408,21 @@ struct CredentialEditorView: View {
         if draft.title == oldType.title {
             draft.title = newType.title
         }
-        if newType == .identityCard,
-           draft.validity.kind == .dateRange,
-           let startDate = draft.issuedAt ?? draft.validity.startDate,
-           let endDate = draft.validity.endDate,
-           let term = CredentialValidityKind.identityCardTerm(from: startDate, to: endDate) {
-            draft.issuedAt = startDate
-            draft.validity = CredentialValidity(kind: term)
-        } else if newType != .identityCard, draft.validity.kind.durationYears != nil {
-            let endDate = draft.expirationDate()
-            draft.validity = CredentialValidity(
-                kind: .dateRange,
-                startDate: draft.issuedAt,
-                endDate: endDate
-            )
+        let previousEndDate = draft.expirationDate()
+        if CredentialValidityKind.isAlwaysPermanent(for: newType) {
+            draft.validity = CredentialValidity(kind: .permanent)
+        } else if !CredentialValidityKind.options(for: newType).contains(draft.validity.kind) {
+            if let previousEndDate {
+                draft.validity = CredentialValidity(
+                    kind: .dateRange,
+                    startDate: draft.issuedAt,
+                    endDate: previousEndDate
+                )
+            } else {
+                draft.validity = CredentialValidity(
+                    kind: CredentialValidityKind.options(for: newType).first ?? .permanent
+                )
+            }
         }
     }
 
@@ -441,8 +447,8 @@ struct CredentialEditorView: View {
             draft.validity.endDate = nil
             draft.expiryReminder.isEnabled = false
         case .dateRange:
-            draft.validity.endDate = draft.validity.endDate ?? Date()
-        case .fiveYears, .tenYears, .twentyYears:
+            draft.validity.startDate = draft.issuedAt
+        case .fiveYears, .sixYears, .tenYears, .twentyYears:
             draft.validity.startDate = nil
             draft.validity.endDate = nil
             if draft.issuedAt == nil {
@@ -540,15 +546,20 @@ struct CredentialEditorView: View {
                 return
             }
         }
-        if draft.type == .identityCard,
-           draft.validity.kind == .unspecified {
-            errorMessage = "请选择身份证有效期时长。"
+        if draft.issuedAt == nil {
+            errorMessage = "请填写签发日期。"
             return
         }
-        if draft.type == .identityCard,
-           draft.validity.kind.durationYears != nil,
-           draft.issuedAt == nil {
-            errorMessage = "请填写签发日期，以便自动计算身份证到期日。"
+        if draft.validity.kind == .dateRange,
+           let startDate = draft.validity.startDate,
+           let issuedAt = draft.issuedAt,
+           Calendar.autoupdatingCurrent.startOfDay(for: startDate)
+                != Calendar.autoupdatingCurrent.startOfDay(for: issuedAt) {
+            errorMessage = "有效期起始日期必须与签发日期一致。"
+            return
+        }
+        if !CredentialValidityKind.isAllowed(draft.validity.kind, for: draft.type) {
+            errorMessage = "请选择适用于该证照类型的期限。"
             return
         }
         guard auth.isAdmin else {

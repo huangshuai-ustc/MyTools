@@ -224,27 +224,31 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     }
 
     private func normalizeValidity(in document: inout CredentialDocument) {
-        if document.type == .identityCard {
-            let startDate = document.issuedAt ?? document.validity.startDate
-            if document.issuedAt == nil {
-                document.issuedAt = startDate
-            }
-            if document.validity.kind == .dateRange,
-               let startDate,
-               let endDate = document.validity.endDate,
-               let term = CredentialValidityKind.identityCardTerm(
-                   from: startDate,
-                   to: endDate
-               ) {
-                document.validity.kind = term
-            }
-        } else if document.validity.kind.durationYears != nil {
+        if CredentialValidityKind.isAlwaysPermanent(for: document.type) {
+            document.validity = CredentialValidity(kind: .permanent)
+            return
+        }
+
+        if document.validity.kind == .dateRange,
+           let startDate = document.issuedAt ?? document.validity.startDate,
+           let endDate = document.validity.endDate,
+           let term = CredentialValidityKind.fixedTerm(
+               for: document.type,
+               from: startDate,
+               to: endDate
+           ) {
+            document.issuedAt = document.issuedAt ?? startDate
+            document.validity.kind = term
+        } else if document.validity.kind.durationYears != nil,
+                  !CredentialValidityKind.options(for: document.type).contains(document.validity.kind) {
             let endDate = document.expirationDate()
             document.validity = CredentialValidity(
                 kind: .dateRange,
                 startDate: document.issuedAt,
                 endDate: endDate
             )
+        } else if document.validity.kind == .dateRange {
+            document.validity.startDate = document.issuedAt ?? document.validity.startDate
         }
         document.validity.normalize()
     }
@@ -256,7 +260,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         case .permanent:
             return (document.type == .identityCard && document.validity.startDate != nil ? 1 : 0)
                 + (document.validity.endDate != nil ? 1 : 0)
-        case .unspecified, .fiveYears, .tenYears, .twentyYears:
+        case .unspecified, .fiveYears, .sixYears, .tenYears, .twentyYears:
             return (document.validity.startDate != nil ? 1 : 0)
                 + (document.validity.endDate != nil ? 1 : 0)
         }
@@ -271,7 +275,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
                 document.validity.startDate = nil
             }
             document.validity.endDate = nil
-        case .unspecified, .fiveYears, .tenYears, .twentyYears:
+        case .unspecified, .fiveYears, .sixYears, .tenYears, .twentyYears:
             document.validity.startDate = nil
             document.validity.endDate = nil
         }

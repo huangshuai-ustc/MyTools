@@ -4,7 +4,6 @@ import Foundation
 enum FoodPlaceStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case tried
     case wantToTry
-    case notTried
 
     var id: Self { self }
 
@@ -12,7 +11,6 @@ enum FoodPlaceStatus: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .tried: return "吃过"
         case .wantToTry: return "想吃"
-        case .notTried: return "还没吃"
         }
     }
 
@@ -20,7 +18,6 @@ enum FoodPlaceStatus: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .tried: return "checkmark.circle.fill"
         case .wantToTry: return "heart.fill"
-        case .notTried: return "bookmark.fill"
         }
     }
 }

@@ -50,27 +50,28 @@ struct IMESafeTextField: View {
 struct IMESafeMultilineTextField: View {
     let prompt: String
     @Binding var text: String
+    var minHeight: CGFloat = IMEMultilineMetrics.minimumHeight
+    var maxHeight: CGFloat = IMEMultilineMetrics.maximumHeight
 
     var body: some View {
 #if os(iOS)
-        IMESafeUITextView(prompt: prompt, text: $text)
+        IMESafeUITextView(prompt: prompt, text: $text, minHeight: minHeight, maxHeight: maxHeight)
             .frame(
-                minHeight: IMEMultilineMetrics.minimumHeight,
-                maxHeight: IMEMultilineMetrics.maximumHeight
+                minHeight: minHeight,
+                maxHeight: maxHeight
             )
 #else
         TextField(prompt, text: $text, axis: .vertical)
-            .lineLimit(3...6)
+            .lineLimit(minHeight <= 40 ? 1...6 : 3...6)
+            .frame(minHeight: minHeight, maxHeight: maxHeight)
 #endif
     }
 }
 
-#if os(iOS)
 private enum IMEMultilineMetrics {
     static let minimumHeight: CGFloat = 84
     static let maximumHeight: CGFloat = 220
 }
-#endif
 
 #if os(iOS)
 private struct IMESafeUITextField: UIViewRepresentable {
@@ -232,6 +233,8 @@ private final class IMEPlaceholderTextView: UITextView {
 private struct IMESafeUITextView: UIViewRepresentable {
     let prompt: String
     @Binding var text: String
+    let minHeight: CGFloat
+    let maxHeight: CGFloat
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -276,8 +279,8 @@ private struct IMESafeUITextView: UIViewRepresentable {
         return CGSize(
             width: width,
             height: min(
-                max(fittingHeight, IMEMultilineMetrics.minimumHeight),
-                IMEMultilineMetrics.maximumHeight
+                max(fittingHeight, minHeight),
+                maxHeight
             )
         )
     }

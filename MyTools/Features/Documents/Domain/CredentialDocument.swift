@@ -9,6 +9,9 @@ enum CredentialDocumentType: String, Codable, CaseIterable, Identifiable, Sendab
     case educationCertificate
     case degreeCertificate
     case propertyOwnershipCertificate
+    case birthMedicalCertificate
+    case vaccinationCertificate
+    case professionalQualificationCertificate
     case other
 
     var id: Self { self }
@@ -22,6 +25,9 @@ enum CredentialDocumentType: String, Codable, CaseIterable, Identifiable, Sendab
         case .educationCertificate: return "学历证"
         case .degreeCertificate: return "学位证"
         case .propertyOwnershipCertificate: return "房产证"
+        case .birthMedicalCertificate: return "出生医学证明"
+        case .vaccinationCertificate: return "预防接种证"
+        case .professionalQualificationCertificate: return "职业资格证书"
         case .other: return "自定义"
         }
     }
@@ -35,6 +41,9 @@ enum CredentialDocumentType: String, Codable, CaseIterable, Identifiable, Sendab
         case .educationCertificate: return "graduationcap.fill"
         case .degreeCertificate: return "scroll.fill"
         case .propertyOwnershipCertificate: return "house.fill"
+        case .birthMedicalCertificate: return "figure.and.child.holdinghands"
+        case .vaccinationCertificate: return "cross.case.fill"
+        case .professionalQualificationCertificate: return "person.badge.key.fill"
         case .other: return "doc.badge.gearshape"
         }
     }
@@ -50,17 +59,25 @@ enum CredentialDocumentType: String, Codable, CaseIterable, Identifiable, Sendab
         case .passport:
             return [
                 CredentialField(label: "国籍", isSensitive: false),
-                CredentialField(label: "出生地")
+                CredentialField(label: "性别", isSensitive: false),
+                CredentialField(label: "出生地", isSensitive: false),
+                CredentialField(label: "签发地点", isSensitive: false)
             ]
         case .hongKongMacaoPermit:
             return [
-                CredentialField(label: "出生地"),
-                CredentialField(label: "换证次数", isSensitive: false)
+                CredentialField(label: "性别", isSensitive: false),
+                CredentialField(label: "出生日期", isSensitive: false),
+                CredentialField(label: "签发次数", isSensitive: false),
+                CredentialField(label: "签注信息", kind: .multiline, isSensitive: false)
             ]
         case .driversLicense:
             return [
+                CredentialField(label: "性别", isSensitive: false),
+                CredentialField(label: "出生日期", isSensitive: false),
                 CredentialField(label: "准驾车型", isSensitive: false),
+                CredentialField(label: "初次领证日期", isSensitive: false),
                 CredentialField(label: "档案编号"),
+                CredentialField(label: "国籍", isSensitive: false),
                 CredentialField(label: "住址", kind: .multiline)
             ]
         case .educationCertificate:
@@ -68,20 +85,62 @@ enum CredentialDocumentType: String, Codable, CaseIterable, Identifiable, Sendab
                 CredentialField(label: "学校", isSensitive: false),
                 CredentialField(label: "专业", isSensitive: false),
                 CredentialField(label: "学历层次", isSensitive: false),
-                CredentialField(label: "学习形式", isSensitive: false)
+                CredentialField(label: "学习形式", isSensitive: false),
+                CredentialField(label: "学习起止年月", isSensitive: false)
             ]
         case .degreeCertificate:
             return [
                 CredentialField(label: "授予单位", isSensitive: false),
                 CredentialField(label: "学位类别", isSensitive: false),
-                CredentialField(label: "专业", isSensitive: false)
+                CredentialField(label: "专业", isSensitive: false),
+                CredentialField(label: "授予日期", isSensitive: false)
             ]
         case .propertyOwnershipCertificate:
             return [
                 CredentialField(label: "坐落", kind: .multiline),
                 CredentialField(label: "不动产单元号"),
                 CredentialField(label: "权利类型", isSensitive: false),
-                CredentialField(label: "共有情况", isSensitive: false)
+                CredentialField(label: "共有情况", isSensitive: false),
+                CredentialField(label: "面积", isSensitive: false),
+                CredentialField(label: "用途", isSensitive: false),
+                CredentialField(label: "权利性质", isSensitive: false),
+                CredentialField(label: "使用期限", isSensitive: false)
+            ]
+        case .birthMedicalCertificate:
+            return [
+                CredentialField(label: "新生儿姓名", isSensitive: false),
+                CredentialField(label: "新生儿性别", isSensitive: false),
+                CredentialField(label: "出生日期", isSensitive: false),
+                CredentialField(label: "出生时间", isSensitive: false),
+                CredentialField(label: "出生地点", isSensitive: false),
+                CredentialField(label: "出生孕周", isSensitive: false),
+                CredentialField(label: "出生体重", isSensitive: false),
+                CredentialField(label: "母亲姓名", isSensitive: false),
+                CredentialField(label: "母亲证件号码"),
+                CredentialField(label: "父亲姓名", isSensitive: false),
+                CredentialField(label: "父亲证件号码"),
+                CredentialField(label: "签发机构", isSensitive: false)
+            ]
+        case .vaccinationCertificate:
+            return [
+                CredentialField(label: "儿童姓名", isSensitive: false),
+                CredentialField(label: "出生日期", isSensitive: false),
+                CredentialField(label: "性别", isSensitive: false),
+                CredentialField(label: "监护人", isSensitive: false),
+                CredentialField(label: "监护人联系方式"),
+                CredentialField(label: "居住地址", kind: .multiline),
+                CredentialField(label: "接种单位", isSensitive: false),
+                CredentialField(label: "接种记录", kind: .multiline, isSensitive: false),
+                CredentialField(label: "异常反应记录", kind: .multiline)
+            ]
+        case .professionalQualificationCertificate:
+            return [
+                CredentialField(label: "职业（工种）", isSensitive: false),
+                CredentialField(label: "资格类别", isSensitive: false),
+                CredentialField(label: "资格等级", isSensitive: false),
+                CredentialField(label: "任教学科或从业范围", isSensitive: false),
+                CredentialField(label: "注册或复审信息", kind: .multiline, isSensitive: false),
+                CredentialField(label: "发证机关", isSensitive: false)
             ]
         case .other:
             return []
@@ -149,6 +208,7 @@ struct CredentialAttachment: Identifiable, Codable, Equatable, Sendable {
 enum CredentialValidityKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case unspecified
     case fiveYears
+    case sixYears
     case tenYears
     case twentyYears
     case dateRange
@@ -160,6 +220,7 @@ enum CredentialValidityKind: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .unspecified: return "暂不设置"
         case .fiveYears: return "五年"
+        case .sixYears: return "六年"
         case .tenYears: return "十年"
         case .twentyYears: return "二十年"
         case .dateRange: return "固定期限"
@@ -170,26 +231,74 @@ enum CredentialValidityKind: String, Codable, CaseIterable, Identifiable, Sendab
     var durationYears: Int? {
         switch self {
         case .fiveYears: return 5
+        case .sixYears: return 6
         case .tenYears: return 10
         case .twentyYears: return 20
         case .unspecified, .dateRange, .permanent: return nil
         }
     }
 
-    static let identityCardOptions: [Self] = [
-        .fiveYears, .tenYears, .twentyYears, .permanent
-    ]
+    /// The printed validity end date is not uniform across Chinese credentials.
+    /// Identity cards, permits and driver's licenses use the anniversary date;
+    /// ordinary passports expire on the day before that anniversary.
+    enum EndDateRule: String, Codable, Sendable {
+        case anniversary
+        case dayBeforeAnniversary
 
-    static let standardOptions: [Self] = [.unspecified, .dateRange, .permanent]
+        var title: String {
+            switch self {
+            case .anniversary:
+                return "签发日到年限届满日"
+            case .dayBeforeAnniversary:
+                return "签发日到年限届满日前一日"
+            }
+        }
+    }
 
-    static func identityCardTerm(
+    static func endDateRule(for type: CredentialDocumentType) -> EndDateRule {
+        switch type {
+        case .passport:
+            return .dayBeforeAnniversary
+        case .identityCard, .hongKongMacaoPermit, .driversLicense,
+             .educationCertificate, .degreeCertificate, .propertyOwnershipCertificate,
+             .birthMedicalCertificate, .vaccinationCertificate,
+             .professionalQualificationCertificate, .other:
+            return .anniversary
+        }
+    }
+
+    static func expirationDate(
+        from startDate: Date,
+        type: CredentialDocumentType,
+        years: Int,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Date? {
+        guard let anniversary = calendar.date(byAdding: .year, value: years, to: startDate) else {
+            return nil
+        }
+        switch endDateRule(for: type) {
+        case .anniversary:
+            return anniversary
+        case .dayBeforeAnniversary:
+            return calendar.date(byAdding: .day, value: -1, to: anniversary)
+        }
+    }
+
+    static func fixedTerm(
+        for type: CredentialDocumentType,
         from startDate: Date,
         to endDate: Date,
         calendar: Calendar = .autoupdatingCurrent
     ) -> Self? {
-        for kind in [Self.fiveYears, .tenYears, .twentyYears] {
+        for kind in [Self.fiveYears, .sixYears, .tenYears, .twentyYears]
+            where options(for: type).contains(kind) {
             guard let years = kind.durationYears,
-                  let expected = calendar.date(byAdding: .year, value: years, to: startDate) else {
+                  let expected = expirationDate(
+                      from: startDate,
+                      type: type,
+                      years: years,
+                      calendar: calendar
+                  ) else {
                 continue
             }
             let difference = calendar.dateComponents(
@@ -197,9 +306,54 @@ enum CredentialValidityKind: String, Codable, CaseIterable, Identifiable, Sendab
                 from: calendar.startOfDay(for: expected),
                 to: calendar.startOfDay(for: endDate)
             ).day ?? .max
-            if abs(difference) <= 1 { return kind }
+            // Do not blur the two official display conventions: a passport
+            // ending on the anniversary date is not a valid day-before term.
+            if difference == 0 { return kind }
         }
         return nil
+    }
+
+    static let identityCardOptions: [Self] = [
+        .fiveYears, .tenYears, .twentyYears, .permanent
+    ]
+
+    static let passportOptions: [Self] = [.fiveYears, .tenYears]
+    static let hongKongMacaoPermitOptions: [Self] = [.fiveYears, .tenYears]
+    static let driversLicenseOptions: [Self] = [.sixYears, .tenYears, .permanent]
+    static let standardOptions: [Self] = [.dateRange, .permanent]
+
+    static func options(for type: CredentialDocumentType) -> [Self] {
+        switch type {
+        case .identityCard: return identityCardOptions
+        case .passport: return passportOptions
+        case .hongKongMacaoPermit: return hongKongMacaoPermitOptions
+        case .driversLicense: return driversLicenseOptions
+        case .educationCertificate, .degreeCertificate, .propertyOwnershipCertificate,
+             .birthMedicalCertificate, .vaccinationCertificate:
+            return [.permanent]
+        case .professionalQualificationCertificate, .other:
+            return standardOptions
+        }
+    }
+
+    static func isAlwaysPermanent(for type: CredentialDocumentType) -> Bool {
+        switch type {
+        case .birthMedicalCertificate, .vaccinationCertificate: return true
+        default: return false
+        }
+    }
+
+    static func isAllowed(_ kind: Self, for type: CredentialDocumentType) -> Bool {
+        if isAlwaysPermanent(for: type) { return kind == .permanent }
+        return options(for: type).contains(kind) || kind == .dateRange
+    }
+
+    static func identityCardTerm(
+        from startDate: Date,
+        to endDate: Date,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Self? {
+        fixedTerm(for: .identityCard, from: startDate, to: endDate, calendar: calendar)
     }
 }
 
@@ -215,7 +369,7 @@ struct CredentialValidity: Codable, Equatable, Sendable {
             endDate = nil
         case .dateRange:
             break
-        case .fiveYears, .tenYears, .twentyYears, .permanent:
+        case .fiveYears, .sixYears, .tenYears, .twentyYears, .permanent:
             startDate = nil
             endDate = nil
         }
@@ -356,6 +510,9 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
         self.expiryReminder = expiryReminder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        if CredentialValidityKind.isAlwaysPermanent(for: type) {
+            self.validity = CredentialValidity(kind: .permanent)
+        }
     }
 
     init(versionOf source: CredentialDocument) {
@@ -515,7 +672,12 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
 
     func expirationDate(calendar: Calendar = .autoupdatingCurrent) -> Date? {
         if let years = validity.kind.durationYears, let issuedAt {
-            return calendar.date(byAdding: .year, value: years, to: issuedAt)
+            return CredentialValidityKind.expirationDate(
+                from: issuedAt,
+                type: type,
+                years: years,
+                calendar: calendar
+            )
         }
         return validity.kind == .dateRange ? validity.endDate : nil
     }
@@ -541,7 +703,7 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
             return .unspecified
         case .permanent:
             return .permanent
-        case .fiveYears, .tenYears, .twentyYears, .dateRange:
+        case .fiveYears, .sixYears, .tenYears, .twentyYears, .dateRange:
             guard let endDate = expirationDate(calendar: calendar) else { return .unspecified }
             let today = calendar.startOfDay(for: date)
             let expiryDay = calendar.startOfDay(for: endDate)

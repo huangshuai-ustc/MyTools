@@ -55,7 +55,7 @@ struct BillImportView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(record.displayTitle)
                                         .lineLimit(1)
-                                    Text(AppDateFormatter.dateTimeString(from: record.occurredAt))
+                                    Text(AppDateFormatter.dateTimeWithoutSecondsString(from: record.occurredAt))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }

@@ -8,6 +8,7 @@ struct BillEditorView: View {
     @State private var draft: BillRecord
     @State private var amountText: String
     @State private var tagsText: String
+    @State private var secondsText: String
     @State private var showingAuthentication = false
     @State private var errorMessage: String?
 
@@ -17,6 +18,7 @@ struct BillEditorView: View {
             initialValue: record.amount == 0 ? "" : NSDecimalNumber(decimal: record.amount).stringValue
         )
         _tagsText = State(initialValue: record.tags.joined(separator: "，"))
+        _secondsText = State(initialValue: String(Calendar.autoupdatingCurrent.component(.second, from: record.occurredAt)))
     }
 
     private var isExisting: Bool {
@@ -46,7 +48,20 @@ struct BillEditorView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    DatePicker("交易时间", selection: $draft.occurredAt)
+                    LabeledContent("交易时间") {
+                        HStack(spacing: 6) {
+                            DatePicker("", selection: $draft.occurredAt, displayedComponents: [.date, .hourAndMinute])
+                                .labelsHidden()
+                            Text(":")
+                                .foregroundStyle(.secondary)
+                            TextField("00", text: $secondsText)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 38)
+#if os(iOS)
+                                .keyboardType(.numberPad)
+#endif
+                        }
+                    }
                     Picker("状态", selection: $draft.status) {
                         ForEach(BillTransactionStatus.allCases) { status in
                             Text(status.title).tag(status)
@@ -137,9 +152,24 @@ struct BillEditorView: View {
     }
 
     private func save() {
+        applySeconds()
         draft.tags = tagsText.components(separatedBy: CharacterSet(charactersIn: ",，、"))
         store.upsert(draft)
         dismiss()
+    }
+
+    private func applySeconds() {
+        guard let seconds = Int(secondsText.trimmingCharacters(in: .whitespacesAndNewlines)), (0...59).contains(seconds) else {
+            return
+        }
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = .autoupdatingCurrent
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: draft.occurredAt)
+        var updated = components
+        updated.second = seconds
+        if let date = calendar.date(from: updated) {
+            draft.occurredAt = date
+        }
     }
 }
 

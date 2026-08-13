@@ -284,6 +284,9 @@ final class StockRefreshAppDelegate: NSObject, UIApplicationDelegate {
             }
             StockRefreshCoordinator.shared.handleBackgroundRefresh(refreshTask)
         }
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        SportsLotteryRefreshCoordinator.registerBackgroundTask()
+#endif
         return true
     }
 }

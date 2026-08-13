@@ -9,7 +9,7 @@ enum AppStoreBackupMerger {
     ) -> VaultBackupPayload {
         let modules = imported.includedModules.intersection(
             CompiledToolModules.available(from: enabledModules)
-        )
+        ).intersection(ToolModuleCatalog.backupModules)
         var merged = localVault
 
 #if MYTOOLS_FEATURE_FINANCE
@@ -77,8 +77,24 @@ enum AppStoreBackupMerger {
 #endif
 
 #if MYTOOLS_FEATURE_SECRETS
+        if modules.contains(.secrets), !imported.vault.secretFieldTemplates.isEmpty {
+            merged.secretFieldTemplates = imported.vault.secretFieldTemplates
+        }
+        let importedSecrets: [SecretVaultValue] = modules.contains(.secrets)
+            ? imported.secrets.map { item in
+                guard item.fields.isEmpty else { return item }
+                let template = imported.vault.secretFieldTemplates.first {
+                    $0.category == item.category
+                } ?? localVault.secretFieldTemplates.first {
+                    $0.category == item.category
+                } ?? SecretFieldTemplate(category: item.category, fields: item.category.defaultFields)
+                var normalized = item
+                normalized.fields = template.makeFields()
+                return normalized
+            }
+            : []
         let secrets = modules.contains(.secrets)
-            ? mergeByID(local: localSecrets, imported: imported.secrets)
+            ? mergeByID(local: localSecrets, imported: importedSecrets)
             : localSecrets
 #else
         let secrets = localSecrets

@@ -46,9 +46,17 @@ struct RootView: View {
             StockRefreshCoordinator.shared.update(scenePhase: scenePhase)
         }
 #endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        .onAppear {
+            SportsLotteryRefreshCoordinator.shared.update(scenePhase: scenePhase)
+        }
+#endif
         .onChange(of: scenePhase) { _, phase in
 #if MYTOOLS_FEATURE_STOCKS
             StockRefreshCoordinator.shared.update(scenePhase: phase)
+#endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+            SportsLotteryRefreshCoordinator.shared.update(scenePhase: phase)
 #endif
             if phase == .background {
                 DiagnosticLogger.shared.markEnteredBackground()

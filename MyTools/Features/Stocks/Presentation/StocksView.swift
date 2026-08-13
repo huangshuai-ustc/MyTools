@@ -176,7 +176,6 @@ struct StocksView: View {
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
     @State private var watchRoute: WatchRoute?
-    @State private var showsNoPositionStocks = false
     @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
     @AppStorage("stock-sort-direction-v2") private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
 
@@ -279,27 +278,20 @@ struct StocksView: View {
                 }
             }
 
-            Section(ToolModule.myStocks.title) {
-                if displayedStocks.isEmpty {
+            if displayedStocks.isEmpty && noPositionStocks.isEmpty {
+                Section("当前持仓（\(displayedStocks.count)）") {
                     ContentUnavailableView(
                         emptyStocksTitle,
                         systemImage: emptyStocksSystemImage
                     )
                 }
-                stockLinks(displayedStocks, allocations: allocations)
-                if !showsNoPositionStocks, !noPositionStocks.isEmpty {
-                    HiddenItemsVisibilityButton(
-                        itemsDescription: "\(noPositionStocks.count) 只无持仓股票",
-                        isShowing: $showsNoPositionStocks
-                    )
+            } else if !displayedStocks.isEmpty {
+                Section("当前持仓（\(displayedStocks.count)）") {
+                    stockLinks(displayedStocks, allocations: allocations)
                 }
             }
-            if showsNoPositionStocks, !noPositionStocks.isEmpty {
-                Section("无持仓股票（\(noPositionStocks.count)）") {
-                    HiddenItemsVisibilityButton(
-                        itemsDescription: "\(noPositionStocks.count) 只无持仓股票",
-                        isShowing: $showsNoPositionStocks
-                    )
+            if !noPositionStocks.isEmpty {
+                Section("无持仓或仅看盘（\(noPositionStocks.count)）") {
                     stockLinks(noPositionStocks, allocations: allocations)
                 }
             }
@@ -394,7 +386,6 @@ struct StocksView: View {
             StockRefreshCoordinator.shared.setStocksPageVisible(false)
             enteringRefreshTask?.cancel()
             enteringRefreshTask = nil
-            showsNoPositionStocks = false
             didRefreshOnCurrentAppearance = false
         }
     }

@@ -117,6 +117,44 @@ struct BillsTests {
         #expect(previous.expense == 40)
     }
 
+    @Test func analyticsPeriodsBuildExpectedIntervalsAndComparisons() {
+        let calendar = Self.calendar
+        let date = Self.date(year: 2026, month: 8, day: 12, hour: 10, minute: 20, second: 30)
+
+        let week = BillAnalyticsCalculator.interval(for: .week, containing: date, calendar: calendar)
+        #expect(week.duration == 7 * 24 * 60 * 60)
+
+        let month = BillAnalyticsCalculator.interval(for: .month, containing: date, calendar: calendar)
+        #expect(calendar.component(.day, from: month.start) == 1)
+        #expect(calendar.component(.month, from: month.end) == 9)
+
+        let quarter = BillAnalyticsCalculator.interval(for: .quarter, containing: date, calendar: calendar)
+        #expect(calendar.component(.month, from: quarter.start) == 7)
+        #expect(calendar.component(.month, from: quarter.end) == 10)
+
+        let year = BillAnalyticsCalculator.interval(for: .year, containing: date, calendar: calendar)
+        #expect(calendar.component(.month, from: year.start) == 1)
+        #expect(calendar.component(.month, from: year.end) == 1)
+        #expect(calendar.component(.year, from: year.end) == 2027)
+
+        let custom = BillAnalyticsCalculator.customInterval(
+            start: Self.date(year: 2026, month: 8, day: 10, hour: 18, minute: 0, second: 0),
+            end: Self.date(year: 2026, month: 8, day: 12, hour: 8, minute: 0, second: 0),
+            calendar: calendar
+        )
+        #expect(calendar.component(.day, from: custom.start) == 10)
+        #expect(calendar.component(.day, from: custom.end) == 13)
+        #expect(BillAnalyticsCalculator.previousInterval(before: custom, period: .custom, calendar: calendar) == nil)
+
+        let previousQuarter = BillAnalyticsCalculator.previousInterval(
+            before: quarter,
+            period: .quarter,
+            calendar: calendar
+        )
+        #expect(previousQuarter.map { calendar.component(.month, from: $0.start) } == 4)
+        #expect(previousQuarter.map { calendar.component(.month, from: $0.end) } == 7)
+    }
+
     @Test func ocrParserPrefersLabeledAmountAndExtractsPaymentDetails() throws {
         let result = OCRResult(lines: [
             Self.line("麦当劳北京王府井店", y: 0.1),
@@ -175,6 +213,66 @@ struct BillsTests {
         #expect(store.records.first?.amount == 25)
         #expect(store.records.first?.origin.externalTransactionID == "wx-100")
         #expect(decoded.version == 2)
+    }
+
+    @Test func exportFilterSupportsPresetCustomSourceCategoryAndDirection() throws {
+        let now = Self.date(year: 2026, month: 8, day: 12, hour: 12, minute: 0, second: 0)
+        let wechat = BillOrigin(
+            kind: .imported,
+            providerIdentifier: "com.tencent.wechatpay",
+            providerName: "微信支付",
+            externalTransactionID: "wx-1",
+            importedAt: now,
+            rawFields: [:]
+        )
+        let records = [
+            BillRecord(
+                occurredAt: Self.date(year: 2026, month: 8, day: 1, hour: 8, minute: 0, second: 0),
+                direction: .expense,
+                amount: 20,
+                category: .dining,
+                origin: wechat
+            ),
+            BillRecord(
+                occurredAt: Self.date(year: 2026, month: 7, day: 1, hour: 8, minute: 0, second: 0),
+                direction: .expense,
+                amount: 30,
+                category: .transport,
+                origin: wechat
+            ),
+            BillRecord(
+                occurredAt: Self.date(year: 2025, month: 7, day: 1, hour: 8, minute: 0, second: 0),
+                direction: .income,
+                amount: 100,
+                category: .salary
+            )
+        ]
+
+        let recent = BillExportFilter(
+            period: .oneMonth,
+            customStart: now,
+            customEnd: now
+        ).records(from: records, calendar: Self.calendar, now: now)
+        #expect(recent.count == 1)
+        #expect(recent.first?.category == .dining)
+
+        let filtered = BillExportFilter(
+            period: .custom,
+            customStart: Self.date(year: 2026, month: 6, day: 1, hour: 0, minute: 0, second: 0),
+            customEnd: now,
+            providerName: "微信支付",
+            category: .transport,
+            direction: .expense
+        ).records(from: records, calendar: Self.calendar, now: now)
+        #expect(filtered.count == 1)
+        #expect(filtered.first?.amount == 30)
+
+        let invalidRange = BillExportFilter(
+            period: .custom,
+            customStart: now,
+            customEnd: Self.date(year: 2026, month: 7, day: 1, hour: 0, minute: 0, second: 0)
+        ).records(from: records, calendar: Self.calendar, now: now)
+        #expect(invalidRange.isEmpty)
     }
 
     @Test func alipayGB18030CSVSkipsSummaryAndMapsPlatformFields() throws {
@@ -345,6 +443,12 @@ struct BillsTests {
         #expect(vault.billRecords.isEmpty)
         #expect(ToolModule.bills.definition.participatesInBackup)
         #expect(ToolModule.bills.definition.participatesInCloudSync)
+    }
+
+    @Test func billTimeDisplayDefaultsToMinutePrecision() {
+        let date = Self.date(year: 2026, month: 8, day: 15, hour: 12, minute: 34, second: 56)
+        #expect(AppDateFormatter.dateTimeWithoutSecondsString(from: date).hasSuffix("12:34"))
+        #expect(AppDateFormatter.dateTimeString(from: date).hasSuffix("12:34:56"))
     }
 
     private static var calendar: Calendar {

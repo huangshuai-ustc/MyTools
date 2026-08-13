@@ -380,9 +380,16 @@ private struct StockPriceAlertEditorView: View {
                             set: { draft.stockID = $0 }
                         )
                     ) {
-                        ForEach(stocks) { stock in
-                            Text("\(stock.displayName)（\(stock.symbol)）")
-                                .tag(stock.id)
+                        ForEach(StockMarket.topLevelOrder) { market in
+                            let marketStocks = stocks.filter { $0.market == market }
+                            if !marketStocks.isEmpty {
+                                Section(market.title.replacingOccurrences(of: " ", with: "")) {
+                                    ForEach(marketStocks) { stock in
+                                        Text("\(stock.displayName)（\(stock.symbol)）")
+                                            .tag(stock.id)
+                                    }
+                                }
+                            }
                         }
                     }
                     Picker("方向", selection: $draft.direction) {

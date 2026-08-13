@@ -80,7 +80,14 @@ struct ProfileSettingsView: View {
 #else
             EmptyView()
 #endif
-        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .bills:
+#if MYTOOLS_FEATURE_BILLS
+        case .bills:
+            BillsExportSettingsView()
+#else
+        case .bills:
+            EmptyView()
+#endif
+        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery:
             EmptyView()
         }
     }

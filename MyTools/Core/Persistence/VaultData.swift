@@ -105,8 +105,10 @@ typealias FoodPlaceVaultValue = OpaqueModuleValue
 
 #if MYTOOLS_FEATURE_SECRETS
 typealias SecretVaultValue = SecretItem
+typealias SecretFieldTemplateVaultValue = SecretFieldTemplate
 #else
 typealias SecretVaultValue = OpaqueModuleValue
+typealias SecretFieldTemplateVaultValue = OpaqueModuleValue
 #endif
 
 #if MYTOOLS_FEATURE_DOCUMENTS
@@ -133,6 +135,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var billRecords: [BillRecordVaultValue] = []
     var currencyRateAlerts: [CurrencyRateAlert] = []
     var stockPriceAlerts: [StockPriceAlert] = []
+    var secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
 
     init(
         accounts: [BankAccountVaultValue] = [],
@@ -145,7 +148,8 @@ struct VaultData: Codable, @unchecked Sendable {
         credentialDocuments: [CredentialDocumentVaultValue] = [],
         billRecords: [BillRecordVaultValue] = [],
         currencyRateAlerts: [CurrencyRateAlert] = [],
-        stockPriceAlerts: [StockPriceAlert] = []
+        stockPriceAlerts: [StockPriceAlert] = [],
+        secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
     ) {
         self.accounts = accounts
         self.cards = cards
@@ -158,6 +162,7 @@ struct VaultData: Codable, @unchecked Sendable {
         self.billRecords = billRecords
         self.currencyRateAlerts = currencyRateAlerts
         self.stockPriceAlerts = stockPriceAlerts
+        self.secretFieldTemplates = secretFieldTemplates
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -172,6 +177,7 @@ struct VaultData: Codable, @unchecked Sendable {
         case billRecords
         case currencyRateAlerts
         case stockPriceAlerts
+        case secretFieldTemplates
     }
 
     init(from decoder: Decoder) throws {
@@ -198,6 +204,10 @@ struct VaultData: Codable, @unchecked Sendable {
         stockPriceAlerts = try container.decodeIfPresent(
             [StockPriceAlert].self,
             forKey: .stockPriceAlerts
+        ) ?? []
+        secretFieldTemplates = try container.decodeIfPresent(
+            [SecretFieldTemplateVaultValue].self,
+            forKey: .secretFieldTemplates
         ) ?? []
     }
 

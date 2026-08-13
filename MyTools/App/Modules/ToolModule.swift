@@ -9,6 +9,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
     case secrets
     case documents
     case bills
+    case sportsLottery
 
     var id: Self { self }
 
@@ -20,8 +21,9 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .healthRecords: return "健康档案"
         case .foodMap: return "美食地图"
         case .secrets: return "保密资料"
-        case .documents: return "证照"
-        case .bills: return "账单"
+        case .documents: return "证照资料"
+        case .bills: return "收支账单"
+        case .sportsLottery: return "体彩开奖"
         }
     }
 
@@ -35,6 +37,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "账号、Token、密钥与授权"
         case .documents: return "证件、证书与重要文书"
         case .bills: return "记录、识别与导入付款明细"
+        case .sportsLottery: return "按赛事查看比赛开奖结果"
         }
     }
 
@@ -48,6 +51,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "lock.shield.fill"
         case .documents: return "person.text.rectangle.fill"
         case .bills: return "receipt.fill"
+        case .sportsLottery: return "soccerball"
         }
     }
 
@@ -61,6 +65,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return .orange
         case .documents: return .teal
         case .bills: return .cyan
+        case .sportsLottery: return .purple
         }
     }
 
@@ -70,8 +75,10 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         switch self {
         case .myStocks:
             return true
-        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .bills:
+        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery:
             return false
+        case .bills:
+            return true
         }
     }
 
@@ -149,6 +156,12 @@ enum ToolModuleCatalog {
             capabilities: [.localVault],
             participatesInBackup: true,
             participatesInCloudSync: true
+        ),
+        ToolModuleDefinition(
+            module: .sportsLottery,
+            capabilities: [],
+            participatesInBackup: false,
+            participatesInCloudSync: false
         )
     ]
 
@@ -165,6 +178,16 @@ enum ToolModuleCatalog {
 
     static var allModules: Set<ToolModule> {
         CompiledToolModules.set
+    }
+
+    static var backupModules: Set<ToolModule> {
+        Set(definitions.filter(\.participatesInBackup).map(\.module))
+            .intersection(CompiledToolModules.set)
+    }
+
+    static var cloudSyncModules: Set<ToolModule> {
+        Set(definitions.filter(\.participatesInCloudSync).map(\.module))
+            .intersection(CompiledToolModules.set)
     }
 }
 
@@ -194,6 +217,9 @@ enum CompiledToolModules {
 #endif
 #if MYTOOLS_FEATURE_BILLS
         modules.append(.bills)
+#endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        modules.append(.sportsLottery)
 #endif
         return modules
     }()

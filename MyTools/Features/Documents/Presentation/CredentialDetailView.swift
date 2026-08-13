@@ -58,11 +58,16 @@ struct CredentialDetailView: View {
                             CredentialStatusLabel(status: document.validityStatus())
                         }
                         .frame(maxWidth: .infinity)
-                        if let date = document.validity.startDate {
-                            protectedRow("开始日期", value: AppDateFormatter.string(from: date))
+                        if let date = document.issuedAt ?? document.validity.startDate {
+                            protectedRow("有效期起始", value: AppDateFormatter.string(from: date))
                         }
                         if let date = document.expirationDate() {
                             protectedRow("到期日期", value: AppDateFormatter.string(from: date))
+                        }
+                        if document.validity.kind.durationYears != nil {
+                            Text(CredentialValidityKind.endDateRule(for: document.type).title)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                         if document.expiryReminder.isEnabled {
                             LabeledContent("到期提醒", value: reminderTitle(document.expiryReminder.daysBefore))

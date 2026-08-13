@@ -54,6 +54,12 @@ struct ToolModuleDestination: View {
 #else
             unavailableModule(module)
 #endif
+        case .sportsLottery:
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+            SportsLotteryView()
+#else
+            unavailableModule(module)
+#endif
         }
     }
 

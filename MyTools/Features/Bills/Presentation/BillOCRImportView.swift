@@ -19,6 +19,7 @@ struct BillOCRImportView: View {
     @State private var selectedCandidateID: String?
     @State private var amountText = ""
     @State private var occurredAt = Date()
+    @State private var secondsText = "0"
     @State private var direction = BillDirection.expense
     @State private var currency = CurrencyCode.cny
     @State private var merchant = ""
@@ -174,7 +175,14 @@ struct BillOCRImportView: View {
                 }
             }
             .pickerStyle(.menu)
-            DatePicker("交易时间", selection: $occurredAt)
+            DatePicker("交易时间", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
+            LabeledContent("秒") {
+                TextField("00", text: $secondsText)
+                    .multilineTextAlignment(.trailing)
+#if os(iOS)
+                    .keyboardType(.numberPad)
+#endif
+            }
             safeField("商户", prompt: "可修改", text: $merchant)
             safeField("支付方式", prompt: "可修改", text: $paymentMethod)
             safeField("商品说明", prompt: "可选", text: $itemDescription)
@@ -282,6 +290,7 @@ struct BillOCRImportView: View {
                 suggestion = parsed
                 direction = parsed.direction
                 occurredAt = parsed.occurredAt ?? Date()
+                secondsText = String(Calendar.autoupdatingCurrent.component(.second, from: occurredAt))
                 merchant = parsed.merchant ?? ""
                 paymentMethod = parsed.paymentMethod ?? ""
                 if let candidate = parsed.amountCandidates.first {
@@ -306,11 +315,28 @@ struct BillOCRImportView: View {
             errorMessage = "请选择或输入大于 0 的有效金额。"
             return
         }
+        guard applySeconds() else {
+            errorMessage = "请输入 0 到 59 之间的秒数。"
+            return
+        }
         guard auth.isAdmin else {
             showingAuthentication = true
             return
         }
         save(amount: amount)
+    }
+
+    private func applySeconds() -> Bool {
+        guard let seconds = Int(secondsText.trimmingCharacters(in: .whitespacesAndNewlines)), (0...59).contains(seconds) else {
+            return false
+        }
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = .autoupdatingCurrent
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: occurredAt)
+        components.second = seconds
+        guard let date = calendar.date(from: components) else { return false }
+        occurredAt = date
+        return true
     }
 
     private func saveAfterAuthentication() {

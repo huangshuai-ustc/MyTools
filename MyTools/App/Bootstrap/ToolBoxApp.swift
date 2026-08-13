@@ -18,6 +18,9 @@ struct ToolBoxApp: App {
 #if os(iOS) && MYTOOLS_FEATURE_STOCKS
     @UIApplicationDelegateAdaptor(StockRefreshAppDelegate.self)
     private var appDelegate
+#elseif os(iOS) && MYTOOLS_FEATURE_SPORTS_LOTTERY
+    @UIApplicationDelegateAdaptor(SportsLotteryRefreshAppDelegate.self)
+    private var appDelegate
 #endif
     @StateObject private var moduleSettings: ToolModuleSettings
     @StateObject private var store: AppStore

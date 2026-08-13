@@ -6,6 +6,36 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct DocumentsTests {
+    @Test func documentTypesExposeOfficiallyDistinctTemplatesAndValidityRules() {
+        #expect(CredentialDocumentType.birthMedicalCertificate.title == "出生医学证明")
+        #expect(CredentialDocumentType.vaccinationCertificate.title == "预防接种证")
+        #expect(CredentialDocumentType.professionalQualificationCertificate.title == "职业资格证书")
+        #expect(CredentialDocumentType.birthMedicalCertificate.defaultFields.map(\.label).contains("母亲姓名"))
+        #expect(CredentialDocumentType.vaccinationCertificate.defaultFields.map(\.label).contains("接种记录"))
+        #expect(CredentialDocumentType.professionalQualificationCertificate.defaultFields.map(\.label).contains("资格等级"))
+        #expect(CredentialValidityKind.options(for: .passport) == [.fiveYears, .tenYears])
+        #expect(CredentialValidityKind.options(for: .hongKongMacaoPermit) == [.fiveYears, .tenYears])
+        #expect(CredentialValidityKind.options(for: .driversLicense) == [.sixYears, .tenYears, .permanent])
+        #expect(CredentialValidityKind.isAlwaysPermanent(for: .birthMedicalCertificate))
+        #expect(CredentialValidityKind.isAlwaysPermanent(for: .vaccinationCertificate))
+    }
+
+    @Test func expirationUsesMandatoryIssuanceDateForAllFixedTerms() {
+        let issuedAt = Self.date(year: 2026, month: 8, day: 12)
+        let calendar = Self.calendar
+        let cases: [(CredentialDocumentType, CredentialValidityKind, Date)] = [
+            (.identityCard, .tenYears, Self.date(year: 2036, month: 8, day: 12)),
+            (.passport, .fiveYears, Self.date(year: 2031, month: 8, day: 11)),
+            (.passport, .tenYears, Self.date(year: 2036, month: 8, day: 11)),
+            (.hongKongMacaoPermit, .tenYears, Self.date(year: 2036, month: 8, day: 12)),
+            (.driversLicense, .sixYears, Self.date(year: 2032, month: 8, day: 12))
+        ]
+        for (type, kind, expected) in cases {
+            let document = CredentialDocument(type: type, issuedAt: issuedAt, validity: CredentialValidity(kind: kind))
+            #expect(document.expirationDate(calendar: calendar) == expected)
+        }
+    }
+
     @Test func validityStatusDistinguishesPermanentUpcomingAndExpired() {
         let calendar = Self.calendar
         let today = Self.date(year: 2026, month: 8, day: 11)
@@ -39,6 +69,59 @@ struct DocumentsTests {
         document.validity = CredentialValidity(kind: .unspecified)
         #expect(document.expirationDate(calendar: calendar) == nil)
         #expect(!CredentialValidityKind.identityCardOptions.contains(.unspecified))
+    }
+
+    @Test func fixedTermDateRulesAreAppliedWhenInferringOCRValidity() throws {
+        let start = Self.date(year: 2026, month: 8, day: 12)
+        let passportResult = OCRResult(lines: [
+            Self.line("签发日期 2026.08.12", y: 0.1),
+            Self.line("有效期 2026.08.12-2036.08.11", y: 0.2)
+        ])
+        let passportSuggestion = CredentialOCRParser.parse(
+            passportResult,
+            for: .passport,
+            calendar: Self.calendar
+        )
+        var passport = CredentialDocument(type: .passport)
+        passport.applyOCRSuggestion(passportSuggestion, calendar: Self.calendar)
+        #expect(passport.issuedAt == start)
+        #expect(passport.validity.kind == .tenYears)
+        #expect(passport.expirationDate(calendar: Self.calendar) == Self.date(year: 2036, month: 8, day: 11))
+
+        let permitResult = OCRResult(lines: [
+            Self.line("签发日期 2026.08.12", y: 0.1),
+            Self.line("有效期 2026.08.12-2036.08.12", y: 0.2)
+        ])
+        let permitSuggestion = CredentialOCRParser.parse(
+            permitResult,
+            for: .hongKongMacaoPermit,
+            calendar: Self.calendar
+        )
+        var permit = CredentialDocument(type: .hongKongMacaoPermit)
+        permit.applyOCRSuggestion(permitSuggestion, calendar: Self.calendar)
+        #expect(permit.validity.kind == .tenYears)
+        #expect(permit.expirationDate(calendar: Self.calendar) == Self.date(year: 2036, month: 8, day: 12))
+
+        let passportWithAnniversaryResult = OCRResult(lines: [
+            Self.line("签发日期 2026.08.12", y: 0.1),
+            Self.line("有效期 2026.08.12-2036.08.12", y: 0.2)
+        ])
+        let passportWithAnniversarySuggestion = CredentialOCRParser.parse(
+            passportWithAnniversaryResult,
+            for: .passport,
+            calendar: Self.calendar
+        )
+        var passportWithAnniversary = CredentialDocument(type: .passport)
+        passportWithAnniversary.applyOCRSuggestion(
+            passportWithAnniversarySuggestion,
+            calendar: Self.calendar
+        )
+        #expect(passportWithAnniversary.validity.kind == .dateRange)
+        #expect(passportWithAnniversary.issuedAt == start)
+        #expect(
+            passportWithAnniversary.validity.endDate
+                == Self.date(year: 2036, month: 8, day: 12)
+        )
     }
 
     @Test func birthDateUsesCustomFieldsInsteadOfBasicInformation() {

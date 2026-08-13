@@ -2,10 +2,31 @@
 import Charts
 import SwiftUI
 
+private enum BillCalendarMode: String, CaseIterable, Identifiable {
+    case anchor
+    case range
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .anchor: return "选择某天"
+        case .range: return "选择时间区间"
+        }
+    }
+}
+
 struct BillAnalysisView: View {
     @EnvironmentObject private var store: BillsStore
-    @State private var selectedMonth = Date()
+    @Binding var pageSelection: BillsPage
+    @State private var period: BillAnalysisPeriod = .month
+    @State private var anchorDate = Date()
+    @State private var customStart = Calendar.autoupdatingCurrent.date(byAdding: .day, value: -29, to: Date()) ?? Date()
+    @State private var customEnd = Date()
     @State private var selectedCurrency: CurrencyCode = .cny
+    @State private var showingDatePicker = false
+    @State private var calendarMode: BillCalendarMode = .anchor
+    @State private var refreshID = UUID()
 
     private var availableCurrencies: [CurrencyCode] {
         let currencies = Set(store.records.map(\.currency))
@@ -19,37 +40,90 @@ struct BillAnalysisView: View {
     }
 
     private var snapshot: BillAnalyticsSnapshot {
-        BillAnalyticsCalculator.snapshot(
-            records: store.records,
-            month: selectedMonth,
-            currency: currency
-        )
+        _ = refreshID
+        return BillAnalyticsCalculator.snapshot(records: store.records, interval: selectedInterval, currency: currency)
     }
 
-    private var previousSnapshot: BillAnalyticsSnapshot {
-        BillAnalyticsCalculator.snapshot(
-            records: store.records,
-            month: BillAnalyticsCalculator.previousMonth(before: selectedMonth),
-            currency: currency
-        )
+    private var selectedInterval: DateInterval {
+        switch period {
+        case .custom:
+            return BillAnalyticsCalculator.customInterval(start: customStart, end: customEnd)
+        default:
+            return BillAnalyticsCalculator.interval(for: period, containing: anchorDate)
+        }
+    }
+
+    private var previousSnapshot: BillAnalyticsSnapshot? {
+        guard let previousInterval = BillAnalyticsCalculator.previousInterval(
+            before: selectedInterval,
+            period: period
+        ) else { return nil }
+        return BillAnalyticsCalculator.snapshot(records: store.records, interval: previousInterval, currency: currency)
+    }
+
+    private var periodTitle: String {
+        if period == .custom {
+            return "\(customStart.formatted(date: .numeric, time: .omitted)) - \(customEnd.formatted(date: .numeric, time: .omitted))"
+        }
+        switch period {
+        case .week:
+            return "第 \(Calendar.autoupdatingCurrent.component(.weekOfYear, from: anchorDate)) 周"
+        case .month:
+            return anchorDate.formatted(.dateTime.year().month())
+        case .quarter:
+            let month = Calendar.autoupdatingCurrent.component(.month, from: anchorDate)
+            let quarter = ((month - 1) / 3) + 1
+            return "\(Calendar.autoupdatingCurrent.component(.year, from: anchorDate)) 年第 \(quarter) 季"
+        case .year:
+            return anchorDate.formatted(.dateTime.year())
+        case .custom:
+            return "自定义区间"
+        }
+    }
+
+    private var overviewTitle: String {
+        switch period {
+        case .week: return "周度概览"
+        case .month: return "月度概览"
+        case .quarter: return "季度概览"
+        case .year: return "年度概览"
+        case .custom: return "区间概览"
+        }
     }
 
     var body: some View {
         List {
             Section {
+                BillsPagePicker(selection: $pageSelection)
+            }
+
+            Section {
+                Picker("统计周期", selection: $period) {
+                    ForEach(BillAnalysisPeriod.allCases) { value in
+                        Text(value.title).tag(value)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: period) { _, value in
+                    calendarMode = value == .custom ? .range : .anchor
+                    if value == .custom { showingDatePicker = true }
+                    refresh()
+                }
+            }
+
+            Section {
                 periodSelector
-                    .appListRowStyle()
             }
 
             if snapshot.transactionCount == 0 {
                 ContentUnavailableView(
-                    "本月暂无账单",
+                    "当前周期暂无账单",
                     systemImage: "chart.bar.xaxis",
                     description: Text("请选择其他月份或币种。")
                 )
             } else {
                 overviewSection
-                comparisonSection
+                if previousSnapshot != nil { comparisonSection }
                 dailySection
                 categorySection
                 merchantSection
@@ -59,6 +133,23 @@ struct BillAnalysisView: View {
 #if os(iOS)
         .listStyle(.insetGrouped)
 #endif
+        .onReceive(store.$records) { _ in refresh() }
+        .refreshable { refresh() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("刷新分析")
+                .accessibilityLabel("刷新分析")
+            }
+        }
+        .sheet(isPresented: $showingDatePicker) {
+            customDatePicker
+                .iOSLargeSheet()
+        }
     }
 
     private var periodSelector: some View {
@@ -74,9 +165,8 @@ struct BillAnalysisView: View {
                 .help("上个月")
                 .accessibilityLabel("上个月")
 
-                Text(selectedMonth, format: .dateTime.year().month())
+                Text(periodTitle)
                     .font(.headline)
-                    .monospacedDigit()
                     .frame(maxWidth: .infinity)
 
                 Button {
@@ -90,14 +180,15 @@ struct BillAnalysisView: View {
                 .accessibilityLabel("下个月")
 
                 Button {
-                    selectedMonth = Date()
+                    calendarMode = period == .custom ? .range : .anchor
+                    showingDatePicker = true
                 } label: {
                     Image(systemName: "calendar")
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
-                .help("返回本月")
-                .accessibilityLabel("返回本月")
+                .help("选择日期或时间区间")
+                .accessibilityLabel("选择日期或时间区间")
             }
 
             if availableCurrencies.count > 1 {
@@ -121,7 +212,7 @@ struct BillAnalysisView: View {
     }
 
     private var overviewSection: some View {
-        Section("月度概览") {
+            Section(overviewTitle) {
             LazyVGrid(
                 columns: [GridItem(.flexible()), GridItem(.flexible())],
                 alignment: .leading,
@@ -168,8 +259,10 @@ struct BillAnalysisView: View {
             .frame(height: 220)
             .appListRowStyle()
 
-            LabeledContent("支出较上月", value: comparisonText(current: snapshot.expense, previous: previousSnapshot.expense))
-            LabeledContent("净支出较上月", value: comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense))
+            if let previousSnapshot {
+                LabeledContent("支出较上周期", value: comparisonText(current: snapshot.expense, previous: previousSnapshot.expense))
+                LabeledContent("净支出较上周期", value: comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense))
+            }
         }
     }
 
@@ -199,7 +292,7 @@ struct BillAnalysisView: View {
     private var categorySection: some View {
         Section("支出分类") {
             if snapshot.expense == 0 {
-                Text("本月没有支出")
+                    Text("当前周期没有支出")
                     .foregroundStyle(.secondary)
             } else {
                 Chart(snapshot.categoryTotals) { total in
@@ -244,7 +337,7 @@ struct BillAnalysisView: View {
     private var merchantSection: some View {
         Section("商户支出排行") {
             if snapshot.merchantTotals.isEmpty {
-                Text("本月没有支出")
+                Text("当前周期没有支出")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(snapshot.merchantTotals.prefix(8)) { total in
@@ -262,7 +355,7 @@ struct BillAnalysisView: View {
     private var paymentMethodSection: some View {
         Section("付款方式") {
             if snapshot.paymentMethodTotals.isEmpty {
-                Text("本月没有支出")
+                Text("当前周期没有支出")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(snapshot.paymentMethodTotals.prefix(8)) { total in
@@ -278,13 +371,14 @@ struct BillAnalysisView: View {
     }
 
     private var comparisonPoints: [BillMonthComparisonPoint] {
-        [
-            BillMonthComparisonPoint(period: "上月", kind: "支出", amount: previousSnapshot.expense),
-            BillMonthComparisonPoint(period: "上月", kind: "收入", amount: previousSnapshot.income),
-            BillMonthComparisonPoint(period: "上月", kind: "退款", amount: previousSnapshot.refund),
-            BillMonthComparisonPoint(period: "本月", kind: "支出", amount: snapshot.expense),
-            BillMonthComparisonPoint(period: "本月", kind: "收入", amount: snapshot.income),
-            BillMonthComparisonPoint(period: "本月", kind: "退款", amount: snapshot.refund)
+        guard let previousSnapshot else { return [] }
+        return [
+            BillMonthComparisonPoint(period: "上周期", kind: "支出", amount: previousSnapshot.expense),
+            BillMonthComparisonPoint(period: "上周期", kind: "收入", amount: previousSnapshot.income),
+            BillMonthComparisonPoint(period: "上周期", kind: "退款", amount: previousSnapshot.refund),
+            BillMonthComparisonPoint(period: "当前", kind: "支出", amount: snapshot.expense),
+            BillMonthComparisonPoint(period: "当前", kind: "收入", amount: snapshot.income),
+            BillMonthComparisonPoint(period: "当前", kind: "退款", amount: snapshot.refund)
         ]
     }
 
@@ -304,12 +398,55 @@ struct BillAnalysisView: View {
     }
 
     private func moveMonth(by value: Int) {
-        selectedMonth = Calendar.autoupdatingCurrent.date(byAdding: .month, value: value, to: selectedMonth)
-            ?? selectedMonth
+        guard period != .custom else { return }
+        anchorDate = BillAnalyticsCalculator.shiftedAnchor(anchorDate, period: period, by: value)
+        refresh()
+    }
+
+    private var customDatePicker: some View {
+        NavigationStack {
+            Form {
+                Picker("选择方式", selection: $calendarMode) {
+                    ForEach(BillCalendarMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                switch calendarMode {
+                case .anchor:
+                    DatePicker("周期基准日", selection: $anchorDate, displayedComponents: .date)
+                case .range:
+                    DatePicker("开始日期", selection: $customStart, displayedComponents: .date)
+                    DatePicker("结束日期", selection: $customEnd, displayedComponents: .date)
+                }
+            }
+            .navigationTitle("选择分析时间")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { showingDatePicker = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        if calendarMode == .range {
+                            period = .custom
+                        } else if period == .custom {
+                            period = .month
+                        }
+                        showingDatePicker = false
+                        refresh()
+                    }
+                }
+            }
+        }
+    }
+
+    private func refresh() {
+        refreshID = UUID()
     }
 
     private func comparisonText(current: Decimal, previous: Decimal) -> String {
-        guard previous != 0 else { return current == 0 ? "持平" : "无上月基数" }
+        guard previous != 0 else { return current == 0 ? "持平" : "无上一周期基数" }
         let change = (current - previous) / previous
         let value = BillAnalysisFormatting.percentage(change.magnitude, of: 1)
         if change > 0 { return "增加 \(value)" }

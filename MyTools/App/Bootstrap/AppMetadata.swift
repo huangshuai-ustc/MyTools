@@ -12,6 +12,10 @@ enum AppMetadata {
         "\(bundleIdentifier).stock-refresh"
     }
 
+    static var sportsLotteryRefreshTaskIdentifier: String {
+        "\(bundleIdentifier).sports-lottery-refresh"
+    }
+
     static var backupTypeIdentifier: String {
         "\(bundleIdentifier).backup"
     }

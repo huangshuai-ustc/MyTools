@@ -8,6 +8,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         password: String
     ) async throws -> Data {
         let includedModules = CompiledToolModules.available(from: includedModules)
+            .intersection(ToolModuleCatalog.backupModules)
         return try await Task.detached(priority: .userInitiated) {
             let attachments = BackupAttachmentMapper(store: AttachmentStore())
             var snapshot = Self.snapshot(from: vault, includedModules: includedModules)
@@ -55,7 +56,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
             )
             let modules = payload.includedModules.intersection(
                 CompiledToolModules.available(from: enabledModules)
-            )
+            ).intersection(ToolModuleCatalog.backupModules)
             payload = Self.snapshot(payload, includedModules: modules)
 #if MYTOOLS_FEATURE_HEALTH
             if payload.includedModules.contains(.healthRecords) {
@@ -119,6 +120,9 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         if !includedModules.contains(.myStocks) {
             snapshot.stocks = []
             snapshot.stockPriceAlerts = []
+        }
+        if !includedModules.contains(.secrets) {
+            snapshot.secretFieldTemplates = []
         }
         if !includedModules.contains(.currencyExchange) {
             snapshot.currencyExchangeRecords = []
