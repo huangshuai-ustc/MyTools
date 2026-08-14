@@ -38,6 +38,8 @@
 	<string>用于验证管理员身份，保护银行卡信息</string>
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍摄图片并识别选定区域内的文字</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>用于在新增美食时默认显示您附近的地图位置</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

@@ -74,11 +74,9 @@ struct NotificationSettingsView: View {
                     if auth.isEditSessionReady {
                         ForEach(currencyStore.rateAlerts) { alert in
                             currencyAlertRow(alert)
-                        }
-                        .onDelete { offsets in
-                            currencyStore.deleteRateAlerts(
-                                ids: Set(offsets.map { currencyStore.rateAlerts[$0].id })
-                            )
+                                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                                    currencyStore.deleteRateAlerts(ids: [alert.id])
+                                }
                         }
                     } else {
                         ForEach(currencyStore.rateAlerts) { alert in
@@ -107,11 +105,9 @@ struct NotificationSettingsView: View {
                     if auth.isEditSessionReady {
                         ForEach(stockStore.priceAlerts) { alert in
                             stockAlertRow(alert)
-                        }
-                        .onDelete { offsets in
-                            stockStore.deletePriceAlerts(
-                                ids: Set(offsets.map { stockStore.priceAlerts[$0].id })
-                            )
+                                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                                    stockStore.deletePriceAlerts(ids: [alert.id])
+                                }
                         }
                     } else {
                         ForEach(stockStore.priceAlerts) { alert in

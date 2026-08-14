@@ -95,6 +95,7 @@ struct SecretVaultView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var categoryFilter: SecretCategoryFilter = .all
+    @State private var selectedTag = ""
     @State private var isUnlocked = false
     @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
@@ -116,6 +117,7 @@ struct SecretVaultView: View {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let filteredItems = store.secretItems
             .filter(categoryFilter.includes)
+            .filter { selectedTag.isEmpty || AppTagSupport.parse($0.tags).contains(selectedTag) }
             .filter { item in
                 term.isEmpty
                     || item.title.localizedCaseInsensitiveContains(term)
@@ -124,6 +126,10 @@ struct SecretVaultView: View {
                     || item.fields.contains { $0.label.localizedCaseInsensitiveContains(term) }
             }
         return selectedSortOrder.sorted(filteredItems)
+    }
+
+    private var availableTags: [String] {
+        AppTagSupport.normalize(store.secretItems.flatMap { AppTagSupport.parse($0.tags) })
     }
 
     var body: some View {
@@ -136,6 +142,9 @@ struct SecretVaultView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                if !availableTags.isEmpty {
+                    AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
+                }
             }
 
             Section("保密条目") {
@@ -152,11 +161,9 @@ struct SecretVaultView: View {
                         SecretItemRow(item: item)
                     }
                     .appListRowStyle()
-                }
-                .onDelete {
-                    guard auth.isAdmin else { return }
-                    let ids = Set($0.map { visibleItems[$0].id })
-                    store.deleteSecrets(ids: ids)
+                    .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                        store.deleteSecrets(ids: [item.id])
+                    }
                 }
             }
         }
@@ -238,6 +245,11 @@ struct SecretVaultView: View {
         }
         .onChange(of: editingItem) { _, item in
             if item == nil { isCreating = false }
+        }
+        .onChange(of: availableTags) { _, tags in
+            if !selectedTag.isEmpty, !tags.contains(selectedTag) {
+                selectedTag = ""
+            }
         }
     }
 
@@ -419,6 +431,7 @@ private struct SecretFieldTemplateEditorView: View {
     @State private var fields: [SecretField]
     @State private var showingNewField = false
     @State private var newFieldName = ""
+    @State private var draggedFieldID: UUID?
     let onSave: (SecretFieldTemplate) -> Void
 
     init(category: SecretCategory, template: SecretFieldTemplate, onSave: @escaping (SecretFieldTemplate) -> Void) {
@@ -431,28 +444,51 @@ private struct SecretFieldTemplateEditorView: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach($fields) { $field in
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextField("字段名称", text: $field.label)
-                            HStack {
-                                Picker("输入形式", selection: $field.inputType) {
-                                    ForEach(SecretFieldInputType.allCases) { inputType in
-                                        Text(inputType.title).tag(inputType)
-                                    }
+                    ForEach($fields) { field in
+                        HStack(spacing: 12) {
+                            TextField("字段名称", text: field.label)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Picker("字段类型", selection: field.inputType) {
+                                ForEach(SecretFieldInputType.allCases) { inputType in
+                                    Text(inputType.title).tag(inputType)
                                 }
-                                Toggle("隐藏", isOn: $field.isSensitive)
-                                    .labelsHidden()
-                                    .accessibilityLabel("默认隐藏内容")
                             }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .fixedSize()
                         }
                         .padding(.vertical, 4)
+                        .onDrag {
+                            draggedFieldID = field.wrappedValue.id
+                            return NSItemProvider(object: NSString(string: field.wrappedValue.id.uuidString))
+                        }
+                        .onDrop(
+                            of: [.text],
+                            delegate: SecretFieldDropDelegate(
+                                targetID: field.wrappedValue.id,
+                                draggedID: $draggedFieldID,
+                                move: moveField
+                            )
+                        )
+                        .appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+                            Button {
+                                field.wrappedValue.isSensitive.toggle()
+                            } label: {
+                                Label(
+                                    field.wrappedValue.isSensitive ? "显示" : "隐藏",
+                                    systemImage: field.wrappedValue.isSensitive ? "eye" : "eye.slash"
+                                )
+                            }
+                            .tint(AppSwipeActions.visibility.tint)
+                        }
+                        .appDeleteSwipeAction {
+                            fields.removeAll { $0.id == field.wrappedValue.id }
+                        }
                     }
-                    .onDelete { fields.remove(atOffsets: $0) }
-                    .onMove { fields.move(fromOffsets: $0, toOffset: $1) }
                 } header: {
                     Text("字段模板 · \(category.title)")
                 } footer: {
-                    Text("模板只保存字段定义；新建条目时会生成空白字段。")
+                    Text("模板只保存字段定义；右滑可显示/隐藏内容，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
                 }
 
                 Section {
@@ -464,9 +500,6 @@ private struct SecretFieldTemplateEditorView: View {
                     }
                 }
             }
-#if os(iOS)
-            .environment(\.editMode, .constant(.active))
-#endif
             .navigationTitle("字段模板")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -500,6 +533,37 @@ private struct SecretFieldTemplateEditorView: View {
                 }
             }
         }
+    }
+
+    private func moveField(_ draggedID: UUID, before targetID: UUID) {
+        guard draggedID != targetID,
+              let sourceIndex = fields.firstIndex(where: { $0.id == draggedID }),
+              let targetIndex = fields.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+        let movedField = fields.remove(at: sourceIndex)
+        let insertionIndex = fields.firstIndex(where: { $0.id == targetID }) ?? targetIndex
+        fields.insert(movedField, at: insertionIndex)
+    }
+}
+
+private struct SecretFieldDropDelegate: DropDelegate {
+    let targetID: UUID
+    @Binding var draggedID: UUID?
+    let move: (UUID, UUID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        move(draggedID, targetID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedID = nil
+        return true
     }
 }
 
@@ -572,10 +636,14 @@ struct SecretDetailView: View {
                         LabeledContent("分类", value: item.category.title)
                         LabeledContent("用途", value: item.purpose.title)
                         if !item.tags.isEmpty {
-                            LabeledContent(
-                                "标签",
-                                value: canRevealSensitiveFields ? item.tags : "••••••"
-                            )
+                            LabeledContent("标签") {
+                                if canRevealSensitiveFields {
+                                    AppTagCapsules(tags: AppTagSupport.parse(item.tags))
+                                } else {
+                                    Text("••••••")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
 
@@ -711,7 +779,8 @@ private struct SecretFieldValueRow: View {
     let canRevealSensitiveFields: Bool
 
     private var isRevealed: Bool {
-        canRevealSensitiveFields && (!field.isSensitive || !hiddenFieldIDs.contains(field.id))
+        guard field.isSensitive else { return true }
+        return canRevealSensitiveFields && !hiddenFieldIDs.contains(field.id)
     }
 
     private var displayValue: String {
@@ -732,7 +801,7 @@ private struct SecretFieldValueRow: View {
                         Image(systemName: isRevealed ? "eye.slash" : "eye")
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel(isRevealed ? "隐藏字段" : "显示字段")
+                    .accessibilityLabel(isRevealed ? "隐藏内容" : "显示内容")
                 }
             }
             if isRevealed,
@@ -841,9 +910,10 @@ struct SecretEditorView: View {
                             Text(purpose.title).tag(purpose)
                         }
                     }
-                    LabeledContent("标签") {
-                        IMESafeTextField(prompt: "可选，用逗号分隔", text: $draft.item.tags, alignment: .trailing)
-                    }
+                }
+
+                Section("标签") {
+                    AppTagEditor(text: $draft.item.tags, suggestions: store.knownTags)
                 }
 
                 Section {
@@ -851,33 +921,13 @@ struct SecretEditorView: View {
                         let fieldBinding = binding(for: field.id, fallback: field)
                         fieldEditorRow(field: fieldBinding)
                             .padding(.vertical, 4)
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                Button {
-                                    fieldBinding.wrappedValue.isSensitive.toggle()
-                                } label: {
-                                    Label(
-                                        fieldBinding.wrappedValue.isSensitive ? "显示" : "隐藏",
-                                        systemImage: fieldBinding.wrappedValue.isSensitive ? "eye" : "eye.slash"
-                                    )
-                                }
-                                .tint(.blue)
-                                Button {
-                                    beginFieldNameEdit(field)
-                                } label: {
-                                    Label("编辑名称", systemImage: "pencil")
-                                }
-                                .tint(.orange)
+                            .modifier(SecretFieldSwipeActionsModifier(
+                                field: fieldBinding,
+                                onRename: { beginFieldNameEdit(field) }
+                            ))
+                            .appDeleteSwipeAction {
+                                draft.item.fields.removeAll { $0.id == field.id }
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    draft.item.fields.removeAll { $0.id == field.id }
-                                } label: {
-                                    Label("删除字段", systemImage: "trash")
-                                }
-                            }
-                    }
-                    .onDelete { offsets in
-                        draft.item.fields.remove(atOffsets: offsets)
                     }
                     .onMove { source, destination in
                         draft.item.fields.move(fromOffsets: source, toOffset: destination)
@@ -954,6 +1004,11 @@ struct SecretEditorView: View {
                     store.upsertFieldTemplate(template)
                     if shouldRefreshDraft {
                         draft.item.fields = template.makeFields()
+                    } else {
+                        draft.item.fields = applyTemplateSensitivity(
+                            to: draft.item.fields,
+                            matching: template
+                        )
                     }
                 }
                 .iOSLargeSheet()
@@ -1087,6 +1142,22 @@ struct SecretEditorView: View {
         return fields.count == template.fields.count && normalizedFields == normalizedTemplate
     }
 
+    private func applyTemplateSensitivity(
+        to fields: [SecretField],
+        matching template: SecretFieldTemplate
+    ) -> [SecretField] {
+        fields.map { field in
+            guard let templateField = template.fields.first(where: {
+                $0.label == field.label && $0.inputType == field.inputType
+            }) else {
+                return field
+            }
+            var updated = field
+            updated.isSensitive = templateField.isSensitive
+            return updated
+        }
+    }
+
     private var attachmentSection: some View {
         Section {
             if draft.item.attachments.isEmpty {
@@ -1095,19 +1166,19 @@ struct SecretEditorView: View {
             }
             ForEach(draft.item.attachments) { attachment in
                 SecretAttachmentRow(attachment: attachment)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    .appSwipeActions(edge: .trailing, style: AppSwipeActions.secondary) {
                         Button {
                             beginRename(attachment)
                         } label: {
                             Label("重命名", systemImage: "pencil")
                         }
-                        .tint(.blue)
+                        .tint(AppSwipeActions.rename.tint)
                         Button(role: .destructive) {
                             removeAttachment(attachment)
                         } label: {
-                            Label("移除", systemImage: "trash")
+                            Label("删除", systemImage: "trash")
                         }
-                        .tint(.red)
+                        .tint(AppSwipeActions.delete.tint)
                     }
             }
 
@@ -1211,6 +1282,34 @@ struct SecretEditorView: View {
         didSave = true
         store.upsertSecret(draft.item)
         dismiss()
+    }
+}
+
+private struct SecretFieldSwipeActionsModifier: ViewModifier {
+    let field: Binding<SecretField>
+    let onRename: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        content.appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+            Button {
+                field.wrappedValue.isSensitive.toggle()
+            } label: {
+                visibilityLabel(isSensitive: field.wrappedValue.isSensitive)
+            }
+            .tint(AppSwipeActions.visibility.tint)
+            Button(action: onRename) {
+                Label("编辑名称", systemImage: "pencil")
+            }
+            .tint(AppSwipeActions.edit.tint)
+        }
+    }
+
+    private func visibilityLabel(isSensitive: Bool) -> some View {
+        Label(
+            isSensitive ? "显示内容" : "隐藏内容",
+            systemImage: isSensitive ? "eye" : "eye.slash"
+        )
     }
 }
 

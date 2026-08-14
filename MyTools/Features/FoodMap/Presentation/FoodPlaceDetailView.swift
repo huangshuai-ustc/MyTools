@@ -73,8 +73,7 @@ struct FoodPlaceDetailView: View {
 
                     if !place.tags.isEmpty {
                         Section("标签") {
-                            Text(place.tags.joined(separator: "、"))
-                                .textSelection(.enabled)
+                            AppTagCapsules(tags: place.tags)
                         }
                     }
 

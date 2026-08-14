@@ -11,23 +11,32 @@ struct BillImportOutcome: Equatable, Sendable {
 @MainActor
 final class BillsStore: ObservableObject {
     @Published private(set) var records: [BillRecord]
+    @Published private(set) var knownTags: [String]
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
-    init(records: [BillRecord] = []) {
-        self.records = Self.sorted(records)
+    init(records: [BillRecord] = [], knownTags: [String] = []) {
+        let normalizedRecords = records.map(Self.normalizedTags(in:))
+        self.records = Self.sorted(normalizedRecords)
+        self.knownTags = AppTagSupport.merged(knownTags, with: normalizedRecords.flatMap(\.tags))
     }
 
     func attach(mutationNotifier: any VaultMutationNotifying) {
         self.mutationNotifier = mutationNotifier
     }
 
-    func replace(records: [BillRecord]) {
-        self.records = Self.sorted(records)
+    func replace(records: [BillRecord], knownTags: [String]? = nil) {
+        let normalizedRecords = records.map(Self.normalizedTags(in:))
+        self.records = Self.sorted(normalizedRecords)
+        self.knownTags = AppTagSupport.merged(
+            knownTags ?? self.knownTags,
+            with: normalizedRecords.flatMap(\.tags)
+        )
     }
 
     func upsert(_ record: BillRecord) {
         var stored = normalized(record)
         guard stored.amount > 0 else { return }
+        knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
         stored.updatedAt = Date()
         if let index = records.firstIndex(where: { $0.id == stored.id }) {
             stored.createdAt = records[index].createdAt
@@ -54,6 +63,7 @@ final class BillsStore: ObservableObject {
 
         for incoming in incomingRecords {
             var stored = normalized(incoming)
+            knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
             if let index = matchingIndex(for: stored) {
                 stored.id = records[index].id
                 stored.createdAt = records[index].createdAt
@@ -139,13 +149,7 @@ final class BillsStore: ObservableObject {
     }
 
     private func normalizedTags(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        return values.compactMap { value in
-            let tag = normalizedText(value)
-            guard !tag.isEmpty else { return nil }
-            let key = tag.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            return seen.insert(key).inserted ? tag : nil
-        }
+        AppTagSupport.normalize(values)
     }
 
     private static func sorted(_ records: [BillRecord]) -> [BillRecord] {
@@ -153,6 +157,12 @@ final class BillsStore: ObservableObject {
             if $0.occurredAt != $1.occurredAt { return $0.occurredAt > $1.occurredAt }
             return $0.createdAt > $1.createdAt
         }
+    }
+
+    private static func normalizedTags(in record: BillRecord) -> BillRecord {
+        var result = record
+        result.tags = AppTagSupport.normalize(record.tags)
+        return result
     }
 
     private func didMutate() {

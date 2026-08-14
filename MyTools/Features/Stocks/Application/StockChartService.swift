@@ -20,6 +20,7 @@ actor StockChartService: StockChartServing {
     private var diskStore: StockChartDiskStore
     private let providers: StockChartProviders
     private var lastRefreshSessionEnd: [StockChartCacheKey: Date] = [:]
+    private var cacheGeneration = 0
 
     init(
         diskStore: StockChartDiskStore = StockChartDiskStore(),
@@ -55,6 +56,7 @@ actor StockChartService: StockChartServing {
             range: range
         )
         let now = Date()
+        let generation = cacheGeneration
         let stored = diskStore.load(for: stockKey)
         let cached = stored.flatMap {
             diskStore.renderedSnapshot(from: $0, range: range)
@@ -92,7 +94,9 @@ actor StockChartService: StockChartServing {
                 for: stockKey,
                 into: stored
             )
-            diskStore.save(updatedStore, for: stockKey)
+            if generation == cacheGeneration {
+                diskStore.save(updatedStore, for: stockKey)
+            }
             return diskStore.renderedSnapshot(from: updatedStore, range: range) ?? snapshot
         } catch is CancellationError {
             throw CancellationError()
@@ -100,6 +104,12 @@ actor StockChartService: StockChartServing {
             if let cached { return cached }
             throw error
         }
+    }
+
+    func clearCache() {
+        cacheGeneration += 1
+        lastRefreshSessionEnd.removeAll()
+        diskStore.removeAll()
     }
 
     private func fetchRemoteChart(

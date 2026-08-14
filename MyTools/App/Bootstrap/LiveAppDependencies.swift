@@ -21,6 +21,26 @@ extension ExchangeRateRepository: ExchangeRateProviding {
     }
 }
 
+private struct LiveModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
+    func clearLocalCache(for module: ToolModule) async {
+        switch module {
+        case .myStocks:
+#if MYTOOLS_FEATURE_STOCKS
+            await StockChartService.shared.clearCache()
+#endif
+            break
+        case .sportsLottery:
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+            await SportsLotteryService.shared.clearCache()
+#endif
+            break
+        case .personalFinance, .currencyExchange, .healthRecords, .foodMap,
+             .secrets, .documents, .bills:
+            break
+        }
+    }
+}
+
 extension AppStoreDependencies {
     @MainActor
     static var live: Self {
@@ -49,7 +69,8 @@ extension AppStoreDependencies {
             attachmentStore: attachmentStore,
             defaults: .standard,
             localNotificationScheduler: AppNotificationService.shared,
-            cloudSync: cloudSync
+            cloudSync: cloudSync,
+            moduleLocalDataCacheCleaner: LiveModuleLocalDataCacheCleaner()
         )
     }
 }

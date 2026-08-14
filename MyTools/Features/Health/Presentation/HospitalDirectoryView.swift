@@ -36,15 +36,8 @@ struct HospitalDirectoryView: View {
                         .onTapGesture {
                             if auth.isAdmin { editingProfile = profile }
                         }
-                        .swipeActions {
-                            if auth.isAdmin {
-                                Button(role: .destructive) {
-                                    store.deleteHospitalProfiles(ids: [profile.id])
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
-                                .tint(.red)
-                            }
+                        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                            store.deleteHospitalProfiles(ids: [profile.id])
                         }
                 }
             }

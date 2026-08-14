@@ -25,7 +25,7 @@ struct FoodMapView: View {
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var statusFilter: FoodStatusFilter = .all
-    @State private var selectedTag: String?
+    @State private var selectedTag = ""
     @State private var editingPlace: FoodPlace?
 
     private var locatedPlaceCount: Int {
@@ -33,13 +33,14 @@ struct FoodMapView: View {
     }
 
     private var availableTags: [String] {
-        Set(store.places.flatMap(\.tags)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        AppTagSupport.normalize(store.places.flatMap(\.tags))
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
     private var visiblePlaces: [FoodPlace] {
         store.places
             .filter(statusFilter.includes)
-            .filter { selectedTag == nil || $0.tags.contains(selectedTag!) }
+            .filter { selectedTag.isEmpty || $0.tags.contains(selectedTag) }
             .filter { $0.matches(query) }
             .sorted { lhs, rhs in
                 if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
@@ -74,13 +75,7 @@ struct FoodMapView: View {
                     .pickerStyle(.menu)
 
                     if !availableTags.isEmpty {
-                        Picker("标签", selection: $selectedTag) {
-                            Text("全部标签").tag(nil as String?)
-                            ForEach(availableTags, id: \.self) { tag in
-                                Text(tag).tag(tag as String?)
-                            }
-                        }
-                        .pickerStyle(.menu)
+                        AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
                     }
                 }
             }
@@ -93,15 +88,8 @@ struct FoodMapView: View {
                     )
                 }
 
-                if auth.isAdmin {
-                    ForEach(visiblePlaces) { place in
-                        placeLink(place)
-                    }
-                    .onDelete(perform: delete)
-                } else {
-                    ForEach(visiblePlaces) { place in
-                        placeLink(place)
-                    }
+                ForEach(visiblePlaces) { place in
+                    placeLink(place)
                 }
             }
         }
@@ -140,8 +128,8 @@ struct FoodMapView: View {
                 .iOSLargeSheet()
         }
         .onChange(of: availableTags) { _, tags in
-            if let selectedTag, !tags.contains(selectedTag) {
-                self.selectedTag = nil
+            if !selectedTag.isEmpty, !tags.contains(selectedTag) {
+                selectedTag = ""
             }
         }
     }
@@ -153,12 +141,11 @@ struct FoodMapView: View {
             FoodPlaceRow(place: place)
         }
         .appListRowStyle()
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            store.delete(ids: [place.id])
+        }
     }
 
-    private func delete(at offsets: IndexSet) {
-        let ids = Set(offsets.map { visiblePlaces[$0].id })
-        store.delete(ids: ids)
-    }
 }
 
 private struct FoodPlaceRow: View {
@@ -194,6 +181,7 @@ private struct FoodPlaceRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                AppTagCapsules(tags: place.tags, limit: 3)
             }
         }
     }

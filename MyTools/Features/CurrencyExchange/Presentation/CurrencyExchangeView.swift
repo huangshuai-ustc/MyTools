@@ -133,9 +133,6 @@ struct CurrencyExchangeView: View {
                         ForEach(group.records) { record in
                             recordButton(record)
                         }
-                        .onDelete { offsets in
-                            deleteRecords(at: offsets, from: group.records)
-                        }
                     } else {
                         ForEach(group.records) { record in
                             CurrencyExchangeRecordRow(
@@ -330,10 +327,9 @@ struct CurrencyExchangeView: View {
         }
         .buttonStyle(.plain)
         .appListRowStyle()
-    }
-
-    private func deleteRecords(at offsets: IndexSet, from records: [CurrencyExchangeRecord]) {
-        store.deleteRecords(ids: Set(offsets.map { records[$0].id }))
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            store.deleteRecords(ids: [record.id])
+        }
     }
 
     private var totalResultTitle: String {

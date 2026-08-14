@@ -547,8 +547,10 @@ struct AccountEditorView: View {
                         DomesticSubaccountRow(subaccount: subaccount)
                     }
                     .buttonStyle(.plain)
+                    .appDeleteSwipeAction {
+                        draft.account.domesticSubaccounts.removeAll { $0.id == subaccount.id }
+                    }
                 }
-                .onDelete(perform: deleteDomesticSubaccounts)
                 Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
                     Label("添加子账户", systemImage: "plus.circle")
                 }
@@ -561,8 +563,10 @@ struct AccountEditorView: View {
                         ForeignSubaccountRow(subaccount: subaccount)
                     }
                     .buttonStyle(.plain)
+                    .appDeleteSwipeAction {
+                        draft.account.foreignSubaccounts.removeAll { $0.id == subaccount.id }
+                    }
                 }
-                .onDelete(perform: deleteForeignSubaccounts)
                 Button { editingForeignSubaccount = ForeignSubaccount() } label: {
                     Label("添加子账户", systemImage: "plus.circle")
                 }
@@ -581,8 +585,10 @@ struct AccountEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .appListRowStyle()
+                .appDeleteSwipeAction {
+                    deleteCards(ids: [card.id])
+                }
             }
-            .onDelete(perform: deleteCards)
             Button { editingCard = BankCard() } label: {
                 Label("添加银行卡", systemImage: "plus.circle")
             }
@@ -627,8 +633,10 @@ struct AccountEditorView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .appDeleteSwipeAction {
+                    draft.account.additionalLoginFields.removeAll { $0.id == field.id }
+                }
             }
-            .onDelete(perform: deleteAdditionalLoginFields)
             Button { editingAdditionalLoginField = AdditionalLoginField() } label: {
                 Label("添加自定义登录字段", systemImage: "plus.circle")
             }
@@ -698,20 +706,12 @@ struct AccountEditorView: View {
         }
     }
 
-    private func deleteDomesticSubaccounts(at offsets: IndexSet) {
-        draft.account.domesticSubaccounts.remove(atOffsets: offsets)
-    }
-
     private func upsertForeignSubaccount(_ value: ForeignSubaccount) {
         if let index = draft.account.foreignSubaccounts.firstIndex(where: { $0.id == value.id }) {
             draft.account.foreignSubaccounts[index] = value
         } else {
             draft.account.foreignSubaccounts.append(value)
         }
-    }
-
-    private func deleteForeignSubaccounts(at offsets: IndexSet) {
-        draft.account.foreignSubaccounts.remove(atOffsets: offsets)
     }
 
     private func upsertCard(_ card: BankCard) {
@@ -722,8 +722,7 @@ struct AccountEditorView: View {
         }
     }
 
-    private func deleteCards(at offsets: IndexSet) {
-        let ids = Set(offsets.map { sortedDraftCards[$0].id })
+    private func deleteCards(ids: Set<UUID>) {
         for card in draft.cards where ids.contains(card.id) {
             for attachment in card.statements.compactMap(\.attachment)
             where !originalAttachmentIDs.contains(attachment.id) {
@@ -739,10 +738,6 @@ struct AccountEditorView: View {
         } else {
             draft.account.additionalLoginFields.append(value)
         }
-    }
-
-    private func deleteAdditionalLoginFields(at offsets: IndexSet) {
-        draft.account.additionalLoginFields.remove(atOffsets: offsets)
     }
 
     private func cleanUpUncommittedAttachments() {

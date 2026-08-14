@@ -43,7 +43,8 @@ struct FoodMapTests {
         edited.shopName = "  示例店  "
         edited.administrativeLocation = ChinaAdministrativeLocation(
             province: " 广东省 ",
-            city: " 深圳市 "
+            city: " 深圳市 ",
+            district: " 南山区 "
         )
         edited.address = "  示例路 1 号  "
         edited.sourceTitle = "  朋友推荐  "
@@ -61,9 +62,10 @@ struct FoodMapTests {
         #expect(stored.shopName == "示例店")
         #expect(stored.administrativeLocation == ChinaAdministrativeLocation(
             province: "广东省",
-            city: "深圳市"
+            city: "深圳市",
+            district: "南山区"
         ))
-        #expect(stored.administrativeArea == "广东省 深圳市")
+        #expect(stored.administrativeArea == "广东省 深圳市 南山区")
         #expect(stored.address == "示例路 1 号")
         #expect(stored.sourceTitle == "朋友推荐")
         #expect(stored.sourceURL == "https://example.com/food")
@@ -126,6 +128,23 @@ struct FoodMapTests {
             from: "深圳南山"
         ) == ChinaAdministrativeLocation(province: "广东省", city: "深圳市"))
         #expect(ChinaAdministrativeDivisions.infer(from: "Tokyo, Japan") == nil)
+    }
+
+    @Test func administrativeLocationKeepsDistrictAndDecodesLegacyData() throws {
+        let location = try #require(ChinaAdministrativeDivisions.location(
+            province: "广东省",
+            city: "深圳市",
+            district: "南山区"
+        ))
+        #expect(location.displayName == "广东省 深圳市 南山区")
+        #expect(ChinaAdministrativeDivisions.canonicalProvince("广东") == "广东省")
+
+        let legacy = try JSONDecoder().decode(
+            ChinaAdministrativeLocation.self,
+            from: Data("{\"province\":\"广东省\",\"city\":\"深圳市\"}".utf8)
+        )
+        #expect(legacy.district == nil)
+        #expect(legacy.displayName == "广东省 深圳市")
     }
 
     @Test func backupRestoresFoodMapPhotosOnlyWhenModuleIsEnabled() async throws {

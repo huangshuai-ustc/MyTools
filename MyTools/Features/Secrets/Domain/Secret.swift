@@ -125,8 +125,8 @@ enum SecretFieldKind: String, Codable, CaseIterable, Identifiable, Sendable {
 
 enum SecretFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable {
     case text
-    case date
     case url
+    case date
 
     var id: Self { self }
 

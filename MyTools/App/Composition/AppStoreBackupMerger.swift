@@ -49,6 +49,10 @@ enum AppStoreBackupMerger {
                 local: localVault.hospitalProfiles,
                 imported: imported.vault.hospitalProfiles
             )
+            merged.medicalRecordTags = AppTagSupport.merged(
+                localVault.medicalRecordTags,
+                with: imported.vault.medicalRecordTags
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
@@ -56,6 +60,10 @@ enum AppStoreBackupMerger {
             merged.foodPlaces = mergeByID(
                 local: localVault.foodPlaces,
                 imported: imported.vault.foodPlaces
+            )
+            merged.foodPlaceTags = AppTagSupport.merged(
+                localVault.foodPlaceTags,
+                with: imported.vault.foodPlaceTags
             )
         }
 #endif
@@ -65,6 +73,10 @@ enum AppStoreBackupMerger {
                 local: localVault.credentialDocuments,
                 imported: imported.vault.credentialDocuments
             )
+            merged.credentialTags = AppTagSupport.merged(
+                localVault.credentialTags,
+                with: imported.vault.credentialTags
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_BILLS
@@ -73,12 +85,22 @@ enum AppStoreBackupMerger {
                 local: localVault.billRecords,
                 imported: imported.vault.billRecords
             )
+            merged.billTags = AppTagSupport.merged(
+                localVault.billTags,
+                with: imported.vault.billTags
+            )
         }
 #endif
 
 #if MYTOOLS_FEATURE_SECRETS
         if modules.contains(.secrets), !imported.vault.secretFieldTemplates.isEmpty {
             merged.secretFieldTemplates = imported.vault.secretFieldTemplates
+        }
+        if modules.contains(.secrets) {
+            merged.secretTags = AppTagSupport.merged(
+                localVault.secretTags,
+                with: imported.vault.secretTags
+            )
         }
         let importedSecrets: [SecretVaultValue] = modules.contains(.secrets)
             ? imported.secrets.map { item in

@@ -84,7 +84,7 @@ struct CredentialDetailView: View {
 
                     if !document.tags.isEmpty {
                         Section("标签") {
-                            Text(document.tags.joined(separator: "、"))
+                            AppTagCapsules(tags: document.tags)
                         }
                     }
 
@@ -135,14 +135,8 @@ struct CredentialDetailView: View {
                                     CredentialVersionRow(document: version)
                                 }
                                 .appListRowStyle()
-                                .swipeActions {
-                                    if auth.isAdmin, version.isVersion {
-                                        Button(role: .destructive) {
-                                            store.delete(ids: [version.id])
-                                        } label: {
-                                            Label("删除版本", systemImage: "trash")
-                                        }
-                                    }
+                                .appDeleteSwipeAction(isEnabled: auth.isAdmin && version.isVersion) {
+                                    store.delete(ids: [version.id])
                                 }
                             }
                         }

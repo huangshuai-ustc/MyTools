@@ -59,6 +59,7 @@ struct BillsView: View {
     @State private var query = ""
     @State private var directionFilter: BillDirectionFilter = .all
     @State private var categoryFilter: BillCategoryFilter = .all
+    @State private var selectedTag = ""
     @State private var editingRecord: BillRecord?
     @State private var showingOCRImport = false
     @State private var showingFileImport = false
@@ -77,7 +78,8 @@ struct BillsView: View {
             case .all: matchesCategory = true
             case .category(let category): matchesCategory = record.category == category
             }
-            return matchesDirection && matchesCategory && record.matches(query)
+            let matchesTag = selectedTag.isEmpty || record.tags.contains(selectedTag)
+            return matchesDirection && matchesCategory && matchesTag && record.matches(query)
         }
     }
 
@@ -87,6 +89,10 @@ struct BillsView: View {
 
     private var availableCategories: [BillCategory] {
         Set(store.records.map(\.category)).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    private var availableTags: [String] {
+        AppTagSupport.normalize(store.records.flatMap(\.tags))
     }
 
     private var groupedRecords: [(Date, [BillRecord])] {
@@ -168,6 +174,10 @@ struct BillsView: View {
                         }
                         .appListRowStyle()
                     }
+                    if !availableTags.isEmpty {
+                        AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
+                            .appListRowStyle()
+                    }
                 }
             }
 
@@ -182,19 +192,9 @@ struct BillsView: View {
             } else {
                 ForEach(groupedRecords, id: \.0) { day, records in
                     Section(AppDateFormatter.string(from: day)) {
-                        if auth.isAdmin {
-                            ForEach(records) { record in
-                                recordLink(record)
-                                    .onAppear { loadMoreIfNeeded(record) }
-                            }
-                            .onDelete { offsets in
-                                store.delete(ids: Set(offsets.map { records[$0].id }))
-                            }
-                        } else {
-                            ForEach(records) { record in
-                                recordLink(record)
-                                    .onAppear { loadMoreIfNeeded(record) }
-                            }
+                        ForEach(records) { record in
+                            recordLink(record)
+                                .onAppear { loadMoreIfNeeded(record) }
                         }
                     }
                 }
@@ -306,6 +306,9 @@ struct BillsView: View {
             BillRow(record: record)
         }
         .appListRowStyle()
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            store.delete(ids: [record.id])
+        }
     }
 }
 
@@ -333,6 +336,7 @@ private struct BillRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                AppTagCapsules(tags: record.tags, limit: 3)
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
@@ -371,7 +375,7 @@ private struct BillDetailView: View {
                     }
                     detailSection(record)
                     if !record.tags.isEmpty {
-                        Section("标签") { Text(record.tags.joined(separator: "、")) }
+                        Section("标签") { AppTagCapsules(tags: record.tags) }
                     }
                     if !record.note.isEmpty {
                         Section("备注") { Text(record.note) }

@@ -145,6 +145,53 @@ struct AppStoreFacadeTests {
         #expect(persistence.scheduleCount == 1)
     }
 
+    @Test func moduleLocalDataDeletionCanBeUndoneWithoutTouchingOtherModules() async throws {
+        let defaults = Self.makeDefaults()
+        let persistence = RecordingVaultPersistence()
+        var stock = StockHolding()
+        stock.symbol = "TEST"
+        var bill = BillRecord()
+        bill.merchant = "保留账单"
+        let store = AppStore(
+            initialVault: VaultData(stocks: [stock], billRecords: [bill]),
+            dependencies: Self.dependencies(defaults: defaults, persistence: persistence)
+        )
+
+        let deletion = try #require(
+            store.beginModuleLocalDataDeletion(for: .myStocks, undoWindow: 60)
+        )
+        #expect(store.stockStore.stocks.isEmpty)
+        #expect(store.billsStore.records == [bill])
+        let pendingCloudSnapshot = try store.makeCloudSyncSnapshot()
+        #expect(!pendingCloudSnapshot.participatingModules.contains(.myStocks))
+
+        #expect(store.undoModuleLocalDataDeletion(id: deletion.id))
+        #expect(store.stockStore.stocks == [stock])
+        #expect(store.billsStore.records == [bill])
+        #expect(store.pendingModuleLocalDataDeletion == nil)
+    }
+
+    @Test func moduleLocalDataDeletionCommitsAfterUndoWindow() async throws {
+        let defaults = Self.makeDefaults()
+        let persistence = RecordingVaultPersistence()
+        var stock = StockHolding()
+        stock.symbol = "TEST"
+        let store = AppStore(
+            initialVault: VaultData(stocks: [stock]),
+            dependencies: Self.dependencies(defaults: defaults, persistence: persistence)
+        )
+
+        let deletion = try #require(
+            store.beginModuleLocalDataDeletion(for: .myStocks, undoWindow: 60)
+        )
+        await store.commitModuleLocalDataDeletion(id: deletion.id)
+
+        #expect(store.stockStore.stocks.isEmpty)
+        #expect(store.pendingModuleLocalDataDeletion == nil)
+        let committedCloudSnapshot = try store.makeCloudSyncSnapshot()
+        #expect(committedCloudSnapshot.participatingModules.contains(.myStocks))
+    }
+
     @Test func quoteRefreshPublishesAndPersistsThroughStockStore() async {
         let defaults = Self.makeDefaults()
         let persistence = RecordingVaultPersistence()
@@ -185,7 +232,8 @@ struct AppStoreFacadeTests {
         defaults: UserDefaults,
         persistence: RecordingVaultPersistence,
         initialLoader: any VaultInitialLoading = EmptyVaultInitialLoader(),
-        quoteService: any StockQuoteRefreshing = EmptyStockQuoteProvider()
+        quoteService: any StockQuoteRefreshing = EmptyStockQuoteProvider(),
+        moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing = DisabledModuleLocalDataCacheCleaner()
     ) -> AppStoreDependencies {
         AppStoreDependencies(
             initialLoader: initialLoader,
@@ -196,7 +244,8 @@ struct AppStoreFacadeTests {
             stockRefreshInvalidator: NoopStockRefreshInvalidator(),
             backupProcessor: AppStoreBackupProcessor(),
             attachmentStore: AttachmentStore(),
-            defaults: defaults
+            defaults: defaults,
+            moduleLocalDataCacheCleaner: moduleLocalDataCacheCleaner
         )
     }
 

@@ -69,6 +69,14 @@ protocol VaultBackupProcessing: Sendable {
     ) async throws -> VaultBackupPayload
 }
 
+protocol ModuleLocalDataCacheClearing: Sendable {
+    func clearLocalCache(for module: ToolModule) async
+}
+
+struct DisabledModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
+    func clearLocalCache(for module: ToolModule) async {}
+}
+
 struct AppStoreDependencies {
     let initialLoader: any VaultInitialLoading
     let persistence: any VaultPersisting
@@ -81,6 +89,7 @@ struct AppStoreDependencies {
     let defaults: UserDefaults
     let localNotificationScheduler: any LocalNotificationScheduling
     let cloudSync: CloudSyncCoordinator?
+    let moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing
 
     @MainActor
     init(
@@ -94,7 +103,8 @@ struct AppStoreDependencies {
         attachmentStore: AttachmentStore,
         defaults: UserDefaults,
         localNotificationScheduler: any LocalNotificationScheduling = DisabledLocalNotificationScheduler(),
-        cloudSync: CloudSyncCoordinator? = nil
+        cloudSync: CloudSyncCoordinator? = nil,
+        moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing = DisabledModuleLocalDataCacheCleaner()
     ) {
         self.initialLoader = initialLoader
         self.persistence = persistence
@@ -107,5 +117,6 @@ struct AppStoreDependencies {
         self.defaults = defaults
         self.localNotificationScheduler = localNotificationScheduler
         self.cloudSync = cloudSync
+        self.moduleLocalDataCacheCleaner = moduleLocalDataCacheCleaner
     }
 }

@@ -222,12 +222,7 @@ enum MedicalRecordDraftValidator {
     }
 
     private static func parsedTags(_ text: String) -> [String] {
-        var result: [String] = []
-        for rawTag in text.split(whereSeparator: { ",，、".contains($0) }) {
-            let tag = trimmed(String(rawTag))
-            if !tag.isEmpty, !result.contains(tag) { result.append(tag) }
-        }
-        return result
+        AppTagSupport.parse(text)
     }
 }
 

@@ -11,11 +11,24 @@ private struct SendableUserDefaults: @unchecked Sendable {
     let value: UserDefaults
 }
 
+struct PendingModuleLocalDataDeletion: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let module: ToolModule
+    let expiresAt: Date
+}
+
+private struct ModuleLocalDataDeletionSnapshot {
+    let module: ToolModule
+    let vault: VaultData
+    let secrets: [SecretVaultValue]
+}
+
 @MainActor
 final class AppStore: ObservableObject, VaultMutationNotifying {
     @Published private(set) var isInitialDataLoaded = false
     @Published private(set) var isVaultLoadFailurePresented = false
     @Published private(set) var persistenceError: String?
+    @Published private(set) var pendingModuleLocalDataDeletion: PendingModuleLocalDataDeletion?
 #if MYTOOLS_FEATURE_STOCKS
     let stockStore: StockStore
 #endif
@@ -49,12 +62,16 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private let moduleLifecycleRegistry: ModuleLifecycleRegistry
     private let moduleDataCleanupRegistry: ModuleDataCleanupRegistry
     private let cloudSyncPreferences: CloudSyncPreferencesBridge
+    private let defaults: UserDefaults
+    private let moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing
     private var isRestoringBackup = false
     private var isApplyingCloudChanges = false
     private var canPersistVault = true
     private var didLogPersistenceBlocked = false
     private var retainedVault: VaultData
     private var retainedSecrets: [SecretVaultValue]
+    private var pendingModuleDeletionSnapshot: ModuleLocalDataDeletionSnapshot?
+    private var pendingModuleDeletionTask: Task<Void, Never>?
 
     init(
         initialVault: VaultData? = nil,
@@ -67,6 +84,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         let stockAppearanceSettings = stockAppearanceSettings
             ?? StockAppearanceSettings(defaults: dependencies.defaults)
         self.moduleSettings = moduleSettings
+        defaults = dependencies.defaults
+        moduleLocalDataCacheCleaner = dependencies.moduleLocalDataCacheCleaner
         retainedVault = initialVault ?? VaultData()
         retainedSecrets = secretItems
         moduleLifecycleRegistry = ModuleLifecycleRegistry()
@@ -115,6 +134,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         healthStore = HealthStore(
             medicalRecords: initialVault?.medicalRecords ?? [],
             hospitalProfiles: initialVault?.hospitalProfiles ?? [],
+            knownTags: initialVault?.medicalRecordTags ?? [],
             attachmentStore: attachmentStore,
             moduleSettings: moduleSettings
         )
@@ -129,6 +149,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_FOOD_MAP
         foodMapStore = FoodMapStore(
             places: initialVault?.foodPlaces ?? [],
+            knownTags: initialVault?.foodPlaceTags ?? [],
             attachmentStore: attachmentStore
         )
 #endif
@@ -136,19 +157,24 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         secretStore = SecretStore(
             secretItems: secretItems,
             fieldTemplates: initialVault?.secretFieldTemplates ?? [],
+            knownTags: initialVault?.secretTags ?? [],
             attachmentStore: attachmentStore
         )
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         documentsStore = DocumentsStore(
             documents: initialVault?.credentialDocuments ?? [],
+            knownTags: initialVault?.credentialTags ?? [],
             attachmentStore: attachmentStore,
             notificationScheduler: dependencies.localNotificationScheduler,
             moduleSettings: moduleSettings
         )
 #endif
 #if MYTOOLS_FEATURE_BILLS
-        billsStore = BillsStore(records: initialVault?.billRecords ?? [])
+        billsStore = BillsStore(
+            records: initialVault?.billRecords ?? [],
+            knownTags: initialVault?.billTags ?? []
+        )
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         moduleLifecycleRegistry.register(stockStore)
@@ -264,7 +290,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_SECRETS
         secretStore.replace(
             secretItems: snapshot.secrets,
-            fieldTemplates: snapshot.vault.secretFieldTemplates
+            fieldTemplates: snapshot.vault.secretFieldTemplates,
+            knownTags: snapshot.vault.secretTags
         )
 #endif
         canPersistVault = snapshot.canPersist
@@ -305,17 +332,21 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_HEALTH
         healthStore.replace(
             medicalRecords: vault.medicalRecords,
-            hospitalProfiles: vault.hospitalProfiles
+            hospitalProfiles: vault.hospitalProfiles,
+            knownTags: vault.medicalRecordTags
         )
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
-        foodMapStore.replace(places: vault.foodPlaces)
+        foodMapStore.replace(places: vault.foodPlaces, knownTags: vault.foodPlaceTags)
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
-        documentsStore.replace(documents: vault.credentialDocuments)
+        documentsStore.replace(
+            documents: vault.credentialDocuments,
+            knownTags: vault.credentialTags
+        )
 #endif
 #if MYTOOLS_FEATURE_BILLS
-        billsStore.replace(records: vault.billRecords)
+        billsStore.replace(records: vault.billRecords, knownTags: vault.billTags)
 #endif
     }
 
@@ -383,7 +414,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_SECRETS
         secretStore.replace(
             secretItems: mergedPayload.secrets,
-            fieldTemplates: mergedPayload.vault.secretFieldTemplates
+            fieldTemplates: mergedPayload.vault.secretFieldTemplates,
+            knownTags: mergedPayload.vault.secretTags
         )
 #endif
         canPersistVault = true
@@ -442,6 +474,73 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         return report
     }
 
+    @discardableResult
+    func beginModuleLocalDataDeletion(
+        for module: ToolModule,
+        undoWindow: TimeInterval = 10
+    ) -> PendingModuleLocalDataDeletion? {
+        guard isInitialDataLoaded,
+              canPersistVault,
+              pendingModuleLocalDataDeletion == nil,
+              CompiledToolModules.ordered.contains(module) else { return nil }
+
+        let deletion = PendingModuleLocalDataDeletion(
+            id: UUID(),
+            module: module,
+            expiresAt: Date().addingTimeInterval(max(undoWindow, 0))
+        )
+        pendingModuleDeletionSnapshot = ModuleLocalDataDeletionSnapshot(
+            module: module,
+            vault: currentVaultData(),
+            secrets: currentSecrets
+        )
+        pendingModuleLocalDataDeletion = deletion
+        let didChangeVault = clearLocalData(for: module)
+        if didChangeVault {
+            persist()
+        }
+
+        pendingModuleDeletionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(max(undoWindow, 0)))
+            guard !Task.isCancelled else { return }
+            await self?.commitModuleLocalDataDeletion(id: deletion.id)
+        }
+        return deletion
+    }
+
+    @discardableResult
+    func undoModuleLocalDataDeletion(id: UUID) -> Bool {
+        guard let deletion = pendingModuleLocalDataDeletion,
+              deletion.id == id,
+              Date() < deletion.expiresAt,
+              let snapshot = pendingModuleDeletionSnapshot,
+              snapshot.module == deletion.module else { return false }
+
+        pendingModuleDeletionTask?.cancel()
+        pendingModuleDeletionTask = nil
+        restoreLocalData(from: snapshot)
+        pendingModuleDeletionSnapshot = nil
+        pendingModuleLocalDataDeletion = nil
+        persist()
+        cloudSync.localDataDidChange()
+        return true
+    }
+
+    func commitModuleLocalDataDeletion(id: UUID) async {
+        guard let deletion = pendingModuleLocalDataDeletion,
+              deletion.id == id,
+              let snapshot = pendingModuleDeletionSnapshot,
+              snapshot.module == deletion.module else { return }
+
+        pendingModuleDeletionTask?.cancel()
+        pendingModuleDeletionTask = nil
+        pendingModuleDeletionSnapshot = nil
+        pendingModuleLocalDataDeletion = nil
+        finalizeLocalDataDeletion(snapshot)
+        cloudSync.localDataDidChange()
+        await moduleLocalDataCacheCleaner.clearLocalCache(for: deletion.module)
+    }
+
     private func persist() {
         guard !isRestoringBackup, canPersistVault else {
             if !canPersistVault, !didLogPersistenceBlocked {
@@ -474,18 +573,23 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_HEALTH
         vault.medicalRecords = healthStore.medicalRecords
         vault.hospitalProfiles = healthStore.hospitalProfiles
+        vault.medicalRecordTags = healthStore.knownTags
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
         vault.foodPlaces = foodMapStore.places
+        vault.foodPlaceTags = foodMapStore.knownTags
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         vault.credentialDocuments = documentsStore.documents
+        vault.credentialTags = documentsStore.knownTags
 #endif
 #if MYTOOLS_FEATURE_BILLS
         vault.billRecords = billsStore.records
+        vault.billTags = billsStore.knownTags
 #endif
 #if MYTOOLS_FEATURE_SECRETS
         vault.secretFieldTemplates = secretStore.fieldTemplates
+        vault.secretTags = secretStore.knownTags
 #endif
         return vault
     }
@@ -498,7 +602,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
     }
 
-    private func makeCloudSyncSnapshot() throws -> CloudSyncSnapshot {
+    func makeCloudSyncSnapshot() throws -> CloudSyncSnapshot {
         try CloudSyncSnapshotBuilder.make(
             vault: currentVaultData(),
             secrets: currentSecrets,
@@ -540,7 +644,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_SECRETS
         secretStore.replace(
             secretItems: merged.secrets,
-            fieldTemplates: merged.vault.secretFieldTemplates
+            fieldTemplates: merged.vault.secretFieldTemplates,
+            knownTags: merged.vault.secretTags
         )
 #endif
         if let incomingPreferences {
@@ -558,7 +663,278 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     private var enabledModules: Set<ToolModule> {
-        Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+        var modules = Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+        if let pendingModuleLocalDataDeletion {
+            modules.remove(pendingModuleLocalDataDeletion.module)
+        }
+        return modules
+    }
+
+    @discardableResult
+    private func clearLocalData(for module: ToolModule) -> Bool {
+        var vault = currentVaultData()
+        var secrets = currentSecrets
+
+        switch module {
+        case .personalFinance:
+#if MYTOOLS_FEATURE_FINANCE
+            vault.accounts = []
+            vault.cards = []
+#endif
+            break
+        case .myStocks:
+#if MYTOOLS_FEATURE_STOCKS
+            vault.stocks = []
+            vault.stockPriceAlerts = []
+#endif
+            break
+        case .currencyExchange:
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+            vault.currencyExchangeRecords = []
+            vault.currencyRateAlerts = []
+#endif
+            break
+        case .healthRecords:
+#if MYTOOLS_FEATURE_HEALTH
+            vault.medicalRecords = []
+            vault.hospitalProfiles = []
+            vault.medicalRecordTags = []
+#endif
+            break
+        case .foodMap:
+#if MYTOOLS_FEATURE_FOOD_MAP
+            vault.foodPlaces = []
+            vault.foodPlaceTags = []
+#endif
+            break
+        case .secrets:
+#if MYTOOLS_FEATURE_SECRETS
+            secrets = []
+            vault.secretFieldTemplates = []
+            vault.secretTags = []
+#endif
+            break
+        case .documents:
+#if MYTOOLS_FEATURE_DOCUMENTS
+            vault.credentialDocuments = []
+            vault.credentialTags = []
+#endif
+            break
+        case .bills:
+#if MYTOOLS_FEATURE_BILLS
+            vault.billRecords = []
+            vault.billTags = []
+#endif
+            break
+        case .sportsLottery:
+            break
+        }
+
+        applyVault(vault)
+        retainedSecrets = secrets
+#if MYTOOLS_FEATURE_SECRETS
+        if module == .secrets {
+            secretStore.replace(
+                secretItems: secrets,
+                fieldTemplates: vault.secretFieldTemplates,
+                knownTags: vault.secretTags
+            )
+        }
+#endif
+        return module.definition.capabilities.contains(.localVault)
+    }
+
+    private func restoreLocalData(from snapshot: ModuleLocalDataDeletionSnapshot) {
+        var vault = currentVaultData()
+        var secrets = currentSecrets
+
+        switch snapshot.module {
+        case .personalFinance:
+#if MYTOOLS_FEATURE_FINANCE
+            vault.accounts = mergingRestored(snapshot.vault.accounts, into: vault.accounts)
+            vault.cards = mergingRestored(snapshot.vault.cards, into: vault.cards)
+#endif
+            break
+        case .myStocks:
+#if MYTOOLS_FEATURE_STOCKS
+            vault.stocks = mergingRestored(snapshot.vault.stocks, into: vault.stocks)
+            vault.stockPriceAlerts = mergingRestored(
+                snapshot.vault.stockPriceAlerts,
+                into: vault.stockPriceAlerts
+            )
+#endif
+            break
+        case .currencyExchange:
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+            vault.currencyExchangeRecords = mergingRestored(
+                snapshot.vault.currencyExchangeRecords,
+                into: vault.currencyExchangeRecords
+            )
+            vault.currencyRateAlerts = mergingRestored(
+                snapshot.vault.currencyRateAlerts,
+                into: vault.currencyRateAlerts
+            )
+#endif
+            break
+        case .healthRecords:
+#if MYTOOLS_FEATURE_HEALTH
+            vault.medicalRecords = mergingRestored(
+                snapshot.vault.medicalRecords,
+                into: vault.medicalRecords
+            )
+            vault.hospitalProfiles = mergingRestored(
+                snapshot.vault.hospitalProfiles,
+                into: vault.hospitalProfiles
+            )
+            vault.medicalRecordTags = AppTagSupport.merged(
+                vault.medicalRecordTags,
+                with: snapshot.vault.medicalRecordTags
+            )
+#endif
+            break
+        case .foodMap:
+#if MYTOOLS_FEATURE_FOOD_MAP
+            vault.foodPlaces = mergingRestored(snapshot.vault.foodPlaces, into: vault.foodPlaces)
+            vault.foodPlaceTags = AppTagSupport.merged(
+                vault.foodPlaceTags,
+                with: snapshot.vault.foodPlaceTags
+            )
+#endif
+            break
+        case .secrets:
+#if MYTOOLS_FEATURE_SECRETS
+            secrets = mergingRestored(snapshot.secrets, into: secrets)
+            vault.secretFieldTemplates = mergingRestored(
+                snapshot.vault.secretFieldTemplates,
+                into: vault.secretFieldTemplates
+            )
+            vault.secretTags = AppTagSupport.merged(
+                vault.secretTags,
+                with: snapshot.vault.secretTags
+            )
+#endif
+            break
+        case .documents:
+#if MYTOOLS_FEATURE_DOCUMENTS
+            vault.credentialDocuments = mergingRestored(
+                snapshot.vault.credentialDocuments,
+                into: vault.credentialDocuments
+            )
+            vault.credentialTags = AppTagSupport.merged(
+                vault.credentialTags,
+                with: snapshot.vault.credentialTags
+            )
+#endif
+            break
+        case .bills:
+#if MYTOOLS_FEATURE_BILLS
+            vault.billRecords = mergingRestored(snapshot.vault.billRecords, into: vault.billRecords)
+            vault.billTags = AppTagSupport.merged(
+                vault.billTags,
+                with: snapshot.vault.billTags
+            )
+#endif
+            break
+        case .sportsLottery:
+            break
+        }
+
+        applyVault(vault)
+        retainedSecrets = secrets
+#if MYTOOLS_FEATURE_SECRETS
+        if snapshot.module == .secrets {
+            secretStore.replace(
+                secretItems: secrets,
+                fieldTemplates: vault.secretFieldTemplates,
+                knownTags: vault.secretTags
+            )
+        }
+#endif
+    }
+
+    private func finalizeLocalDataDeletion(_ snapshot: ModuleLocalDataDeletionSnapshot) {
+        let retainedAttachmentIDs = Set(
+            attachmentsByID(vault: currentVaultData(), secrets: currentSecrets).keys
+        )
+        for attachment in attachments(
+            for: snapshot.module,
+            vault: snapshot.vault,
+            secrets: snapshot.secrets
+        ) where !retainedAttachmentIDs.contains(attachment.id) {
+            attachmentStore.delete(attachment)
+        }
+
+        switch snapshot.module {
+        case .myStocks:
+#if MYTOOLS_FEATURE_STOCKS
+            stockStore.clearNotificationState(for: Set(snapshot.vault.stockPriceAlerts.map(\.id)))
+            stockStore.clearLocalRefreshState()
+#endif
+            break
+        case .currencyExchange:
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+            currencyExchangeStore.clearNotificationState(
+                for: Set(snapshot.vault.currencyRateAlerts.map(\.id))
+            )
+#endif
+            break
+        case .sportsLottery:
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+            defaults.removeObject(forKey: SportsLotteryLeaguePreferences.key)
+#endif
+            break
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+            break
+        }
+    }
+
+    private func attachments(
+        for module: ToolModule,
+        vault: VaultData,
+        secrets: [SecretVaultValue]
+    ) -> [FileAttachment] {
+        switch module {
+        case .personalFinance:
+#if MYTOOLS_FEATURE_FINANCE
+            return vault.cards.flatMap(\.statements).compactMap(\.attachment)
+#else
+            return []
+#endif
+        case .healthRecords:
+#if MYTOOLS_FEATURE_HEALTH
+            return vault.medicalRecords.flatMap(\.attachments)
+#else
+            return []
+#endif
+        case .foodMap:
+#if MYTOOLS_FEATURE_FOOD_MAP
+            return vault.foodPlaces.flatMap(\.photos)
+#else
+            return []
+#endif
+        case .secrets:
+#if MYTOOLS_FEATURE_SECRETS
+            return secrets.flatMap(\.attachments)
+#else
+            return []
+#endif
+        case .documents:
+#if MYTOOLS_FEATURE_DOCUMENTS
+            return vault.credentialDocuments.flatMap(\.attachmentFiles)
+#else
+            return []
+#endif
+        case .myStocks, .currencyExchange, .bills, .sportsLottery:
+            return []
+        }
+    }
+
+    private func mergingRestored<Value: Identifiable>(
+        _ previous: [Value],
+        into current: [Value]
+    ) -> [Value] where Value.ID: Hashable {
+        let currentIDs = Set(current.map(\.id))
+        return previous.filter { !currentIDs.contains($0.id) } + current
     }
 
     private func attachmentsByID(

@@ -11,6 +11,7 @@ struct FoodPlaceEditorView: View {
     @State private var tagsText: String
     @State private var selectedProvince: String
     @State private var selectedCity: String
+    @State private var selectedDistrict: String
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingLocationPicker = false
@@ -22,9 +23,10 @@ struct FoodPlaceEditorView: View {
     init(place: FoodPlace) {
         let location = place.administrativeLocation
         _draft = State(initialValue: place)
-        _tagsText = State(initialValue: place.tags.joined(separator: "，"))
+        _tagsText = State(initialValue: AppTagSupport.joined(place.tags))
         _selectedProvince = State(initialValue: location?.province ?? "")
         _selectedCity = State(initialValue: location?.city ?? "")
+        _selectedDistrict = State(initialValue: location?.district ?? "")
         _attachmentSession = State(
             initialValue: AttachmentEditSession(originalAttachments: place.photos)
         )
@@ -74,10 +76,19 @@ struct FoodPlaceEditorView: View {
                     if !selectedProvince.isEmpty {
                         Picker("城市", selection: $selectedCity) {
                             Text("请选择").tag("")
+                            if !selectedCity.isEmpty, !selectedProvinceCities.contains(selectedCity) {
+                                Text(selectedCity).tag(selectedCity)
+                            }
                             ForEach(selectedProvinceCities, id: \.self) { city in
                                 Text(city).tag(city)
                             }
                         }
+                    }
+                    if !selectedProvince.isEmpty {
+                        IMESafeTextField(
+                            prompt: "区县、街道、镇或同级行政区（可由地图自动填充）",
+                            text: $selectedDistrict
+                        )
                     }
                     IMESafeMultilineTextField(prompt: "详细地址", text: $draft.address)
                         .lineLimit(1...3)
@@ -141,7 +152,7 @@ struct FoodPlaceEditorView: View {
                 }
 
                 Section("分类") {
-                    IMESafeTextField(prompt: "标签，用逗号分隔", text: $tagsText)
+                    AppTagEditor(text: $tagsText, suggestions: store.knownTags)
                 }
 
                 Section("信息来源") {
@@ -232,6 +243,11 @@ struct FoodPlaceEditorView: View {
         if let location = selection.administrativeLocation {
             selectedProvince = location.province
             selectedCity = location.city
+            selectedDistrict = location.district ?? ""
+        } else {
+            selectedProvince = ""
+            selectedCity = ""
+            selectedDistrict = ""
         }
         if draft.shopName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft.shopName = selection.name
@@ -288,10 +304,11 @@ struct FoodPlaceEditorView: View {
             return
         }
         if !selectedProvince.isEmpty,
-           ChinaAdministrativeDivisions.location(
-               province: selectedProvince,
-               city: selectedCity
-           ) == nil {
+            ChinaAdministrativeDivisions.location(
+                province: selectedProvince,
+                city: selectedCity,
+                district: selectedDistrict
+            ) == nil {
             errorMessage = "请选择城市；国外地点请将省级行政区设为不填写。"
             return
         }
@@ -315,10 +332,10 @@ struct FoodPlaceEditorView: View {
     private func save() {
         draft.administrativeLocation = ChinaAdministrativeDivisions.location(
             province: selectedProvince,
-            city: selectedCity
+            city: selectedCity,
+            district: selectedDistrict
         )
-        draft.tags = tagsText
-            .components(separatedBy: CharacterSet(charactersIn: ",，、"))
+        draft.tags = AppTagSupport.parse(tagsText)
         store.upsert(draft)
         attachmentSession.commit()
         didFinish = true
@@ -332,6 +349,7 @@ struct FoodPlaceEditorView: View {
         } else if !cities.contains(selectedCity) {
             selectedCity = ""
         }
+        selectedDistrict = ""
     }
 
     private func cancel() {

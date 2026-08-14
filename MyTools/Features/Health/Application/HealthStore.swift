@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDataCleanupParticipant {
     @Published private(set) var medicalRecords: [MedicalRecord]
     @Published private(set) var hospitalProfiles: [HospitalProfile]
+    @Published private(set) var knownTags: [String]
 
     private let attachmentStore: AttachmentStore
     private weak var moduleSettings: ToolModuleSettings?
@@ -14,11 +15,14 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     init(
         medicalRecords: [MedicalRecord] = [],
         hospitalProfiles: [HospitalProfile] = [],
+        knownTags: [String] = [],
         attachmentStore: AttachmentStore,
         moduleSettings: ToolModuleSettings? = nil
     ) {
-        self.medicalRecords = medicalRecords
+        let normalizedRecords = medicalRecords.map(Self.normalizedTags(in:))
+        self.medicalRecords = normalizedRecords
         self.hospitalProfiles = hospitalProfiles
+        self.knownTags = AppTagSupport.merged(knownTags, with: normalizedRecords.flatMap(\.tags))
         self.attachmentStore = attachmentStore
         self.moduleSettings = moduleSettings
     }
@@ -29,10 +33,16 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
 
     func replace(
         medicalRecords: [MedicalRecord],
-        hospitalProfiles: [HospitalProfile]
+        hospitalProfiles: [HospitalProfile],
+        knownTags: [String]? = nil
     ) {
-        self.medicalRecords = medicalRecords
+        let normalizedRecords = medicalRecords.map(Self.normalizedTags(in:))
+        self.medicalRecords = normalizedRecords
         self.hospitalProfiles = hospitalProfiles
+        self.knownTags = AppTagSupport.merged(
+            knownTags ?? self.knownTags,
+            with: normalizedRecords.flatMap(\.tags)
+        )
     }
 
     func moduleVisibilityChanged(isVisible: Bool) {
@@ -117,6 +127,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         var storedRecord = record
         storedRecord.normalizeInstitutionClassification()
         storedRecord.hospital = storedRecord.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
+        knownTags = AppTagSupport.merged(knownTags, with: storedRecord.tags)
         if let index = medicalRecords.firstIndex(where: { $0.id == storedRecord.id }) {
             let retainedIDs = Set(storedRecord.attachments.map(\.id))
             for attachment in medicalRecords[index].attachments where !retainedIDs.contains(attachment.id) {
@@ -138,6 +149,12 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         medicalRecords = synchronization.medicalRecords
         hospitalProfiles = synchronization.hospitalProfiles
         didMutate()
+    }
+
+    private static func normalizedTags(in record: MedicalRecord) -> MedicalRecord {
+        var result = record
+        result.tags = AppTagSupport.normalize(record.tags)
+        return result
     }
 
     func hospitalProfile(

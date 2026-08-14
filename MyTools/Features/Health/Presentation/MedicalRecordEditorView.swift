@@ -15,7 +15,7 @@ private final class MedicalRecordEditorDraft: ObservableObject {
         self.record = record
         insuranceCostText = Self.decimalText(record.insuranceCost)
         selfPayCostText = Self.decimalText(record.selfPayCost)
-        tagsText = record.tags.joined(separator: "、")
+        tagsText = AppTagSupport.joined(record.tags)
     }
 
     private static func decimalText(_ value: Decimal) -> String {
@@ -374,9 +374,10 @@ struct MedicalRecordEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .appListRowStyle()
+                .appDeleteSwipeAction {
+                    draft.record.expenseItems.removeAll { $0.id == item.id }
+                }
             }
-            .onDelete { offsets in draft.record.expenseItems.remove(atOffsets: offsets) }
-
             Button { editingExpenseItem = MedicalExpenseItem() } label: {
                 Label(
                     draft.record.isPharmacyPurchase
@@ -402,19 +403,19 @@ struct MedicalRecordEditorView: View {
             }
             ForEach(draft.record.attachments) { attachment in
                 attachmentRow(attachment)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    .appSwipeActions(edge: .trailing, style: AppSwipeActions.secondary) {
                         Button {
                             beginRename(attachment)
                         } label: {
                             Label("重命名", systemImage: "pencil")
                         }
-                        .tint(.blue)
+                        .tint(AppSwipeActions.rename.tint)
                         Button(role: .destructive) {
                             removeAttachment(attachment)
                         } label: {
-                            Label("移除", systemImage: "trash")
+                            Label("删除", systemImage: "trash")
                         }
-                        .tint(.red)
+                        .tint(AppSwipeActions.delete.tint)
                     }
             }
 
@@ -434,14 +435,10 @@ struct MedicalRecordEditorView: View {
     private var tagAndNotesSection: some View {
         Group {
             Section("标签") {
-                safeField("标签：", prompt: "用逗号或顿号分隔", text: $draft.tagsText)
-                Menu {
-                    ForEach(suggestedTags, id: \.self) { tag in
-                        Button(tag) { addSuggestedTag(tag) }
-                    }
-                } label: {
-                    Label("添加常用标签", systemImage: "tag")
-                }
+                AppTagEditor(
+                    text: $draft.tagsText,
+                    suggestions: AppTagSupport.normalize(store.knownTags + suggestedTags)
+                )
             }
             Section("备注") {
                 IMESafeMultilineTextField(prompt: "自由填写", text: $draft.record.notes)
@@ -615,19 +612,8 @@ struct MedicalRecordEditorView: View {
         draft.record.physicalExamDetails = details
     }
 
-    private func addSuggestedTag(_ tag: String) {
-        var tags = parsedTags()
-        if !tags.contains(tag) { tags.append(tag) }
-        draft.tagsText = tags.joined(separator: "、")
-    }
-
     private func parsedTags() -> [String] {
-        var result: [String] = []
-        for rawTag in draft.tagsText.split(whereSeparator: { ",，、".contains($0) }) {
-            let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !tag.isEmpty, !result.contains(tag) { result.append(tag) }
-        }
-        return result
+        AppTagSupport.parse(draft.tagsText)
     }
 
     private func requestSave() {

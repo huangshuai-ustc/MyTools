@@ -62,16 +62,7 @@ struct HealthRecordsView: View {
 
             if !presentation.allTags.isEmpty {
                 Section("标签筛选") {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
-                            tagFilterButton(title: "全部", value: "", systemImage: "tag")
-                            ForEach(presentation.allTags, id: \.self) { tag in
-                                tagFilterButton(title: tag, value: tag)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    .scrollIndicators(.hidden)
+                    AppTagFilterCapsules(tags: presentation.allTags, selectedTag: $selectedTag)
                 }
             }
 
@@ -208,28 +199,6 @@ struct HealthRecordsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func tagFilterButton(title: String, value: String, systemImage: String? = nil) -> some View {
-        let isSelected = selectedTag == value
-        return Button { selectedTag = value } label: {
-            Group {
-                if let systemImage {
-                    Label(title, systemImage: systemImage)
-                } else {
-                    Text(title)
-                }
-            }
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(isSelected ? Color.white : Color.primary)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(
-                isSelected ? Color.pink : Color.secondary.opacity(0.12),
-                in: RoundedRectangle(cornerRadius: 6)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
     private func recordLink(
         _ record: MedicalRecord,
         isFollowUp: Bool,
@@ -249,15 +218,8 @@ struct HealthRecordsView: View {
             )
         }
         .appListRowStyle()
-        .swipeActions {
-            if auth.isAdmin {
-                Button(role: .destructive) {
-                    store.deleteMedicalRecords(ids: [record.id])
-                } label: {
-                    Label("删除", systemImage: "trash")
-                }
-                .tint(.red)
-            }
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            store.deleteMedicalRecords(ids: [record.id])
         }
     }
 }

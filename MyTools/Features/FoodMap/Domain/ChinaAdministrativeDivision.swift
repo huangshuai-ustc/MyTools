@@ -4,9 +4,18 @@ import Foundation
 struct ChinaAdministrativeLocation: Codable, Equatable, Hashable, Sendable {
     let province: String
     let city: String
+    /// District, county, town, township, or the equivalent level returned by Maps.
+    var district: String? = nil
 
     var displayName: String {
-        province == city ? province : "\(province) \(city)"
+        var values = [province]
+        if !city.isEmpty, city != province {
+            values.append(city)
+        }
+        if let district, !district.isEmpty, !values.contains(district) {
+            values.append(district)
+        }
+        return values.joined(separator: " ")
     }
 }
 
@@ -151,12 +160,29 @@ enum ChinaAdministrativeDivisions {
         provinces.first { $0.name == province }?.cities ?? []
     }
 
-    static func location(province: String, city: String) -> ChinaAdministrativeLocation? {
+    static func location(
+        province: String,
+        city: String,
+        district: String? = nil
+    ) -> ChinaAdministrativeLocation? {
         let province = province.trimmingCharacters(in: .whitespacesAndNewlines)
         let city = city.trimmingCharacters(in: .whitespacesAndNewlines)
+        let district = district?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !province.isEmpty,
-              cities(in: province).contains(city) else { return nil }
-        return ChinaAdministrativeLocation(province: province, city: city)
+              !city.isEmpty else { return nil }
+        return ChinaAdministrativeLocation(
+            province: province,
+            city: city,
+            district: district?.isEmpty == true ? nil : district
+        )
+    }
+
+    static func canonicalProvince(_ value: String) -> String? {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        return provinces.first {
+            $0.name == normalized || provinceAlias(for: $0.name) == normalized
+        }?.name
     }
 
     static func infer(from text: String) -> ChinaAdministrativeLocation? {

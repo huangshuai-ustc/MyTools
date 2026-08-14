@@ -3,11 +3,13 @@ import SwiftUI
 struct StorageDataView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @State private var scanResult: StorageScanResult?
     @State private var redundantDataReport: RedundantDataCleanupReport?
     @State private var isScanning = false
     @State private var showingCleanupConfirmation = false
     @State private var showingRedundantCleanupConfirmation = false
+    @State private var deletionConfirmationModule: ToolModule?
     @State private var showingMessage = false
     @State private var message = ""
 
@@ -137,6 +139,61 @@ struct StorageDataView: View {
                 }
             }
 
+            if let deletion = store.pendingModuleLocalDataDeletion {
+                Section {
+                    TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("已删除“\(deletion.module.title)”的本地数据")
+                                Text("\(remainingSeconds(until: deletion.expiresAt, at: context.date)) 秒后完成清理")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                store.undoModuleLocalDataDeletion(id: deletion.id)
+                            } label: {
+                                Label("撤回", systemImage: "arrow.uturn.backward")
+                            }
+                            .disabled(context.date >= deletion.expiresAt)
+                        }
+                    }
+                } header: {
+                    Text("可撤回")
+                } footer: {
+                    Text("撤回会恢复刚才删除的记录；在此期间新增的其他数据不会被覆盖。")
+                }
+            }
+
+            Section {
+                ForEach(moduleSettings.orderedModules) { module in
+                    Button(role: .destructive) {
+                        deletionConfirmationModule = module
+                    } label: {
+                        HStack(spacing: 12) {
+                            Label(module.title, systemImage: module.systemImage)
+                            Spacer()
+                            Image(systemName: "trash")
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .disabled(
+                        !auth.isAdmin
+                            || !store.isInitialDataLoaded
+                            || store.pendingModuleLocalDataDeletion != nil
+                    )
+                    .accessibilityLabel("删除\(module.title)的所有本地数据")
+                }
+            } header: {
+                Text("删除功能数据")
+            } footer: {
+                if auth.isAdmin {
+                    Text("每次只能删除一个功能的数据。操作需要经过两次各 10 秒的确认，删除后还有 10 秒可以撤回。")
+                } else {
+                    Text("进入管理员模式后可以删除功能数据。")
+                }
+            }
+
             Section {
                 Button {
                     scan()
@@ -184,6 +241,14 @@ struct StorageDataView: View {
             Button("确定", role: .cancel) {}
         } message: {
             Text(message)
+        }
+        .sheet(item: $deletionConfirmationModule) { module in
+            ModuleLocalDataDeletionConfirmationView(
+                module: module,
+                cloudSyncEnabled: store.cloudSync.isEnabled
+            ) {
+                store.beginModuleLocalDataDeletion(for: module)
+            }
         }
     }
 
@@ -293,5 +358,127 @@ struct StorageDataView: View {
     private func report(_ text: String) {
         message = text
         showingMessage = true
+    }
+
+    private func remainingSeconds(until date: Date, at now: Date) -> Int {
+        max(0, Int(ceil(date.timeIntervalSince(now))))
+    }
+}
+
+private struct ModuleLocalDataDeletionConfirmationView: View {
+    private enum Stage {
+        case first
+        case second
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    let module: ToolModule
+    let cloudSyncEnabled: Bool
+    let delete: () -> Void
+    @State private var stage: Stage = .first
+    @State private var unlockAt = Date().addingTimeInterval(10)
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    Image(systemName: stage == .first ? "exclamationmark.triangle.fill" : "trash.fill")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.red)
+                        .frame(width: 44, height: 44)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(stage == .first ? "确认数据范围" : "最后确认")
+                            .font(.title3.weight(.semibold))
+                        Text("第 \(stage == .first ? 1 : 2) 层，共 2 层")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(message)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if stage == .second {
+                    Label(
+                        cloudSyncEnabled
+                            ? "删除完成后会同步到 iCloud 和其他设备。"
+                            : "已经导出的备份不会被修改。",
+                        systemImage: cloudSyncEnabled ? "icloud" : "externaldrive"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                    let seconds = remainingSeconds(at: context.date)
+                    Button(role: stage == .second ? .destructive : nil) {
+                        guard context.date >= unlockAt else { return }
+                        if stage == .first {
+                            stage = .second
+                            unlockAt = Date().addingTimeInterval(10)
+                        } else {
+                            delete()
+                            dismiss()
+                        }
+                    } label: {
+                        Text(buttonTitle(seconds: seconds))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(stage == .second ? .red : .accentColor)
+                    .controlSize(.large)
+                    .disabled(seconds > 0)
+                }
+            }
+            .padding(24)
+            .navigationTitle("删除\(module.title)数据")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 360, minHeight: 390)
+#if os(iOS)
+        .presentationDetents([.medium])
+#endif
+    }
+
+    private var message: String {
+        switch stage {
+        case .first:
+            return "将删除“\(module.title)”的\(module.localDataDeletionDescription)。首页显示开关和排序不会改变。"
+        case .second:
+            return "这会清空“\(module.title)”的所有本地数据。按钮解锁后执行删除，随后只有 10 秒可以撤回。"
+        }
+    }
+
+    private func remainingSeconds(at date: Date) -> Int {
+        max(0, Int(ceil(unlockAt.timeIntervalSince(date))))
+    }
+
+    private func buttonTitle(seconds: Int) -> String {
+        if seconds > 0 {
+            return stage == .first ? "继续（\(seconds)）" : "删除本地数据（\(seconds)）"
+        }
+        return stage == .first ? "继续" : "删除本地数据"
+    }
+}
+
+private extension ToolModule {
+    var localDataDeletionDescription: String {
+        switch self {
+        case .personalFinance: return "银行账户、银行卡和账单附件"
+        case .myStocks: return "持仓、交易、提醒、刷新状态和图表缓存"
+        case .currencyExchange: return "换汇记录和汇率提醒"
+        case .healthRecords: return "健康档案、医疗机构资料和附件"
+        case .foodMap: return "美食记录和照片"
+        case .secrets: return "保密条目、字段模板和附件"
+        case .documents: return "证照、到期提醒和附件"
+        case .bills: return "全部收支账单记录"
+        case .sportsLottery: return "赛事选择和本机赛果缓存"
+        }
     }
 }

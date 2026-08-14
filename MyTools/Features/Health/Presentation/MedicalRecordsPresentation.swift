@@ -108,7 +108,7 @@ struct MedicalRecordsPresentation {
     }
 
     var allTags: [String] {
-        Array(Set(records.flatMap(\.tags))).sorted {
+        AppTagSupport.normalize(records.flatMap(\.tags)).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }

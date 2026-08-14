@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
     @Published private(set) var places: [FoodPlace]
+    @Published private(set) var knownTags: [String]
 
     private let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
@@ -13,9 +14,12 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
 
     init(
         places: [FoodPlace] = [],
+        knownTags: [String] = [],
         attachmentStore: AttachmentStore
     ) {
-        self.places = places
+        let normalizedPlaces = places.map(Self.normalizedTags(in:))
+        self.places = normalizedPlaces
+        self.knownTags = AppTagSupport.merged(knownTags, with: normalizedPlaces.flatMap(\.tags))
         self.attachmentStore = attachmentStore
     }
 
@@ -23,8 +27,13 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
         self.mutationNotifier = mutationNotifier
     }
 
-    func replace(places: [FoodPlace]) {
-        self.places = places
+    func replace(places: [FoodPlace], knownTags: [String]? = nil) {
+        let normalizedPlaces = places.map(Self.normalizedTags(in:))
+        self.places = normalizedPlaces
+        self.knownTags = AppTagSupport.merged(
+            knownTags ?? self.knownTags,
+            with: normalizedPlaces.flatMap(\.tags)
+        )
     }
 
     func scanRedundantData() -> [RedundantDataFinding] {
@@ -53,7 +62,8 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
         if let location = place.administrativeLocation {
             stored.administrativeLocation = ChinaAdministrativeDivisions.location(
                 province: normalizedText(location.province),
-                city: normalizedText(location.city)
+                city: normalizedText(location.city),
+                district: normalizedText(location.district ?? "")
             )
         }
         stored.address = normalizedText(place.address)
@@ -61,6 +71,7 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
         stored.sourceURL = normalizedText(place.sourceURL)
         stored.note = place.note.trimmingCharacters(in: .whitespacesAndNewlines)
         stored.tags = normalizedTags(place.tags)
+        knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
         if stored.status != .tried {
             stored.visitedAt = nil
         }
@@ -129,13 +140,13 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
     }
 
     private func normalizedTags(_ tags: [String]) -> [String] {
-        var keys = Set<String>()
-        return tags.compactMap { value in
-            let tag = normalizedText(value)
-            guard !tag.isEmpty else { return nil }
-            let key = tag.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            return keys.insert(key).inserted ? tag : nil
-        }
+        AppTagSupport.normalize(tags)
+    }
+
+    private static func normalizedTags(in place: FoodPlace) -> FoodPlace {
+        var result = place
+        result.tags = AppTagSupport.normalize(place.tags)
+        return result
     }
 
     private func didMutate() {

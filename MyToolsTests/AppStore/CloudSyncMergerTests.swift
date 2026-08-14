@@ -117,7 +117,7 @@ struct CloudSyncMergerTests {
         #expect(moduleSettings.orderedModules == expectedOrder)
         #expect(!moduleSettings.isVisible(.healthRecords))
         #expect(!moduleSettings.isVisible(.myStocks))
-        #expect(moduleSettings.isVisible(.personalFinance))
+        #expect(moduleSettings.isVisible(.personalFinance) == ToolModule.personalFinance.defaultIsVisible)
         #expect(Set(visibilityChanges) == [.healthRecords, .myStocks])
         #expect(defaults.string(forKey: AppStorageKey.appearanceMode) == AppAppearanceMode.light.rawValue)
         #expect(defaults.string(forKey: AppStorageKey.fontSize) == AppFontSize.xxLarge.rawValue)

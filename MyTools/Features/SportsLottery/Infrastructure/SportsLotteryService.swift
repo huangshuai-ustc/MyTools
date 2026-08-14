@@ -52,6 +52,7 @@ actor SportsLotteryService: SportsLotteryProviding {
     private var hasLoadedPersistence = false
     private var persistedLeagues: [Int: PersistedLeagueCache] = [:]
     private var cachedLeagueDirectory: [SportsLotteryLeague]?
+    private var cacheGeneration = 0
 
     init(
         httpClient: any SportsLotteryHTTPClient = URLSessionSportsLotteryHTTPClient(),
@@ -72,13 +73,18 @@ actor SportsLotteryService: SportsLotteryProviding {
         }
 
         let automaticSlot = Self.automaticRefreshSlot(for: Date())
+        let generation = cacheGeneration
         let dueLeagues = selected.filter { league in
             guard let cache = persistedLeagues[league.leagueID] else { return true }
             if forceRefresh { return true }
             return cache.lastAutomaticRefreshSlot != automaticSlot
         }
         if !dueLeagues.isEmpty {
-            try await refresh(dueLeagues, automaticSlot: automaticSlot)
+            try await refresh(
+                dueLeagues,
+                automaticSlot: automaticSlot,
+                generation: generation
+            )
         }
         return snapshot(for: selected)
     }
@@ -118,12 +124,14 @@ actor SportsLotteryService: SportsLotteryProviding {
 
     private func refresh(
         _ leagues: [SportsLotteryLeague],
-        automaticSlot: Date?
+        automaticSlot: Date?,
+        generation: Int
     ) async throws {
         for league in leagues {
             let oldCache = persistedLeagues[league.leagueID]
             let range = Self.refreshDateRange(for: oldCache)
             let candidates = try await fetchResultCandidates(league: league, range: range)
+            guard generation == cacheGeneration else { return }
             let uniqueCandidates = candidates.reduce(into: [Int: MatchCandidate]()) { result, candidate in
                 result[candidate.id] = candidate
             }
@@ -132,6 +140,7 @@ actor SportsLotteryService: SportsLotteryProviding {
                 merged[candidate.id]?.hasCompleteResult != true
             }
             let matches = await enrich(Array(candidatesNeedingEnrichment)).sorted(by: SportsLotteryMatch.isNewer)
+            guard generation == cacheGeneration else { return }
             for match in matches {
                 merged[match.id] = match
             }
@@ -144,6 +153,16 @@ actor SportsLotteryService: SportsLotteryProviding {
             )
             try savePersistence()
         }
+    }
+
+    func clearCache() {
+        cacheGeneration += 1
+        hasLoadedPersistence = true
+        persistedLeagues.removeAll()
+        cachedLeagueDirectory = nil
+        guard let cacheFileURL,
+              FileManager.default.fileExists(atPath: cacheFileURL.path) else { return }
+        try? FileManager.default.removeItem(at: cacheFileURL)
     }
 
     private func snapshot(for leagues: [SportsLotteryLeague]) -> SportsLotterySnapshot {

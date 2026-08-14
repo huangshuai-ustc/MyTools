@@ -181,8 +181,7 @@ struct MedicalRecordRow: View {
                     .minimumScaleFactor(0.8)
                 }
                 if !record.tags.isEmpty {
-                    Text(record.tags.prefix(2).joined(separator: " · "))
-                        .lineLimit(1)
+                    AppTagCapsules(tags: record.tags, limit: 2)
                 }
                 Spacer()
                 Text(MedicalValueFormatter.money(displayedTotalCost))

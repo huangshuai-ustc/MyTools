@@ -32,6 +32,24 @@ struct ModuleStoreTests {
         #expect(visibilityChanges.isEmpty)
     }
 
+    @Test func moduleSettingsUseCompileTimeDefaultsUntilOverridden() {
+        let defaults = UserDefaults(suiteName: "MyToolsTests.\(UUID().uuidString)")!
+        let settings = ToolModuleSettings(defaults: defaults)
+
+        for module in CompiledToolModules.ordered {
+            #expect(settings.isVisible(module) == module.defaultIsVisible)
+            #expect(defaults.object(forKey: module.visibilityKey) == nil)
+        }
+
+        guard let module = CompiledToolModules.ordered.first else { return }
+        settings.setVisible(!module.defaultIsVisible, for: module)
+        #expect(settings.isVisible(module) == !module.defaultIsVisible)
+        #expect(defaults.bool(forKey: module.visibilityKey) == !module.defaultIsVisible)
+
+        let restored = ToolModuleSettings(defaults: defaults)
+        #expect(restored.isVisible(module) == !module.defaultIsVisible)
+    }
+
     @Test func opaqueModuleValuesRoundTripAndRetainAttachmentReferences() throws {
         let source = Data(#"{"id":"item-1","count":3,"ratio":1.25,"active":true,"empty":null,"attachments":[{"storedFileName":"first.pdf"},{"nested":{"storedFileName":"second.jpg"}},{"storedFileName":""}]}"#.utf8)
         let decoded = try JSONDecoder().decode(OpaqueModuleValue.self, from: source)

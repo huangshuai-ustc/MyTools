@@ -139,6 +139,42 @@ struct StockChartDiskStoreTests {
         #expect(!store.hasRequestedCoverage(in: persisted, for: .intraday))
     }
 
+    @Test func removeAllDeletesPersistentAndLegacyCacheDirectories() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let point = StockChartFixtures.point(at: StockChartFixtures.date(2026, 8, 7))
+        let snapshot = StockChartSnapshot(
+            symbol: key.symbol,
+            name: "VOO",
+            currencyCode: "USD",
+            previousClose: 500,
+            points: [point],
+            indicatorPoints: nil,
+            quoteUpdatedAt: point.date,
+            fetchedAt: point.date,
+            source: "Test",
+            supportsCandlesticks: true
+        )
+        var store = makeStore(directories)
+        let persisted = store.merging(snapshot, range: .oneMonth, for: key, into: nil)
+        let didSave = store.save(persisted, for: key)
+        #expect(didSave)
+        let legacyURL = store.legacyCacheURL(for: StockChartCacheKey(
+            market: key.market,
+            symbol: key.symbol,
+            range: .oneMonth
+        ))
+        try FileManager.default.createDirectory(at: directories.legacy, withIntermediateDirectories: true)
+        try Data("legacy".utf8).write(to: legacyURL)
+
+        store.removeAll()
+
+        #expect(!FileManager.default.fileExists(atPath: store.persistentStoreURL(for: key).path))
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+        #expect(store.load(for: key) == nil)
+    }
+
     private func samplePoints(count: Int) -> [StockChartPoint] {
         let start = StockChartFixtures.date(2026, 5, 20)
         return (0..<count).map { index in

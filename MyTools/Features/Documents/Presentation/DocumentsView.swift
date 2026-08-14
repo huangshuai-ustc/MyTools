@@ -93,7 +93,7 @@ struct DocumentsView: View {
     @State private var typeFilter: CredentialTypeFilter = .all
     @State private var statusFilter: CredentialStatusFilter = .all
     @State private var versionStatusFilter: CredentialVersionStatusFilter = .all
-    @State private var selectedTag: String?
+    @State private var selectedTag = ""
     @State private var isUnlocked = false
     @State private var showingSensitiveAccess = false
     @State private var editingDocument: CredentialDocument?
@@ -101,7 +101,7 @@ struct DocumentsView: View {
     private var canAccess: Bool { auth.isAdmin || isUnlocked }
 
     private var availableTags: [String] {
-        Set(store.documents.flatMap(\.tags)).sorted {
+        AppTagSupport.normalize(store.documents.flatMap(\.tags)).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }
@@ -111,7 +111,7 @@ struct DocumentsView: View {
             .filter(typeFilter.includes)
             .filter(statusFilter.includes)
             .filter(versionStatusFilter.includes)
-            .filter { selectedTag == nil || $0.tags.contains(selectedTag!) }
+            .filter { selectedTag.isEmpty || $0.tags.contains(selectedTag) }
             .filter { $0.matches(query) }
         let matchingByRootID = Dictionary(grouping: matchingDocuments, by: \.rootDocumentID)
         let allByRootID = Dictionary(grouping: store.documents, by: \.rootDocumentID)
@@ -160,13 +160,7 @@ struct DocumentsView: View {
                     }
                     .pickerStyle(.menu)
                     if !availableTags.isEmpty {
-                        Picker("标签", selection: $selectedTag) {
-                            Text("全部标签").tag(nil as String?)
-                            ForEach(availableTags, id: \.self) { tag in
-                                Text(tag).tag(tag as String?)
-                            }
-                        }
-                        .pickerStyle(.menu)
+                        AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
                     }
                 }
             }
@@ -178,15 +172,8 @@ struct DocumentsView: View {
                         systemImage: store.documents.isEmpty ? "person.text.rectangle" : "magnifyingglass"
                     )
                 }
-                if auth.isAdmin {
-                    ForEach(visibleGroups) { group in
-                        documentLink(group)
-                    }
-                    .onDelete(perform: delete)
-                } else {
-                    ForEach(visibleGroups) { group in
-                        documentLink(group)
-                    }
+                ForEach(visibleGroups) { group in
+                    documentLink(group)
                 }
             }
         }
@@ -234,8 +221,8 @@ struct DocumentsView: View {
             if phase != .active { isUnlocked = false }
         }
         .onChange(of: availableTags) { _, tags in
-            if let selectedTag, !tags.contains(selectedTag) {
-                self.selectedTag = nil
+            if !selectedTag.isEmpty, !tags.contains(selectedTag) {
+                selectedTag = ""
             }
         }
     }
@@ -250,10 +237,9 @@ struct DocumentsView: View {
             )
         }
         .appListRowStyle()
-    }
-
-    private func delete(at offsets: IndexSet) {
-        store.delete(ids: Set(offsets.map { visibleGroups[$0].id }))
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            store.delete(ids: [group.id])
+        }
     }
 
 }
@@ -288,6 +274,7 @@ private struct CredentialDocumentRow: View {
                     CredentialVersionStatusLabel(status: document.versionStatus)
                     CredentialStatusLabel(status: document.validityStatus())
                 }
+                AppTagCapsules(tags: document.tags, limit: 3)
             }
             Spacer(minLength: 4)
             Image(systemName: "lock.fill")

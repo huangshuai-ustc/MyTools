@@ -17,7 +17,7 @@ struct BillEditorView: View {
         _amountText = State(
             initialValue: record.amount == 0 ? "" : NSDecimalNumber(decimal: record.amount).stringValue
         )
-        _tagsText = State(initialValue: record.tags.joined(separator: "，"))
+        _tagsText = State(initialValue: AppTagSupport.joined(record.tags))
         _secondsText = State(initialValue: String(Calendar.autoupdatingCurrent.component(.second, from: record.occurredAt)))
     }
 
@@ -85,7 +85,7 @@ struct BillEditorView: View {
                 }
 
                 Section("标签") {
-                    IMESafeTextField(prompt: "用逗号或顿号分隔", text: $tagsText)
+                    AppTagEditor(text: $tagsText, suggestions: store.knownTags)
                 }
                 Section("备注") {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
@@ -153,7 +153,7 @@ struct BillEditorView: View {
 
     private func save() {
         applySeconds()
-        draft.tags = tagsText.components(separatedBy: CharacterSet(charactersIn: ",，、"))
+        draft.tags = AppTagSupport.parse(tagsText)
         store.upsert(draft)
         dismiss()
     }

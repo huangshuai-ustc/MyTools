@@ -23,6 +23,17 @@ struct BillsTests {
         #expect(store.total(direction: .expense, in: earlierDate) == 20.5)
     }
 
+    @Test func knownTagsRemainReusableAfterRecordDeletion() {
+        let store = BillsStore()
+        let record = BillRecord(amount: 12, tags: [" 餐饮 ", "餐饮"])
+
+        store.upsert(record)
+        store.delete(ids: [record.id])
+
+        #expect(store.records.isEmpty)
+        #expect(store.knownTags == ["餐饮"])
+    }
+
     @Test func monthlyAnalyticsSeparatesCurrenciesAndExcludesCancelledTransactions() {
         let august = Self.date(year: 2026, month: 8, day: 15, hour: 12, minute: 0, second: 0)
         let records = [
@@ -446,7 +457,7 @@ struct BillsTests {
     }
 
     @Test func billTimeDisplayDefaultsToMinutePrecision() {
-        let date = Self.date(year: 2026, month: 8, day: 15, hour: 12, minute: 34, second: 56)
+        let date = Self.displayDate(year: 2026, month: 8, day: 15, hour: 12, minute: 34, second: 56)
         #expect(AppDateFormatter.dateTimeWithoutSecondsString(from: date).hasSuffix("12:34"))
         #expect(AppDateFormatter.dateTimeString(from: date).hasSuffix("12:34:56"))
     }
@@ -466,6 +477,27 @@ struct BillsTests {
         second: Int
     ) -> Date {
         calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second
+        ))!
+    }
+
+    private static func displayDate(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int,
+        second: Int
+    ) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar.date(from: DateComponents(
             timeZone: calendar.timeZone,
             year: year,
             month: month,

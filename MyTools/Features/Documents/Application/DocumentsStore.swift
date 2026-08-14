@@ -7,6 +7,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     static let notificationIdentifierPrefix = "credential-expiry-"
 
     @Published private(set) var documents: [CredentialDocument]
+    @Published private(set) var knownTags: [String]
 
     private let attachmentStore: AttachmentStore
     private let notificationScheduler: any LocalNotificationScheduling
@@ -15,11 +16,14 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
 
     init(
         documents: [CredentialDocument] = [],
+        knownTags: [String] = [],
         attachmentStore: AttachmentStore,
         notificationScheduler: any LocalNotificationScheduling = DisabledLocalNotificationScheduler(),
         moduleSettings: ToolModuleSettings? = nil
     ) {
-        self.documents = documents
+        let normalizedDocuments = documents.map(Self.normalizedTags(in:))
+        self.documents = normalizedDocuments
+        self.knownTags = AppTagSupport.merged(knownTags, with: normalizedDocuments.flatMap(\.tags))
         self.attachmentStore = attachmentStore
         self.notificationScheduler = notificationScheduler
         self.moduleSettings = moduleSettings
@@ -33,8 +37,13 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         self.mutationNotifier = mutationNotifier
     }
 
-    func replace(documents: [CredentialDocument]) {
-        self.documents = documents
+    func replace(documents: [CredentialDocument], knownTags: [String]? = nil) {
+        let normalizedDocuments = documents.map(Self.normalizedTags(in:))
+        self.documents = normalizedDocuments
+        self.knownTags = AppTagSupport.merged(
+            knownTags ?? self.knownTags,
+            with: normalizedDocuments.flatMap(\.tags)
+        )
         reconcileExpiryNotifications()
     }
 
@@ -208,6 +217,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         result.issuingAuthority = normalizedText(result.issuingAuthority)
         result.note = result.note.trimmingCharacters(in: .whitespacesAndNewlines)
         result.tags = normalizedTags(result.tags)
+        knownTags = AppTagSupport.merged(knownTags, with: result.tags)
         result.fields = result.fields.compactMap { field in
             var field = field
             field.label = normalizedText(field.label)
@@ -305,13 +315,13 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     }
 
     private func normalizedTags(_ tags: [String]) -> [String] {
-        var keys = Set<String>()
-        return tags.compactMap { value in
-            let tag = normalizedText(value)
-            guard !tag.isEmpty else { return nil }
-            let key = tag.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            return keys.insert(key).inserted ? tag : nil
-        }
+        AppTagSupport.normalize(tags)
+    }
+
+    private static func normalizedTags(in document: CredentialDocument) -> CredentialDocument {
+        var result = document
+        result.tags = AppTagSupport.normalize(document.tags)
+        return result
     }
 
     private func reconcileExpiryNotifications(forceEnabled: Bool? = nil, now: Date = Date()) {

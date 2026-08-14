@@ -216,9 +216,9 @@ struct StockDetailView: View {
                         }
                         .buttonStyle(.plain)
                         .appListRowStyle()
-                    }
-                    .onDelete { offsets in
-                        deleteTransactions(at: offsets, sortedTransactions: sortedTransactions)
+                        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                            deleteTransaction(id: transaction.id, from: sortedTransactions)
+                        }
                     }
                     Button { editorRoute = .transaction(StockTransaction()) } label: {
                         Label("添加买入或卖出记录", systemImage: "plus.circle")
@@ -247,9 +247,9 @@ struct StockDetailView: View {
                         }
                         .buttonStyle(.plain)
                         .appListRowStyle()
-                    }
-                    .onDelete { offsets in
-                        deleteDividends(at: offsets, sortedDividends: sortedDividends)
+                        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                            deleteDividend(id: dividend.id, from: sortedDividends)
+                        }
                     }
                     Button { editorRoute = .dividend(StockDividend()) } label: {
                         Label("添加分红记录", systemImage: "plus.circle")
@@ -267,8 +267,7 @@ struct StockDetailView: View {
 #endif
     }
 
-    private func deleteTransactions(at offsets: IndexSet, sortedTransactions: [StockTransaction]) {
-        let ids = Set(offsets.map { sortedTransactions[$0].id })
+    private func deleteTransactions(ids: Set<UUID>) {
         guard store.deleteTransactions(ids: ids, from: stockID) else {
             transactionError = "删除这些记录后持仓股数会小于零，请先调整相应的卖出记录。"
             showingTransactionError = true
@@ -276,9 +275,18 @@ struct StockDetailView: View {
         }
     }
 
-    private func deleteDividends(at offsets: IndexSet, sortedDividends: [StockDividend]) {
-        let ids = Set(offsets.map { sortedDividends[$0].id })
+    private func deleteTransaction(id: UUID, from transactions: [StockTransaction]) {
+        guard transactions.contains(where: { $0.id == id }) else { return }
+        deleteTransactions(ids: [id])
+    }
+
+    private func deleteDividends(ids: Set<UUID>) {
         store.deleteDividends(ids: ids, from: stockID)
+    }
+
+    private func deleteDividend(id: UUID, from dividends: [StockDividend]) {
+        guard dividends.contains(where: { $0.id == id }) else { return }
+        deleteDividends(ids: [id])
     }
 }
 

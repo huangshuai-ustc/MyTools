@@ -400,13 +400,16 @@ struct StocksView: View {
             )
         }
         .appListRowStyle()
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+            store.deleteStocks(ids: [stock.id])
+        }
+        .appSwipeActions(edge: .leading, style: AppSwipeActions.primary) {
             Button {
                 watchRoute = WatchRoute(stockID: stock.id)
             } label: {
                 Label("看盘", systemImage: "chart.xyaxis.line")
             }
-            .tint(.teal)
+            .tint(AppSwipeActions.primary.tint)
         }
     }
 
@@ -415,15 +418,8 @@ struct StocksView: View {
         _ stocks: [StockHolding],
         allocations: StockAllocationSnapshot
     ) -> some View {
-        if auth.isEditSessionReady {
-            ForEach(stocks) { stock in
-                stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
-            }
-            .onDelete { deleteStocks(at: $0, from: stocks) }
-        } else {
-            ForEach(stocks) { stock in
-                stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
-            }
+        ForEach(stocks) { stock in
+            stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
         }
     }
 
@@ -437,11 +433,6 @@ struct StocksView: View {
 
     private var emptyStocksSystemImage: String {
         configuredStocks.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
-    }
-
-    private func deleteStocks(at offsets: IndexSet, from stocks: [StockHolding]) {
-        let ids = Set(offsets.map { stocks[$0].id })
-        store.deleteStocks(ids: ids)
     }
 
     private func autoSelectMarketIfNeeded() {

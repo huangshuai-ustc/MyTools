@@ -1,5 +1,7 @@
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
+import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 private final class SportsLotteryViewModel: ObservableObject {
@@ -34,6 +36,7 @@ private final class SportsLotteryViewModel: ObservableObject {
 }
 
 struct SportsLotteryView: View {
+    @EnvironmentObject private var auth: AuthManager
     private let service: any SportsLotteryProviding
     private let defaults: UserDefaults
     @State private var leagues: [SportsLotteryLeague]
@@ -56,7 +59,11 @@ struct SportsLotteryView: View {
             } else {
                 ForEach(leagues) { league in
                     NavigationLink {
-                        SportsLotteryLeagueView(league: league, service: service)
+                        SportsLotteryLeagueView(
+                            league: league,
+                            service: service,
+                            defaults: defaults
+                        )
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Label(league.title, systemImage: "sportscourt")
@@ -70,12 +77,8 @@ struct SportsLotteryView: View {
                         }
                         .padding(.vertical, 4)
                     }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            delete(league)
-                        } label: {
-                            Label("删除", systemImage: "trash")
-                        }
+                    .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                        delete(league)
                     }
                     .appListRowStyle()
                 }
@@ -89,14 +92,17 @@ struct SportsLotteryView: View {
         }
         .navigationTitle(ToolModule.sportsLottery.title)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAddLeague = true
-                } label: {
-                    Image(systemName: "plus")
+            ToolbarItemGroup(placement: .primaryAction) {
+                AdminEditAccessButton()
+                if auth.isAdmin {
+                    Button {
+                        showingAddLeague = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("添加赛事")
+                    .help("添加赛事")
                 }
-                .accessibilityLabel("添加赛事")
-                .help("添加赛事")
             }
         }
         .sheet(isPresented: $showingAddLeague) {
@@ -195,15 +201,39 @@ private struct SportsLotteryAddLeagueView: View {
 
 private struct SportsLotteryLeagueView: View {
     let league: SportsLotteryLeague
+    let defaults: UserDefaults
     @StateObject private var model: SportsLotteryViewModel
+    @State private var orderedMatchIDs: [Int]
+    @State private var draggedMatchID: Int?
+    @State private var didRefreshOnEntry = false
 
-    init(league: SportsLotteryLeague, service: any SportsLotteryProviding) {
+    init(
+        league: SportsLotteryLeague,
+        service: any SportsLotteryProviding,
+        defaults: UserDefaults
+    ) {
         self.league = league
+        self.defaults = defaults
         _model = StateObject(wrappedValue: SportsLotteryViewModel(league: league, service: service))
+        _orderedMatchIDs = State(
+            initialValue: SportsLotteryMatchOrderPreferences.load(
+                for: league.leagueID,
+                from: defaults
+            )
+        )
     }
 
     private var matches: [SportsLotteryMatch] {
         model.snapshot?.matchesByLeague[league] ?? []
+    }
+
+    private var displayedMatches: [SportsLotteryMatch] {
+        let knownIDs = Set(orderedMatchIDs)
+        let savedMatches = orderedMatchIDs.compactMap { id in
+            matches.first { $0.id == id }
+        }
+        let newMatches = matches.filter { !knownIDs.contains($0.id) }
+        return newMatches + savedMatches
     }
 
     var body: some View {
@@ -214,9 +244,21 @@ private struct SportsLotteryLeagueView: View {
             } else if matches.isEmpty {
                 ContentUnavailableView("暂无数据", systemImage: "soccerball")
             } else {
-                ForEach(matches) { match in
+                ForEach(displayedMatches) { match in
                     SportsLotteryMatchRow(match: match)
                         .appListRowStyle()
+                        .onDrag {
+                            draggedMatchID = match.id
+                            return NSItemProvider(object: NSString(string: String(match.id)))
+                        }
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: SportsLotteryMatchDropDelegate(
+                                targetID: match.id,
+                                draggedID: $draggedMatchID,
+                                move: moveMatch
+                            )
+                        )
                 }
                 Section {
                     if let fetchedAt = model.snapshot?.fetchedAt {
@@ -238,7 +280,11 @@ private struct SportsLotteryLeagueView: View {
                 .disabled(model.isLoading)
             }
         }
-        .task { await model.load() }
+        .task {
+            guard !didRefreshOnEntry else { return }
+            didRefreshOnEntry = true
+            await model.load(forceRefresh: true)
+        }
         .refreshable { await model.load(forceRefresh: true) }
         .alert("加载失败", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -248,6 +294,42 @@ private struct SportsLotteryLeagueView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
+    }
+
+    private func moveMatch(_ draggedID: Int, before targetID: Int) {
+        var order = displayedMatches.map(\.id)
+        guard let sourceIndex = order.firstIndex(of: draggedID),
+              let targetIndex = order.firstIndex(of: targetID),
+              sourceIndex != targetIndex else { return }
+        let movedID = order.remove(at: sourceIndex)
+        guard let newTargetIndex = order.firstIndex(of: targetID) else { return }
+        order.insert(movedID, at: newTargetIndex)
+        orderedMatchIDs = order
+        SportsLotteryMatchOrderPreferences.save(
+            order,
+            for: league.leagueID,
+            to: defaults
+        )
+    }
+}
+
+private struct SportsLotteryMatchDropDelegate: DropDelegate {
+    let targetID: Int
+    @Binding var draggedID: Int?
+    let move: (Int, Int) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        move(draggedID, targetID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedID = nil
+        return true
     }
 }
 

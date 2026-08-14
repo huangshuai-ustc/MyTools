@@ -133,6 +133,11 @@ struct VaultData: Codable, @unchecked Sendable {
     var foodPlaces: [FoodPlaceVaultValue] = []
     var credentialDocuments: [CredentialDocumentVaultValue] = []
     var billRecords: [BillRecordVaultValue] = []
+    var medicalRecordTags: [String] = []
+    var foodPlaceTags: [String] = []
+    var credentialTags: [String] = []
+    var billTags: [String] = []
+    var secretTags: [String] = []
     var currencyRateAlerts: [CurrencyRateAlert] = []
     var stockPriceAlerts: [StockPriceAlert] = []
     var secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
@@ -147,6 +152,11 @@ struct VaultData: Codable, @unchecked Sendable {
         foodPlaces: [FoodPlaceVaultValue] = [],
         credentialDocuments: [CredentialDocumentVaultValue] = [],
         billRecords: [BillRecordVaultValue] = [],
+        medicalRecordTags: [String] = [],
+        foodPlaceTags: [String] = [],
+        credentialTags: [String] = [],
+        billTags: [String] = [],
+        secretTags: [String] = [],
         currencyRateAlerts: [CurrencyRateAlert] = [],
         stockPriceAlerts: [StockPriceAlert] = [],
         secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
@@ -160,6 +170,11 @@ struct VaultData: Codable, @unchecked Sendable {
         self.foodPlaces = foodPlaces
         self.credentialDocuments = credentialDocuments
         self.billRecords = billRecords
+        self.medicalRecordTags = medicalRecordTags
+        self.foodPlaceTags = foodPlaceTags
+        self.credentialTags = credentialTags
+        self.billTags = billTags
+        self.secretTags = secretTags
         self.currencyRateAlerts = currencyRateAlerts
         self.stockPriceAlerts = stockPriceAlerts
         self.secretFieldTemplates = secretFieldTemplates
@@ -175,6 +190,11 @@ struct VaultData: Codable, @unchecked Sendable {
         case foodPlaces
         case credentialDocuments
         case billRecords
+        case medicalRecordTags
+        case foodPlaceTags
+        case credentialTags
+        case billTags
+        case secretTags
         case currencyRateAlerts
         case stockPriceAlerts
         case secretFieldTemplates
@@ -197,6 +217,11 @@ struct VaultData: Codable, @unchecked Sendable {
             forKey: .credentialDocuments
         ) ?? []
         billRecords = try container.decodeIfPresent([BillRecordVaultValue].self, forKey: .billRecords) ?? []
+        medicalRecordTags = try container.decodeIfPresent([String].self, forKey: .medicalRecordTags) ?? []
+        foodPlaceTags = try container.decodeIfPresent([String].self, forKey: .foodPlaceTags) ?? []
+        credentialTags = try container.decodeIfPresent([String].self, forKey: .credentialTags) ?? []
+        billTags = try container.decodeIfPresent([String].self, forKey: .billTags) ?? []
+        secretTags = try container.decodeIfPresent([String].self, forKey: .secretTags) ?? []
         currencyRateAlerts = try container.decodeIfPresent(
             [CurrencyRateAlert].self,
             forKey: .currencyRateAlerts

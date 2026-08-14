@@ -67,6 +67,36 @@ enum SportsLotteryLeaguePreferences {
     }
 }
 
+enum SportsLotteryMatchOrderPreferences {
+    static let key = "sports-lottery-match-order-v1"
+
+    static func load(
+        for leagueID: Int,
+        from defaults: UserDefaults = .standard
+    ) -> [Int] {
+        guard let data = defaults.data(forKey: key),
+              let orders = try? JSONDecoder().decode([String: [Int]].self, from: data) else {
+            return []
+        }
+        return orders[String(leagueID), default: []]
+    }
+
+    static func save(
+        _ order: [Int],
+        for leagueID: Int,
+        to defaults: UserDefaults = .standard
+    ) {
+        var orders: [String: [Int]] = [:]
+        if let data = defaults.data(forKey: key),
+           let existing = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+            orders = existing
+        }
+        orders[String(leagueID)] = order
+        guard let data = try? JSONEncoder().encode(orders) else { return }
+        defaults.set(data, forKey: key)
+    }
+}
+
 enum SportsLotteryOutcomeCode: String, CaseIterable, Codable, Identifiable, Sendable {
     case had = "HAD"
     case hhad = "HHAD"

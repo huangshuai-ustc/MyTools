@@ -115,12 +115,12 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
         didMutate()
     }
 
-    func deleteAccount(at offsets: IndexSet) {
-        let ids = offsets.map { accounts[$0].id }
+    func deleteAccount(id: UUID) {
+        let ids = [id]
         for card in cards where ids.contains(card.accountID ?? UUID()) {
             card.statements.compactMap(\.attachment).forEach(attachmentStore.delete)
         }
-        accounts.remove(atOffsets: offsets)
+        accounts.removeAll { $0.id == id }
         cards.removeAll { card in ids.contains(card.accountID ?? UUID()) }
         didMutate()
     }

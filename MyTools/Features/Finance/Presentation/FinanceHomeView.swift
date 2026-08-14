@@ -49,15 +49,8 @@ struct HomeView: View {
                         description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
                 }
-                if auth.isAdmin {
-                    ForEach(snapshot.activeAccounts) { account in
-                        accountLink(account, cards: snapshot.cards(for: account))
-                    }
-                    .onDelete { deleteAccounts(at: $0, from: snapshot.activeAccounts) }
-                } else {
-                    ForEach(snapshot.activeAccounts) { account in
-                        accountLink(account, cards: snapshot.cards(for: account))
-                    }
+                ForEach(snapshot.activeAccounts) { account in
+                    accountLink(account, cards: snapshot.cards(for: account))
                 }
                 if !showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
                     HiddenItemsVisibilityButton(
@@ -72,15 +65,8 @@ struct HomeView: View {
                         itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
                         isShowing: $showsInactiveBanks
                     )
-                    if auth.isAdmin {
-                        ForEach(snapshot.inactiveAccounts) { account in
-                            accountLink(account, cards: snapshot.cards(for: account))
-                        }
-                        .onDelete { deleteAccounts(at: $0, from: snapshot.inactiveAccounts) }
-                    } else {
-                        ForEach(snapshot.inactiveAccounts) { account in
-                            accountLink(account, cards: snapshot.cards(for: account))
-                        }
+                    ForEach(snapshot.inactiveAccounts) { account in
+                        accountLink(account, cards: snapshot.cards(for: account))
                     }
                 }
             }
@@ -141,13 +127,14 @@ struct HomeView: View {
             }
         }
         .appListRowStyle()
+        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+            deleteAccount(id: account.id)
+        }
     }
 
-    private func deleteAccounts(at offsets: IndexSet, from source: [BankAccount]) {
+    private func deleteAccount(id: UUID) {
         guard auth.isAdmin else { return }
-        let ids = Set(offsets.map { source[$0].id })
-        let originalOffsets = IndexSet(store.accounts.indices.filter { ids.contains(store.accounts[$0].id) })
-        store.deleteAccount(at: originalOffsets)
+        store.deleteAccount(id: id)
     }
 
     @ViewBuilder

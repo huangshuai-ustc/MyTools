@@ -107,7 +107,8 @@ final class ToolModuleSettings: ObservableObject {
     }
 
     func isVisible(_ module: ToolModule) -> Bool {
-        CompiledToolModules.contains(module) && (visibility[module.rawValue] ?? true)
+        CompiledToolModules.contains(module)
+            && (visibility[module.rawValue] ?? module.defaultIsVisible)
     }
 
     func setVisibilityChangeHandler(_ handler: (@MainActor (ToolModule, Bool) -> Void)?) {

@@ -37,6 +37,18 @@ struct SportsLotteryTests {
         #expect(SportsLotteryLeaguePreferences.load(from: defaults).isEmpty)
     }
 
+    @Test func matchOrderPreferencesPersistPerLeague() {
+        let suiteName = "SportsLotteryMatchOrderTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(SportsLotteryMatchOrderPreferences.load(for: 69, from: defaults).isEmpty)
+        SportsLotteryMatchOrderPreferences.save([7, 6], for: 69, to: defaults)
+        SportsLotteryMatchOrderPreferences.save([3, 2], for: 25, to: defaults)
+        #expect(SportsLotteryMatchOrderPreferences.load(for: 69, from: defaults) == [7, 6])
+        #expect(SportsLotteryMatchOrderPreferences.load(for: 25, from: defaults) == [3, 2])
+    }
+
     @Test func matchGroupsCanBeSortedNewestFirst() {
         let old = SportsLotteryMatch(
             id: 1, league: .premierLeague, leagueName: "英格兰超级联赛",

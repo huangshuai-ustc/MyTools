@@ -195,6 +195,16 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         ids.forEach(alertNotifications.clearState)
     }
 
+    func clearLocalRefreshState() {
+        lastRefreshAtByMarket.removeAll()
+        quoteErrors.removeAll()
+        quoteSources.removeAll()
+        quoteRefreshError = nil
+        defaults.removeObject(forKey: StockStoreDefaultsKey.refreshDatesByMarket)
+        defaults.removeObject(forKey: StockStoreDefaultsKey.legacyRefreshDate)
+        refreshInvalidator.refreshEligibilityChanged()
+    }
+
     func refreshQuotes(
         for market: StockMarket? = nil,
         forcedMarkets: Set<StockMarket> = [],

@@ -25,7 +25,7 @@ struct CredentialEditorView: View {
 
     init(document: CredentialDocument) {
         _draft = State(initialValue: document)
-        _tagsText = State(initialValue: document.tags.joined(separator: "，"))
+        _tagsText = State(initialValue: AppTagSupport.joined(document.tags))
         _attachmentSession = State(
             initialValue: AttachmentEditSession(originalAttachments: document.attachmentFiles)
         )
@@ -53,7 +53,7 @@ struct CredentialEditorView: View {
                 customFieldsSection
                 attachmentSection
                 Section("标签") {
-                    IMESafeTextField(prompt: "用逗号或顿号分隔", text: $tagsText)
+                    AppTagEditor(text: $tagsText, suggestions: store.knownTags)
                 }
                 Section("备注") {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
@@ -265,8 +265,10 @@ struct CredentialEditorView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .appDeleteSwipeAction {
+                    draft.fields.removeAll { $0.id == field.id }
+                }
             }
-            .onDelete { draft.fields.remove(atOffsets: $0) }
             .onMove { draft.fields.move(fromOffsets: $0, toOffset: $1) }
             Button {
                 draft.fields.append(CredentialField(label: "新字段"))
@@ -309,7 +311,7 @@ struct CredentialEditorView: View {
                         Button(role: .destructive) {
                             remove(binding.wrappedValue)
                         } label: {
-                            Label("移除", systemImage: "trash")
+                            Label("删除", systemImage: "trash")
                         }
                     }
                     .buttonStyle(.borderless)
@@ -575,7 +577,7 @@ struct CredentialEditorView: View {
     }
 
     private func save() {
-        draft.tags = tagsText.components(separatedBy: CharacterSet(charactersIn: ",，、"))
+        draft.tags = AppTagSupport.parse(tagsText)
         store.upsert(draft)
         attachmentSession.commit()
         didFinish = true

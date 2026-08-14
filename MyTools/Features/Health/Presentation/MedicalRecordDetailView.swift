@@ -296,15 +296,8 @@ struct MedicalRecordDetailView: View {
                                 MedicalPhysicalExamFollowUpRow(record: followUp)
                             }
                             .appListRowStyle()
-                            .swipeActions {
-                                if auth.isAdmin {
-                                    Button(role: .destructive) {
-                                        store.deleteMedicalRecords(ids: [followUp.id])
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                    .tint(.red)
-                                }
+                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                                store.deleteMedicalRecords(ids: [followUp.id])
                             }
                         }
                     }
@@ -325,15 +318,8 @@ struct MedicalRecordDetailView: View {
                                 MedicalInpatientDayRow(record: followUp, parent: record)
                             }
                             .appListRowStyle()
-                            .swipeActions {
-                                if auth.isAdmin {
-                                    Button(role: .destructive) {
-                                        store.deleteMedicalRecords(ids: [followUp.id])
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                    .tint(.red)
-                                }
+                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                                store.deleteMedicalRecords(ids: [followUp.id])
                             }
                         }
                     }
@@ -349,15 +335,8 @@ struct MedicalRecordDetailView: View {
                                 MedicalFollowUpRow(record: followUp)
                             }
                             .appListRowStyle()
-                            .swipeActions {
-                                if auth.isAdmin {
-                                    Button(role: .destructive) {
-                                        store.deleteMedicalRecords(ids: [followUp.id])
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                    .tint(.red)
-                                }
+                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                                store.deleteMedicalRecords(ids: [followUp.id])
                             }
                         }
                     }
@@ -373,15 +352,8 @@ struct MedicalRecordDetailView: View {
                                 MedicalLinkedPharmacyPurchaseRow(record: purchase)
                             }
                             .appListRowStyle()
-                            .swipeActions {
-                                if auth.isAdmin {
-                                    Button(role: .destructive) {
-                                        store.deleteMedicalRecords(ids: [purchase.id])
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                    .tint(.red)
-                                }
+                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                                store.deleteMedicalRecords(ids: [purchase.id])
                             }
                         }
                     }
@@ -482,8 +454,7 @@ struct MedicalRecordDetailView: View {
 
             if !record.tags.isEmpty {
                 Section("标签") {
-                    Text(record.tags.joined(separator: " · "))
-                        .copyableText(record.tags.joined(separator: " · "))
+                    AppTagCapsules(tags: record.tags)
                 }
             }
 

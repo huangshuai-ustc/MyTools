@@ -201,6 +201,22 @@ struct StockChartDiskStore {
         }
     }
 
+    mutating func removeAll() {
+        memoryStores.removeAll()
+        for directory in [persistentStoreDirectory, legacyCacheDirectory] {
+            guard fileManager.fileExists(atPath: directory.path) else { continue }
+            do {
+                try fileManager.removeItem(at: directory)
+            } catch {
+                DiagnosticLogger.shared.log(
+                    .stockQuote,
+                    "离线行情缓存清理失败：\(error.localizedDescription)",
+                    level: .warning
+                )
+            }
+        }
+    }
+
     func renderedSnapshot(
         from store: StockChartPersistedStore,
         range: StockChartRange

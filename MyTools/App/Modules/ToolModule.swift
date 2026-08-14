@@ -71,6 +71,65 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
 
     var visibilityKey: String { "tool-module-\(rawValue)-visible" }
 
+    var defaultIsVisible: Bool {
+        switch self {
+        case .personalFinance:
+#if MYTOOLS_DEFAULT_HIDDEN_FINANCE
+            return false
+#else
+            return true
+#endif
+        case .myStocks:
+#if MYTOOLS_DEFAULT_HIDDEN_STOCKS
+            return false
+#else
+            return true
+#endif
+        case .currencyExchange:
+#if MYTOOLS_DEFAULT_HIDDEN_CURRENCY_EXCHANGE
+            return false
+#else
+            return true
+#endif
+        case .healthRecords:
+#if MYTOOLS_DEFAULT_HIDDEN_HEALTH
+            return false
+#else
+            return true
+#endif
+        case .foodMap:
+#if MYTOOLS_DEFAULT_HIDDEN_FOOD_MAP
+            return false
+#else
+            return true
+#endif
+        case .secrets:
+#if MYTOOLS_DEFAULT_HIDDEN_SECRETS
+            return false
+#else
+            return true
+#endif
+        case .documents:
+#if MYTOOLS_DEFAULT_HIDDEN_DOCUMENTS
+            return false
+#else
+            return true
+#endif
+        case .bills:
+#if MYTOOLS_DEFAULT_HIDDEN_BILLS
+            return false
+#else
+            return true
+#endif
+        case .sportsLottery:
+#if MYTOOLS_DEFAULT_HIDDEN_SPORTS_LOTTERY
+            return false
+#else
+            return true
+#endif
+        }
+    }
+
     var hasSettings: Bool {
         switch self {
         case .myStocks:

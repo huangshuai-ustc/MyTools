@@ -107,6 +107,7 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
             || shopName.localizedCaseInsensitiveContains(term)
             || administrativeLocation?.province.localizedCaseInsensitiveContains(term) == true
             || administrativeLocation?.city.localizedCaseInsensitiveContains(term) == true
+            || administrativeLocation?.district?.localizedCaseInsensitiveContains(term) == true
             || address.localizedCaseInsensitiveContains(term)
             || sourceTitle.localizedCaseInsensitiveContains(term)
             || note.localizedCaseInsensitiveContains(term)

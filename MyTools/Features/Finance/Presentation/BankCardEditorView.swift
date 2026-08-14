@@ -99,8 +99,10 @@ struct CardEditorView: View {
                                 CreditCardStatementRow(statement: statement)
                             }
                             .buttonStyle(.plain)
+                            .appDeleteSwipeAction {
+                                deleteStatements(ids: [statement.id])
+                            }
                         }
-                        .onDelete(perform: deleteStatements)
                         Button { editingStatement = CreditCardStatement() } label: {
                             Label("添加 PDF 账单", systemImage: "doc.badge.plus")
                         }
@@ -180,8 +182,7 @@ struct CardEditorView: View {
         }
     }
 
-    private func deleteStatements(at offsets: IndexSet) {
-        let ids = Set(offsets.map { sortedStatements[$0].id })
+    private func deleteStatements(ids: Set<UUID>) {
         for statement in draft.card.statements where ids.contains(statement.id) {
             guard let attachment = statement.attachment,
                   !originalAttachmentIDs.contains(attachment.id) else { continue }
