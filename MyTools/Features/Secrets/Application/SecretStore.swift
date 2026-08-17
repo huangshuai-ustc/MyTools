@@ -57,6 +57,18 @@ final class SecretStore: ObservableObject {
         fieldTemplate(for: category).makeFields()
     }
 
+    func effectiveFields(for item: SecretItem) -> [SecretField] {
+        let template = fieldTemplate(for: item.category)
+        return item.fields.map { field in
+            guard let templateField = matchingTemplateField(for: field, in: template) else {
+                return field
+            }
+            var effectiveField = field
+            effectiveField.isSensitive = templateField.isSensitive
+            return effectiveField
+        }
+    }
+
     func upsertFieldTemplate(_ template: SecretFieldTemplate) {
         guard !isRestoringBackup else { return }
         let normalized = template.normalized()
@@ -72,9 +84,8 @@ final class SecretStore: ObservableObject {
             var updatedItem = item
             var didUpdate = false
             updatedItem.fields = item.fields.map { field in
-                guard let templateField = normalized.fields.first(where: {
-                    $0.label == field.label && $0.inputType == field.inputType
-                }), field.isSensitive != templateField.isSensitive else {
+                guard let templateField = matchingTemplateField(for: field, in: normalized),
+                      field.isSensitive != templateField.isSensitive else {
                     return field
                 }
                 var updatedField = field
@@ -203,6 +214,22 @@ final class SecretStore: ObservableObject {
             byCategory[fallback.category] = fallback
         }
         return SecretCategory.allCases.compactMap { byCategory[$0] }
+    }
+
+    private func matchingTemplateField(
+        for field: SecretField,
+        in template: SecretFieldTemplate
+    ) -> SecretField? {
+        if let exactMatch = template.fields.first(where: {
+            $0.label == field.label && $0.inputType == field.inputType
+        }) {
+            return exactMatch
+        }
+
+        let kindMatches = template.fields.filter {
+            $0.kind == field.kind && $0.inputType == field.inputType
+        }
+        return kindMatches.count == 1 ? kindMatches.first : nil
     }
 
     private static func importSignature(_ item: SecretItem) -> String {

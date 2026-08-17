@@ -125,6 +125,49 @@ struct SecretsTests {
         #expect(saved.fields.first(where: { $0.label == "用户名" })?.isSensitive == true)
     }
 
+    @Test @MainActor func effectiveFieldsUseCurrentTemplateVisibility() throws {
+        let item = SecretItem(
+            category: .login,
+            fields: [
+                SecretField(label: "用户名", value: "user", kind: .username),
+                SecretField(label: "密码", value: "secret", kind: .password),
+                SecretField(label: "URL", value: "https://example.com", kind: .url)
+            ]
+        )
+        var template = SecretFieldTemplate(category: .login, fields: item.fields)
+        template.fields = template.fields.map { field in
+            var updated = field
+            updated.isSensitive = ["密码", "URL"].contains(field.label) ? false : true
+            return updated
+        }
+        let store = SecretStore(
+            secretItems: [item],
+            fieldTemplates: [template],
+            attachmentStore: AttachmentStore()
+        )
+
+        let effectiveFields = store.effectiveFields(for: item)
+        #expect(effectiveFields.first(where: { $0.label == "用户名" })?.isSensitive == true)
+        #expect(effectiveFields.first(where: { $0.label == "密码" })?.isSensitive == false)
+        #expect(effectiveFields.first(where: { $0.label == "URL" })?.isSensitive == false)
+    }
+
+    @Test @MainActor func makeFieldsUsesTheSelectedCategoryTemplate() {
+        let template = SecretFieldTemplate(
+            category: .email,
+            fields: [SecretField(label: "自定义邮箱", kind: .email, isSensitive: false)]
+        )
+        let store = SecretStore(
+            fieldTemplates: [template],
+            attachmentStore: AttachmentStore()
+        )
+
+        let fields = store.makeFields(for: .email)
+        #expect(fields.map(\.label) == ["自定义邮箱"])
+        #expect(fields.first?.isSensitive == false)
+        #expect(fields.first?.value.isEmpty == true)
+    }
+
     @Test @MainActor func vaultDataLegacyDecodeCompletesTemplatesInSecretStore() throws {
         let data = Data("{\"currencyRateAlerts\":[],\"stockPriceAlerts\":[]}".utf8)
         let vault = try JSONDecoder().decode(VaultData.self, from: data)

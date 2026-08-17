@@ -337,10 +337,10 @@
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyTools/Features/Secrets/Application/SecretStore.swift` | 保密条目 CRUD、附件生命周期、标签规范化/标签库和备份恢复状态。 |
+| `MyTools/Features/Secrets/Application/SecretStore.swift` | 保密条目 CRUD、附件生命周期、标签规范化/标签库、分类模板字段生成、普通模式有效显隐解析和备份恢复状态。 |
 | `MyTools/Features/Secrets/Domain/Secret.swift` | 六类模板、个人/工作用途、自定义字段、内容遮罩、标签、备注和附件实体；登录模板包含 URL。 |
 | `MyTools/Features/Secrets/Domain/ApplePasswordImport.swift` | Apple 密码 CSV 的 UTF-8/引号/换行解析、字段映射、导入预览和重复数据校验。 |
-| `MyTools/Features/Secrets/Presentation/SecretVaultView.swift` | 列表筛选、个人/工作用途标签、Apple 密码 CSV 导入、独立查看认证、字段模板长按拖动排序、字段紧凑编辑、右滑显隐/改名、详情、编辑和附件交互。 |
+| `MyTools/Features/Secrets/Presentation/SecretVaultView.swift` | 列表筛选、个人/工作用途标签、Apple 密码 CSV 导入、独立查看认证、字段模板长按拖动排序、普通模式按模板显隐、切换分类重建模板字段、字段紧凑编辑、右滑显隐/改名、详情、编辑和附件交互。 |
 
 ### `MyTools/Features/Stocks/Domain/`：股票领域与确定性计算
 
@@ -497,7 +497,7 @@
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
 | 美食地图 | 吃过/想吃、店铺、中国省市、详细地址、地图坐标、图片、来源、标签胶囊、标签建议/筛选/搜索、总地图和第三方导航 | `Features/FoodMap/Presentation/FoodMapView.swift` | `FoodMapStore`、`FoodPlace.swift` |
-| 保密资料 | 六类模板、个人/工作用途、自定义字段、字段模板名称/类型编辑、模板字段右滑内容显隐、左滑删除与长按拖动排序、按换行自动单行/多行、默认字段遮罩、条目字段右滑内容显隐/改名、左滑删除、标签胶囊、标签建议/筛选/搜索、Apple 密码 CSV 导入、独立查看认证和管理员编辑 | `Features/Secrets/Presentation/SecretVaultView.swift` | `SecretStore`、`Secret.swift`、`ApplePasswordImport.swift` |
+| 保密资料 | 六类模板、个人/工作用途、自定义字段、字段模板名称/类型编辑、普通模式按当前模板显隐、切换分类重建目标模板字段、模板字段右滑内容显隐、左滑删除与长按拖动排序、按换行自动单行/多行、默认字段遮罩、条目字段右滑内容显隐/改名、左滑删除、标签胶囊、标签建议/筛选/搜索、Apple 密码 CSV 导入、独立查看认证和管理员编辑 | `Features/Secrets/Presentation/SecretVaultView.swift` | `SecretStore`、`Secret.swift`、`ApplePasswordImport.swift` |
 | 证照 | 身份证、护照、港澳通行证、驾驶证、学历/学位/房产证、出生医学证明、预防接种证、职业资格证书和自定义模板；所有证照必填签发日期，固定期限从签发日期起算；身份证、港澳通行证和驾驶证使用年限届满日，普通护照的到期日为年限届满日前一日；到期提醒、多版本及证照状态、标签胶囊、标签建议/筛选/搜索、自定义字段、图片/PDF 附件和 OCR 候选确认/字段填充；出生日期仅作为自定义字段，旧版固定值支持无损迁移 | `Features/Documents/Presentation/DocumentsView.swift` | `DocumentsStore`、`CredentialDocument.swift` |
 | 账单 | 手工收支记录、图片区域 OCR、金额/日期/商户/支付方式候选、默认 30 条增量列表和搜索/收支/分类/标签筛选；记录/分析顶层分区与按周、月、季、年或自定义区间、按币种统计，提供上一周期对比、每日支出、分类、商户和付款方式图表；标签以胶囊显示并支持历史建议复用；设置中可按预设/自定义区间、来源、分类和收支方向导出 JSON；版本化交换协议、导入预览及来源交易号去重；支持微信支付 XLSX 和支付宝 GB18030/UTF-8 CSV，自动跳过导出摘要 | `Features/Bills/Presentation/BillsView.swift` | `BillsStore`、`BillRecord.swift`、`BillAnalytics.swift`、`BillExchange.swift` |
 | 体彩开奖 | 默认五大联赛与欧冠；进入管理员（编辑）模式后可按官方赛事简称或全称添加，赛事行使用统一配置的红色“删除”左滑动作；按赛事批量获取近期开赛结果并补齐比赛头信息与五类竞彩固定奖金；官方结果缺失时显示暂无数据；比赛行支持长按拖动并持久化自定义顺序，进入赛事比赛页自动强制刷新一次；赛果独立持久化，首次加载近 30 天、后续增量刷新，并在北京时间 10:00/22:00 自动检查；不参与 Vault、备份或同步 | `Features/SportsLottery/Presentation/SportsLotteryView.swift` | `SportsLotteryService`、`SportsLotteryModels.swift`、`SportsLotteryRefreshCoordinator.swift` |
@@ -682,7 +682,7 @@
 | 账单 | `MyToolsTests/Bills/BillsTests.swift`：规范化、分析周期、导出预设/自定义区间与来源/分类/收支筛选、OCR 候选、交换协议、重复导入、微信 XLSX、支付宝 GB18030 CSV、真实样本可选集成验证、银行卡待接状态、空 Vault、备份和 CloudKit 隔离 |
 | 健康 | `MyToolsTests/Health`：医疗草稿、附件编辑、筛选分组和统计 |
 | 股票 | `MyToolsTests/Stocks`：组合编辑、报价、图表、缓存、解析、展示、技术指标和评分 |
-| 保密资料 | `MyToolsTests/Secrets/SecretsTests.swift`：Apple 密码 CSV 字段映射、引号/换行解析和旧数据用途兼容 |
+| 保密资料 | `MyToolsTests/Secrets/SecretsTests.swift`：Apple 密码 CSV 字段映射、引号/换行解析、旧数据用途兼容、分类模板字段生成和普通模式模板显隐解析 |
 | 体彩开奖 | `MyToolsTests/SportsLottery/SportsLotteryTests.swift`：赛事名称映射、欧冠默认项、赛事偏好增删、比赛分组和时间/场次倒序、自定义比赛顺序、本地快照持久化及 10:00/22:00 刷新时段 |
 | 测试替身 | `MyToolsTests/TestSupport`：行情 Fixture、Fake Provider、报价和图表 HTTP Stub |
 

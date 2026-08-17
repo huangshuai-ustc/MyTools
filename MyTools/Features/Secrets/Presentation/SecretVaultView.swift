@@ -185,7 +185,7 @@ struct SecretVaultView: View {
                 if canAccess, auth.isAdmin {
                     Button {
                         isCreating = true
-                        editingItem = SecretItem()
+                        editingItem = SecretItem(fields: store.makeFields(for: .login))
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -648,7 +648,7 @@ struct SecretDetailView: View {
                     }
 
                     Section("保密字段") {
-                        ForEach(item.fields) { field in
+                        ForEach(store.effectiveFields(for: item)) { field in
                             SecretFieldValueRow(
                                 field: field,
                                 hiddenFieldIDs: $hiddenFieldIDs,
@@ -899,8 +899,7 @@ struct SecretEditorView: View {
                         }
                     }
                     .onChange(of: draft.item.category) { oldCategory, newCategory in
-                        guard isNew,
-                              fieldsMatchTemplate(draft.item.fields, template: store.fieldTemplate(for: oldCategory)) else {
+                        guard isNew, oldCategory != newCategory else {
                             return
                         }
                         draft.item.fields = store.makeFields(for: newCategory)
