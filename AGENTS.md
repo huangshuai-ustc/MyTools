@@ -19,7 +19,7 @@
 
 ## 不可破坏的架构规则
 
-- “我的 > 首页功能”的开关是业务模块顶层边界。关闭模块后，该模块的页面、后台刷新、通知、备份导入导出、CloudKit 上传与远端合并都不得继续参与。
+- “我的 > 首页功能”的开关只控制页面、后台刷新和通知；隐藏模块的数据仍参与备份与 CloudKit 同步。只有“删除功能数据”的撤回窗口才会临时停止目标模块的 CloudKit 对账。
 - `Config/Shared.xcconfig` 的 `MYTOOLS_COMPILED_FEATURES` 是唯一编译清单。未编译模块不得注册、显示、启动服务、导入导出或参与 CloudKit；其本地 Vault 数据必须以不透明载荷原样保留，避免精简版本覆盖或清理数据与附件。
 - 模块显隐先读取本地 `UserDefaults`，没有显式本地值时使用编译配置声明的默认值；CloudKit 应用偏好同步优先于编译默认值。`MYTOOLS_DEFAULT_HIDDEN_FEATURES` 只能改变新安装或没有显式设置时的首页初始状态。
 - 存储与数据设置中的“删除功能数据”只允许管理员操作。每层确认都必须等待 10 秒，执行后保留 10 秒撤回窗口；`AppStore` 以模块快照恢复目标字段，撤回期不删除附件且从 CloudKit 参与模块中暂时排除目标模块，过期后才删除未被其他模块引用的附件、模块专属缓存和提醒状态，并恢复正常对账。开启 iCloud 时最终删除会同步到其他设备，备份文件不回写。
@@ -175,10 +175,10 @@
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyTools/Core/CloudSync/CloudKitSyncWorker.swift` | CKSyncEngine 私有数据库/Zone、上传下载、账户变化和增量游标执行器。 |
+| `MyTools/Core/CloudSync/CloudKitSyncWorker.swift` | CKSyncEngine 私有数据库/Zone、上传下载、账户变化、删除记录回收和增量游标执行器。 |
 | `MyTools/Core/CloudSync/CloudSyncCoordinator.swift` | 面向 App 的同步生命周期、状态发布、对账和错误协调。 |
 | `MyTools/Core/CloudSync/CloudSyncModels.swift` | 同步实体种类、快照编码、模块归属及远端 upsert/delete 合并规则。 |
-| `MyTools/Core/CloudSync/CloudSyncPreferences.swift` | 模块顺序/显隐、外观等 App 偏好的 CloudKit 编码和双向桥接。 |
+| `MyTools/Core/CloudSync/CloudSyncPreferences.swift` | 模块顺序/显隐、外观、排序筛选和体彩赛事偏好等 App 设置的 CloudKit 编码和双向桥接。 |
 | `MyTools/Core/CloudSync/CloudSyncStateStore.swift` | 同步状态、系统字段和游标的本地磁盘存储。 |
 
 ### `MyTools/Core/Currency/`：币种与共享汇率
@@ -289,9 +289,9 @@
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyTools/Features/Finance/Application/FinanceStore.swift` | 银行、子账户、银行卡 CRUD，账单附件生命周期和冗余字段清理。 |
-| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、境内外子账户、银行卡、账单及状态/卡组织领域模型。 |
-| `MyTools/Features/Finance/Presentation/BankAccountViews.swift` | 银行详情与银行档案新增/编辑，包括境内外扩展资料。 |
+| `MyTools/Features/Finance/Application/FinanceStore.swift` | 银行、子账户、银行卡 CRUD，境内/境外登录字段模板，账单附件生命周期和冗余字段清理。 |
+| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、分行坐标、境内外子账户、登录字段模板、银行卡、账单及状态/卡组织领域模型。 |
+| `MyTools/Features/Finance/Presentation/BankAccountViews.swift` | 银行详情与银行档案新增/编辑、分行地图选点/导航、登录字段左右滑操作和模板编辑，包括境内外扩展资料。 |
 | `MyTools/Features/Finance/Presentation/BankCardDetailView.swift` | 银行卡敏感详情、账单附件和相关操作。 |
 | `MyTools/Features/Finance/Presentation/BankCardEditorView.swift` | 借记卡/信用卡编辑和信用卡账单附件编辑。 |
 | `MyTools/Features/Finance/Presentation/FinanceHomeView.swift` | 金融首页、地区/类别筛选、搜索排序、统计和列表行。 |
@@ -307,7 +307,8 @@
 | `MyTools/Features/FoodMap/Domain/ChinaAdministrativeDivision.swift` | 中国省市目录、下级行政区字段、标准化和中文地址省市推断；兼容缺少下级行政区的旧记录。 |
 | `MyTools/Features/FoodMap/Domain/FoodPlace.swift` | “吃过/想吃”两种美食状态、坐标、来源、图片和地点实体。 |
 | `MyTools/Features/FoodMap/Infrastructure/FoodNavigationService.swift` | Apple/高德/百度/腾讯/Google 地图 URL 生成与可用性判断。 |
-| `MyTools/Features/FoodMap/Presentation/FoodLocationPickerView.swift` | 定位权限、附近区域默认地图、原生风格搜索、候选选中状态、地图点选、MapKit 反向地理编码与地址/行政区回填。 |
+| `MyTools/Core/Location/MapLocationSearchService.swift` | 美食地图、银行网点及后续地图功能共用的 `MapLocationPickerView`、MapKit 搜索服务和候选行；统一定位权限、地图展示、请求取消、国际地址兜底、反向地理编码、手动点选、保存/取消、整行点击和蓝色选中标记。 |
+| `MyTools/Features/FoodMap/Presentation/FoodLocationPickerView.swift` | Core 公共地图选点组件的美食业务适配器，只负责把统一选点结果转换为地点名称、详细地址和中国行政区。 |
 | `MyTools/Features/FoodMap/Presentation/FoodMapPresentationSupport.swift` | 地图卡片、导航菜单、来源链接和照片缩略图等共享组件。 |
 | `MyTools/Features/FoodMap/Presentation/FoodMapView.swift` | 美食列表、状态/标签筛选、搜索和总地图入口。 |
 | `MyTools/Features/FoodMap/Presentation/FoodPlaceDetailView.swift` | 地点详情、图片、来源、地图与导航操作。 |
@@ -492,7 +493,7 @@
 
 | 模块 | 已实现能力 | 主要入口 | 数据与状态 |
 | --- | --- | --- | --- |
-| 金融账户 | 境内外银行、支行、子账户、借记卡、信用卡、账单 PDF、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
+| 金融账户 | 境内外银行、网络银行无网点标记、支行地图链接/导航、子账户（含支票账户）、借记卡、信用卡、账单 PDF、登录字段模板与左右滑管理、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
 | 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、“当前持仓”和“无持仓或仅看盘”分区、实时行情、历史图表、技术指标、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift` |
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
@@ -500,7 +501,7 @@
 | 保密资料 | 六类模板、个人/工作用途、自定义字段、字段模板名称/类型编辑、普通模式按当前模板显隐、切换分类重建目标模板字段、模板字段右滑内容显隐、左滑删除与长按拖动排序、按换行自动单行/多行、默认字段遮罩、条目字段右滑内容显隐/改名、左滑删除、标签胶囊、标签建议/筛选/搜索、Apple 密码 CSV 导入、独立查看认证和管理员编辑 | `Features/Secrets/Presentation/SecretVaultView.swift` | `SecretStore`、`Secret.swift`、`ApplePasswordImport.swift` |
 | 证照 | 身份证、护照、港澳通行证、驾驶证、学历/学位/房产证、出生医学证明、预防接种证、职业资格证书和自定义模板；所有证照必填签发日期，固定期限从签发日期起算；身份证、港澳通行证和驾驶证使用年限届满日，普通护照的到期日为年限届满日前一日；到期提醒、多版本及证照状态、标签胶囊、标签建议/筛选/搜索、自定义字段、图片/PDF 附件和 OCR 候选确认/字段填充；出生日期仅作为自定义字段，旧版固定值支持无损迁移 | `Features/Documents/Presentation/DocumentsView.swift` | `DocumentsStore`、`CredentialDocument.swift` |
 | 账单 | 手工收支记录、图片区域 OCR、金额/日期/商户/支付方式候选、默认 30 条增量列表和搜索/收支/分类/标签筛选；记录/分析顶层分区与按周、月、季、年或自定义区间、按币种统计，提供上一周期对比、每日支出、分类、商户和付款方式图表；标签以胶囊显示并支持历史建议复用；设置中可按预设/自定义区间、来源、分类和收支方向导出 JSON；版本化交换协议、导入预览及来源交易号去重；支持微信支付 XLSX 和支付宝 GB18030/UTF-8 CSV，自动跳过导出摘要 | `Features/Bills/Presentation/BillsView.swift` | `BillsStore`、`BillRecord.swift`、`BillAnalytics.swift`、`BillExchange.swift` |
-| 体彩开奖 | 默认五大联赛与欧冠；进入管理员（编辑）模式后可按官方赛事简称或全称添加，赛事行使用统一配置的红色“删除”左滑动作；按赛事批量获取近期开赛结果并补齐比赛头信息与五类竞彩固定奖金；官方结果缺失时显示暂无数据；比赛行支持长按拖动并持久化自定义顺序，进入赛事比赛页自动强制刷新一次；赛果独立持久化，首次加载近 30 天、后续增量刷新，并在北京时间 10:00/22:00 自动检查；不参与 Vault、备份或同步 | `Features/SportsLottery/Presentation/SportsLotteryView.swift` | `SportsLotteryService`、`SportsLotteryModels.swift`、`SportsLotteryRefreshCoordinator.swift` |
+| 体彩开奖 | 默认五大联赛与欧冠；进入管理员（编辑）模式后可按官方赛事简称或全称添加，赛事行使用统一配置的红色“删除”左滑动作；按赛事批量获取近期开赛结果并补齐比赛头信息与五类竞彩固定奖金；官方结果缺失时显示暂无数据；比赛行支持长按拖动并持久化自定义顺序，进入赛事比赛页自动强制刷新一次；赛果独立持久化，首次加载近 30 天、后续增量刷新，并在北京时间 10:00/22:00 自动检查；网络赛果不参与 Vault、备份或同步，但赛事选择和自定义顺序作为应用偏好同步 | `Features/SportsLottery/Presentation/SportsLotteryView.swift` | `SportsLotteryService`、`SportsLotteryModels.swift`、`SportsLotteryRefreshCoordinator.swift` |
 
 九个模块都登记在 `App/Modules/ToolModule.swift`，其中八个业务数据模块参与本地 Vault、加密备份和 CloudKit；体彩开奖是网络只读模块，不参与本地数据、备份或同步；金融、健康、美食、保密资料和证照拥有附件；股票和换汇共用汇率；股票、换汇和证照拥有提醒。
 
@@ -554,12 +555,23 @@
 | 加密备份格式 | `VaultBackupDocument`、`VaultBackupPayload`、`VaultBackupCrypto` in `Core/Backup/VaultBackup.swift` | `.mytools`、PBKDF2-HMAC-SHA256、AES-GCM、格式 1.0、模块集合 |
 | 备份裁剪与附件装配 | `AppStoreBackupProcessor` in `App/Composition/AppStoreBackupProcessor.swift` | 按已开启模块导出/导入、嵌入和恢复附件数据 |
 | 增量备份合并 | `AppStoreBackupMerger` in `App/Composition/AppStoreBackupMerger.swift` | 只合并备份包含且当前开启的模块，按记录 ID 更新或追加 |
-| CloudKit 快照和编码 | `CloudSyncSnapshotBuilder`、`CloudSyncCoding`、`CloudSyncEntityKind`、`CloudSyncItem` in `Core/CloudSync/CloudSyncModels.swift` | 模块归属、业务 JSON、CKAsset 附件和 App 偏好快照 |
-| CloudKit 远端合并 | `CloudSyncMerger`、`CloudSyncChange` | 按实体类型与模块开关应用 upsert/delete，关闭模块的变更忽略 |
-| CloudKit 生命周期 | `CloudSyncCoordinator`、`CloudKitSyncWorker` | 私有数据库、自定义 Zone、增量游标、上传/拉取、账户变化和对账 |
+| CloudKit 快照和编码 | `CloudSyncSnapshotBuilder`、`CloudSyncCoding`、`CloudSyncEntityKind`、`CloudSyncItem` in `Core/CloudSync/CloudSyncModels.swift` | 主线程只复制当前业务状态；JSON 编码和附件读取必须在 utility 后台任务执行，再按摘要生成记录级增量 |
+| CloudKit 远端合并 | `CloudSyncMerger`、`CloudSyncChange` | 按实体类型与已编译且允许同步的模块应用 upsert/delete；首页隐藏不会停止同步，删除功能数据的撤回窗口才会临时排除模块 |
+| CloudKit 生命周期 | `CloudSyncCoordinator`、`CloudKitSyncWorker` | 私有数据库、自定义 Zone、增量游标、上传/拉取、账户变化和对账；本地变更用 2 秒防抖合并差异计算，自动发送交给 `CKSyncEngine` 系统调度，手动同步才强制 fetch/send；附件在业务记录应用后后台逐个恢复且禁止整文件读入内存 |
 | 同步开关与状态 | `CloudSyncPreferences`、`CloudSyncStateStore`、`CloudSyncPreferencesBridge` | 默认关闭、Apple 账户状态、错误、游标、模块顺序/显隐与外观偏好同步 |
 
 本地 Vault 是离线事实源。行情缓存、汇率缓存、诊断日志、认证状态和 OCR 临时结果不进入 Vault、备份或 CloudKit。
+
+#### 新增字段与 iCloud 同步准则
+
+CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `VaultData` 就默认进入 iCloud。修改数据模型时按以下规则分类：
+
+1. 用户主动创建或修改、跨设备应保持一致的业务数据（例如持仓、账户位置、模板、标签、备注和排序设置）必须进入 `VaultData` 或 `CloudSyncAppPreferences`，并在 `CloudSyncSnapshotBuilder` 与 `CloudSyncMerger` 中同时加入 upsert/delete 路径。
+2. 记录内部新增字段沿用 Codable 载荷，但解码必须使用 `decodeIfPresent` 或显式默认值，保证旧设备上传的旧载荷仍可读取；字段重命名必须保留兼容键或提供迁移。
+3. 新增顶层数组、模板库、标签库或设置集合必须使用独立稳定的 CloudSync entity（或扩展 App Preferences），不能把多个模块数据隐式塞进某一条业务记录；新增 entity 要声明模块归属、快照、合并、删除和空值语义。
+4. 行情、汇率、地图搜索候选、刷新时间、诊断日志、临时 OCR、设备授权、管理员会话和通知运行状态属于派生或设备级数据，默认不进入 iCloud；若需求要跨设备保留，必须先将其重新定义为用户业务数据并单独评审。
+5. 每个新增可同步字段至少补四类检查：本地快照包含测试、远端 upsert 合并测试、远端 delete/清理测试、旧载荷兼容解码测试；若模块可隐藏，还要验证隐藏模块仍参与同步。
+6. 变更完成后必须检查 `CloudSyncEntityKind` 的模块映射、备份与存储清理引用、文档同步边界，并在构建日志中检查 `deprecated`、编译错误和测试构建结果。
 
 ### OCR 文字识别
 

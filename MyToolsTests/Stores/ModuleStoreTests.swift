@@ -161,6 +161,23 @@ struct ModuleStoreTests {
         #expect(retainedOverseas.correspondenceAddressEnglish == "Keep address")
     }
 
+    @Test func financeLoginTemplatesAreRegionSpecificAndPersistent() throws {
+        let domestic = BankLoginFieldTemplate(name: "境内网银网址")
+        let overseas = BankLoginFieldTemplate(name: "海外安全问题", isSensitive: true)
+        let store = FinanceStore(
+            domesticLoginFieldTemplates: [domestic],
+            overseasLoginFieldTemplates: [overseas],
+            attachmentStore: AttachmentStore()
+        )
+
+        #expect(store.makeLoginFields(for: .domestic).map(\.name) == ["境内网银网址"])
+        #expect(store.makeLoginFields(for: .overseas).map(\.name) == ["海外安全问题"])
+        #expect(store.makeLoginFields(for: .overseas).first?.isSensitive == true)
+
+        store.deleteLoginFieldTemplate(domestic, for: .domestic)
+        #expect(store.loginFieldTemplates(for: .domestic).isEmpty)
+    }
+
     @Test func secretStoreRejectsMutationsWhileBackupRestoreIsInProgress() {
         let original = SecretItem(title: "Original")
         let store = SecretStore(

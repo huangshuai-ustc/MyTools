@@ -22,7 +22,7 @@ struct CloudSyncMergerTests {
             enabledModules: [.personalFinance]
         )
 
-        #expect(Set(snapshot.items.map(\.kind)) == [.bankAccount])
+        #expect(Set(snapshot.items.map(\.kind)) == [.bankAccount, .financeMetadata])
         #expect(snapshot.participatingModules == [.personalFinance])
     }
 
@@ -41,6 +41,43 @@ struct CloudSyncMergerTests {
         )
 
         #expect(result.vault.medicalRecords == [localRecord])
+    }
+
+    @Test func snapshotAndMergePreserveModuleMetadata() throws {
+        var bankTemplate = BankLoginFieldTemplate(name: "自定义网址")
+        bankTemplate.isSensitive = true
+        let secretTemplate = SecretFieldTemplate(
+            category: .login,
+            fields: [SecretField(label: "一次性密码", isSensitive: false)]
+        )
+        let vault = VaultData(
+            domesticBankLoginFieldTemplates: [bankTemplate],
+            medicalRecordTags: ["心内科"],
+            foodPlaceTags: ["面馆"],
+            credentialTags: ["重要证件"],
+            billTags: ["报销"],
+            secretTags: ["工作"],
+            secretFieldTemplates: [secretTemplate]
+        )
+
+        let snapshot = try CloudSyncSnapshotBuilder.make(
+            vault: vault,
+            secrets: [],
+            attachmentStore: AttachmentStore()
+        )
+        let changes = snapshot.items.compactMap { item -> CloudSyncChange? in
+            guard item.kind.module != nil else { return nil }
+            return .upsert(kind: item.kind, id: item.id, payload: item.payload)
+        }
+        let result = try CloudSyncMerger.apply(changes, to: VaultData(), secrets: [])
+
+        #expect(result.vault.domesticBankLoginFieldTemplates == [bankTemplate])
+        #expect(result.vault.medicalRecordTags == ["心内科"])
+        #expect(result.vault.foodPlaceTags == ["面馆"])
+        #expect(result.vault.credentialTags == ["重要证件"])
+        #expect(result.vault.billTags == ["报销"])
+        #expect(result.vault.secretTags == ["工作"])
+        #expect(result.vault.secretFieldTemplates == [secretTemplate])
     }
 
     @MainActor

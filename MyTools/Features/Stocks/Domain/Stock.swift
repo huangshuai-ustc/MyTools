@@ -219,6 +219,11 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         return marketValue - holdingCost
     }
 
+    var holdingProfitRate: Decimal? {
+        guard holdingCost > 0, let holdingProfitLoss else { return nil }
+        return holdingProfitLoss / holdingCost
+    }
+
     /// Lifetime result: current holding profit plus realized profit.
     var totalProfitLoss: Decimal? {
         guard let holdingProfitLoss else { return nil }

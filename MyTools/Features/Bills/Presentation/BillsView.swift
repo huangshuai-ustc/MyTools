@@ -114,7 +114,7 @@ struct BillsView: View {
         .navigationTitle(ToolModule.bills.title)
         .iOSLabeledBackButton("工具")
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
 #endif
         .toolbar { billsToolbar }
         .sheet(item: $editingRecord) { record in

@@ -97,7 +97,7 @@ struct FoodMapView: View {
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索美食、店名、地点或标签")
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {

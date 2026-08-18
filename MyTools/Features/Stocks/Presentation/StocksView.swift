@@ -176,8 +176,8 @@ struct StocksView: View {
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
     @State private var watchRoute: WatchRoute?
-    @AppStorage("stock-sort-criterion-v2") private var sortCriterionRawValue = StockSortCriterion.name.rawValue
-    @AppStorage("stock-sort-direction-v2") private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
+    @AppStorage(AppStorageKey.stockSortCriterion) private var sortCriterionRawValue = StockSortCriterion.name.rawValue
+    @AppStorage(AppStorageKey.stockSortDirection) private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
 
     private var stockSorter: StockSorter {
         StockSorter(
@@ -287,12 +287,12 @@ struct StocksView: View {
                 }
             } else if !displayedStocks.isEmpty {
                 Section("当前持仓（\(displayedStocks.count)）") {
-                    stockLinks(displayedStocks, allocations: allocations)
+                    stockLinks(displayedStocks)
                 }
             }
             if !noPositionStocks.isEmpty {
                 Section("无持仓或仅看盘（\(noPositionStocks.count)）") {
-                    stockLinks(noPositionStocks, allocations: allocations)
+                    stockLinks(noPositionStocks)
                 }
             }
 
@@ -319,6 +319,12 @@ struct StocksView: View {
             }
         }
         .navigationTitle(ToolModule.myStocks.title)
+        .onChange(of: sortCriterionRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        }
+        .onChange(of: sortDirectionRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索股票名称或代码")
         .refreshable {
@@ -353,7 +359,7 @@ struct StocksView: View {
             }
         }
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif
@@ -390,14 +396,11 @@ struct StocksView: View {
         }
     }
 
-    private func stockLink(_ stock: StockHolding, allocation: Decimal?) -> some View {
+    private func stockLink(_ stock: StockHolding) -> some View {
         NavigationLink {
             StockDetailView(stockID: stock.id)
         } label: {
-            StockRow(
-                stock: stock,
-                allocation: allocation
-            )
+            StockRow(stock: stock)
         }
         .appListRowStyle()
         .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
@@ -414,12 +417,9 @@ struct StocksView: View {
     }
 
     @ViewBuilder
-    private func stockLinks(
-        _ stocks: [StockHolding],
-        allocations: StockAllocationSnapshot
-    ) -> some View {
+    private func stockLinks(_ stocks: [StockHolding]) -> some View {
         ForEach(stocks) { stock in
-            stockLink(stock, allocation: allocations.holdingShare(for: stock.id))
+            stockLink(stock)
         }
     }
 
@@ -721,9 +721,7 @@ private struct StockSummaryMetricsHeader: View {
 }
 
 private struct StockRow: View {
-    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stock: StockHolding
-    let allocation: Decimal?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
@@ -738,20 +736,16 @@ private struct StockRow: View {
                 Spacer(minLength: 4)
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("持仓 \(StockValueFormatter.quantity(stock.currentShares)) 股")
-                    Text("市值 \(marketValueText) (\(allocationText))")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-                .foregroundStyle(.secondary)
-
-                Spacer(minLength: 4)
-
-                VStack(alignment: .trailing, spacing: 4) {
+            Grid(horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow {
+                    metric("持仓", value: holdingQuantityText)
+                    metric("成本", value: holdingCostText)
                     metric("涨跌", value: changePercentText, color: changePercentColor)
-                    metric(profitLossLabel, value: profitLossText, color: profitLossColor)
+                }
+                GridRow {
+                    metric("市值", value: marketValueText)
+                    metric("盈亏", value: profitLossText, color: profitLossColor)
+                    metric("盈率", value: profitRateText, color: profitRateColor)
                 }
             }
             .font(.caption.monospacedDigit())
@@ -759,31 +753,25 @@ private struct StockRow: View {
     }
 
     @ViewBuilder
-    private func metric(_ label: String, value: String, color: Color) -> some View {
-        HStack(spacing: 6) {
+    private func metric(_ label: String, value: String, color: Color = .primary) -> some View {
+        HStack(spacing: 4) {
             Text(label)
-                .frame(width: 28, alignment: .leading)
                 .foregroundStyle(.secondary)
             Text(value)
-                .frame(width: 66, alignment: .trailing)
                 .foregroundStyle(color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.62)
         }
-        .frame(width: 100, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var changePercentText: String {
-        stock.changePercent.map(StockValueFormatter.percent) ?? "--"
+        stock.changePercent.map(StockValueFormatter.signedPercent) ?? "--"
     }
 
     private var changePercentColor: Color {
         guard let value = stock.changePercent else { return .secondary }
-        return StockTrendColor.color(
-            for: value,
-            market: stock.market,
-            settings: stockAppearanceSettings
-        )
+        return fixedProfitColor(value)
     }
 
     private var marketValueText: String {
@@ -791,26 +779,37 @@ private struct StockRow: View {
         return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
     }
 
+    private var holdingCostText: String {
+        StockValueFormatter.money(stock.holdingCost, currencyCode: stock.market.currencyCode)
+    }
+
+    private var holdingQuantityText: String {
+        return "\(StockValueFormatter.integerQuantity(stock.currentShares)) 股"
+    }
+
     private var profitLossText: String {
         guard stock.currentShares > 0, let value = stock.holdingProfitLoss else { return "--" }
-        return StockValueFormatter.moneyMagnitude(value, currencyCode: stock.market.currencyCode)
-    }
-
-    private var allocationText: String {
-        allocation.map(StockValueFormatter.allocationPercent) ?? "待同步"
-    }
-
-    private var profitLossLabel: String {
-        "盈亏"
+        return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
     }
 
     private var profitLossColor: Color {
         guard stock.currentShares > 0, let value = stock.holdingProfitLoss else { return .secondary }
-        return StockTrendColor.color(
-            for: value,
-            market: stock.market,
-            settings: stockAppearanceSettings
-        )
+        return fixedProfitColor(value)
+    }
+
+    private var profitRateText: String {
+        stock.holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "--"
+    }
+
+    private var profitRateColor: Color {
+        guard let value = stock.holdingProfitRate else { return .secondary }
+        return fixedProfitColor(value)
+    }
+
+    private func fixedProfitColor(_ value: Decimal) -> Color {
+        if value > 0 { return .red }
+        if value < 0 { return .green }
+        return .secondary
     }
 }
 

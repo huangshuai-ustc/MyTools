@@ -1,5 +1,38 @@
 #if MYTOOLS_FEATURE_FINANCE
 import SwiftUI
+import MapKit
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+private enum BankNavigationApplication: String, CaseIterable, Identifiable {
+    case appleMaps
+    case amap
+    case baiduMaps
+    case googleMaps
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .appleMaps: return "Apple 地图"
+        case .amap: return "高德地图"
+        case .baiduMaps: return "百度地图"
+        case .googleMaps: return "Google Maps"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .appleMaps: return "map"
+        case .amap: return "location.north.line"
+        case .baiduMaps: return "map.fill"
+        case .googleMaps: return "globe"
+        }
+    }
+}
 
 struct AccountDetailView: View {
     @EnvironmentObject private var store: FinanceStore
@@ -11,12 +44,13 @@ struct AccountDetailView: View {
     @State private var viewingCard: BankCard?
     @State private var viewingDomesticSubaccount: DomesticSubaccount?
     @State private var viewingForeignSubaccount: ForeignSubaccount?
+    @State private var editingBranchLocation: BankAccount?
     @State private var sensitiveLoginInformationRevealed = false
     @State private var showingSensitiveAccess = false
     @State private var showsClosedCards = false
     @State private var showsClosedSubaccounts = false
-    @AppStorage("card-sort-order-v1") private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
-    @AppStorage("card-category-filter-v1") private var cardCategoryRawValue = CardCategoryFilter.all.rawValue
+    @AppStorage(AppStorageKey.cardSortOrder) private var cardSortOrderRawValue = CardSortOrder.nameAscending.rawValue
+    @AppStorage(AppStorageKey.cardCategoryFilter) private var cardCategoryRawValue = CardCategoryFilter.all.rawValue
 
     init(account: BankAccount, backTitle: String) {
         accountID = account.id
@@ -81,12 +115,29 @@ struct AccountDetailView: View {
             ForeignSubaccountReadOnlyView(subaccount: subaccount)
                 .iOSLargeSheet()
         }
+        .sheet(item: $editingBranchLocation) { account in
+            BankBranchLocationPickerView(
+                branchName: account.branchName,
+                location: account.branchLocation
+            ) { location in
+                var updated = account
+                updated.branchLocation = location
+                store.replaceAccount(updated, cards: store.cards(for: account))
+            }
+            .iOSLargeSheet()
+        }
         .sheet(isPresented: $showingSensitiveAccess) {
             SensitiveAccessView { sensitiveLoginInformationRevealed = true }
                 .iOSAuthenticationSheet()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { sensitiveLoginInformationRevealed = false }
+        }
+        .onChange(of: cardSortOrderRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        }
+        .onChange(of: cardCategoryRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
         }
         .onChange(of: auth.isAdmin) { _, _ in
             sensitiveLoginInformationRevealed = false
@@ -110,10 +161,36 @@ struct AccountDetailView: View {
                         .copyableText(account.region.title)
                 }
                 CopyableValueRow(title: "银行", value: account.bankName)
-                CopyableValueRow(
-                    title: account.region == .domestic ? "开户网点" : "分行/网点",
-                    value: account.branchName
-                )
+                if account.isOnlineBank {
+                    LabeledContent(account.region == .domestic ? "开户网点" : "分行/网点") {
+                        Label("网络银行", systemImage: "network")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    LabeledContent(account.region == .domestic ? "开户网点" : "分行/网点") {
+                        if auth.isAdmin {
+                            Button {
+                                editingBranchLocation = account
+                            } label: {
+                                branchLocationValueLabel(for: account)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Menu {
+                                ForEach(BankNavigationApplication.allCases) { application in
+                                    Button {
+                                        openNavigation(application, for: account)
+                                    } label: {
+                                        Label(application.title, systemImage: application.systemImage)
+                                    }
+                                }
+                            } label: {
+                                branchLocationValueLabel(for: account)
+                            }
+                            .menuStyle(.borderlessButton)
+                        }
+                    }
+                }
                 if !account.name.isEmpty {
                     CopyableValueRow(title: "备注名称", value: account.name)
                 }
@@ -334,6 +411,47 @@ struct AccountDetailView: View {
         }
     }
 
+    private func branchLocationValueLabel(for account: BankAccount) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: account.branchLocation?.isValid == true
+                  ? "mappin.and.ellipse"
+                  : "exclamationmark.triangle.fill")
+                .foregroundStyle(account.branchLocation?.isValid == true ? .blue : .yellow)
+            Text(account.branchName.isEmpty ? "未填写" : account.branchName)
+                .foregroundStyle(.blue)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .copyableText(account.branchName)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .contentShape(Rectangle())
+    }
+
+    private func openNavigation(_ application: BankNavigationApplication, for account: BankAccount) {
+        let location = account.branchLocation?.isValid == true
+            ? account.branchLocation!
+            : .defaultLocation
+        let coordinate = "\(location.latitude),\(location.longitude)"
+        let name = account.branchName.isEmpty ? "分行/网点" : account.branchName
+        let url: URL?
+        switch application {
+        case .appleMaps:
+            url = URL(string: "maps://?daddr=\(coordinate)&q=\(name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name)&dirflg=d")
+        case .amap:
+            url = URL(string: "iosamap://navi?lat=\(location.latitude)&lon=\(location.longitude)&dev=0&style=2")
+        case .baiduMaps:
+            url = URL(string: "baidumap://map/direction?destination=latlng:\(location.latitude),\(location.longitude)|name:\(name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name)&mode=driving")
+        case .googleMaps:
+            url = URL(string: "comgooglemaps://?daddr=\(coordinate)&directionsmode=driving")
+        }
+        guard let url else { return }
+#if os(iOS)
+        UIApplication.shared.open(url)
+#elseif os(macOS)
+        NSWorkspace.shared.open(url)
+#endif
+    }
+
     private func displayedCards(for account: BankAccount) -> [BankCard] {
         let cards = store.cards(for: account).filter {
             $0.status != .closed
@@ -421,15 +539,20 @@ struct AccountEditorView: View {
     @State private var editingForeignSubaccount: ForeignSubaccount?
     @State private var editingCard: BankCard?
     @State private var editingAdditionalLoginField: AdditionalLoginField?
+    @State private var editingLoginTemplate: BankRegion?
+    @State private var editingFixedLoginField: FixedLoginField?
+    @State private var editingBranchLocation = false
     @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var didSave = false
     private let navigationTitle: String
+    private let isNew: Bool
     private let originalAttachmentIDs: Set<UUID>
 
     init(account: BankAccount, isNew: Bool, cards: [BankCard] = []) {
         _draft = StateObject(wrappedValue: AccountEditorDraft(account: account, cards: cards))
+        self.isNew = isNew
         navigationTitle = isNew ? "新增银行档案" : "编辑银行档案"
         originalAttachmentIDs = Set(cards.flatMap(\.statements).compactMap { $0.attachment?.id })
     }
@@ -467,8 +590,9 @@ struct AccountEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     DatePicker("建立日期：", selection: $draft.account.openedAt, displayedComponents: .date)
-                    HStack(alignment: .top, spacing: 4) {
-                        Text("备注：").fixedSize(horizontal: true, vertical: true)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("备注：")
+                            .foregroundStyle(.secondary)
                         IMESafeMultilineTextField(prompt: "可选", text: $draft.account.note)
                     }
                 }
@@ -507,6 +631,36 @@ struct AccountEditorView: View {
                     .id(field.id)
                     .iOSLargeSheet()
             }
+            .sheet(item: $editingFixedLoginField) { field in
+                BankFixedLoginFieldEditorView(field: field, value: fixedLoginValue(field)) { value in
+                    updateFixedLoginField(field, value: value)
+                }
+                .iOSLargeSheet()
+            }
+            .sheet(item: $editingLoginTemplate) { region in
+                BankLoginTemplateEditorView(
+                    region: region,
+                    templates: store.loginFieldTemplates(for: region)
+                )
+                    .id(region)
+                    .iOSLargeSheet()
+            }
+            .sheet(isPresented: $editingBranchLocation) {
+                BankBranchLocationPickerView(
+                    branchName: draft.account.branchName,
+                    location: draft.account.branchLocation
+                ) { location in
+                    draft.account.branchLocation = location
+                }
+                .iOSLargeSheet()
+            }
+            .onChange(of: draft.account.region) { oldRegion, newRegion in
+                guard isNew, oldRegion != newRegion else { return }
+                let oldTemplateNames = Set(store.loginFieldTemplates(for: oldRegion).map(\.name))
+                let currentNames = Set(draft.account.additionalLoginFields.map(\.name))
+                guard currentNames.isSubset(of: oldTemplateNames) else { return }
+                draft.account.additionalLoginFields = store.makeLoginFields(for: newRegion)
+            }
             .onDisappear(perform: cleanUpUncommittedAttachments)
             .alert("无法保存银行档案", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -521,17 +675,34 @@ struct AccountEditorView: View {
             LabeledContent("银行名称：") {
                 IMESafeTextField(prompt: "必填", text: $draft.account.bankName, alignment: .trailing)
             }
-            LabeledContent(draft.account.region == .domestic ? "开户网点：" : "分行/网点：") {
-                IMESafeTextField(prompt: "可选", text: $draft.account.branchName, alignment: .trailing)
+            Toggle("网络银行（无实体网点）", isOn: $draft.account.isOnlineBank)
+            if !draft.account.isOnlineBank {
+                LabeledContent(draft.account.region == .domestic ? "开户网点：" : "分行/网点：") {
+                    IMESafeTextField(prompt: "可选", text: $draft.account.branchName, alignment: .trailing)
+                }
+                HStack {
+                    Text("地图位置")
+                    Spacer()
+                    Button {
+                        editingBranchLocation = true
+                    } label: {
+                        Label(
+                            draft.account.branchLocation?.isValid == true ? "修改位置" : "设置位置",
+                            systemImage: "mappin.and.ellipse"
+                        )
+                    }
+                }
             }
             LabeledContent("备注名称：") {
                 IMESafeTextField(prompt: "可选", text: $draft.account.name, alignment: .trailing)
             }
-            Text(draft.account.region == .domestic
-                 ? "境内银行以银行卡为主；子账户用于个人养老金等没有独立卡片的账户。"
-                 : "境外银行以子账户为主；每个账户可单独记录账户号、币种和状态。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if !draft.account.isOnlineBank {
+                Text(draft.account.region == .domestic
+                     ? "境内银行以银行卡为主；子账户用于个人养老金等没有独立卡片的账户。"
+                     : "境外银行以子账户为主；每个账户可单独记录账户号、币种和状态。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -611,16 +782,9 @@ struct AccountEditorView: View {
 
     private var loginEditorSection: some View {
         Section("登录信息") {
-            LabeledContent("绑定手机号：") {
-                IMESafeTextField(prompt: "可选", text: $draft.account.boundPhoneNumber, alignment: .trailing)
-            }
-            LabeledContent("登录账号：") {
-                IMESafeTextField(prompt: "可选", text: $draft.account.loginAccount, alignment: .trailing)
-            }
-            LabeledContent("登录密码：") {
-                SecureField("可选", text: $draft.account.loginPassword)
-                    .multilineTextAlignment(.trailing)
-            }
+            fixedLoginFieldRow(.phone, value: draft.account.boundPhoneNumber)
+            fixedLoginFieldRow(.account, value: draft.account.loginAccount)
+            fixedLoginFieldRow(.password, value: draft.account.loginPassword)
             ForEach(draft.account.additionalLoginFields) { field in
                 Button { editingAdditionalLoginField = field } label: {
                     HStack(spacing: 12) {
@@ -633,9 +797,24 @@ struct AccountEditorView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
+                    Button { editingAdditionalLoginField = field } label: {
+                        Label("编辑", systemImage: "square.and.pencil")
+                    }
+                    Button {
+                        var updated = field
+                        updated.isSensitive.toggle()
+                        upsertAdditionalLoginField(updated)
+                    } label: {
+                        Label(field.isSensitive ? "显示" : "隐藏", systemImage: field.isSensitive ? "eye" : "eye.slash")
+                    }
+                }
                 .appDeleteSwipeAction {
                     draft.account.additionalLoginFields.removeAll { $0.id == field.id }
                 }
+            }
+            Button { editingLoginTemplate = draft.account.region } label: {
+                Label("管理(draft.account.region.title)登录模板", systemImage: "rectangle.and.pencil.and.ellipsis")
             }
             Button { editingAdditionalLoginField = AdditionalLoginField() } label: {
                 Label("添加自定义登录字段", systemImage: "plus.circle")
@@ -740,6 +919,36 @@ struct AccountEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private func fixedLoginFieldRow(_ field: FixedLoginField, value: String) -> some View {
+        Button { editingFixedLoginField = field } label: {
+            LabeledContent(field.title, value: value.isEmpty ? "未填写" : (field == .password ? "••••••••" : value))
+        }
+        .buttonStyle(.plain)
+        .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
+            Button { editingFixedLoginField = field } label: {
+                Label("编辑", systemImage: "square.and.pencil")
+            }
+        }
+        .appDeleteSwipeAction { updateFixedLoginField(field, value: "") }
+    }
+
+    private func updateFixedLoginField(_ field: FixedLoginField, value: String) {
+        switch field {
+        case .phone: draft.account.boundPhoneNumber = value
+        case .account: draft.account.loginAccount = value
+        case .password: draft.account.loginPassword = value
+        }
+    }
+
+    private func fixedLoginValue(_ field: FixedLoginField) -> String {
+        switch field {
+        case .phone: draft.account.boundPhoneNumber
+        case .account: draft.account.loginAccount
+        case .password: draft.account.loginPassword
+        }
+    }
+
     private func cleanUpUncommittedAttachments() {
         guard !didSave else { return }
         for attachment in draft.cards.flatMap(\.statements).compactMap(\.attachment)
@@ -801,6 +1010,194 @@ private struct AdditionalLoginFieldEditorView: View {
             }
         }
     }
+}
+
+private enum FixedLoginField: String, Identifiable {
+    case phone
+    case account
+    case password
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .phone: return "绑定手机号"
+        case .account: return "登录账号"
+        case .password: return "登录密码"
+        }
+    }
+}
+
+private struct BankFixedLoginFieldEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let field: FixedLoginField
+    let onSave: (String) -> Void
+    @State private var value: String
+
+    init(field: FixedLoginField, value: String = "", onSave: @escaping (String) -> Void) {
+        self.field = field
+        self.onSave = onSave
+        _value = State(initialValue: value)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(field.title) {
+                    if field == .password {
+                        SecureField("可选", text: $value)
+                    } else {
+                        IMESafeTextField(prompt: "可选", text: $value)
+                    }
+                }
+            }
+            .navigationTitle("编辑(field.title)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        commitPendingTextInput {
+                            onSave(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                            dismiss()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct BankLoginTemplateEditorView: View {
+    @EnvironmentObject private var store: FinanceStore
+    @Environment(\.dismiss) private var dismiss
+    let region: BankRegion
+    @State private var templates: [BankLoginFieldTemplate]
+    @State private var editingTemplate: BankLoginFieldTemplate?
+
+    init(region: BankRegion, templates: [BankLoginFieldTemplate]) {
+        self.region = region
+        _templates = State(initialValue: templates)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(templates) { template in
+                    Text(template.name)
+                        .foregroundStyle(template.isSensitive ? .secondary : .primary)
+                        .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
+                            Button { editingTemplate = template } label: {
+                                Label("编辑", systemImage: "square.and.pencil")
+                            }
+                            Button {
+                                var updated = template
+                                updated.isSensitive.toggle()
+                                save(updated)
+                            } label: {
+                                Label(template.isSensitive ? "显示" : "隐藏", systemImage: template.isSensitive ? "eye" : "eye.slash")
+                            }
+                        }
+                        .appDeleteSwipeAction {
+                            templates.removeAll { $0.id == template.id }
+                            store.deleteLoginFieldTemplate(template, for: region)
+                        }
+                }
+                Button { editingTemplate = BankLoginFieldTemplate() } label: {
+                    Label("添加模板字段", systemImage: "plus.circle")
+                }
+            }
+            .navigationTitle("(region.title)登录模板")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
+            }
+            .sheet(item: $editingTemplate) { template in
+                BankLoginTemplateFieldEditorView(template: template) { save($0) }
+                    .id(template.id)
+                    .iOSLargeSheet()
+            }
+        }
+    }
+
+    private func save(_ template: BankLoginFieldTemplate) {
+        store.upsertLoginFieldTemplate(template, for: region)
+        templates = store.loginFieldTemplates(for: region)
+        editingTemplate = nil
+    }
+}
+
+private struct BankLoginTemplateFieldEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var template: BankLoginFieldTemplate
+    let onSave: (BankLoginFieldTemplate) -> Void
+
+    init(template: BankLoginFieldTemplate, onSave: @escaping (BankLoginFieldTemplate) -> Void) {
+        _template = State(initialValue: template)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                LabeledContent("字段名称：") {
+                    IMESafeTextField(prompt: "例如安全问题", text: $template.name, alignment: .trailing)
+                }
+                Toggle("作为敏感信息隐藏", isOn: $template.isSensitive)
+            }
+            .navigationTitle(template.name.isEmpty ? "添加模板字段" : "编辑模板字段")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        commitPendingTextInput {
+                            var value = template
+                            value.name = value.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !value.name.isEmpty else { return }
+                            onSave(value)
+                            dismiss()
+                        }
+                    }
+                    .disabled(template.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+private struct BankBranchLocationPickerView: View {
+    let branchName: String
+    let location: BankBranchLocation?
+    let onSave: (BankBranchLocation) -> Void
+
+    var body: some View {
+        let initial = location?.isValid == true ? location! : BankBranchLocation.defaultLocation
+        MapLocationPickerView(
+            configuration: MapLocationPickerConfiguration(
+                title: "分行/网点位置",
+                searchPlaceholder: "搜索分行、网点或地址",
+                markerTitle: branchName.isEmpty ? "分行/网点" : branchName,
+                initialSearchText: branchName,
+                initialSelection: MapLocationSelection(
+                    name: branchName,
+                    address: "",
+                    coordinate: CLLocationCoordinate2D(
+                        latitude: initial.latitude,
+                        longitude: initial.longitude
+                    ),
+                    administrativeContext: ""
+                ),
+                defaultCoordinate: CLLocationCoordinate2D(
+                    latitude: BankBranchLocation.defaultLocation.latitude,
+                    longitude: BankBranchLocation.defaultLocation.longitude
+                )
+            )
+        ) { selection in
+            onSave(BankBranchLocation(
+                latitude: selection.coordinate.latitude,
+                longitude: selection.coordinate.longitude
+            ))
+        }
+    }
+
 }
 
 private struct FinanceCardDisplayMenu: View {

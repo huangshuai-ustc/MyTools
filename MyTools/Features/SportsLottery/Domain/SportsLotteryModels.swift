@@ -45,7 +45,7 @@ struct SportsLotteryLeague: Codable, Equatable, Hashable, Identifiable, Sendable
 }
 
 enum SportsLotteryLeaguePreferences {
-    static let key = "sports-lottery-leagues-v2"
+    static let key = AppStorageKey.sportsLotteryLeagues
 
     static func load(from defaults: UserDefaults = .standard) -> [SportsLotteryLeague] {
         guard let data = defaults.data(forKey: key),
@@ -59,6 +59,7 @@ enum SportsLotteryLeaguePreferences {
         let value = unique(leagues)
         guard let data = try? JSONEncoder().encode(value) else { return }
         defaults.set(data, forKey: key)
+        NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
     }
 
     private static func unique(_ leagues: [SportsLotteryLeague]) -> [SportsLotteryLeague] {
@@ -68,7 +69,7 @@ enum SportsLotteryLeaguePreferences {
 }
 
 enum SportsLotteryMatchOrderPreferences {
-    static let key = "sports-lottery-match-order-v1"
+    static let key = AppStorageKey.sportsLotteryMatchOrder
 
     static func load(
         for leagueID: Int,
@@ -94,6 +95,7 @@ enum SportsLotteryMatchOrderPreferences {
         orders[String(leagueID)] = order
         guard let data = try? JSONEncoder().encode(orders) else { return }
         defaults.set(data, forKey: key)
+        NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
     }
 }
 

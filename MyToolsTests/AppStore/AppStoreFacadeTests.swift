@@ -162,13 +162,34 @@ struct AppStoreFacadeTests {
         )
         #expect(store.stockStore.stocks.isEmpty)
         #expect(store.billsStore.records == [bill])
-        let pendingCloudSnapshot = try store.makeCloudSyncSnapshot()
+        let pendingCloudSnapshot = try await store.makeCloudSyncSnapshot()
         #expect(!pendingCloudSnapshot.participatingModules.contains(.myStocks))
 
         #expect(store.undoModuleLocalDataDeletion(id: deletion.id))
         #expect(store.stockStore.stocks == [stock])
         #expect(store.billsStore.records == [bill])
         #expect(store.pendingModuleLocalDataDeletion == nil)
+    }
+
+    @Test func hiddenModuleStillParticipatesInCloudSync() async throws {
+        let defaults = Self.makeDefaults()
+        let settings = ToolModuleSettings(defaults: defaults)
+        settings.setVisible(false, for: .myStocks)
+        var stock = StockHolding()
+        stock.symbol = "SYNC"
+        let store = AppStore(
+            initialVault: VaultData(stocks: [stock]),
+            moduleSettings: settings,
+            dependencies: Self.dependencies(
+                defaults: defaults,
+                persistence: RecordingVaultPersistence()
+            )
+        )
+
+        let snapshot = try await store.makeCloudSyncSnapshot()
+
+        #expect(snapshot.participatingModules.contains(.myStocks))
+        #expect(snapshot.items.contains { $0.kind == .stockHolding && $0.id == stock.id })
     }
 
     @Test func moduleLocalDataDeletionCommitsAfterUndoWindow() async throws {
@@ -188,7 +209,7 @@ struct AppStoreFacadeTests {
 
         #expect(store.stockStore.stocks.isEmpty)
         #expect(store.pendingModuleLocalDataDeletion == nil)
-        let committedCloudSnapshot = try store.makeCloudSyncSnapshot()
+        let committedCloudSnapshot = try await store.makeCloudSyncSnapshot()
         #expect(committedCloudSnapshot.participatingModules.contains(.myStocks))
     }
 

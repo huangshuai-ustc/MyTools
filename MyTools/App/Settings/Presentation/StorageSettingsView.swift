@@ -36,7 +36,7 @@ struct StorageDataView: View {
                 } header: {
                     Text("占用空间")
                 } footer: {
-                    Text("仅统计\(AppMetadata.appName)在本机保存的应用数据，不包括 iOS 系统缓存和临时空间。")
+                    Text("仅统计\(AppMetadata.appName)在本机保存的应用数据，不包括 iOS 系统缓存和临时空间。iCloud 用量是云端独立口径，可能包含待回收的历史记录或附件版本，清理后需要等待 Apple 服务回收。")
                 }
 
                 Section {

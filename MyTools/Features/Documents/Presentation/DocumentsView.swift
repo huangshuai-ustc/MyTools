@@ -181,7 +181,7 @@ struct DocumentsView: View {
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、号码、持有人或标签")
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {

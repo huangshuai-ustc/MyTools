@@ -102,6 +102,30 @@ final class AttachmentStore: @unchecked Sendable {
         delete(previous)
     }
 
+    func copyFile(
+        from sourceURL: URL,
+        to attachment: FileAttachment,
+        replacing previous: FileAttachment?
+    ) throws {
+        try ensureDirectory()
+        let destinationURL = url(for: attachment)
+        let temporaryURL = directoryURL.appendingPathComponent(
+            ".icloud-\(UUID().uuidString.lowercased()).tmp",
+            isDirectory: false
+        )
+        defer { try? fileManager.removeItem(at: temporaryURL) }
+
+        try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+
+        guard let previous,
+              previous.storedFileName != attachment.storedFileName else { return }
+        delete(previous)
+    }
+
     func delete(_ attachment: FileAttachment) {
         let fileURL = url(for: attachment)
         guard fileManager.fileExists(atPath: fileURL.path) else { return }

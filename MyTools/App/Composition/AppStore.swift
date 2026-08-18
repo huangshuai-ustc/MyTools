@@ -143,6 +143,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         financeStore = FinanceStore(
             accounts: initialVault?.accounts ?? [],
             cards: initialVault?.cards ?? [],
+            domesticLoginFieldTemplates: initialVault?.domesticBankLoginFieldTemplates ?? [],
+            overseasLoginFieldTemplates: initialVault?.overseasBankLoginFieldTemplates ?? [],
             attachmentStore: attachmentStore
         )
 #endif
@@ -229,7 +231,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         cloudSync.attach(
             snapshotProvider: { [weak self] in
                 guard let self else { return .empty }
-                return try self.makeCloudSyncSnapshot()
+                return try await self.makeCloudSyncSnapshot()
             },
             changeHandler: { [weak self] changes in
                 try self?.applyCloudSyncChanges(changes)
@@ -314,7 +316,12 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private func applyVault(_ vault: VaultData) {
         retainedVault = vault
 #if MYTOOLS_FEATURE_FINANCE
-        financeStore.replace(accounts: vault.accounts, cards: vault.cards)
+        financeStore.replace(
+            accounts: vault.accounts,
+            cards: vault.cards,
+            domesticLoginFieldTemplates: vault.domesticBankLoginFieldTemplates,
+            overseasLoginFieldTemplates: vault.overseasBankLoginFieldTemplates
+        )
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         stockStore.replace(
@@ -561,6 +568,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_FINANCE
         vault.accounts = financeStore.accounts
         vault.cards = financeStore.cards
+        vault.domesticBankLoginFieldTemplates = financeStore.domesticLoginFieldTemplates
+        vault.overseasBankLoginFieldTemplates = financeStore.overseasLoginFieldTemplates
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         vault.stocks = stockStore.stocks
@@ -602,14 +611,21 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
     }
 
-    func makeCloudSyncSnapshot() throws -> CloudSyncSnapshot {
-        try CloudSyncSnapshotBuilder.make(
-            vault: currentVaultData(),
-            secrets: currentSecrets,
-            attachmentStore: attachmentStore,
-            appPreferences: cloudSyncPreferences.makeSnapshot(),
-            enabledModules: enabledModules
-        )
+    func makeCloudSyncSnapshot() async throws -> CloudSyncSnapshot {
+        let vault = currentVaultData()
+        let secrets = currentSecrets
+        let attachmentStore = self.attachmentStore
+        let appPreferences = cloudSyncPreferences.makeSnapshot()
+        let enabledModules = cloudSyncModules
+        return try await Task.detached(priority: .utility) {
+            try CloudSyncSnapshotBuilder.make(
+                vault: vault,
+                secrets: secrets,
+                attachmentStore: attachmentStore,
+                appPreferences: appPreferences,
+                enabledModules: enabledModules
+            )
+        }.value
     }
 
     private func applyCloudSyncChanges(_ changes: [CloudSyncChange]) throws {
@@ -634,7 +650,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             changes,
             to: currentVaultData(),
             secrets: currentSecrets,
-            enabledModules: enabledModules
+            enabledModules: cloudSyncModules
         )
 
         isApplyingCloudChanges = true
@@ -664,6 +680,14 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     private var enabledModules: Set<ToolModule> {
         var modules = Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+        if let pendingModuleLocalDataDeletion {
+            modules.remove(pendingModuleLocalDataDeletion.module)
+        }
+        return modules
+    }
+
+    private var cloudSyncModules: Set<ToolModule> {
+        var modules = ToolModuleCatalog.cloudSyncModules
         if let pendingModuleLocalDataDeletion {
             modules.remove(pendingModuleLocalDataDeletion.module)
         }

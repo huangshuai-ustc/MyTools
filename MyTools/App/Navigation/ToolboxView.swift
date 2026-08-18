@@ -26,7 +26,7 @@ struct ToolboxView: View {
             }
             .navigationTitle("工具")
 #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
+            .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)
 #endif
         }

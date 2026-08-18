@@ -13,6 +13,12 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
     case secretItem
     case credentialDocument
     case billRecord
+    case financeMetadata
+    case healthMetadata
+    case foodMapMetadata
+    case secretsMetadata
+    case documentsMetadata
+    case billsMetadata
     case attachment
     case appPreferences
 
@@ -33,6 +39,18 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
         case .credentialDocument:
             .documents
         case .billRecord:
+            .bills
+        case .financeMetadata:
+            .personalFinance
+        case .healthMetadata:
+            .healthRecords
+        case .foodMapMetadata:
+            .foodMap
+        case .secretsMetadata:
+            .secrets
+        case .documentsMetadata:
+            .documents
+        case .billsMetadata:
             .bills
         case .attachment, .appPreferences:
             nil
@@ -112,6 +130,38 @@ enum CloudSyncCoding {
     }
 }
 
+struct CloudSyncFinanceMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000010")!
+    var domesticLoginFieldTemplates: [BankLoginFieldTemplateVaultValue]
+    var overseasLoginFieldTemplates: [BankLoginFieldTemplateVaultValue]
+}
+
+struct CloudSyncHealthMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000011")!
+    var medicalRecordTags: [String]
+}
+
+struct CloudSyncFoodMapMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000012")!
+    var foodPlaceTags: [String]
+}
+
+struct CloudSyncSecretsMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000013")!
+    var fieldTemplates: [SecretFieldTemplateVaultValue]
+    var tags: [String]
+}
+
+struct CloudSyncDocumentsMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000014")!
+    var tags: [String]
+}
+
+struct CloudSyncBillsMetadata: Codable, Equatable, Sendable {
+    static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000015")!
+    var tags: [String]
+}
+
 enum CloudSyncSnapshotBuilder {
     static func make(
         vault: VaultData,
@@ -131,6 +181,16 @@ enum CloudSyncSnapshotBuilder {
             try append(
                 vault.cards.map(metadataOnlyCard),
                 kind: .bankCard,
+                encoder: encoder,
+                to: &items
+            )
+            try append(
+                CloudSyncFinanceMetadata(
+                    domesticLoginFieldTemplates: vault.domesticBankLoginFieldTemplates,
+                    overseasLoginFieldTemplates: vault.overseasBankLoginFieldTemplates
+                ),
+                id: CloudSyncFinanceMetadata.itemID,
+                kind: .financeMetadata,
                 encoder: encoder,
                 to: &items
             )
@@ -167,6 +227,13 @@ enum CloudSyncSnapshotBuilder {
                 to: &items
             )
             try append(vault.hospitalProfiles, kind: .hospitalProfile, encoder: encoder, to: &items)
+            try append(
+                CloudSyncHealthMetadata(medicalRecordTags: vault.medicalRecordTags),
+                id: CloudSyncHealthMetadata.itemID,
+                kind: .healthMetadata,
+                encoder: encoder,
+                to: &items
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
@@ -174,6 +241,13 @@ enum CloudSyncSnapshotBuilder {
             try append(
                 vault.foodPlaces.map(metadataOnlyFoodPlace),
                 kind: .foodPlace,
+                encoder: encoder,
+                to: &items
+            )
+            try append(
+                CloudSyncFoodMapMetadata(foodPlaceTags: vault.foodPlaceTags),
+                id: CloudSyncFoodMapMetadata.itemID,
+                kind: .foodMapMetadata,
                 encoder: encoder,
                 to: &items
             )
@@ -187,6 +261,16 @@ enum CloudSyncSnapshotBuilder {
                 encoder: encoder,
                 to: &items
             )
+            try append(
+                CloudSyncSecretsMetadata(
+                    fieldTemplates: vault.secretFieldTemplates,
+                    tags: vault.secretTags
+                ),
+                id: CloudSyncSecretsMetadata.itemID,
+                kind: .secretsMetadata,
+                encoder: encoder,
+                to: &items
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
@@ -197,11 +281,25 @@ enum CloudSyncSnapshotBuilder {
                 encoder: encoder,
                 to: &items
             )
+            try append(
+                CloudSyncDocumentsMetadata(tags: vault.credentialTags),
+                id: CloudSyncDocumentsMetadata.itemID,
+                kind: .documentsMetadata,
+                encoder: encoder,
+                to: &items
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_BILLS
         if enabledModules.contains(.bills) {
             try append(vault.billRecords, kind: .billRecord, encoder: encoder, to: &items)
+            try append(
+                CloudSyncBillsMetadata(tags: vault.billTags),
+                id: CloudSyncBillsMetadata.itemID,
+                kind: .billsMetadata,
+                encoder: encoder,
+                to: &items
+            )
         }
 #endif
 
@@ -254,6 +352,23 @@ enum CloudSyncSnapshotBuilder {
                 )
             )
         }
+    }
+
+    private static func append<T: Encodable>(
+        _ value: T,
+        id: UUID,
+        kind: CloudSyncEntityKind,
+        encoder: JSONEncoder,
+        to items: inout [CloudSyncItem]
+    ) throws {
+        items.append(
+            CloudSyncItem(
+                kind: kind,
+                id: id,
+                payload: try encoder.encode(value),
+                assetURL: nil
+            )
+        )
     }
 
 #if MYTOOLS_FEATURE_STOCKS
@@ -470,6 +585,49 @@ enum CloudSyncMerger {
                     try upsert(decoder.decode(BillRecord.self, from: payload), in: &vault.billRecords)
 #endif
                     break
+                case .financeMetadata:
+#if MYTOOLS_FEATURE_FINANCE
+                    let metadata = try decoder.decode(CloudSyncFinanceMetadata.self, from: payload)
+                    vault.domesticBankLoginFieldTemplates = metadata.domesticLoginFieldTemplates
+                    vault.overseasBankLoginFieldTemplates = metadata.overseasLoginFieldTemplates
+#endif
+                    break
+                case .healthMetadata:
+#if MYTOOLS_FEATURE_HEALTH
+                    vault.medicalRecordTags = try decoder.decode(
+                        CloudSyncHealthMetadata.self,
+                        from: payload
+                    ).medicalRecordTags
+#endif
+                    break
+                case .foodMapMetadata:
+#if MYTOOLS_FEATURE_FOOD_MAP
+                    vault.foodPlaceTags = try decoder.decode(
+                        CloudSyncFoodMapMetadata.self,
+                        from: payload
+                    ).foodPlaceTags
+#endif
+                    break
+                case .secretsMetadata:
+#if MYTOOLS_FEATURE_SECRETS
+                    let metadata = try decoder.decode(CloudSyncSecretsMetadata.self, from: payload)
+                    vault.secretFieldTemplates = metadata.fieldTemplates
+                    vault.secretTags = metadata.tags
+#endif
+                    break
+                case .documentsMetadata:
+#if MYTOOLS_FEATURE_DOCUMENTS
+                    vault.credentialTags = try decoder.decode(
+                        CloudSyncDocumentsMetadata.self,
+                        from: payload
+                    ).tags
+#endif
+                    break
+                case .billsMetadata:
+#if MYTOOLS_FEATURE_BILLS
+                    vault.billTags = try decoder.decode(CloudSyncBillsMetadata.self, from: payload).tags
+#endif
+                    break
                 case .attachment:
                     break
                 case .appPreferences:
@@ -537,6 +695,38 @@ enum CloudSyncMerger {
                 case .billRecord:
 #if MYTOOLS_FEATURE_BILLS
                     vault.billRecords.removeAll { $0.id == id }
+#endif
+                    break
+                case .financeMetadata:
+#if MYTOOLS_FEATURE_FINANCE
+                    vault.domesticBankLoginFieldTemplates = []
+                    vault.overseasBankLoginFieldTemplates = []
+#endif
+                    break
+                case .healthMetadata:
+#if MYTOOLS_FEATURE_HEALTH
+                    vault.medicalRecordTags = []
+#endif
+                    break
+                case .foodMapMetadata:
+#if MYTOOLS_FEATURE_FOOD_MAP
+                    vault.foodPlaceTags = []
+#endif
+                    break
+                case .secretsMetadata:
+#if MYTOOLS_FEATURE_SECRETS
+                    vault.secretFieldTemplates = []
+                    vault.secretTags = []
+#endif
+                    break
+                case .documentsMetadata:
+#if MYTOOLS_FEATURE_DOCUMENTS
+                    vault.credentialTags = []
+#endif
+                    break
+                case .billsMetadata:
+#if MYTOOLS_FEATURE_BILLS
+                    vault.billTags = []
 #endif
                     break
                 case .attachment: break

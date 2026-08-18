@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
     @Published private(set) var accounts: [BankAccount]
     @Published private(set) var cards: [BankCard]
+    @Published private(set) var domesticLoginFieldTemplates: [BankLoginFieldTemplate]
+    @Published private(set) var overseasLoginFieldTemplates: [BankLoginFieldTemplate]
 
     private let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
@@ -15,10 +17,18 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
     init(
         accounts: [BankAccount] = [],
         cards: [BankCard] = [],
+        domesticLoginFieldTemplates: [BankLoginFieldTemplate] = [],
+        overseasLoginFieldTemplates: [BankLoginFieldTemplate] = [],
         attachmentStore: AttachmentStore
     ) {
         self.accounts = accounts
         self.cards = cards
+        self.domesticLoginFieldTemplates = Self.normalizedTemplates(
+            domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
+        )
+        self.overseasLoginFieldTemplates = Self.normalizedTemplates(
+            overseasLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.overseasDefaults : overseasLoginFieldTemplates
+        )
         self.attachmentStore = attachmentStore
     }
 
@@ -37,6 +47,65 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
     func replace(accounts: [BankAccount], cards: [BankCard]) {
         self.accounts = accounts
         self.cards = cards
+    }
+
+    func replace(
+        accounts: [BankAccount],
+        cards: [BankCard],
+        domesticLoginFieldTemplates: [BankLoginFieldTemplate],
+        overseasLoginFieldTemplates: [BankLoginFieldTemplate]
+    ) {
+        self.accounts = accounts
+        self.cards = cards
+        self.domesticLoginFieldTemplates = Self.normalizedTemplates(
+            domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
+        )
+        self.overseasLoginFieldTemplates = Self.normalizedTemplates(
+            overseasLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.overseasDefaults : overseasLoginFieldTemplates
+        )
+    }
+
+    func loginFieldTemplates(for region: BankRegion) -> [BankLoginFieldTemplate] {
+        region == .domestic ? domesticLoginFieldTemplates : overseasLoginFieldTemplates
+    }
+
+    func makeLoginFields(for region: BankRegion) -> [AdditionalLoginField] {
+        loginFieldTemplates(for: region).map { $0.makeField() }
+    }
+
+    func upsertLoginFieldTemplate(_ template: BankLoginFieldTemplate, for region: BankRegion) {
+        var value = template
+        value.name = value.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.name.isEmpty else { return }
+        var templates = loginFieldTemplates(for: region)
+        if let index = templates.firstIndex(where: { $0.id == value.id }) {
+            templates[index] = value
+        } else {
+            templates.append(value)
+        }
+        templates = Self.normalizedTemplates(templates)
+        if region == .domestic {
+            domesticLoginFieldTemplates = templates
+        } else {
+            overseasLoginFieldTemplates = templates
+        }
+        for accountIndex in accounts.indices where accounts[accountIndex].region == region {
+            for fieldIndex in accounts[accountIndex].additionalLoginFields.indices {
+                guard accounts[accountIndex].additionalLoginFields[fieldIndex].name == value.name else { continue }
+                accounts[accountIndex].additionalLoginFields[fieldIndex].isSensitive = value.isSensitive
+            }
+        }
+        didMutate()
+    }
+
+    func deleteLoginFieldTemplate(_ template: BankLoginFieldTemplate, for region: BankRegion) {
+        let templates = loginFieldTemplates(for: region).filter { $0.id != template.id }
+        if region == .domestic {
+            domesticLoginFieldTemplates = templates
+        } else {
+            overseasLoginFieldTemplates = templates
+        }
+        didMutate()
     }
 
     func scanRedundantData() -> [RedundantDataFinding] {
@@ -155,6 +224,15 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
 
     private func didMutate() {
         mutationNotifier?.moduleStoreDidMutate()
+    }
+
+    private static func normalizedTemplates(_ templates: [BankLoginFieldTemplate]) -> [BankLoginFieldTemplate] {
+        var seen = Set<String>()
+        return templates.filter { template in
+            let name = template.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return false }
+            return seen.insert(name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)).inserted
+        }
     }
 
     private func overseasOnlyFieldCount(in account: BankAccount) -> Int {

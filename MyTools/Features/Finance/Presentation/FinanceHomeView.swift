@@ -7,7 +7,7 @@ struct HomeView: View {
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
-    @AppStorage("account-sort-order-v2") private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
+    @AppStorage(AppStorageKey.accountSortOrder) private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
     @State private var showsInactiveBanks = false
 
     private var selectedSortOrder: AccountSortOrder {
@@ -74,12 +74,19 @@ struct HomeView: View {
         .navigationTitle(ToolModule.personalFinance.title)
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
+        .onChange(of: sortOrderRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 AccountSortMenu(selection: $sortOrderRawValue)
                 AdminEditAccessButton()
                 if auth.isAdmin {
-                    Button { editingAccount = BankAccount() } label: {
+                    Button {
+                        var account = BankAccount()
+                        account.additionalLoginFields = store.makeLoginFields(for: .domestic)
+                        editingAccount = account
+                    } label: {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("添加银行账户")
@@ -87,7 +94,7 @@ struct HomeView: View {
             }
         }
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif

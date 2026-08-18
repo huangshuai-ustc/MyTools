@@ -21,6 +21,7 @@ enum DomesticAccountType: String, CaseIterable, Identifiable {
     case housingProvidentFund
     case foreignCurrency
     case savings
+    case checking
     case other
 
     var id: Self { self }
@@ -32,6 +33,7 @@ enum DomesticAccountType: String, CaseIterable, Identifiable {
         case .housingProvidentFund: return "公积金账户"
         case .foreignCurrency: return "外汇账户"
         case .savings: return "储蓄账户"
+        case .checking: return "支票账户"
         case .other: return "其他账户"
         }
     }
@@ -289,6 +291,47 @@ struct AdditionalLoginField: Identifiable, Codable, Equatable {
     }
 }
 
+struct BankLoginFieldTemplate: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name = ""
+    var isSensitive = false
+
+    init(id: UUID = UUID(), name: String = "", isSensitive: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isSensitive = isSensitive
+    }
+}
+
+extension BankLoginFieldTemplate {
+    static let domesticDefaults = [
+        BankLoginFieldTemplate(name: "网银登录网址"),
+        BankLoginFieldTemplate(name: "客服电话"),
+        BankLoginFieldTemplate(name: "安全问题", isSensitive: true)
+    ]
+
+    static let overseasDefaults = [
+        BankLoginFieldTemplate(name: "网上银行网址"),
+        BankLoginFieldTemplate(name: "客服电话"),
+        BankLoginFieldTemplate(name: "安全问题", isSensitive: true)
+    ]
+
+    func makeField() -> AdditionalLoginField {
+        AdditionalLoginField(name: name, isSensitive: isSensitive)
+    }
+}
+
+struct BankBranchLocation: Codable, Equatable, Sendable {
+    var latitude: Double
+    var longitude: Double
+
+    var isValid: Bool {
+        (-90...90).contains(latitude) && (-180...180).contains(longitude)
+    }
+
+    static let defaultLocation = BankBranchLocation(latitude: 39.9087, longitude: 116.3975)
+}
+
 struct BankAccount: Identifiable, Codable, Equatable {
     var id = UUID()
     var region: BankRegion = .domestic
@@ -296,6 +339,8 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var foreignSubaccounts: [ForeignSubaccount] = []
     var bankName = ""
     var branchName = ""
+    private var onlineBank: Bool?
+    var branchLocation: BankBranchLocation?
     var openedAt = Date()
     var name = ""
     var swift = ""
@@ -313,6 +358,11 @@ struct BankAccount: Identifiable, Codable, Equatable {
     var remittanceInstructions = ""
     var status: AccountStatus = .normal
     var note = ""
+
+    var isOnlineBank: Bool {
+        get { onlineBank ?? false }
+        set { onlineBank = newValue }
+    }
 }
 
 extension BankAccount {

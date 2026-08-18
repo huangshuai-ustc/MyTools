@@ -34,13 +34,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private var document: CloudSyncStoredDocument
     private var currentItems: [String: CloudSyncItem] = [:]
     // Treat feature data as inactive until the first local snapshot supplies the
-    // compiled and visible module set. This prevents startup fetches from
-    // restoring attachments for a disabled module.
+    // compiled and syncable module set. This prevents startup fetches from
+    // restoring attachments before the local data boundary is known.
     private var activeModules: Set<ToolModule> = []
     private var hasStarted = false
     private var isStarting = false
     private var operationFailure: OperationFailure?
     private var isPerformingRequestedOperation = false
+    private var attachmentRestoreTask: Task<Void, Never>?
 
     private lazy var syncEngine: CKSyncEngine = {
         var configuration = CKSyncEngine.Configuration(
@@ -153,7 +154,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         let activatedModules = activeModules.subtracting(previouslyActiveModules)
         if !activatedModules.isEmpty {
-            await restoreAttachments(for: activatedModules)
+            // Apply records first. Attachment downloads are independent of the
+            // metadata merge and must not block the first usable screen.
+            attachmentRestoreTask?.cancel()
+            attachmentRestoreTask = Task { [weak self] in
+                await self?.restoreAttachments(for: activatedModules)
+            }
             let changes = changesForActivatedModules(activatedModules)
             if !changes.isEmpty {
                 do {
@@ -198,26 +204,28 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         for (key, entry) in document.entries
         where isActiveEntry(kind: entry.kind, key: key)
-            && !entry.isDeleted
+            && (!entry.isDeleted || entry.systemFields != nil)
             && !currentKeys.contains(key) {
-            document.entries[key] = CloudSyncStoredEntry(
-                kind: entry.kind,
-                id: entry.id,
-                module: entry.module,
-                digest: nil,
-                modifiedAt: now,
-                deviceID: document.deviceID,
-                isDeleted: true,
-                payload: nil,
-                systemFields: entry.systemFields
-            )
-            changes.append(.saveRecord(recordID(forKey: key)))
+            if !entry.isDeleted {
+                document.entries[key] = CloudSyncStoredEntry(
+                    kind: entry.kind,
+                    id: entry.id,
+                    module: entry.module,
+                    digest: nil,
+                    modifiedAt: now,
+                    deviceID: document.deviceID,
+                    isDeleted: true,
+                    payload: nil,
+                    systemFields: entry.systemFields
+                )
+            }
+            changes.append(.deleteRecord(recordID(forKey: key)))
         }
 
         if !changes.isEmpty {
             syncEngine.state.add(pendingRecordZoneChanges: changes)
+            saveDocument()
         }
-        saveDocument()
     }
 
     private func changesForActivatedModules(
@@ -248,7 +256,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         do {
             try await fetchRemoteChanges()
             let mergedSnapshot = try await snapshotProvider()
-            await reconcile(snapshot: mergedSnapshot)
+            await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
             await statusHandler(.synced(Date()))
         } catch is OperationFailure {
@@ -261,6 +269,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     func stop() async {
         hasStarted = false
+        attachmentRestoreTask?.cancel()
+        attachmentRestoreTask = nil
         await syncEngine.cancelOperations()
     }
 
@@ -531,9 +541,11 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 local.systemFields = record.cloudSyncSystemFields()
                 document.entries[key] = local
             }
-            syncEngine.state.add(
-                pendingRecordZoneChanges: [.saveRecord(record.recordID)]
-            )
+            syncEngine.state.add(pendingRecordZoneChanges: [
+                document.entries[key]?.isDeleted == true
+                    ? .deleteRecord(record.recordID)
+                    : .saveRecord(record.recordID)
+            ])
             return nil
         }
 
@@ -683,6 +695,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 && entry.module.map(modules.contains) == true
         }
         for entry in entries {
+            guard !Task.isCancelled else { return }
             do {
                 let record = try await container.privateCloudDatabase.record(
                     for: recordID(forKey: CloudSyncItem.key(kind: entry.kind, id: entry.id))
@@ -696,6 +709,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             } catch {
                 await report(error, operation: "恢复 iCloud 附件")
             }
+            await Task.yield()
         }
     }
 
@@ -719,8 +733,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
               let attachment = try? decoder.decode(FileAttachment.self, from: payload),
               let asset = record[Field.asset] as? CKAsset,
               let sourceURL = asset.fileURL else { return }
-        try attachmentStore.write(
-            Data(contentsOf: sourceURL),
+        try attachmentStore.copyFile(
+            from: sourceURL,
             to: attachment,
             replacing: previousAttachment
         )
@@ -730,10 +744,22 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         _ event: CKSyncEngine.Event.SentRecordZoneChanges,
         syncEngine: CKSyncEngine
     ) async {
+        for recordID in event.deletedRecordIDs {
+            document.entries[recordID.recordName]?.systemFields = nil
+        }
+
         for record in event.savedRecords {
             guard var entry = document.entries[record.recordID.recordName] else { continue }
             entry.systemFields = record.cloudSyncSystemFields()
             document.entries[record.recordID.recordName] = entry
+        }
+
+        for (recordID, error) in event.failedRecordDeletes {
+            if (error as NSError).code == CKError.Code.unknownItem.rawValue {
+                document.entries[recordID.recordName]?.systemFields = nil
+            } else {
+                await report(error, operation: "删除 iCloud 记录")
+            }
         }
 
         for failure in event.failedRecordSaves {

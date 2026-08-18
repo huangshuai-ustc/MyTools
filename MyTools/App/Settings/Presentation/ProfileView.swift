@@ -78,7 +78,7 @@ struct ProfileView: View {
             .navigationTitle("我的")
             .adminModeIndicator()
 #if os(iOS)
-            .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)
 #endif
             .sheet(isPresented: $showAuth) {

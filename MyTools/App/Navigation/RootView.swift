@@ -108,13 +108,14 @@ private enum RootDestination: Hashable {
 private struct DesktopRootView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @Binding var selection: RootDestination?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var visibleModules: [ToolModule] {
         moduleSettings.orderedModules.filter(moduleSettings.isVisible)
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: $selection) {
                 ForEach(visibleModules) { module in
                     Label(module.title, systemImage: module.systemImage)
@@ -151,8 +152,10 @@ private struct DesktopRootView: View {
             NavigationStack {
                 ToolModuleDestination(module: module)
             }
+            .environment(\.isSidebarCollapsed, columnVisibility == .detailOnly)
         case .profile:
             ProfileView()
+                .environment(\.isSidebarCollapsed, columnVisibility == .detailOnly)
         case nil:
             ContentUnavailableView("选择一个功能", systemImage: "square.grid.2x2")
         }

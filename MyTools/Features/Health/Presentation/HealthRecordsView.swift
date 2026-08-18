@@ -107,7 +107,7 @@ struct HealthRecordsView: View {
             }
         }
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .sheet(item: $editingRecord) { record in

@@ -35,7 +35,7 @@ enum CloudSyncStatus: Equatable, Sendable {
     }
 }
 
-typealias CloudSyncSnapshotProvider = @MainActor @Sendable () throws -> CloudSyncSnapshot
+typealias CloudSyncSnapshotProvider = @MainActor @Sendable () async throws -> CloudSyncSnapshot
 typealias CloudSyncChangeHandler = @MainActor @Sendable ([CloudSyncChange]) throws -> Void
 
 @MainActor
@@ -48,6 +48,8 @@ final class CloudSyncCoordinator: ObservableObject {
         static let enabled = "icloud-sync-enabled-v1"
         static let lastSuccessfulSyncAt = "icloud-sync-last-success-v1"
     }
+
+    private static let localChangeDebounce: Duration = .seconds(2)
 
     private let defaults: UserDefaults
     private let attachmentStore: AttachmentStore
@@ -105,7 +107,7 @@ final class CloudSyncCoordinator: ObservableObject {
 
     func localDataDidChange() {
         guard isEnabled, worker != nil else { return }
-        scheduleReconciliation(delay: .milliseconds(900))
+        scheduleReconciliation(delay: Self.localChangeDebounce)
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -183,7 +185,7 @@ final class CloudSyncCoordinator: ObservableObject {
                 },
                 snapshotProvider: { [weak self] in
                     guard let self else { return .empty }
-                    return try self.snapshotProvider?() ?? .empty
+                    return try await self.snapshotProvider?() ?? .empty
                 },
                 changeHandler: { [weak self] changes in
                     try self?.changeHandler?(changes)
@@ -199,9 +201,15 @@ final class CloudSyncCoordinator: ObservableObject {
         reconciliationTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled,
-                  let self,
-                  let snapshot = self.makeSnapshot() else { return }
-            await worker.reconcile(snapshot: snapshot)
+                  let self else { return }
+            do {
+                let snapshot = try await self.makeSnapshot()
+                await worker.reconcile(snapshot: snapshot)
+            } catch {
+                self.receive(.error(
+                    "无法整理待同步数据（错误码：\(DiagnosticLogger.errorCode(error))）"
+                ))
+            }
         }
     }
 
@@ -211,13 +219,9 @@ final class CloudSyncCoordinator: ObservableObject {
         operationTask = nil
     }
 
-    private func makeSnapshot() -> CloudSyncSnapshot? {
-        do {
-            return try snapshotProvider?()
-        } catch {
-            receive(.error("无法整理待同步数据（错误码：\(DiagnosticLogger.errorCode(error))）"))
-            return nil
-        }
+    private func makeSnapshot() async throws -> CloudSyncSnapshot {
+        guard let snapshotProvider else { return .empty }
+        return try await snapshotProvider()
     }
 
     private func receive(_ status: CloudSyncStatus) {

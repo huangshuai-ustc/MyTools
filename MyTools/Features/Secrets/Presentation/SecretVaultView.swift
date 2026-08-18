@@ -103,7 +103,7 @@ struct SecretVaultView: View {
     @State private var showingPasswordImportPage = false
     @State private var importResult: String?
     @State private var showingImportResult = false
-    @AppStorage("secret-sort-order-v1") private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
+    @AppStorage(AppStorageKey.secretSortOrder) private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
 
     private var selectedSortOrder: SecretSortOrder {
         SecretSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
@@ -168,6 +168,9 @@ struct SecretVaultView: View {
             }
         }
         .navigationTitle(ToolModule.secrets.title)
+        .onChange(of: sortOrderRawValue) { _, _ in
+            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
         .toolbar {
@@ -205,7 +208,7 @@ struct SecretVaultView: View {
             }
         }
 #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif

@@ -91,6 +91,9 @@ struct SportsLotteryView: View {
             }
         }
         .navigationTitle(ToolModule.sportsLottery.title)
+#if os(iOS)
+        .appAdaptiveLargeNavigationTitle()
+#endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 AdminEditAccessButton()

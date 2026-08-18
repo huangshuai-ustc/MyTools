@@ -108,6 +108,28 @@ struct StockPortfolioEditorTests {
         #expect(stock.dividends.isEmpty)
     }
 
+    @Test func holdingProfitRateUsesUnroundedDecimalValues() {
+        var stock = StockHolding()
+        var transaction = Self.transaction(type: .buy, day: 1, quantity: 3)
+        transaction.unitPrice = Decimal(string: "10.123456")!
+        transaction.fees = Decimal(string: "0.000001")!
+        stock.transactions = [transaction]
+        stock.latestPrice = Decimal(string: "11.234567")!
+
+        let expectedCost = Decimal(string: "30.370369")!
+        let expectedProfit = Decimal(string: "3.333332")!
+        #expect(stock.holdingCost == expectedCost)
+        #expect(stock.holdingProfitLoss == expectedProfit)
+        #expect(stock.holdingProfitRate == expectedProfit / expectedCost)
+    }
+
+    @Test func stockMetricsFormatOnlyAtDisplayBoundary() {
+        #expect(StockValueFormatter.integerQuantity(1200) == "1,200")
+        #expect(StockValueFormatter.signedPercent(Decimal(string: "-0.03456")!) == "-3.46%")
+        #expect(StockValueFormatter.signedPercent(Decimal(string: "0.02344")!) == "+2.34%")
+        #expect(StockValueFormatter.money(Decimal(string: "123456.789")!, currencyCode: "CNY") == "¥123,456.79")
+    }
+
     private static func transaction(
         type: StockTransactionType,
         day: Int,

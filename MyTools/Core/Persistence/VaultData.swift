@@ -72,9 +72,11 @@ enum OpaqueModuleValue: Codable, Equatable, Sendable {
 #if MYTOOLS_FEATURE_FINANCE
 typealias BankAccountVaultValue = BankAccount
 typealias BankCardVaultValue = BankCard
+typealias BankLoginFieldTemplateVaultValue = BankLoginFieldTemplate
 #else
 typealias BankAccountVaultValue = OpaqueModuleValue
 typealias BankCardVaultValue = OpaqueModuleValue
+typealias BankLoginFieldTemplateVaultValue = OpaqueModuleValue
 #endif
 
 #if MYTOOLS_FEATURE_STOCKS
@@ -126,6 +128,8 @@ typealias BillRecordVaultValue = OpaqueModuleValue
 struct VaultData: Codable, @unchecked Sendable {
     var accounts: [BankAccountVaultValue] = []
     var cards: [BankCardVaultValue] = []
+    var domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = []
+    var overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = []
     var stocks: [StockHoldingVaultValue] = []
     var currencyExchangeRecords: [CurrencyExchangeVaultValue] = []
     var medicalRecords: [MedicalRecordVaultValue] = []
@@ -145,6 +149,8 @@ struct VaultData: Codable, @unchecked Sendable {
     init(
         accounts: [BankAccountVaultValue] = [],
         cards: [BankCardVaultValue] = [],
+        domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = [],
+        overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = [],
         stocks: [StockHoldingVaultValue] = [],
         currencyExchangeRecords: [CurrencyExchangeVaultValue] = [],
         medicalRecords: [MedicalRecordVaultValue] = [],
@@ -163,6 +169,8 @@ struct VaultData: Codable, @unchecked Sendable {
     ) {
         self.accounts = accounts
         self.cards = cards
+        self.domesticBankLoginFieldTemplates = domesticBankLoginFieldTemplates
+        self.overseasBankLoginFieldTemplates = overseasBankLoginFieldTemplates
         self.stocks = stocks
         self.currencyExchangeRecords = currencyExchangeRecords
         self.medicalRecords = medicalRecords
@@ -183,6 +191,8 @@ struct VaultData: Codable, @unchecked Sendable {
     private enum CodingKeys: String, CodingKey {
         case accounts
         case cards
+        case domesticBankLoginFieldTemplates
+        case overseasBankLoginFieldTemplates
         case stocks
         case currencyExchangeRecords
         case medicalRecords
@@ -204,6 +214,14 @@ struct VaultData: Codable, @unchecked Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         accounts = try container.decodeIfPresent([BankAccountVaultValue].self, forKey: .accounts) ?? []
         cards = try container.decodeIfPresent([BankCardVaultValue].self, forKey: .cards) ?? []
+        domesticBankLoginFieldTemplates = try container.decodeIfPresent(
+            [BankLoginFieldTemplateVaultValue].self,
+            forKey: .domesticBankLoginFieldTemplates
+        ) ?? []
+        overseasBankLoginFieldTemplates = try container.decodeIfPresent(
+            [BankLoginFieldTemplateVaultValue].self,
+            forKey: .overseasBankLoginFieldTemplates
+        ) ?? []
         stocks = try container.decodeIfPresent([StockHoldingVaultValue].self, forKey: .stocks) ?? []
         currencyExchangeRecords = try container.decodeIfPresent(
             [CurrencyExchangeVaultValue].self,

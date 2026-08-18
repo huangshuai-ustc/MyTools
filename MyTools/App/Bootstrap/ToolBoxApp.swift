@@ -116,6 +116,9 @@ private struct ConfiguredRootView: View {
             .onChange(of: fontSizeRawValue) { _, _ in
                 store.preferenceSettingsDidChange()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .syncedAppPreferenceDidChange)) { _ in
+                store.preferenceSettingsDidChange()
+            }
     }
 
     private var resolvedDynamicTypeSize: DynamicTypeSize {

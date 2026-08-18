@@ -1,6 +1,17 @@
 import SwiftUI
 import Foundation
 
+private struct SidebarCollapsedEnvironmentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isSidebarCollapsed: Bool {
+        get { self[SidebarCollapsedEnvironmentKey.self] }
+        set { self[SidebarCollapsedEnvironmentKey.self] = newValue }
+    }
+}
+
 enum AppTagSupport {
     static let inputSeparator = "，"
 
@@ -263,6 +274,10 @@ struct HiddenItemsVisibilityButton: View {
 }
 
 extension View {
+    func appAdaptiveLargeNavigationTitle() -> some View {
+        modifier(AdaptiveLargeNavigationTitleModifier())
+    }
+
     @ViewBuilder
     func appSwipeActions(
         edge: HorizontalEdge = .trailing,
@@ -387,6 +402,23 @@ extension View {
         }
 #else
         self
+#endif
+    }
+}
+
+private struct AdaptiveLargeNavigationTitleModifier: ViewModifier {
+    @Environment(\.isSidebarCollapsed) private var isSidebarCollapsed
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad && isSidebarCollapsed {
+            content.navigationBarTitleDisplayMode(.inline)
+        } else {
+            content.navigationBarTitleDisplayMode(.large)
+        }
+#else
+        content
 #endif
     }
 }
