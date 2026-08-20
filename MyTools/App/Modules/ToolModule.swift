@@ -221,7 +221,7 @@ enum ToolModuleCatalog {
             capabilities: [],
             participatesInBackup: false,
             participatesInCloudSync: false
-        )
+        ),
     ]
 
     private static let definitionsByModule = Dictionary(

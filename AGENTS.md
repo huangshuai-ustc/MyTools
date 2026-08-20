@@ -348,10 +348,10 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Features/Stocks/Domain/Stock.swift` | 市场、交易、分红、持仓实体及持仓/成本/盈亏基础计算。 |
-| `MyTools/Features/Stocks/Domain/StockChartSeriesProcessor.swift` | 图表序列类型、范围裁剪、增量合并、休市点过滤和降采样。 |
+| `MyTools/Features/Stocks/Domain/StockChartSeriesProcessor.swift` | 图表序列类型、范围裁剪、成立时间边界、增量合并、休市点过滤和降采样。 |
 | `MyTools/Features/Stocks/Domain/StockInvestmentScoreModel.swift` | 基本面快照、评分输入、因子覆盖度和投资机会评分规则。 |
 | `MyTools/Features/Stocks/Domain/StockMarketTradingCalendar.swift` | A/港/美股交易日、节假日、交易时段和最终时段判断。 |
-| `MyTools/Features/Stocks/Domain/StockPortfolioAnalytics.swift` | 市场组合汇总、持仓成本、市值、盈亏和资产分配快照。 |
+| `MyTools/Features/Stocks/Domain/StockPortfolioAnalytics.swift` | 市场组合汇总、持仓成本、市值、盈亏、资产分配和按持仓成本计算的股票占比快照。 |
 | `MyTools/Features/Stocks/Domain/StockQuoteModels.swift` | 实时报价值对象和行情错误。 |
 | `MyTools/Features/Stocks/Domain/StockTechnicalAnalysis.swift` | MA、布林带、MACD、RSI 等技术指标计算。 |
 | `MyTools/Features/Stocks/Domain/StockValueFormatter.swift` | 股票金额、价格、比率和汇率的统一文本格式。 |
@@ -494,7 +494,7 @@
 | 模块 | 已实现能力 | 主要入口 | 数据与状态 |
 | --- | --- | --- | --- |
 | 金融账户 | 境内外银行、网络银行无网点标记、支行地图链接/导航、子账户（含支票账户）、借记卡、信用卡、账单 PDF、登录字段模板与左右滑管理、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
-| 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、“当前持仓”和“无持仓或仅看盘”分区、实时行情、历史图表、技术指标、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift` |
+| 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、“当前持仓”和“无持仓或仅看盘”分区、实时行情、历史图表、RSI14/RSI30 等技术指标、按盘前/盘中/盘后动态约束组合的图表模式、美股盘前橙色/A 股集合竞价橙色与盘后蓝色行情、盘前只显示价格、盘后成交量仅在数据源提供时显示、盘后最近有效正式周期数据、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift` |
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
 | 美食地图 | 吃过/想吃、店铺、中国省市、详细地址、地图坐标、图片、来源、标签胶囊、标签建议/筛选/搜索、总地图和第三方导航 | `Features/FoodMap/Presentation/FoodMapView.swift` | `FoodMapStore`、`FoodPlace.swift` |
@@ -707,5 +707,5 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 - OCR 的设置测试页是临时入口，OCR 本身是可复用 Core 服务；临时页面被移除时不得删除 Core OCR 能力。
 - 股票公开行情和图表可能延迟或不可用；已有 Provider 回退与缓存，不要在页面内直接请求第三方接口。
 - 股票公开基本面数据可能延迟、缺失或口径不同；评分必须展示来源与覆盖度，缺失值不得按 0 伪造，基本面快照不进入 Vault、备份或 CloudKit。
-- 股票收盘补刷按各市场实际最终交易时段去重，不使用固定 12 小时限流；图表服务同样按最终交易时段避免休市重复请求。
+- 股票报价只在原有盘中时段刷新；图表按市场区分盘前、盘中和盘后三个互斥时段，盘前/盘后只更新对应扩展时段序列，收盘补刷按最终交易时段去重，不使用固定 12 小时限流。
 - 当前仍是单 App Target，编译标记会从产物中移除 Feature 实现，但没有独立 Swift Package 提供模块级 import 访问控制；Feature 间依赖禁令仍需由代码审查和回归构建持续执行。

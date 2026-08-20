@@ -105,41 +105,6 @@ struct StockChartCanvas: View {
                 }
             }
 
-            if displayModes.contains(.movingAverage) {
-                ForEach(presentation.technicalPlotPoints) { plotPoint in
-                    if let value = plotPoint.indicator.movingAverage5 {
-                        LineMark(
-                            x: .value("时间", plotPoint.x),
-                            y: .value("MA5", value),
-                            series: .value("指标", "MA5")
-                        )
-                        .foregroundStyle(.teal)
-                        .lineStyle(StockChartVisualStyle.dataLine)
-                        .interpolationMethod(.linear)
-                    }
-                    if let value = plotPoint.indicator.movingAverage20 {
-                        LineMark(
-                            x: .value("时间", plotPoint.x),
-                            y: .value("MA20", value),
-                            series: .value("指标", "MA20")
-                        )
-                        .foregroundStyle(.purple)
-                        .lineStyle(StockChartVisualStyle.dataLine)
-                        .interpolationMethod(.linear)
-                    }
-                    if let value = plotPoint.indicator.movingAverage60 {
-                        LineMark(
-                            x: .value("时间", plotPoint.x),
-                            y: .value("MA60", value),
-                            series: .value("指标", "MA60")
-                        )
-                        .foregroundStyle(.brown)
-                        .lineStyle(StockChartVisualStyle.dataLine)
-                        .interpolationMethod(.linear)
-                    }
-                }
-            }
-
             if displayModes.contains(.bollingerBands) {
                 ForEach(presentation.technicalPlotPoints) { plotPoint in
                     if let upper = plotPoint.indicator.bollingerUpper,
@@ -181,6 +146,43 @@ struct StockChartCanvas: View {
                 }
             }
 
+            // Draw moving averages after the translucent Bollinger area so its
+            // colors stay opaque and match the legend.
+            if displayModes.contains(.movingAverage) {
+                ForEach(presentation.technicalPlotPoints) { plotPoint in
+                    if let value = plotPoint.indicator.movingAverage5 {
+                        LineMark(
+                            x: .value("时间", plotPoint.x),
+                            y: .value("MA5", value),
+                            series: .value("指标", "MA5")
+                        )
+                        .foregroundStyle(.teal)
+                        .lineStyle(StockChartVisualStyle.dataLine)
+                        .interpolationMethod(.linear)
+                    }
+                    if let value = plotPoint.indicator.movingAverage20 {
+                        LineMark(
+                            x: .value("时间", plotPoint.x),
+                            y: .value("MA20", value),
+                            series: .value("指标", "MA20")
+                        )
+                        .foregroundStyle(.purple)
+                        .lineStyle(StockChartVisualStyle.dataLine)
+                        .interpolationMethod(.linear)
+                    }
+                    if let value = plotPoint.indicator.movingAverage60 {
+                        LineMark(
+                            x: .value("时间", plotPoint.x),
+                            y: .value("MA60", value),
+                            series: .value("指标", "MA60")
+                        )
+                        .foregroundStyle(.brown)
+                        .lineStyle(StockChartVisualStyle.dataLine)
+                        .interpolationMethod(.linear)
+                    }
+                }
+            }
+
             if displayModes.contains(.volume) {
                 ForEach(presentation.plotPoints) { plotPoint in
                     if let volume = plotPoint.point.volume {
@@ -193,6 +195,21 @@ struct StockChartCanvas: View {
                             ))
                         )
                         .foregroundStyle(candleColor(plotPoint.point).opacity(0.72))
+                    }
+                }
+                if presentation.hasPostMarketChart {
+                    ForEach(presentation.postMarketPlotPoints) { plotPoint in
+                        if let volume = plotPoint.point.volume {
+                            BarMark(
+                                x: .value("\(presentation.postMarketTitle)时间", plotPoint.x),
+                                y: .value("成交量", volume),
+                                width: .fixed(StockChartPresentation.indicatorBarWidth(
+                                    pointCount: presentation.plotPoints.count,
+                                    isExpanded: isExpanded
+                                ))
+                            )
+                            .foregroundStyle(Color.blue.opacity(0.72))
+                        }
                     }
                 }
             }
@@ -249,12 +266,49 @@ struct StockChartCanvas: View {
                     if let value = plotPoint.indicator.rsi14 {
                         LineMark(
                             x: .value("时间", plotPoint.x),
-                            y: .value("RSI14", value)
+                            y: .value("RSI14", value),
+                            series: .value("指标", "RSI14")
                         )
                         .foregroundStyle(.purple)
                         .lineStyle(StockChartVisualStyle.dataLine)
                         .interpolationMethod(.linear)
                     }
+                    if let value = plotPoint.indicator.rsi30 {
+                        LineMark(
+                            x: .value("时间", plotPoint.x),
+                            y: .value("RSI30", value),
+                            series: .value("指标", "RSI30")
+                        )
+                        .foregroundStyle(.orange)
+                        .lineStyle(StockChartVisualStyle.dataLine)
+                        .interpolationMethod(.linear)
+                    }
+                }
+            }
+
+            if presentation.hasPreMarketChart, !presentation.preMarketPlotPoints.isEmpty {
+                ForEach(presentation.preMarketPlotPoints) { plotPoint in
+                    LineMark(
+                        x: .value("\(presentation.preMarketTitle)时间", plotPoint.x),
+                        y: .value("\(presentation.preMarketTitle)价格", plotPoint.point.close),
+                        series: .value("行情", presentation.preMarketTitle)
+                    )
+                    .foregroundStyle(.orange)
+                    .lineStyle(StockChartVisualStyle.dataLine)
+                    .interpolationMethod(.linear)
+                }
+            }
+
+            if presentation.hasPostMarketChart, !presentation.postMarketPlotPoints.isEmpty {
+                ForEach(presentation.postMarketPlotPoints) { plotPoint in
+                    LineMark(
+                        x: .value("\(presentation.postMarketTitle)时间", plotPoint.x),
+                        y: .value("\(presentation.postMarketTitle)价格", plotPoint.point.close),
+                        series: .value("行情", presentation.postMarketTitle)
+                    )
+                    .foregroundStyle(.blue)
+                    .lineStyle(StockChartVisualStyle.dataLine)
+                    .interpolationMethod(.linear)
                 }
             }
 
@@ -310,6 +364,15 @@ struct StockChartCanvas: View {
                         y: .value("所选 RSI", rsi)
                     )
                     .foregroundStyle(Color.primary)
+                    .symbolSize(36)
+                }
+                if displayModes.contains(.rsi),
+                   let rsi30 = selectedTechnicalPlotPoint.indicator.rsi30 {
+                    PointMark(
+                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
+                        y: .value("所选 RSI30", rsi30)
+                    )
+                    .foregroundStyle(Color.orange)
                     .symbolSize(36)
                 }
                 if !presentation.hasBasePriceChart,
@@ -416,7 +479,7 @@ struct StockChartCanvas: View {
         if let point = presentation.selectedPoint(at: selectedDate) {
             selectedPointSummary(point, presentation: presentation)
         } else {
-            summaryPlaceholder
+            summaryPlaceholder(presentation)
         }
     }
 
@@ -436,8 +499,15 @@ struct StockChartCanvas: View {
                 Text(presentation.chartDateText(point.date))
                     .foregroundStyle(.secondary)
                 if presentation.hasPriceChart {
-                    Text("收盘 \(closeText)")
+                    Text(
+                        "\(presentation.isPreMarket(point) ? presentation.preMarketTitle : presentation.isPostMarket(point) ? presentation.postMarketTitle : "收盘") \(closeText)"
+                    )
                         .fontWeight(.medium)
+                        .foregroundStyle(
+                            presentation.isPreMarket(point)
+                                ? Color.orange
+                                : presentation.isPostMarket(point) ? Color.blue : Color.primary
+                        )
                 }
                 if displayModes.contains(.candlestick) {
                     Text(
@@ -472,8 +542,36 @@ struct StockChartCanvas: View {
 
             if displayModes.contains(.volume) {
                 StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
-                    Text("成交量 \(volumeText)")
+                    Text("\(volumeDirectionText(point))成交量 \(volumeText)")
                         .fontWeight(.medium)
+                }
+            }
+
+            if presentation.hasPreMarketChart,
+               !presentation.isPreMarket(point),
+               let preMarket = presentation.preMarketPlotPoints.last?.point {
+                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                    let price = StockChartPresentation.priceText(
+                        preMarket.close,
+                        currencyCode: snapshot.currencyCode
+                    )
+                    Text("\(presentation.preMarketTitle) \(price)")
+                        .fontWeight(.medium)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if presentation.hasPostMarketChart,
+               !presentation.isPostMarket(point),
+               let postMarket = presentation.postMarketPlotPoints.last?.point {
+                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                    let price = StockChartPresentation.priceText(
+                        postMarket.close,
+                        currencyCode: snapshot.currencyCode
+                    )
+                    Text("\(presentation.postMarketTitle) \(price)")
+                        .fontWeight(.medium)
+                        .foregroundStyle(.blue)
                 }
             }
 
@@ -493,7 +591,18 @@ struct StockChartCanvas: View {
                     Text("RSI14 \(StockChartPresentation.indicatorText(rsi))")
                         .fontWeight(.medium)
                         .foregroundStyle(.purple)
+                    if let rsi30 = indicator?.rsi30 {
+                        Text("RSI30 \(StockChartPresentation.indicatorText(rsi30))")
+                            .fontWeight(.medium)
+                            .foregroundStyle(.orange)
+                    }
                 }
+            }
+            if presentation.hasPreMarketChart,
+               !presentation.preMarketPlotPoints.isEmpty,
+               presentation.hasPriceChart {
+                Text("\(presentation.preMarketTitle)仅展示价格")
+                    .foregroundStyle(.secondary)
             }
         }
         .font(.caption.monospacedDigit())
@@ -539,7 +648,7 @@ struct StockChartCanvas: View {
         }
     }
 
-    private var summaryPlaceholder: some View {
+    private func summaryPlaceholder(_ presentation: StockChartPresentation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if displayModes.isEmpty {
                 Text("未选择图表")
@@ -555,6 +664,32 @@ struct StockChartCanvas: View {
                         Text("开盘 · 最高 · 最低 · 收盘").foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            if displayModes.contains(.preMarket) {
+                Text(
+                    presentation.preMarketPlotPoints.isEmpty
+                        ? "\(presentation.preMarketTitle)暂无数据"
+                        : presentation.preMarketTitle
+                )
+                .foregroundStyle(
+                    presentation.preMarketPlotPoints.isEmpty
+                        ? Color.secondary
+                        : Color.orange
+                )
+            }
+
+            if displayModes.contains(.postMarket) {
+                Text(
+                    presentation.postMarketPlotPoints.isEmpty
+                        ? "\(presentation.postMarketTitle)暂无数据"
+                        : presentation.postMarketTitle
+                )
+                .foregroundStyle(
+                    presentation.postMarketPlotPoints.isEmpty
+                        ? Color.secondary
+                        : Color.blue
+                )
             }
 
             if displayModes.contains(.movingAverage) {
@@ -586,7 +721,10 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.rsi) {
-                Text("RSI14").foregroundStyle(.purple)
+                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                    Text("RSI14").foregroundStyle(.purple)
+                    Text("RSI30").foregroundStyle(.orange)
+                }
             }
         }
         .font(.caption)
@@ -603,6 +741,12 @@ struct StockChartCanvas: View {
 
     private func candleColor(_ point: StockChartPoint) -> Color {
         valueColor(point.close - point.open)
+    }
+
+    private func volumeDirectionText(_ point: StockChartPoint) -> String {
+        if point.close > point.open { return "买入" }
+        if point.close < point.open { return "卖出" }
+        return "持平"
     }
 
     private func transactionColor(_ type: StockTransactionType) -> Color {

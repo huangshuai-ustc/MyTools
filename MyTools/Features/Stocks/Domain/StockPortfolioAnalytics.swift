@@ -92,4 +92,40 @@ struct StockAllocationSnapshot {
     }
 }
 
+/// Cost-basis allocation for the currently held positions. Unlike market-value
+/// allocation, this remains available when a quote is missing; only the
+/// exchange-rate inputs needed to compare different currencies are required.
+struct StockCostAllocationSnapshot {
+    private let holdingShares: [UUID: Decimal]
+    let isComplete: Bool
+
+    init(stocks: [StockHolding], costMultipliers: [StockMarket: Decimal]) {
+        var valuesByHolding: [UUID: Decimal] = [:]
+        var total = Decimal.zero
+
+        for stock in stocks where stock.currentShares > 0 && stock.holdingCost > 0 {
+            guard let multiplier = costMultipliers[stock.market] else {
+                holdingShares = [:]
+                isComplete = false
+                return
+            }
+            let convertedCost = stock.holdingCost * multiplier
+            valuesByHolding[stock.id] = convertedCost
+            total += convertedCost
+        }
+
+        if total > 0 {
+            holdingShares = valuesByHolding.mapValues { $0 / total }
+        } else {
+            holdingShares = valuesByHolding.mapValues { _ in 0 }
+        }
+        isComplete = true
+    }
+
+    func holdingShare(for stockID: UUID) -> Decimal? {
+        guard isComplete else { return nil }
+        return holdingShares[stockID]
+    }
+}
+
 #endif

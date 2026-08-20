@@ -11,6 +11,51 @@ struct StockChartPresentationTests {
         #expect(!StockChartDisplayMode.macd.isCompatible(with: .rsi))
     }
 
+    @Test func extendedHoursCompatibilityFollowsCurrentMarketSession() {
+        #expect(!StockChartDisplayMode.preMarket.isCompatible(
+            with: .line,
+            session: .preMarket
+        ))
+        #expect(StockChartDisplayMode.preMarket.isCompatible(
+            with: .line,
+            session: .regular
+        ))
+        #expect(!StockChartDisplayMode.postMarket.isCompatible(
+            with: .line,
+            session: .regular
+        ))
+        #expect(StockChartDisplayMode.isCompatibleSet(
+            [.preMarket, .line, .postMarket],
+            session: .postMarket
+        ))
+        #expect(!StockChartDisplayMode.isCompatibleSet(
+            [.preMarket, .line],
+            session: .preMarket
+        ))
+        #expect(StockChartDisplayMode.isCompatibleSet(
+            [.preMarket, .line],
+            session: .regular
+        ))
+        #expect(!StockChartDisplayMode.isCompatibleSet(
+            [.preMarket, .line, .postMarket],
+            session: .regular
+        ))
+        #expect(!StockChartDisplayMode.isCompatibleSet(
+            [.preMarket, .postMarket],
+            session: .postMarket
+        ))
+    }
+
+    @Test func defaultDisplayModesFollowMarketSession() {
+        #expect(StockChartDisplayMode.defaultModes(for: .preMarket) == [.preMarket])
+        #expect(StockChartDisplayMode.defaultModes(for: .regular) == [.preMarket, .line])
+        #expect(
+            StockChartDisplayMode.defaultModes(for: .postMarket)
+                == [.preMarket, .line, .postMarket]
+        )
+        #expect(StockChartDisplayMode.defaultModes(for: .closed) == [.line])
+    }
+
     @Test func minuteRangesUseDenseIndexDomainInsteadOfWallClockGaps() {
         let points = [
             point(day: 7, hour: 9, minute: 30),
@@ -25,6 +70,85 @@ struct StockChartPresentationTests {
         #expect(presentation.xDomain == 0...3)
         #expect(presentation.xAxisValues(isExpanded: false).first == 0)
         #expect(presentation.xAxisValues(isExpanded: false).last == 3)
+    }
+
+    @Test func intradayPreMarketAndRegularPointsShareTheFullChartDomain() {
+        let preMarket = [
+            point(
+                day: 7,
+                hour: 8,
+                close: 98,
+                timeZone: "America/New_York"
+            ),
+            point(
+                day: 7,
+                hour: 9,
+                close: 99,
+                timeZone: "America/New_York"
+            )
+        ]
+        let regular = [
+            point(
+                day: 7,
+                hour: 9,
+                minute: 30,
+                close: 100,
+                timeZone: "America/New_York"
+            ),
+            point(
+                day: 7,
+                hour: 12,
+                close: 101,
+                timeZone: "America/New_York"
+            ),
+            point(
+                day: 7,
+                hour: 16,
+                close: 102,
+                timeZone: "America/New_York"
+            )
+        ]
+        let presentation = makePresentation(
+            stock: StockHolding(market: .unitedStates, symbol: "VOO"),
+            points: regular,
+            preMarketPoints: preMarket,
+            range: .intraday,
+            displayModes: [.line, .preMarket]
+        )
+
+        #expect(presentation.preMarketPlotPoints.map(\.x) == [0, 1])
+        #expect(presentation.plotPoints.map(\.x) == [2, 3, 4])
+        #expect(presentation.xDomain == 0...4)
+        #expect(presentation.xAxisValues(isExpanded: false).first == 0)
+        #expect(presentation.xAxisValues(isExpanded: false).last == 4)
+        #expect(presentation.yDomain.lowerBound < 98)
+        #expect(presentation.yDomain.upperBound > 102)
+
+        let preMarketOnly = makePresentation(
+            stock: StockHolding(market: .unitedStates, symbol: "VOO"),
+            points: regular,
+            preMarketPoints: preMarket,
+            range: .intraday,
+            displayModes: [.preMarket]
+        )
+        #expect(preMarketOnly.xDomain == 0...1)
+        #expect(preMarketOnly.xAxisValues(isExpanded: false) == [0, 1])
+        #expect(StockChartDisplayMode.preMarket.isCompatible(with: .line))
+        #expect(!StockChartDisplayMode.preMarket.isCompatible(with: .volume))
+    }
+
+    @Test func rsiPresentationRetainsBothPeriods() {
+        let points = (0..<40).map { index in
+            point(day: 7, hour: 9, minute: 30 + index * 3, close: Double(index + 1))
+        }
+        let presentation = makePresentation(
+            points: points,
+            range: .intraday,
+            displayModes: [.rsi]
+        )
+
+        #expect(presentation.technicalPlotPoints.contains { $0.indicator.rsi14 != nil })
+        #expect(presentation.technicalPlotPoints.contains { $0.indicator.rsi30 != nil })
     }
 
     @Test func fiveDayAxisUsesEachObservedTradingDayOnce() {
@@ -248,11 +372,12 @@ struct StockChartPresentationTests {
     private func makePresentation(
         stock: StockHolding = StockHolding(market: .aShare, symbol: "600519"),
         points: [StockChartPoint],
+        preMarketPoints: [StockChartPoint] = [],
         range: StockChartRange,
         displayModes: Set<StockChartDisplayMode> = [.line]
     ) -> StockChartPresentation {
         StockChartPresentation(
-            snapshot: makeSnapshot(points: points),
+            snapshot: makeSnapshot(points: points, preMarketPoints: preMarketPoints),
             stock: stock,
             range: range,
             displayModes: displayModes
@@ -261,6 +386,7 @@ struct StockChartPresentationTests {
 
     private func makeSnapshot(
         points: [StockChartPoint],
+        preMarketPoints: [StockChartPoint] = [],
         indicatorPoints: [StockChartPoint]? = nil,
         previousClose: Double? = 99
     ) -> StockChartSnapshot {
@@ -270,6 +396,7 @@ struct StockChartPresentationTests {
             currencyCode: "CNY",
             previousClose: previousClose,
             points: points,
+            preMarketPoints: preMarketPoints,
             indicatorPoints: indicatorPoints,
             quoteUpdatedAt: points.last?.date ?? Date(timeIntervalSince1970: 0),
             fetchedAt: Date(timeIntervalSince1970: 0),

@@ -57,6 +57,8 @@ struct TencentStockChartProvider: StockChartProvider {
 
         let parsedPoints = rawPoints.compactMap { parsePoint($0, market: stock.market) }
         let points: [StockChartPoint]
+        let preMarketPoints: [StockChartPoint]
+        let postMarketPoints: [StockChartPoint]
         let fetchedIndicatorPoints: [StockChartPoint]?
         if isMinuteChart {
             let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
@@ -65,9 +67,23 @@ struct TencentStockChartProvider: StockChartProvider {
                 market: stock.market
             )
             points = prepared.visible
+            preMarketPoints = range == .intraday
+                ? StockChartSeriesProcessor.preMarketSessionPoints(
+                    prepared.indicators,
+                    market: stock.market
+                )
+                : []
+            postMarketPoints = range == .intraday
+                ? StockChartSeriesProcessor.postMarketSessionPoints(
+                    prepared.indicators,
+                    market: stock.market
+                )
+                : []
             fetchedIndicatorPoints = prepared.indicators
         } else {
             points = parsedPoints
+            preMarketPoints = []
+            postMarketPoints = []
             fetchedIndicatorPoints = nil
         }
         guard StockChartSeriesProcessor.hasRequiredCoverage(
@@ -90,6 +106,8 @@ struct TencentStockChartProvider: StockChartProvider {
             currencyCode: stock.market.currencyCode,
             previousClose: previousClose,
             points: points,
+            preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
             indicatorPoints: fetchedIndicatorPoints,
             quoteUpdatedAt: latest.date,
             fetchedAt: Date(),

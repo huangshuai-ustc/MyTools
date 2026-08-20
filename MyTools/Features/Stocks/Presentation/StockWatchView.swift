@@ -38,6 +38,7 @@ struct StockWatchView: View {
     @State private var selectedStockID: UUID?
     @State private var selectedRange: StockChartRange = .intraday
     @State private var selectedDisplayModes: Set<StockChartDisplayMode> = [.line]
+    @State private var defaultsAppliedForStockID: UUID?
     @State private var snapshot: StockChartSnapshot?
     @State private var technicalScore: StockInvestmentScore?
     @State private var selectedDate: Date?
@@ -64,6 +65,24 @@ struct StockWatchView: View {
         return store.stocks.first { $0.id == activeStockID }
     }
 
+    private var displayModesForCurrentSession: Set<StockChartDisplayMode> {
+        guard let stock else { return selectedDisplayModes }
+        let session = StockMarketTradingCalendar.session(for: stock.market)
+        var modes = selectedDisplayModes
+        if session == .preMarket {
+            if modes.contains(.line) {
+                modes.remove(.preMarket)
+            }
+            modes.remove(.postMarket)
+        } else if session == .regular {
+            modes.remove(.postMarket)
+        }
+        if modes.contains(.preMarket), modes.contains(.postMarket), !modes.contains(.line) {
+            modes.remove(.postMarket)
+        }
+        return modes
+    }
+
     private var loadKey: LoadKey {
         LoadKey(
             market: stock?.market,
@@ -80,6 +99,14 @@ struct StockWatchView: View {
             symbol: stock.map {
                 StockHolding.normalizedSymbol($0.symbol, market: $0.market)
             } ?? ""
+        )
+    }
+
+    private var currentSessionSummary: StockChartSessionSummary? {
+        guard let snapshot, let stock else { return nil }
+        return StockChartSeriesProcessor.currentSessionSummary(
+            from: snapshot.indicatorPoints ?? snapshot.points,
+            market: stock.market
         )
     }
 
@@ -128,6 +155,7 @@ struct StockWatchView: View {
         }
         .task(id: loadKey) {
             selectedDate = nil
+            applyDefaultDisplayModesIfNeeded()
             await loadChart(forceRefresh: false)
             await pollMinuteChartIfNeeded()
         }
@@ -189,37 +217,37 @@ struct StockWatchView: View {
                 }
             }
 
-            if let snapshot, let latest = snapshot.latestPoint {
+            if let snapshot, let summary = currentSessionSummary {
                 Section("当期数据") {
                     LabeledContent(
                         "开盘",
                         value: StockChartPresentation.priceText(
-                            latest.open,
+                            summary.open,
                             currencyCode: snapshot.currencyCode
                         )
                     )
                     LabeledContent(
                         "最高",
                         value: StockChartPresentation.priceText(
-                            latest.high,
+                            summary.high,
                             currencyCode: snapshot.currencyCode
                         )
                     )
                     LabeledContent(
                         "最低",
                         value: StockChartPresentation.priceText(
-                            latest.low,
+                            summary.low,
                             currencyCode: snapshot.currencyCode
                         )
                     )
                     LabeledContent(
                         "收盘 / 最新",
                         value: StockChartPresentation.priceText(
-                            latest.close,
+                            summary.close,
                             currencyCode: snapshot.currencyCode
                         )
                     )
-                    if let volume = latest.volume {
+                    if let volume = summary.volume {
                         LabeledContent(
                             "成交量",
                             value: StockChartPresentation.volumeText(volume)
@@ -290,7 +318,7 @@ struct StockWatchView: View {
                         mode,
                         in: snapshot
                     )
-                    let isSelected = selectedDisplayModes.contains(mode)
+                    let isSelected = displayModesForCurrentSession.contains(mode)
                     Button {
                         toggleChartMode(mode)
                     } label: {
@@ -324,13 +352,25 @@ struct StockWatchView: View {
     }
 
     private func toggleChartMode(_ mode: StockChartDisplayMode) {
-        if selectedDisplayModes.contains(mode) {
-            selectedDisplayModes.remove(mode)
+        var currentModes = displayModesForCurrentSession
+        if currentModes.contains(mode) {
+            currentModes.remove(mode)
+            selectedDisplayModes = currentModes
         } else {
-            selectedDisplayModes = Set(
-                selectedDisplayModes.filter { mode.isCompatible(with: $0) }
-            )
-            selectedDisplayModes.insert(mode)
+            let session = stock.map {
+                StockMarketTradingCalendar.session(for: $0.market)
+            }
+            let candidate = currentModes.union([mode])
+            if StockChartDisplayMode.isCompatibleSet(candidate, session: session) {
+                selectedDisplayModes = candidate
+            } else {
+                selectedDisplayModes = Set(
+                    currentModes.filter {
+                        mode.isCompatible(with: $0, session: session)
+                    }
+                )
+                selectedDisplayModes.insert(mode)
+            }
         }
         selectedDate = nil
     }
@@ -383,7 +423,10 @@ struct StockWatchView: View {
     }
 
     private func quoteHeader(for stock: StockHolding) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isRegularSession = StockMarketTradingCalendar.isOpen(stock.market)
+        let isPreMarketSession = StockMarketTradingCalendar.isPreMarketOpen(stock.market)
+        let isPostMarketSession = StockMarketTradingCalendar.isPostMarketOpen(stock.market)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 StockMarketBadge(market: stock.market)
                 Text(stock.displayName)
@@ -394,14 +437,22 @@ struct StockWatchView: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Label(
-                    StockMarketTradingCalendar.isOpen(stock.market) ? "交易中" : "已休市",
-                    systemImage: StockMarketTradingCalendar.isOpen(stock.market)
+                    isRegularSession
+                        ? "交易中"
+                        : isPreMarketSession
+                            ? "盘前交易"
+                            : isPostMarketSession ? "盘后交易" : "已休市",
+                    systemImage: isRegularSession
                         ? "circle.fill"
-                        : "moon.zzz"
+                        : isPreMarketSession
+                            ? "clock.arrow.2.circlepath"
+                            : isPostMarketSession ? "clock" : "moon.zzz"
                 )
                 .font(.caption)
                 .foregroundStyle(
-                    StockMarketTradingCalendar.isOpen(stock.market) ? .green : .secondary
+                    isRegularSession
+                        ? .green
+                        : isPreMarketSession ? .orange : isPostMarketSession ? .blue : .secondary
                 )
             }
 
@@ -515,7 +566,7 @@ struct StockWatchView: View {
                 snapshot: snapshot,
                 stock: stock,
                 range: selectedRange,
-                displayModes: selectedDisplayModes,
+                displayModes: displayModesForCurrentSession,
                 isExpanded: false,
                 selectedDate: $selectedDate,
                 isInteracting: $isInteractingWithChart
@@ -553,7 +604,7 @@ struct StockWatchView: View {
                         snapshot: snapshot,
                         stock: stock,
                         range: selectedRange,
-                        displayModes: selectedDisplayModes,
+                        displayModes: displayModesForCurrentSession,
                         isExpanded: true,
                         selectedDate: $selectedDate,
                         isInteracting: $isInteractingWithChart
@@ -780,6 +831,13 @@ struct StockWatchView: View {
         )
     }
 
+    private func applyDefaultDisplayModesIfNeeded() {
+        guard let stock, defaultsAppliedForStockID != stock.id else { return }
+        let session = StockMarketTradingCalendar.session(for: stock.market)
+        selectedDisplayModes = StockChartDisplayMode.defaultModes(for: session)
+        defaultsAppliedForStockID = stock.id
+    }
+
     private func pollMinuteChartIfNeeded() async {
         guard selectedRange == .intraday || selectedRange == .fiveDays else { return }
         while !Task.isCancelled {
@@ -792,7 +850,7 @@ struct StockWatchView: View {
             guard !Task.isCancelled,
                   scenePhase == .active,
                   let stock,
-                  StockMarketTradingCalendar.isOpen(stock.market) else { continue }
+                  StockMarketTradingCalendar.isSessionActive(stock.market) else { continue }
             await loadChart(forceRefresh: false, showsProgress: false)
         }
     }

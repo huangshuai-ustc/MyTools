@@ -167,6 +167,11 @@ final class StockRefreshCoordinator {
     ) -> Set<StockMarket> {
         var result = Set<StockMarket>()
         for market in StockMarket.allCases {
+            // The post-market interval belongs to the chart's extended-hours
+            // stream. Do not force a regular quote refresh until it has ended.
+            guard StockMarketTradingCalendar.session(for: market, at: now) == .closed else {
+                continue
+            }
             guard store.stocks.contains(where: { $0.market == market && $0.hasConfiguredSymbol }) else {
                 continue
             }
@@ -174,7 +179,7 @@ final class StockRefreshCoordinator {
             let latestQuoteAt = store.latestQuoteAt(for: market)
             let quoteNeedsClosingRefresh: Bool
             if let latestQuoteAt {
-                quoteNeedsClosingRefresh = !StockMarketTradingCalendar.isOpen(market, at: now)
+                quoteNeedsClosingRefresh = !StockMarketTradingCalendar.isSessionActive(market, at: now)
                     && StockMarketTradingCalendar.finalSessionEnded(
                         for: market,
                         between: latestQuoteAt,

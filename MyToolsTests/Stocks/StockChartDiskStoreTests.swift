@@ -128,7 +128,7 @@ struct StockChartDiskStoreTests {
             indicatorPointCount: nil
         )
         let persisted = StockChartPersistedStore(
-            version: 1,
+            version: StockChartPersistedStore.currentVersion,
             market: .unitedStates,
             symbol: "VOO",
             series: [StockChartSeriesKind.intraday.rawValue: [point]],
@@ -137,6 +137,49 @@ struct StockChartDiskStoreTests {
         let store = StockChartDiskStore()
 
         #expect(!store.hasRequestedCoverage(in: persisted, for: .intraday))
+    }
+
+    @Test func longerRangesAreClampedToTheInceptionSeries() throws {
+        let inception = StockChartFixtures.date(2023, 1, 3)
+        let oldWeekly = StockChartFixtures.date(2015, 1, 6)
+        let latest = StockChartFixtures.date(2026, 8, 7)
+        let monthlyPoints = [
+            StockChartFixtures.point(at: inception, close: 20),
+            StockChartFixtures.point(at: latest, close: 40)
+        ]
+        let weeklyPoints = [
+            StockChartFixtures.point(at: oldWeekly, close: 10),
+            StockChartFixtures.point(at: inception, close: 20),
+            StockChartFixtures.point(at: latest, close: 40)
+        ]
+        let metadata = StockChartStoredRangeMetadata(
+            symbol: "NBIS",
+            name: "Nebius",
+            currencyCode: "USD",
+            previousClose: nil,
+            quoteUpdatedAt: latest,
+            fetchedAt: latest,
+            source: "Test",
+            supportsCandlesticks: true,
+            indicatorPointCount: nil
+        )
+        let persisted = StockChartPersistedStore(
+            version: StockChartPersistedStore.currentVersion,
+            market: .unitedStates,
+            symbol: "NBIS",
+            series: [
+                StockChartSeriesKind.monthly.rawValue: monthlyPoints,
+                StockChartSeriesKind.weekly.rawValue: weeklyPoints
+            ],
+            rangeMetadata: [StockChartRange.tenYears.rawValue: metadata]
+        )
+
+        let store = StockChartDiskStore()
+        let rendered = try #require(
+            store.renderedSnapshot(from: persisted, range: .tenYears)
+        )
+
+        #expect(rendered.points.map(\.date) == [inception, latest])
     }
 
     @Test func removeAllDeletesPersistentAndLegacyCacheDirectories() throws {

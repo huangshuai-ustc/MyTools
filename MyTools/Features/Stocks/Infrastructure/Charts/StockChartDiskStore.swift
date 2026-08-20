@@ -17,17 +17,47 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
     let name: String
     let currencyCode: String
     let previousClose: Double?
+    let preMarketPoints: [StockChartPoint]
+    let postMarketPoints: [StockChartPoint]
     let quoteUpdatedAt: Date
     let fetchedAt: Date
     let source: String
     let supportsCandlesticks: Bool
     let indicatorPointCount: Int?
 
+    private enum CodingKeys: String, CodingKey {
+        case symbol, name, currencyCode, previousClose, preMarketPoints, postMarketPoints
+        case quoteUpdatedAt, fetchedAt, source, supportsCandlesticks, indicatorPointCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        name = try container.decode(String.self, forKey: .name)
+        currencyCode = try container.decode(String.self, forKey: .currencyCode)
+        previousClose = try container.decodeIfPresent(Double.self, forKey: .previousClose)
+        preMarketPoints = try container.decodeIfPresent(
+            [StockChartPoint].self,
+            forKey: .preMarketPoints
+        ) ?? []
+        postMarketPoints = try container.decodeIfPresent(
+            [StockChartPoint].self,
+            forKey: .postMarketPoints
+        ) ?? []
+        quoteUpdatedAt = try container.decode(Date.self, forKey: .quoteUpdatedAt)
+        fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
+        source = try container.decode(String.self, forKey: .source)
+        supportsCandlesticks = try container.decode(Bool.self, forKey: .supportsCandlesticks)
+        indicatorPointCount = try container.decodeIfPresent(Int.self, forKey: .indicatorPointCount)
+    }
+
     init(snapshot: StockChartSnapshot) {
         symbol = snapshot.symbol
         name = snapshot.name
         currencyCode = snapshot.currencyCode
         previousClose = snapshot.previousClose
+        preMarketPoints = snapshot.preMarketPoints
+        postMarketPoints = snapshot.postMarketPoints
         quoteUpdatedAt = snapshot.quoteUpdatedAt
         fetchedAt = snapshot.fetchedAt
         source = snapshot.source
@@ -40,6 +70,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         name: String,
         currencyCode: String,
         previousClose: Double?,
+        preMarketPoints: [StockChartPoint] = [],
+        postMarketPoints: [StockChartPoint] = [],
         quoteUpdatedAt: Date,
         fetchedAt: Date,
         source: String,
@@ -50,6 +82,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         self.name = name
         self.currencyCode = currencyCode
         self.previousClose = previousClose
+        self.preMarketPoints = preMarketPoints
+        self.postMarketPoints = postMarketPoints
         self.quoteUpdatedAt = quoteUpdatedAt
         self.fetchedAt = fetchedAt
         self.source = source
@@ -67,6 +101,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
             currencyCode: currencyCode,
             previousClose: previousClose,
             points: points,
+            preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
             indicatorPoints: indicatorPoints,
             quoteUpdatedAt: points.last?.date ?? quoteUpdatedAt,
             fetchedAt: fetchedAt,
@@ -77,7 +113,7 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
 }
 
 struct StockChartPersistedStore: Codable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     let version: Int
     let market: StockMarket
@@ -235,10 +271,12 @@ struct StockChartDiskStore {
 
         let kind = StockChartSeriesProcessor.seriesKind(for: range)
         let storedPoints = store.series[kind.rawValue] ?? []
+        let inceptionDate = StockChartSeriesProcessor.inceptionDate(in: store.series)
         let points = StockChartSeriesProcessor.visiblePoints(
             from: storedPoints,
             for: range,
-            market: store.market
+            market: store.market,
+            inceptionDate: inceptionDate
         )
         guard !points.isEmpty else { return nil }
         return metadata.snapshot(

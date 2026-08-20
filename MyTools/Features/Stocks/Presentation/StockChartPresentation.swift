@@ -2,7 +2,9 @@
 import Foundation
 
 enum StockChartDisplayMode: String, CaseIterable, Identifiable {
+    case preMarket
     case line
+    case postMarket
     case candlestick
     case movingAverage
     case bollingerBands
@@ -14,7 +16,9 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .preMarket: return "盘前"
         case .line: return "走势"
+        case .postMarket: return "盘后"
         case .candlestick: return "K 线"
         case .movingAverage: return "均线"
         case .bollingerBands: return "布林"
@@ -28,16 +32,85 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .line, .candlestick, .movingAverage, .bollingerBands:
             return true
-        case .volume, .macd, .rsi:
+        case .preMarket, .postMarket, .volume, .macd, .rsi:
             return false
         }
     }
 
     func isCompatible(with other: StockChartDisplayMode) -> Bool {
+        isCompatible(with: other, session: nil)
+    }
+
+    func isCompatible(
+        with other: StockChartDisplayMode,
+        session: StockMarketSession?
+    ) -> Bool {
         guard self != other else { return true }
-        guard isPriceChart, other.isPriceChart else { return false }
-        let basePriceModes: Set<StockChartDisplayMode> = [.line, .candlestick]
-        return !(basePriceModes.contains(self) && basePriceModes.contains(other))
+        let pairIsCompatible: Bool
+        if self == .preMarket || other == .preMarket {
+            pairIsCompatible = (self == .preMarket && other == .line)
+                || (other == .preMarket && self == .line)
+        } else if self == .postMarket || other == .postMarket {
+            pairIsCompatible = (self == .postMarket && other == .line)
+                || (other == .postMarket && self == .line)
+        } else {
+            guard isPriceChart, other.isPriceChart else { return false }
+            let basePriceModes: Set<StockChartDisplayMode> = [.line, .candlestick]
+            pairIsCompatible = !(basePriceModes.contains(self) && basePriceModes.contains(other))
+        }
+        guard pairIsCompatible else { return false }
+        guard let session else { return true }
+        if session == .preMarket && ((self == .preMarket && other == .line)
+            || (self == .line && other == .preMarket)) {
+            return false
+        }
+        if session == .regular && (self == .postMarket || other == .postMarket) {
+            return false
+        }
+        if session == .preMarket && (self == .postMarket || other == .postMarket) {
+            return false
+        }
+        return true
+    }
+
+    static func isCompatibleSet(
+        _ modes: Set<StockChartDisplayMode>,
+        session: StockMarketSession?
+    ) -> Bool {
+        let hasPreMarket = modes.contains(.preMarket)
+        let hasPostMarket = modes.contains(.postMarket)
+        let hasLine = modes.contains(.line)
+        for left in modes {
+            for right in modes where left != right {
+                let extendedHoursCanBeConnected =
+                    ((left == .preMarket && right == .postMarket)
+                        || (left == .postMarket && right == .preMarket))
+                    && hasLine
+                    && (session == .postMarket || session == .closed)
+                if extendedHoursCanBeConnected { continue }
+                guard left.isCompatible(with: right, session: session) else {
+                    return false
+                }
+            }
+        }
+        if hasPreMarket && hasPostMarket && !hasLine { return false }
+        if hasPreMarket && hasPostMarket && session != .postMarket && session != .closed {
+            return false
+        }
+        return true
+    }
+
+    static func defaultModes(for session: StockMarketSession) -> Set<Self> {
+        switch session {
+        case .preMarket:
+            return [.preMarket]
+        case .regular:
+            return [.preMarket, .line]
+        case .postMarket:
+            return [.preMarket, .line, .postMarket]
+        case .closed:
+            return [.line]
+        }
     }
 }
 
@@ -78,6 +151,8 @@ struct StockChartPresentation {
     let range: StockChartRange
     let displayModes: Set<StockChartDisplayMode>
     let plotPoints: [StockChartPlotPoint]
+    let preMarketPlotPoints: [StockChartPlotPoint]
+    let postMarketPlotPoints: [StockChartPlotPoint]
     let technicalPlotPoints: [StockTechnicalPlotPoint]
     let transactionMarkers: [StockTransactionMarker]
     let xDomain: ClosedRange<Double>
@@ -94,11 +169,27 @@ struct StockChartPresentation {
 
     var hasPriceChart: Bool {
         displayModes.contains { $0.isPriceChart }
+            || displayModes.contains(.preMarket)
+            || displayModes.contains(.postMarket)
     }
 
     var hasBasePriceChart: Bool {
         displayModes.contains(.line) || displayModes.contains(.candlestick)
     }
+
+    var hasPreMarketChart: Bool {
+        range == .intraday && displayModes.contains(.preMarket)
+    }
+
+    var hasPostMarketChart: Bool {
+        range == .intraday && displayModes.contains(.postMarket)
+    }
+
+    var preMarketTitle: String {
+        stock.market == .aShare ? "集合竞价" : "盘前"
+    }
+
+    var postMarketTitle: String { "盘后" }
 
     init(
         snapshot: StockChartSnapshot,
@@ -111,13 +202,39 @@ struct StockChartPresentation {
         self.range = range
         self.displayModes = displayModes
 
+        let hasRegularPriceChart = displayModes.contains(.line)
+        let preMarketCount = range == .intraday
+            && displayModes.contains(.preMarket)
+            && hasRegularPriceChart
+            ? snapshot.preMarketPoints.count
+            : 0
         let plotPoints = snapshot.points.enumerated().map { index, point in
+            StockChartPlotPoint(
+                point: point,
+                x: Self.xValue(
+                    for: point,
+                    index: index + preMarketCount,
+                    range: range
+                )
+            )
+        }
+        self.plotPoints = plotPoints
+        preMarketPlotPoints = snapshot.preMarketPoints.enumerated().map { index, point in
             StockChartPlotPoint(
                 point: point,
                 x: Self.xValue(for: point, index: index, range: range)
             )
         }
-        self.plotPoints = plotPoints
+        postMarketPlotPoints = snapshot.postMarketPoints.enumerated().map { index, point in
+            StockChartPlotPoint(
+                point: point,
+                x: Self.xValue(
+                    for: point,
+                    index: index + preMarketCount + snapshot.points.count,
+                    range: range
+                )
+            )
+        }
         technicalPlotPoints = Self.technicalPlotPoints(
             for: plotPoints,
             in: snapshot
@@ -127,7 +244,18 @@ struct StockChartPresentation {
             in: snapshot,
             range: range
         )
-        xDomain = Self.xDomain(for: plotPoints)
+        var activePlotPoints = plotPoints
+        if displayModes.contains(.preMarket) {
+            activePlotPoints = hasRegularPriceChart
+                ? preMarketPlotPoints + activePlotPoints
+                : preMarketPlotPoints
+        }
+        if displayModes.contains(.postMarket) {
+            activePlotPoints = hasRegularPriceChart
+                ? activePlotPoints + postMarketPlotPoints
+                : postMarketPlotPoints
+        }
+        xDomain = Self.xDomain(for: activePlotPoints)
         yDomain = Self.yDomain(
             snapshot: snapshot,
             displayModes: displayModes,
@@ -137,14 +265,14 @@ struct StockChartPresentation {
 
     func selectedPoint(at date: Date?) -> StockChartPoint? {
         guard let date else { return nil }
-        return snapshot.points.min {
+        return allPricePlotPoints.map(\.point).min {
             abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
         }
     }
 
     func selectedPlotPoint(at date: Date?) -> StockChartPlotPoint? {
         guard let date else { return nil }
-        return plotPoints.min {
+        return allPricePlotPoints.min {
             abs($0.point.date.timeIntervalSince(date))
                 < abs($1.point.date.timeIntervalSince(date))
         }
@@ -159,7 +287,15 @@ struct StockChartPresentation {
     }
 
     func plotPoint(closestTo x: Double) -> StockChartPlotPoint? {
-        plotPoints.min { abs($0.x - x) < abs($1.x - x) }
+        allPricePlotPoints.min { abs($0.x - x) < abs($1.x - x) }
+    }
+
+    func isPreMarket(_ point: StockChartPoint) -> Bool {
+        hasPreMarketChart && preMarketPlotPoints.contains { $0.point.id == point.id }
+    }
+
+    func isPostMarket(_ point: StockChartPoint) -> Bool {
+        hasPostMarketChart && postMarketPlotPoints.contains { $0.point.id == point.id }
     }
 
     func technicalIndicator(at point: StockChartPoint) -> StockTechnicalIndicatorPoint? {
@@ -183,11 +319,12 @@ struct StockChartPresentation {
     }
 
     func xAxisValues(isExpanded: Bool) -> [Double] {
-        guard plotPoints.count > 1 else { return plotPoints.map(\.x) }
+        let axisPlotPoints = range == .intraday ? allPricePlotPoints : plotPoints
+        guard axisPlotPoints.count > 1 else { return axisPlotPoints.map(\.x) }
         if range == .fiveDays {
             let calendar = Self.calendar(for: stock.market)
             var retainedDays = Set<Date>()
-            return plotPoints.compactMap { plotPoint in
+            return axisPlotPoints.compactMap { plotPoint in
                 let day = calendar.startOfDay(for: plotPoint.point.date)
                 guard retainedDays.insert(day).inserted else { return nil }
                 return plotPoint.x
@@ -205,14 +342,31 @@ struct StockChartPresentation {
         case .fiveYears, .tenYears, .sinceInception:
             desiredCount = isExpanded ? 10 : 6
         }
-        let finalIndex = plotPoints.count - 1
+        let finalIndex = axisPlotPoints.count - 1
         let indices = Set((0..<desiredCount).map { position in
             Int(
                 (Double(position) * Double(finalIndex) / Double(desiredCount - 1))
                     .rounded()
             )
         })
-        return indices.sorted().map { plotPoints[$0].x }
+        return indices.sorted().map { axisPlotPoints[$0].x }
+    }
+
+    private var allPricePlotPoints: [StockChartPlotPoint] {
+        var points: [StockChartPlotPoint]
+        if hasPreMarketChart {
+            points = displayModes.contains(.line)
+                ? preMarketPlotPoints + plotPoints
+                : preMarketPlotPoints
+        } else if hasPostMarketChart && !displayModes.contains(.line) {
+            points = postMarketPlotPoints
+        } else {
+            points = plotPoints
+        }
+        if hasPostMarketChart && displayModes.contains(.line) {
+            points += postMarketPlotPoints
+        }
+        return points.sorted { $0.x < $1.x }
     }
 
     func chartDateText(_ date: Date) -> String {
@@ -245,6 +399,10 @@ struct StockChartPresentation {
         switch mode {
         case .line:
             return true
+        case .preMarket:
+            return !snapshot.preMarketPoints.isEmpty
+        case .postMarket:
+            return !snapshot.postMarketPoints.isEmpty
         case .candlestick:
             return snapshot.supportsCandlesticks
         case .movingAverage:
@@ -438,7 +596,11 @@ struct StockChartPresentation {
             return StockTransactionMarker(
                 id: transaction.id,
                 date: markerPoint.date,
-                plotX: xValue(for: markerPoint, index: markerIndex, range: range),
+                plotX: xValue(
+                    for: markerPoint,
+                    index: markerIndex + (range == .intraday ? snapshot.preMarketPoints.count : 0),
+                    range: range
+                ),
                 plotPrice: markerPoint.close,
                 type: transaction.type,
                 quantity: transaction.quantity,
@@ -476,11 +638,12 @@ struct StockChartPresentation {
     private static func xDomain(
         for plotPoints: [StockChartPlotPoint]
     ) -> ClosedRange<Double> {
-        guard let first = plotPoints.first?.x, let last = plotPoints.last?.x else {
+        guard let minimum = plotPoints.map(\.x).min(),
+              let maximum = plotPoints.map(\.x).max() else {
             return 0...1
         }
-        guard first != last else { return (first - 1)...(last + 1) }
-        return min(first, last)...max(first, last)
+        guard minimum != maximum else { return (minimum - 1)...(maximum + 1) }
+        return minimum...maximum
     }
 
     private static func yDomain(
@@ -490,7 +653,11 @@ struct StockChartPresentation {
     ) -> ClosedRange<Double> {
         if displayModes.contains(.rsi) { return 0...100 }
         if displayModes.contains(.volume) {
-            let maximum = snapshot.points.compactMap(\.volume).max() ?? 0
+            var volumePoints = snapshot.points
+            if displayModes.contains(.postMarket) { volumePoints += snapshot.postMarketPoints }
+            let maximum = volumePoints
+                .compactMap(\.volume)
+                .max() ?? 0
             return 0...max(maximum * 1.08, 1)
         }
         if displayModes.contains(.macd) {
@@ -526,6 +693,12 @@ struct StockChartPresentation {
                     point.indicator.bollingerLower
                 ].compactMap { $0 }
             }
+        }
+        if displayModes.contains(.preMarket) {
+            values += snapshot.preMarketPoints.map(\.close)
+        }
+        if displayModes.contains(.postMarket) {
+            values += snapshot.postMarketPoints.map(\.close)
         }
         return paddedDomain(values)
     }

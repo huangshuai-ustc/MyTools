@@ -50,7 +50,7 @@ struct YahooStockChartProvider: StockChartProvider {
         let path = "/v8/finance/chart/\(identifier(symbol, market: stock.market))"
         var queryItems = [
             URLQueryItem(name: "interval", value: range.yahooInterval),
-            URLQueryItem(name: "includePrePost", value: "false"),
+            URLQueryItem(name: "includePrePost", value: "true"),
             URLQueryItem(name: "events", value: "div,splits")
         ]
         if range == .sinceInception {
@@ -102,18 +102,31 @@ struct YahooStockChartProvider: StockChartProvider {
                 volume: value(in: values.volume, at: index)
             )
         }
+        let rawPreMarketPoints = stock.market == .unitedStates && range == .intraday
+            ? StockChartSeriesProcessor.preMarketUnitedStatesSessionPoints(parsedPoints)
+                .sorted { $0.date < $1.date }
+            : []
+        let rawPostMarketPoints = stock.market == .unitedStates && range == .intraday
+            ? StockChartSeriesProcessor.postMarketSessionPoints(parsedPoints, market: .unitedStates)
+                .sorted { $0.date < $1.date }
+            : []
+        let regularPoints = stock.market == .unitedStates
+            && (range == .intraday || range == .fiveDays)
+            ? StockChartSeriesProcessor.regularUnitedStatesSessionPoints(parsedPoints)
+            : parsedPoints
+        guard !regularPoints.isEmpty else { throw StockChartError.noData }
         let points: [StockChartPoint]
         let fetchedIndicatorPoints: [StockChartPoint]?
         if range == .intraday || range == .fiveDays {
             let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
-                parsedPoints,
+                regularPoints,
                 range: range,
                 market: stock.market
             )
             points = prepared.visible
             fetchedIndicatorPoints = prepared.indicators
         } else {
-            points = parsedPoints
+            points = regularPoints
             fetchedIndicatorPoints = nil
         }
         guard StockChartSeriesProcessor.hasRequiredCoverage(
@@ -123,6 +136,32 @@ struct YahooStockChartProvider: StockChartProvider {
         ), let latest = points.last else {
             throw StockChartError.noData
         }
+        let preMarketPoints: [StockChartPoint]
+        if range == .intraday,
+           let latestPreMarketDate = rawPreMarketPoints.last?.date {
+            let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+            let latestRegularDay = calendar.startOfDay(for: latest.date)
+            let latestPreMarketDay = calendar.startOfDay(for: latestPreMarketDate)
+            let targetDay = max(latestRegularDay, latestPreMarketDay)
+            preMarketPoints = rawPreMarketPoints.filter {
+                calendar.isDate($0.date, inSameDayAs: targetDay)
+            }
+        } else {
+            preMarketPoints = []
+        }
+        let postMarketPoints: [StockChartPoint]
+        if range == .intraday,
+           let latestPostMarketDate = rawPostMarketPoints.last?.date {
+            let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+            let latestRegularDay = calendar.startOfDay(for: latest.date)
+            let latestPostMarketDay = calendar.startOfDay(for: latestPostMarketDate)
+            let targetDay = max(latestRegularDay, latestPostMarketDay)
+            postMarketPoints = rawPostMarketPoints.filter {
+                calendar.isDate($0.date, inSameDayAs: targetDay)
+            }
+        } else {
+            postMarketPoints = []
+        }
 
         return StockChartSnapshot(
             symbol: result.meta.symbol ?? symbol,
@@ -130,6 +169,8 @@ struct YahooStockChartProvider: StockChartProvider {
             currencyCode: result.meta.currency ?? stock.market.currencyCode,
             previousClose: result.meta.chartPreviousClose ?? result.meta.previousClose,
             points: points,
+            preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
             indicatorPoints: fetchedIndicatorPoints,
             quoteUpdatedAt: latest.date,
             fetchedAt: Date(),

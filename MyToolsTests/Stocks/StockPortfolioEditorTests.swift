@@ -130,6 +130,27 @@ struct StockPortfolioEditorTests {
         #expect(StockValueFormatter.money(Decimal(string: "123456.789")!, currencyCode: "CNY") == "¥123,456.79")
     }
 
+    @Test func costAllocationUsesRemainingHoldingCostAndCurrencyConversion() throws {
+        var aShare = StockHolding(market: .aShare, symbol: "600000")
+        aShare.transactions = [Self.transaction(type: .buy, day: 1, quantity: 1)]
+
+        var unitedStates = StockHolding(market: .unitedStates, symbol: "VOO")
+        var foreignBuy = Self.transaction(type: .buy, day: 1, quantity: 2)
+        foreignBuy.unitPrice = 50
+        unitedStates.transactions = [foreignBuy]
+
+        let allocation = StockCostAllocationSnapshot(
+            stocks: [aShare, unitedStates],
+            costMultipliers: [.aShare: 1, .unitedStates: 7]
+        )
+
+        #expect(allocation.isComplete)
+        let aShareAllocation = try #require(allocation.holdingShare(for: aShare.id))
+        let unitedStatesAllocation = try #require(allocation.holdingShare(for: unitedStates.id))
+        #expect(aShareAllocation == Decimal(1) / Decimal(8))
+        #expect(unitedStatesAllocation == Decimal(7) / Decimal(8))
+    }
+
     private static func transaction(
         type: StockTransactionType,
         day: Int,

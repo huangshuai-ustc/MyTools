@@ -37,6 +37,7 @@ enum StockChartSeriesProcessor {
         from storedPoints: [StockChartPoint],
         for range: StockChartRange,
         market: StockMarket,
+        inceptionDate: Date? = nil,
         at now: Date = Date()
     ) -> [StockChartPoint] {
         let sortedPoints = pointsThroughLatestTradingDay(
@@ -55,31 +56,67 @@ enum StockChartSeriesProcessor {
         case .oneMonth:
             return points(
                 sortedPoints,
-                since: calendar.date(byAdding: .month, value: -1, to: latest.date)
+                since: clampedStartDate(
+                    calendar.date(byAdding: .month, value: -1, to: latest.date),
+                    to: inceptionDate
+                )
             )
         case .threeMonths:
             return points(
                 sortedPoints,
-                since: calendar.date(byAdding: .month, value: -3, to: latest.date)
+                since: clampedStartDate(
+                    calendar.date(byAdding: .month, value: -3, to: latest.date),
+                    to: inceptionDate
+                )
             )
         case .oneYear:
             return points(
                 sortedPoints,
-                since: calendar.date(byAdding: .year, value: -1, to: latest.date)
+                since: clampedStartDate(
+                    calendar.date(byAdding: .year, value: -1, to: latest.date),
+                    to: inceptionDate
+                )
             )
         case .fiveYears:
             return points(
                 sortedPoints,
-                since: calendar.date(byAdding: .year, value: -5, to: latest.date)
+                since: clampedStartDate(
+                    calendar.date(byAdding: .year, value: -5, to: latest.date),
+                    to: inceptionDate
+                )
             )
         case .tenYears:
             return points(
                 sortedPoints,
-                since: calendar.date(byAdding: .year, value: -10, to: latest.date)
+                since: clampedStartDate(
+                    calendar.date(byAdding: .year, value: -10, to: latest.date),
+                    to: inceptionDate
+                )
             )
         case .sinceInception:
-            return sortedPoints
+            return points(sortedPoints, since: inceptionDate)
         }
+    }
+
+    /// Returns the earliest reliable history boundary available in the store.
+    /// The monthly series is requested as the inception range, while weekly
+    /// history may contain stale predecessor/ticker data and is therefore not
+    /// used to infer a listing date.
+    static func inceptionDate(
+        in series: [String: [StockChartPoint]]
+    ) -> Date? {
+        let preferredKinds: [StockChartSeriesKind] = [
+            .monthly,
+            .daily,
+            .fiveDayMinute,
+            .intraday
+        ]
+        for kind in preferredKinds {
+            if let firstDate = series[kind.rawValue]?.map(\.date).min() {
+                return firstDate
+            }
+        }
+        return nil
     }
 
     static func indicatorPoints(
@@ -130,7 +167,10 @@ enum StockChartSeriesProcessor {
 
         let visible: [StockChartPoint]
         if range == .intraday {
-            visible = pointsOnLatestTradingDay(completeSeries, market: market, at: now)
+            visible = regularSessionPoints(
+                pointsOnLatestTradingDay(completeSeries, market: market, at: now),
+                market: market
+            )
         } else {
             visible = pointsOnLatestTradingDays(
                 completeSeries,
@@ -178,6 +218,8 @@ enum StockChartSeriesProcessor {
             currencyCode: snapshot.currencyCode,
             previousClose: snapshot.previousClose,
             points: visible,
+            preMarketPoints: snapshot.preMarketPoints,
+            postMarketPoints: snapshot.postMarketPoints,
             indicatorPoints: indicatorPoints,
             quoteUpdatedAt: latest.date,
             fetchedAt: snapshot.fetchedAt,
@@ -212,6 +254,118 @@ enum StockChartSeriesProcessor {
             guard let hour = components.hour, let minute = components.minute else { return false }
             let localMinutes = hour * 60 + minute
             return localMinutes >= 570 && localMinutes <= 960
+        }
+    }
+
+    static func regularSessionPoints(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else {
+                return false
+            }
+            let localMinutes = hour * 60 + minute
+            switch market {
+            case .aShare:
+                return (570...690).contains(localMinutes)
+                    || (780...900).contains(localMinutes)
+            case .hongKong:
+                return (570...720).contains(localMinutes)
+                    || (780...960).contains(localMinutes)
+            case .unitedStates:
+                return (570...960).contains(localMinutes)
+            }
+        }
+    }
+
+    /// Aggregates the latest completed/current regular session for the "当期数据" panel.
+    /// Minute chart points are individual bars, so using the last bar directly would
+    /// incorrectly show that bar's open/high/low and often a zero volume.
+    static func currentSessionSummary(
+        from points: [StockChartPoint],
+        market: StockMarket,
+        at now: Date = Date()
+    ) -> StockChartSessionSummary? {
+        let regularPoints = regularSessionPoints(points, market: market)
+        // Daily/weekly providers timestamp bars at the calendar boundary, so
+        // they do not pass the intraday session filter. Keep those bars usable
+        // when the user switches the watch view away from a minute range.
+        let sessionCandidates = regularPoints.isEmpty ? points : regularPoints
+        let sessionPoints = pointsOnLatestTradingDay(
+            sessionCandidates,
+            market: market,
+            at: now
+        ).sorted { $0.date < $1.date }
+        guard let first = sessionPoints.first, let last = sessionPoints.last else {
+            return nil
+        }
+        let volumes = sessionPoints.compactMap(\.volume)
+        return StockChartSessionSummary(
+            open: first.open,
+            high: sessionPoints.map(\.high).max() ?? first.high,
+            low: sessionPoints.map(\.low).min() ?? first.low,
+            close: last.close,
+            volume: volumes.isEmpty ? nil : volumes.reduce(0, +),
+            date: last.date
+        )
+    }
+
+    static func preMarketSessionPoints(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else {
+                return false
+            }
+            let localMinutes = hour * 60 + minute
+            switch market {
+            case .aShare:
+                return (555..<570).contains(localMinutes)
+            case .hongKong:
+                return false
+            case .unitedStates:
+                return (240..<570).contains(localMinutes)
+            }
+        }
+    }
+
+    static func preMarketUnitedStatesSessionPoints(
+        _ points: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(.unitedStates)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else { return false }
+            let localMinutes = hour * 60 + minute
+            return localMinutes >= 240 && localMinutes < 570
+        }
+    }
+
+    static func postMarketSessionPoints(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else {
+                return false
+            }
+            let localMinutes = hour * 60 + minute
+            switch market {
+            case .aShare:
+                return (900...903).contains(localMinutes) && localMinutes > 900
+            case .hongKong:
+                return false
+            case .unitedStates:
+                return (960...1200).contains(localMinutes) && localMinutes > 960
+            }
         }
     }
 
@@ -426,6 +580,12 @@ enum StockChartSeriesProcessor {
     ) -> [StockChartPoint] {
         guard let startDate else { return points }
         return points.filter { $0.date >= startDate }
+    }
+
+    private static func clampedStartDate(_ startDate: Date?, to boundary: Date?) -> Date? {
+        guard let boundary else { return startDate }
+        guard let startDate else { return boundary }
+        return max(startDate, boundary)
     }
 
     private static func seriesBucket(

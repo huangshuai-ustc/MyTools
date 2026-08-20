@@ -1,6 +1,13 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+enum StockMarketSession: String, Sendable {
+    case preMarket
+    case regular
+    case postMarket
+    case closed
+}
+
 enum StockMarketTradingCalendar {
     private static let additionalAShareClosures: [Int: Set<Int>] = [
         2025: [602, 1008],
@@ -28,6 +35,61 @@ enum StockMarketTradingCalendar {
                 date,
                 timeZone: "America/New_York",
                 sessions: [(570, 960)],
+                holiday: isUnitedStatesHoliday
+            )
+        }
+    }
+
+    /// Whether a market is currently publishing an active session, including
+    /// pre-market/auction data where the provider supports it.
+    static func isSessionActive(_ market: StockMarket, at date: Date = Date()) -> Bool {
+        session(for: market, at: date) != .closed
+    }
+
+    static func session(for market: StockMarket, at date: Date = Date()) -> StockMarketSession {
+        if isOpen(market, at: date) { return .regular }
+        if isPreMarketOpen(market, at: date) { return .preMarket }
+        if isPostMarketOpen(market, at: date) { return .postMarket }
+        return .closed
+    }
+
+    static func isPreMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
+        switch market {
+        case .aShare:
+            return isOpen(
+                date,
+                timeZone: "Asia/Shanghai",
+                sessions: [(555, 570)],
+                holiday: isAShareHoliday
+            )
+        case .hongKong:
+            return false
+        case .unitedStates:
+            return isOpen(
+                date,
+                timeZone: "America/New_York",
+                sessions: [(240, 570)],
+                holiday: isUnitedStatesHoliday
+            )
+        }
+    }
+
+    static func isPostMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
+        switch market {
+        case .aShare:
+            return isOpen(
+                date,
+                timeZone: "Asia/Shanghai",
+                sessions: [(900, 903)],
+                holiday: isAShareHoliday
+            )
+        case .hongKong:
+            return false
+        case .unitedStates:
+            return isOpen(
+                date,
+                timeZone: "America/New_York",
+                sessions: [(960, 1200)],
                 holiday: isUnitedStatesHoliday
             )
         }

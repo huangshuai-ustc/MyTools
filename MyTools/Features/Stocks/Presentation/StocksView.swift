@@ -249,8 +249,29 @@ struct StocksView: View {
         return StockAllocationSnapshot(stocks: stocks, marketValueMultipliers: multipliers)
     }
 
+    private var costAllocationSnapshot: StockCostAllocationSnapshot {
+        let multipliers: [StockMarket: Decimal]
+        if let market = marketFilter.market {
+            multipliers = [market: 1]
+        } else {
+            var renminbiMultipliers: [StockMarket: Decimal] = [.aShare: 1]
+            if let rate = exchangeRateStore.renminbiBuyingRates[.hkd] {
+                renminbiMultipliers[.hongKong] = rate
+            }
+            if let rate = exchangeRateStore.renminbiBuyingRates[.usd] {
+                renminbiMultipliers[.unitedStates] = rate
+            }
+            multipliers = renminbiMultipliers
+        }
+        return StockCostAllocationSnapshot(
+            stocks: stocksInSelectedMarket,
+            costMultipliers: multipliers
+        )
+    }
+
     var body: some View {
         let allocations = allocationSnapshot
+        let costAllocations = costAllocationSnapshot
 
         return List {
             Section {
@@ -287,12 +308,12 @@ struct StocksView: View {
                 }
             } else if !displayedStocks.isEmpty {
                 Section("当前持仓（\(displayedStocks.count)）") {
-                    stockLinks(displayedStocks)
+                    stockLinks(displayedStocks, costAllocation: costAllocations)
                 }
             }
             if !noPositionStocks.isEmpty {
                 Section("无持仓或仅看盘（\(noPositionStocks.count)）") {
-                    stockLinks(noPositionStocks)
+                    stockLinks(noPositionStocks, costAllocation: costAllocations)
                 }
             }
 
@@ -396,11 +417,17 @@ struct StocksView: View {
         }
     }
 
-    private func stockLink(_ stock: StockHolding) -> some View {
+    private func stockLink(
+        _ stock: StockHolding,
+        costAllocation: StockCostAllocationSnapshot
+    ) -> some View {
         NavigationLink {
             StockDetailView(stockID: stock.id)
         } label: {
-            StockRow(stock: stock)
+            StockRow(
+                stock: stock,
+                costShare: costAllocation.holdingShare(for: stock.id)
+            )
         }
         .appListRowStyle()
         .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
@@ -417,9 +444,12 @@ struct StocksView: View {
     }
 
     @ViewBuilder
-    private func stockLinks(_ stocks: [StockHolding]) -> some View {
+    private func stockLinks(
+        _ stocks: [StockHolding],
+        costAllocation: StockCostAllocationSnapshot
+    ) -> some View {
         ForEach(stocks) { stock in
-            stockLink(stock)
+            stockLink(stock, costAllocation: costAllocation)
         }
     }
 
@@ -722,6 +752,7 @@ private struct StockSummaryMetricsHeader: View {
 
 private struct StockRow: View {
     let stock: StockHolding
+    let costShare: Decimal?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
@@ -739,13 +770,28 @@ private struct StockRow: View {
             Grid(horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
                     metric("持仓", value: holdingQuantityText)
-                    metric("成本", value: holdingCostText)
-                    metric("涨跌", value: changePercentText, color: changePercentColor)
+                    metric("成本", value: holdingCostText, leadingInset: 8)
+                    metric(
+                        "涨跌",
+                        value: changePercentText,
+                        color: changePercentColor,
+                        leadingInset: 8
+                    )
                 }
                 GridRow {
                     metric("市值", value: marketValueText)
-                    metric("盈亏", value: profitLossText, color: profitLossColor)
-                    metric("盈率", value: profitRateText, color: profitRateColor)
+                    metric(
+                        "盈亏",
+                        value: profitLossText,
+                        color: profitLossColor,
+                        leadingInset: 8
+                    )
+                    metric(
+                        "盈率",
+                        value: profitRateText,
+                        color: profitRateColor,
+                        leadingInset: 8
+                    )
                 }
             }
             .font(.caption.monospacedDigit())
@@ -753,7 +799,12 @@ private struct StockRow: View {
     }
 
     @ViewBuilder
-    private func metric(_ label: String, value: String, color: Color = .primary) -> some View {
+    private func metric(
+        _ label: String,
+        value: String,
+        color: Color = .primary,
+        leadingInset: CGFloat = 0
+    ) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .foregroundStyle(.secondary)
@@ -762,6 +813,7 @@ private struct StockRow: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
         }
+        .padding(.leading, leadingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -784,7 +836,9 @@ private struct StockRow: View {
     }
 
     private var holdingQuantityText: String {
-        return "\(StockValueFormatter.integerQuantity(stock.currentShares)) 股"
+        let quantity = "\(StockValueFormatter.integerQuantity(stock.currentShares)) 股"
+        guard let costShare else { return quantity }
+        return "\(quantity) (\(StockValueFormatter.allocationPercent(costShare)))"
     }
 
     private var profitLossText: String {

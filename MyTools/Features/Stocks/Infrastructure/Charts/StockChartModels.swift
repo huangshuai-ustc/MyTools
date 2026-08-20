@@ -93,17 +93,86 @@ struct StockChartPoint: Identifiable, Codable, Equatable, Sendable {
     var id: Date { date }
 }
 
+struct StockChartSessionSummary: Equatable, Sendable {
+    let open: Double
+    let high: Double
+    let low: Double
+    let close: Double
+    let volume: Double?
+    let date: Date
+}
+
 struct StockChartSnapshot: Codable, Equatable, Sendable {
     let symbol: String
     let name: String
     let currencyCode: String
     let previousClose: Double?
     let points: [StockChartPoint]
+    let preMarketPoints: [StockChartPoint]
+    let postMarketPoints: [StockChartPoint]
     let indicatorPoints: [StockChartPoint]?
     let quoteUpdatedAt: Date
     let fetchedAt: Date
     let source: String
     let supportsCandlesticks: Bool
+
+    init(
+        symbol: String,
+        name: String,
+        currencyCode: String,
+        previousClose: Double?,
+        points: [StockChartPoint],
+        preMarketPoints: [StockChartPoint] = [],
+        postMarketPoints: [StockChartPoint] = [],
+        indicatorPoints: [StockChartPoint]?,
+        quoteUpdatedAt: Date,
+        fetchedAt: Date,
+        source: String,
+        supportsCandlesticks: Bool
+    ) {
+        self.symbol = symbol
+        self.name = name
+        self.currencyCode = currencyCode
+        self.previousClose = previousClose
+        self.points = points
+        self.preMarketPoints = preMarketPoints
+        self.postMarketPoints = postMarketPoints
+        self.indicatorPoints = indicatorPoints
+        self.quoteUpdatedAt = quoteUpdatedAt
+        self.fetchedAt = fetchedAt
+        self.source = source
+        self.supportsCandlesticks = supportsCandlesticks
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case symbol, name, currencyCode, previousClose, points, preMarketPoints, postMarketPoints
+        case indicatorPoints, quoteUpdatedAt, fetchedAt, source, supportsCandlesticks
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        name = try container.decode(String.self, forKey: .name)
+        currencyCode = try container.decode(String.self, forKey: .currencyCode)
+        previousClose = try container.decodeIfPresent(Double.self, forKey: .previousClose)
+        points = try container.decode([StockChartPoint].self, forKey: .points)
+        preMarketPoints = try container.decodeIfPresent(
+            [StockChartPoint].self,
+            forKey: .preMarketPoints
+        ) ?? []
+        postMarketPoints = try container.decodeIfPresent(
+            [StockChartPoint].self,
+            forKey: .postMarketPoints
+        ) ?? []
+        indicatorPoints = try container.decodeIfPresent(
+            [StockChartPoint].self,
+            forKey: .indicatorPoints
+        )
+        quoteUpdatedAt = try container.decode(Date.self, forKey: .quoteUpdatedAt)
+        fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
+        source = try container.decode(String.self, forKey: .source)
+        supportsCandlesticks = try container.decode(Bool.self, forKey: .supportsCandlesticks)
+    }
 
     var latestPoint: StockChartPoint? { points.last }
 }

@@ -17,6 +17,8 @@ struct StockTechnicalIndicatorsTests {
         #expect(indicators[59].movingAverage60 == 30.5)
         #expect(indicators[13].rsi14 == nil)
         #expect(indicators[14].rsi14 == 100)
+        #expect(indicators[29].rsi30 == nil)
+        #expect(indicators[30].rsi30 == 100)
         #expect(try #require(indicators.last).macdLine > 0)
     }
 

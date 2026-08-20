@@ -150,6 +150,117 @@ struct StockChartSeriesProcessorTests {
         #expect(visible.map(\.date) == Array(points.suffix(2)).map(\.date))
     }
 
+    @Test func aShareIntradaySeparatesCallAuctionFromRegularSession() {
+        let auction = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 20)
+        let open = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 30)
+        let close = StockChartFixtures.date(2026, 8, 3, hour: 15)
+        let points = [
+            StockChartFixtures.point(at: auction, close: 99),
+            StockChartFixtures.point(at: open, close: 100),
+            StockChartFixtures.point(at: close, close: 101)
+        ]
+
+        #expect(
+            StockChartSeriesProcessor.preMarketSessionPoints(points, market: .aShare)
+                .map(\.date) == [auction]
+        )
+        #expect(
+            StockChartSeriesProcessor.regularSessionPoints(points, market: .aShare)
+                .map(\.date) == [open, close]
+        )
+    }
+
+    @Test func currentSessionSummaryAggregatesMinuteOHLCAndVolume() {
+        let points = [
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026,
+                    8,
+                    7,
+                    hour: 9,
+                    minute: 30,
+                    timeZone: "America/New_York"
+                ),
+                open: 96,
+                high: 97,
+                low: 95,
+                close: 96.5,
+                volume: 100
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026,
+                    8,
+                    7,
+                    hour: 10,
+                    timeZone: "America/New_York"
+                ),
+                open: 96.5,
+                high: 98,
+                low: 89,
+                close: 90,
+                volume: 250
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026,
+                    8,
+                    7,
+                    hour: 16,
+                    timeZone: "America/New_York"
+                ),
+                open: 90,
+                high: 91,
+                low: 90,
+                close: 90.8,
+                volume: 50
+            )
+        ]
+
+        let summary = StockChartSeriesProcessor.currentSessionSummary(
+            from: points,
+            market: .unitedStates,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 18, timeZone: "America/New_York")
+        )
+
+        #expect(summary?.open == 96)
+        #expect(summary?.high == 98)
+        #expect(summary?.low == 89)
+        #expect(summary?.close == 90.8)
+        #expect(summary?.volume == 400)
+    }
+
+    @Test func unitedStatesPreMarketIsAnActiveRefreshSession() {
+        let preMarket = StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 6,
+            timeZone: "America/New_York"
+        )
+        #expect(!StockMarketTradingCalendar.isOpen(.unitedStates, at: preMarket))
+        #expect(StockMarketTradingCalendar.isPreMarketOpen(.unitedStates, at: preMarket))
+        #expect(StockMarketTradingCalendar.isSessionActive(.unitedStates, at: preMarket))
+    }
+
+    @Test func marketSessionsAreMutuallyExclusiveAcrossTheTradingDay() {
+        let aSharePost = StockChartFixtures.date(2026, 8, 7, hour: 15, minute: 1)
+        #expect(StockMarketTradingCalendar.session(for: .aShare, at: aSharePost) == .postMarket)
+
+        let unitedStatesPost = StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 17,
+            timeZone: "America/New_York"
+        )
+        #expect(
+            StockMarketTradingCalendar.session(for: .unitedStates, at: unitedStatesPost)
+                == .postMarket
+        )
+        #expect(!StockMarketTradingCalendar.isOpen(.unitedStates, at: unitedStatesPost))
+    }
+
     @Test func fiveDaysKeepsFiveObservedTradingDaysWithoutCalendarGaps() {
         let dates = [
             (2026, 7, 27), (2026, 7, 28), (2026, 7, 29), (2026, 7, 30),

@@ -13,6 +13,7 @@ struct StockTechnicalIndicatorPoint: Identifiable {
     let macdSignal: Double
     let macdHistogram: Double
     let rsi14: Double?
+    let rsi30: Double?
 
     var id: Date { date }
 }
@@ -28,6 +29,10 @@ enum StockTechnicalIndicators {
         var initialLossTotal = 0.0
         var averageGain: Double?
         var averageLoss: Double?
+        var averageGain30: Double?
+        var averageLoss30: Double?
+        var initialGainTotal30 = 0.0
+        var initialLossTotal30 = 0.0
 
         return points.indices.map { index in
             let close = points[index].close
@@ -54,6 +59,18 @@ enum StockTechnicalIndicators {
                           let previousAverageLoss = averageLoss {
                     averageGain = (previousAverageGain * 13 + gain) / 14
                     averageLoss = (previousAverageLoss * 13 + loss) / 14
+                }
+                if index <= 30 {
+                    initialGainTotal30 += gain
+                    initialLossTotal30 += loss
+                    if index == 30 {
+                        averageGain30 = initialGainTotal30 / 30
+                        averageLoss30 = initialLossTotal30 / 30
+                    }
+                } else if let previousAverageGain = averageGain30,
+                          let previousAverageLoss = averageLoss30 {
+                    averageGain30 = (previousAverageGain * 29 + gain) / 30
+                    averageLoss30 = (previousAverageLoss * 29 + loss) / 30
                 }
             }
 
@@ -89,6 +106,10 @@ enum StockTechnicalIndicators {
                 rsi14: relativeStrengthIndex(
                     averageGain: averageGain,
                     averageLoss: averageLoss
+                ),
+                rsi30: relativeStrengthIndex(
+                    averageGain: averageGain30,
+                    averageLoss: averageLoss30
                 )
             )
         }

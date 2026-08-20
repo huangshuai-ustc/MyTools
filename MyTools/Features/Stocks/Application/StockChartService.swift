@@ -74,7 +74,7 @@ actor StockChartService: StockChartServing {
         }
 
         do {
-            if !StockMarketTradingCalendar.isOpen(stock.market, at: now) {
+            if !StockMarketTradingCalendar.isSessionActive(stock.market, at: now) {
                 lastRefreshSessionEnd[cacheKey] = StockMarketTradingCalendar
                     .latestCompletedFinalSessionEnd(for: stock.market, at: now)
             }
@@ -88,8 +88,15 @@ actor StockChartService: StockChartServing {
             ) else {
                 throw StockChartError.noData
             }
+            let scopedSnapshot = snapshotByUpdatingCurrentSession(
+                StockMarketTradingCalendar.session(for: stock.market, at: now),
+                remote: snapshot,
+                cached: cached,
+                market: stock.market,
+                at: now
+            )
             let updatedStore = diskStore.merging(
-                snapshot,
+                scopedSnapshot,
                 range: range,
                 for: stockKey,
                 into: stored
@@ -97,7 +104,7 @@ actor StockChartService: StockChartServing {
             if generation == cacheGeneration {
                 diskStore.save(updatedStore, for: stockKey)
             }
-            return diskStore.renderedSnapshot(from: updatedStore, range: range) ?? snapshot
+            return diskStore.renderedSnapshot(from: updatedStore, range: range) ?? scopedSnapshot
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -116,7 +123,15 @@ actor StockChartService: StockChartServing {
         for request: StockChartRequest
     ) async throws -> StockChartSnapshot {
         do {
-            return try await providers.tencent.fetchChart(for: request)
+            let tencentSnapshot = try await providers.tencent.fetchChart(for: request)
+            if request.stock.market == .unitedStates,
+               request.range == .intraday,
+               (tencentSnapshot.preMarketPoints.isEmpty
+                    || tencentSnapshot.postMarketPoints.isEmpty),
+               let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
+                return yahooSnapshot
+            }
+            return tencentSnapshot
         } catch {
             guard !Task.isCancelled else { throw CancellationError() }
 
@@ -155,8 +170,22 @@ actor StockChartService: StockChartServing {
         now: Date
     ) -> Bool {
         guard !forceRefresh else { return false }
-        if StockMarketTradingCalendar.isOpen(key.market, at: now) {
-            return now.timeIntervalSince(snapshot.fetchedAt) < key.range.cacheLifetime
+        switch StockMarketTradingCalendar.session(for: key.market, at: now) {
+        case .preMarket:
+            guard let latest = snapshot.preMarketPoints.last else { return false }
+            return now.timeIntervalSince(latest.date) < key.range.cacheLifetime
+        case .regular:
+            let calendar = StockChartSeriesProcessor.marketCalendar(key.market)
+            let hasTodayRegularPoint = snapshot.points.contains {
+                calendar.isDate($0.date, inSameDayAs: now)
+            }
+            return hasTodayRegularPoint
+                && now.timeIntervalSince(snapshot.fetchedAt) < key.range.cacheLifetime
+        case .postMarket:
+            guard let latest = snapshot.postMarketPoints.last else { return false }
+            return now.timeIntervalSince(latest.date) < key.range.cacheLifetime
+        case .closed:
+            break
         }
         let sessionEnded = StockMarketTradingCalendar.sessionEnded(
             for: key.market,
@@ -169,6 +198,79 @@ actor StockChartService: StockChartServing {
             return true
         }
         return lastRefreshSessionEnd[key] == sessionEnd
+    }
+
+    private func snapshotByUpdatingCurrentSession(
+        _ session: StockMarketSession,
+        remote: StockChartSnapshot,
+        cached: StockChartSnapshot?,
+        market: StockMarket,
+        at now: Date
+    ) -> StockChartSnapshot {
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let currentDayPoints: ([StockChartPoint]) -> [StockChartPoint] = { points in
+            points.filter { calendar.isDate($0.date, inSameDayAs: now) }
+        }
+        let hasCached = cached != nil
+        let regularPoints: [StockChartPoint]
+        let preMarketPoints: [StockChartPoint]
+        let postMarketPoints: [StockChartPoint]
+        let indicatorPoints: [StockChartPoint]?
+
+        switch session {
+        case .preMarket:
+            regularPoints = cached?.points ?? remote.points
+            indicatorPoints = cached?.indicatorPoints ?? remote.indicatorPoints
+            preMarketPoints = currentDayPoints(remote.preMarketPoints)
+            postMarketPoints = hasCached
+                ? currentDayPoints(cached?.postMarketPoints ?? [])
+                : []
+        case .regular:
+            regularPoints = remote.points
+            indicatorPoints = remote.indicatorPoints
+            preMarketPoints = hasCached
+                ? currentDayPoints(cached?.preMarketPoints ?? [])
+                : currentDayPoints(remote.preMarketPoints)
+            postMarketPoints = hasCached
+                ? currentDayPoints(cached?.postMarketPoints ?? [])
+                : []
+        case .postMarket:
+            regularPoints = cached?.points ?? remote.points
+            indicatorPoints = cached?.indicatorPoints ?? remote.indicatorPoints
+            preMarketPoints = currentDayPoints(
+                cached?.preMarketPoints ?? remote.preMarketPoints
+            )
+            postMarketPoints = currentDayPoints(remote.postMarketPoints)
+        case .closed:
+            regularPoints = remote.points
+            indicatorPoints = remote.indicatorPoints
+            preMarketPoints = remote.preMarketPoints
+            postMarketPoints = remote.postMarketPoints
+        }
+
+        let updatedAt: Date
+        switch session {
+        case .preMarket:
+            updatedAt = preMarketPoints.last?.date ?? remote.quoteUpdatedAt
+        case .postMarket:
+            updatedAt = postMarketPoints.last?.date ?? remote.quoteUpdatedAt
+        case .regular, .closed:
+            updatedAt = remote.quoteUpdatedAt
+        }
+        return StockChartSnapshot(
+            symbol: remote.symbol,
+            name: remote.name,
+            currencyCode: remote.currencyCode,
+            previousClose: remote.previousClose,
+            points: regularPoints,
+            preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
+            indicatorPoints: indicatorPoints,
+            quoteUpdatedAt: updatedAt,
+            fetchedAt: remote.fetchedAt,
+            source: remote.source,
+            supportsCandlesticks: remote.supportsCandlesticks
+        )
     }
 }
 
