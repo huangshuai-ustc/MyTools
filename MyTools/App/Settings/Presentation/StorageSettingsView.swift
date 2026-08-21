@@ -10,6 +10,8 @@ struct StorageDataView: View {
     @State private var showingCleanupConfirmation = false
     @State private var showingRedundantCleanupConfirmation = false
     @State private var deletionConfirmationModule: ToolModule?
+    @State private var cacheCleanupModule: ToolModule?
+    @State private var isClearingCache = false
     @State private var showingMessage = false
     @State private var message = ""
 
@@ -18,9 +20,9 @@ struct StorageDataView: View {
             if let scanResult {
                 Section {
                     LabeledContent {
-                        Text(formattedSize(scanResult.usage.totalBytes))
+                        Text(formattedSize(scanResult.usage.managedBytes))
                     } label: {
-                        Text("应用数据总计")
+                        Text("应用可管理数据")
                     }
                         .font(.headline)
                     storageRow("本地档案", bytes: scanResult.usage.localVaultBytes)
@@ -29,6 +31,18 @@ struct StorageDataView: View {
                         bytes: scanResult.usage.attachmentsBytes,
                         detail: "\(scanResult.usage.attachmentCount) 个文件"
                     )
+                    if scanResult.usage.cloudSyncStateBytes > 0 {
+                        storageRow("同步状态", bytes: scanResult.usage.cloudSyncStateBytes)
+                    }
+                    if scanResult.usage.localCacheBytes > 0 {
+                        storageRow("本地缓存", bytes: scanResult.usage.localCacheBytes)
+                    }
+                    if scanResult.usage.systemCloudKitCacheBytes > 0 {
+                        storageRow(
+                            "系统 CloudKit 缓存",
+                            bytes: scanResult.usage.systemCloudKitCacheBytes
+                        )
+                    }
                     storageRow("诊断日志", bytes: scanResult.usage.diagnosticsBytes)
                     if scanResult.usage.otherBytes > 0 {
                         storageRow("其他应用数据", bytes: scanResult.usage.otherBytes)
@@ -36,7 +50,7 @@ struct StorageDataView: View {
                 } header: {
                     Text("占用空间")
                 } footer: {
-                    Text("仅统计\(AppMetadata.appName)在本机保存的应用数据，不包括 iOS 系统缓存和临时空间。iCloud 用量是云端独立口径，可能包含待回收的历史记录或附件版本，清理后需要等待 Apple 服务回收。")
+                    Text("同步状态、行情/赛果缓存和诊断日志均只留在本机，已排除出系统 iCloud 设备备份，也不会写入 CloudKit。系统 CloudKit 缓存由系统管理，另计为系统占用，用于已同步记录和附件的本机访问，不能由 App 直接删除；它也不代表额外上传的业务数据。iCloud 云端用量是独立口径，可能暂时保留记录或附件版本。")
                 }
 
                 Section {
@@ -128,6 +142,33 @@ struct StorageDataView: View {
                     Text("冗余字段")
                 } footer: {
                     Text("只检查当前已编译且已开启的功能。关闭功能的数据和未编译功能的不透明数据不会被读取或修改。")
+                }
+
+                if !localCacheModules.isEmpty {
+                    Section {
+                        ForEach(localCacheModules) { module in
+                            HStack(spacing: 12) {
+                                Label(module.title, systemImage: module.systemImage)
+                                    .foregroundStyle(module.tint)
+                                Text(module.localCacheDescription)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 8)
+                                Button(role: .destructive) {
+                                    cacheCleanupModule = module
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("清理\(module.title)本地缓存")
+                                .disabled(!auth.isAdmin || isClearingCache)
+                            }
+                        }
+                    } header: {
+                        Text("本地缓存")
+                    } footer: {
+                        Text("只删除可重新下载的行情、汇率或赛果缓存，不会删除业务记录、附件、提醒或 iCloud 数据。")
+                    }
                 }
             } else if isScanning || !store.isInitialDataLoaded {
                 Section {
@@ -237,6 +278,16 @@ struct StorageDataView: View {
         } message: {
             Text("将从当前档案中删除 \(redundantDataReport?.affectedFieldCount ?? 0) 个不适用字段值。此操作无法撤销，已经导出的旧备份不会被修改。")
         }
+        .alert(item: $cacheCleanupModule) { module in
+            Alert(
+                title: Text("清理\(module.title)本地缓存？"),
+                message: Text("\(module.localCacheDescription)。清理后下次使用时会重新下载，业务数据和 iCloud 数据不会受到影响。"),
+                primaryButton: .destructive(Text("清理")) {
+                    clearLocalCache(for: module)
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        }
         .alert("存储与数据", isPresented: $showingMessage) {
             Button("确定", role: .cancel) {}
         } message: {
@@ -258,6 +309,10 @@ struct StorageDataView: View {
 
     private var orphanBytes: Int64 {
         unreferencedOrphans.reduce(Int64.zero) { $0 + $1.byteCount }
+    }
+
+    private var localCacheModules: [ToolModule] {
+        CompiledToolModules.ordered.filter(\.hasLocalCache)
     }
 
     private var unreferencedOrphans: [OrphanAttachmentInfo] {
@@ -353,6 +408,17 @@ struct StorageDataView: View {
         }
         report("已清理 \(cleanupReport.affectedFieldCount) 个不适用字段值。")
         scan()
+    }
+
+    private func clearLocalCache(for module: ToolModule) {
+        guard auth.isAdmin, !isClearingCache else { return }
+        isClearingCache = true
+        Task { @MainActor in
+            await store.clearLocalCache(for: module)
+            isClearingCache = false
+            report("已清理\(module.title)的本地缓存。")
+            scan()
+        }
     }
 
     private func report(_ text: String) {
@@ -468,11 +534,33 @@ private struct ModuleLocalDataDeletionConfirmationView: View {
 }
 
 private extension ToolModule {
+    var hasLocalCache: Bool {
+        switch self {
+        case .myStocks, .currencyExchange, .sportsLottery:
+            true
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+            false
+        }
+    }
+
+    var localCacheDescription: String {
+        switch self {
+        case .myStocks:
+            return "行情图、刷新状态和共享汇率缓存"
+        case .currencyExchange:
+            return "共享中国银行汇率牌价缓存"
+        case .sportsLottery:
+            return "体彩赛事赛果缓存"
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+            return "暂无可单独清理的模块缓存"
+        }
+    }
+
     var localDataDeletionDescription: String {
         switch self {
         case .personalFinance: return "银行账户、银行卡和账单附件"
-        case .myStocks: return "持仓、交易、提醒、刷新状态和图表缓存"
-        case .currencyExchange: return "换汇记录和汇率提醒"
+        case .myStocks: return "持仓、交易、提醒、刷新状态、图表和共享汇率缓存"
+        case .currencyExchange: return "换汇记录、汇率提醒和共享牌价缓存"
         case .healthRecords: return "健康档案、医疗机构资料和附件"
         case .foodMap: return "美食记录和照片"
         case .secrets: return "保密条目、字段模板和附件"

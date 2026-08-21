@@ -208,13 +208,21 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     func refreshQuotes(
         for market: StockMarket? = nil,
         forcedMarkets: Set<StockMarket> = [],
-        allowClosedMissingData: Bool = true
+        allowClosedMissingData: Bool = true,
+        forceRefresh: Bool = false
     ) async {
         guard isModuleVisible, !isRefreshingQuotes, !Task.isCancelled else { return }
+        let effectiveForcedMarkets: Set<StockMarket>
+        if forceRefresh {
+            effectiveForcedMarkets = market.map { Set([$0]) }
+                ?? Set(StockMarket.allCases)
+        } else {
+            effectiveForcedMarkets = forcedMarkets
+        }
         let requestedStocks = StockQuoteRefreshReducer.stocksToRefresh(
             from: stocks,
             market: market,
-            forcedMarkets: forcedMarkets,
+            forcedMarkets: effectiveForcedMarkets,
             allowClosedMissingData: allowClosedMissingData,
             at: Date()
         )
@@ -245,7 +253,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             )
         }
         if reduction.successCount > 0 {
-            if reduction.didChangePersistedQuote { didMutate() }
+            if reduction.didChangePersistedQuote { didMutateLocalOnly() }
             let refreshedAt = Date()
             for market in reduction.refreshedMarkets {
                 lastRefreshAtByMarket[market] = refreshedAt
@@ -317,6 +325,10 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
 
     private func didMutate() {
         mutationNotifier?.moduleStoreDidMutate()
+    }
+
+    private func didMutateLocalOnly() {
+        mutationNotifier?.moduleStoreDidMutateLocalOnly()
     }
 
     private static func loadRefreshDates(from defaults: UserDefaults) -> [StockMarket: Date] {

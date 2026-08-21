@@ -29,7 +29,11 @@ struct StockChartServiceTests {
             range: .intraday
         )
 
-        #expect(await context.recorder.calls() == ["tencent", "yahoo", "nasdaq"])
+        let calls = await context.recorder.calls()
+        // The successful Nasdaq response may trigger the normal minute
+        // indicator warm-up request. Assert the fallback order without tying
+        // this provider-order test to that independent enrichment pass.
+        #expect(Array(calls.prefix(3)) == ["tencent", "yahoo", "nasdaq"])
     }
 
     @Test func USFiveDaysSkipsNasdaqAndFallsBackToYahoo() async throws {
@@ -64,6 +68,40 @@ struct StockChartServiceTests {
         )
 
         #expect(await context.recorder.calls() == ["tencent", "nasdaq"])
+    }
+
+    @Test func USYearKUsesYahooCompleteDailyHistory() async throws {
+        let context = try makeContext(
+            market: .unitedStates,
+            range: .yearK,
+            yahooBehavior: nil,
+            nasdaqSucceeds: true
+        )
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        _ = try await context.service.fetchChart(
+            for: context.stock,
+            range: .yearK
+        )
+
+        #expect(await context.recorder.calls() == ["yahoo"])
+    }
+
+    @Test func USDayKUsesYahooCompleteDailyHistory() async throws {
+        let context = try makeContext(
+            market: .unitedStates,
+            range: .dayK,
+            yahooBehavior: nil,
+            nasdaqSucceeds: true
+        )
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        _ = try await context.service.fetchChart(
+            for: context.stock,
+            range: .dayK
+        )
+
+        #expect(await context.recorder.calls() == ["yahoo"])
     }
 
     @Test func allProviderFailuresBecomeServiceUnavailable() async throws {
@@ -144,10 +182,38 @@ struct StockChartServiceTests {
         let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
         let endDate = StockChartFixtures.date(2026, 8, 7)
         let points = (0..<90).compactMap { index -> StockChartPoint? in
-            guard let date = calendar.date(byAdding: .day, value: index - 89, to: endDate) else {
+            let baseDate: Date
+            if range == .intraday {
+                baseDate = calendar.date(
+                    byAdding: .day,
+                    value: index < 45 ? -1 : 0,
+                    to: endDate
+                ) ?? endDate
+            } else {
+                guard let historicalDate = calendar.date(
+                    byAdding: .day,
+                    value: index - 89,
+                    to: endDate
+                ) else {
+                    return nil
+                }
+                baseDate = historicalDate
+            }
+            guard let date = calendar.date(bySettingHour: 9, minute: 30, second: 0, of: baseDate) else {
                 return nil
             }
-            return StockChartFixtures.point(at: date, close: 100 + Double(index))
+            let pointDate: Date
+            if range == .intraday {
+                pointDate = calendar.date(
+                    bySettingHour: 9,
+                    minute: 30,
+                    second: index % 60,
+                    of: date.addingTimeInterval(Double(index / 60) * 3_600)
+                ) ?? date
+            } else {
+                pointDate = date
+            }
+            return StockChartFixtures.point(at: pointDate, close: 100 + Double(index))
         }
         return StockChartSnapshot(
             symbol: stock.symbol,
@@ -156,6 +222,7 @@ struct StockChartServiceTests {
             previousClose: 188,
             points: points,
             indicatorPoints: range == .intraday || range == .fiveDays ? points : nil,
+            dailyIndicatorPoints: range == .fiveDays ? points : nil,
             quoteUpdatedAt: points.last!.date,
             fetchedAt: endDate,
             source: "Fake",

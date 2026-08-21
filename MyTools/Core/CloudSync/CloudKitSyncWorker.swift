@@ -32,7 +32,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private let changeHandler: CloudSyncChangeHandler
     private let zoneID: CKRecordZone.ID
     private var document: CloudSyncStoredDocument
-    private var currentItems: [String: CloudSyncItem] = [:]
+    private var hasLoadedState = false
     // Treat feature data as inactive until the first local snapshot supplies the
     // compiled and syncable module set. This prevents startup fetches from
     // restoring attachments before the local data boundary is known.
@@ -72,15 +72,15 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             zoneName: Self.zoneName,
             ownerName: CKCurrentUserDefaultName
         )
-        var storedDocument = stateStore.load()
-        let upgradedState = storedDocument.prepareForCurrentReconciliationVersion()
-        document = storedDocument
-        if upgradedState {
-            try? stateStore.save(storedDocument)
-        }
+        // Loading and decoding the persisted sync state can involve tens of
+        // megabytes. It is deliberately deferred to `start()` so creating the
+        // worker from the main-actor coordinator never blocks the first screen.
+        document = CloudSyncStoredDocument()
     }
 
     func start() async {
+        await loadPersistedStateIfNeeded()
+        guard !Task.isCancelled else { return }
         guard !hasStarted else {
             await synchronize()
             return
@@ -130,6 +130,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             let mergedSnapshot = try await snapshotProvider()
             await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
+            _ = document.discardSystemFields(excluding: pendingRecordKeys())
+            saveDocument()
             guard !Task.isCancelled else { return }
             hasStarted = true
             await statusHandler(.synced(Date()))
@@ -150,7 +152,6 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private func reconcileReadySnapshot(_ snapshot: CloudSyncSnapshot) async {
         let previouslyActiveModules = activeModules
         activeModules = snapshot.participatingModules
-        currentItems = Dictionary(uniqueKeysWithValues: snapshot.items.map { ($0.key, $0) })
 
         let activatedModules = activeModules.subtracting(previouslyActiveModules)
         if !activatedModules.isEmpty {
@@ -174,7 +175,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         let now = Date()
         var changes: [CKSyncEngine.PendingRecordZoneChange] = []
-        let currentKeys = Set(currentItems.keys)
+        var changedKeys = Set<String>()
+        let currentKeys = Set(snapshot.items.map(\.key))
 
         for item in snapshot.items {
             if item.kind == .attachment,
@@ -199,6 +201,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 payload: item.payload,
                 systemFields: previous?.systemFields
             )
+            changedKeys.insert(item.key)
             changes.append(.saveRecord(recordID(forKey: item.key)))
         }
 
@@ -218,12 +221,19 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                     payload: nil,
                     systemFields: entry.systemFields
                 )
+                changedKeys.insert(key)
             }
             changes.append(.deleteRecord(recordID(forKey: key)))
         }
 
+        let didDiscardPayloads = discardRedundantPayloads(
+            matching: snapshot.items,
+            excluding: changedKeys.union(pendingRecordKeys())
+        )
         if !changes.isEmpty {
             syncEngine.state.add(pendingRecordZoneChanges: changes)
+        }
+        if !changes.isEmpty || didDiscardPayloads {
             saveDocument()
         }
     }
@@ -258,6 +268,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             let mergedSnapshot = try await snapshotProvider()
             await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
+            _ = document.discardSystemFields(excluding: pendingRecordKeys())
+            saveDocument()
             await statusHandler(.synced(Date()))
         } catch is OperationFailure {
             return
@@ -271,13 +283,29 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         hasStarted = false
         attachmentRestoreTask?.cancel()
         attachmentRestoreTask = nil
+        guard hasLoadedState else { return }
         await syncEngine.cancelOperations()
+    }
+
+    private func loadPersistedStateIfNeeded() async {
+        guard !hasLoadedState else { return }
+        let loaded = await Task.detached(priority: .utility) { [stateStore] in
+            var document = stateStore.load()
+            let upgradedState = document.prepareForCurrentReconciliationVersion()
+            return (document, upgradedState)
+        }.value
+        document = loaded.0
+        hasLoadedState = true
+        if loaded.1 {
+            saveDocument()
+        }
     }
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
         switch event {
         case .stateUpdate(let event):
             document.engineState = event.stateSerialization
+            _ = document.discardSystemFields(excluding: pendingRecordKeys())
             saveDocument()
 
         case .accountChange(let event):
@@ -386,8 +414,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             guard let payload = entry.payload else { return nil }
             record.encryptedValues[Field.payload] = payload as NSData
             if entry.kind == .attachment,
-               let assetURL = currentItems[recordID.recordName]?.assetURL,
-               FileManager.default.fileExists(atPath: assetURL.path) {
+               let attachment = try? CloudSyncCoding.decoder().decode(
+                    FileAttachment.self,
+                    from: payload
+               ) {
+                let assetURL = attachmentStore.url(for: attachment)
+                guard FileManager.default.fileExists(atPath: assetURL.path) else {
+                    return record
+                }
                 record[Field.asset] = CKAsset(fileURL: assetURL)
             }
         }
@@ -622,7 +656,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         module: ToolModule? = nil
     ) -> Bool {
         if kind == .attachment {
-            let owner = module ?? currentItems[key]?.module ?? document.entries[key]?.module
+            let owner = module ?? document.entries[key]?.module
             if let owner {
                 return activeModules.contains(owner)
             }
@@ -750,7 +784,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         for record in event.savedRecords {
             guard var entry = document.entries[record.recordID.recordName] else { continue }
-            entry.systemFields = record.cloudSyncSystemFields()
+            // The change tag is useful only while a save is pending. Keeping
+            // it after a successful upload duplicates CloudKit's state locally
+            // for every bill and makes the sync file grow without bound.
+            entry.systemFields = nil
+            if entry.kind != .attachment,
+               isActiveEntry(kind: entry.kind, key: record.recordID.recordName) {
+                entry.payload = nil
+            }
             document.entries[record.recordID.recordName] = entry
         }
 
@@ -789,6 +830,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 await report(failure.error, operation: "上传 iCloud 记录")
             }
         }
+        _ = document.discardSystemFields(excluding: pendingRecordKeys())
         saveDocument()
     }
 
@@ -861,6 +903,43 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     private static func digest(_ data: Data) -> Data {
         Data(SHA256.hash(data: data))
+    }
+
+    /// Active entities already live in the local vault. Retaining a second full
+    /// JSON copy is only necessary while the record is pending upload. Keep
+    /// attachment metadata because it is required to remove a downloaded file.
+    private func discardRedundantPayloads(
+        matching items: [CloudSyncItem],
+        excluding changedKeys: Set<String>
+    ) -> Bool {
+        var didChange = false
+        for item in items {
+            let key = item.key
+            guard !changedKeys.contains(key),
+                  item.kind != .attachment,
+                  var entry = document.entries[key],
+                  !entry.isDeleted,
+                  entry.payload != nil,
+                  entry.digest == Self.digest(item.payload),
+                  isActiveEntry(kind: entry.kind, key: key) else {
+                continue
+            }
+            entry.payload = nil
+            document.entries[key] = entry
+            didChange = true
+        }
+        return didChange
+    }
+
+    private func pendingRecordKeys() -> Set<String> {
+        Set(syncEngine.state.pendingRecordZoneChanges.compactMap { change in
+            switch change {
+            case .saveRecord(let recordID), .deleteRecord(let recordID):
+                recordID.recordName
+            @unknown default:
+                nil
+            }
+        })
     }
 
     private func saveDocument() {

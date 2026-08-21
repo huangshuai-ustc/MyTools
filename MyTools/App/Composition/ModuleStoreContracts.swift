@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 protocol VaultMutationNotifying: AnyObject {
     func moduleStoreDidMutate()
+    func moduleStoreDidMutateLocalOnly()
 }
 
 @MainActor

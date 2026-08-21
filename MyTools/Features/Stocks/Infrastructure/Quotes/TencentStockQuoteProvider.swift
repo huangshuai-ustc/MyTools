@@ -154,9 +154,18 @@ struct TencentStockQuoteProvider: StockQuoteBatchProviding {
         } else {
             name = fields[1]
         }
+        let shortName: String?
+        if stock.market == .unitedStates,
+           fields.indices.contains(1),
+           !fields[1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            shortName = fields[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            shortName = nil
+        }
         return StockQuote(
             symbol: stock.market == .aShare && !fields[2].isEmpty ? fields[2] : symbol,
             name: name,
+            shortName: shortName,
             latestPrice: latestPrice,
             previousClose: previousClose,
             changePercent: requiresTimestamp ? calculatedChange : suppliedChange,

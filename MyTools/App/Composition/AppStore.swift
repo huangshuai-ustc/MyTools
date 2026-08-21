@@ -466,6 +466,13 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         }
     }
 
+    /// Quote fields are intentionally local-only and excluded from the
+    /// CloudKit portfolio snapshot. Persist them without re-encoding every
+    /// business record merely to discover that there is nothing to upload.
+    func moduleStoreDidMutateLocalOnly() {
+        persist()
+    }
+
     func scanRedundantData() -> RedundantDataCleanupReport {
         guard isInitialDataLoaded else { return .empty }
         return moduleDataCleanupRegistry.scan(enabledModules: enabledModules)
@@ -546,6 +553,25 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         finalizeLocalDataDeletion(snapshot)
         cloudSync.localDataDidChange()
         await moduleLocalDataCacheCleaner.clearLocalCache(for: deletion.module)
+    }
+
+    func clearLocalCache(for module: ToolModule) async {
+        guard isInitialDataLoaded,
+              CompiledToolModules.ordered.contains(module) else { return }
+
+        switch module {
+        case .myStocks:
+#if MYTOOLS_FEATURE_STOCKS
+            stockStore.clearLocalRefreshState()
+#endif
+            exchangeRateStore.clearLocalCache()
+        case .currencyExchange:
+            exchangeRateStore.clearLocalCache()
+        case .personalFinance, .healthRecords, .foodMap, .secrets,
+             .documents, .bills, .sportsLottery:
+            break
+        }
+        await moduleLocalDataCacheCleaner.clearLocalCache(for: module)
     }
 
     private func persist() {

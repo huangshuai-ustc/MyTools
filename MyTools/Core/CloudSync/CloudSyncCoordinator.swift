@@ -1,4 +1,34 @@
 import Foundation
+#if os(macOS)
+import Security
+#endif
+
+enum CloudKitAvailability {
+    static func isSupported(containerIdentifier: String) -> Bool {
+        guard !containerIdentifier.isEmpty else { return false }
+#if os(macOS)
+        guard let task = SecTaskCreateFromSelf(nil),
+              let identifiers = SecTaskCopyValueForEntitlement(
+                  task,
+                  "com.apple.developer.icloud-container-identifiers" as CFString,
+                  nil
+              ) as? [String] else {
+            return false
+        }
+        return identifiers.contains(containerIdentifier)
+#elseif targetEnvironment(simulator)
+        // Simulator builds do not carry the production iCloud container
+        // entitlement and must not construct CKContainer either.
+        return false
+#else
+        // iOS/iPadOS builds are signed with the CloudKit entitlement from the
+        // target's entitlements file. SecTask is not imported by the iOS Swift
+        // Security module, so the XCTest environment check remains the caller's
+        // guard for unsigned test processes.
+        return true
+#endif
+    }
+}
 
 enum CloudSyncStatus: Equatable, Sendable {
     case disabled

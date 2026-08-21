@@ -5,6 +5,19 @@ struct StockChartRequest: Sendable {
     let stock: StockHolding
     let symbol: String
     let range: StockChartRange
+    let usesDailyTechnicalInterval: Bool
+
+    init(
+        stock: StockHolding,
+        symbol: String,
+        range: StockChartRange,
+        usesDailyTechnicalInterval: Bool = false
+    ) {
+        self.stock = stock
+        self.symbol = symbol
+        self.range = range
+        self.usesDailyTechnicalInterval = usesDailyTechnicalInterval
+    }
 }
 
 protocol StockChartProvider: Sendable {

@@ -5,8 +5,9 @@ private final class StockEditorDraft: ObservableObject {
     @Published var stock: StockHolding
     @Published var symbolText: String
     @Published var nameText: String
+    @Published var searchText: String
     @Published var initialTradedAt = Date()
-    @Published var includesInitialPurchase = true
+    @Published var isWatchOnly = false
     @Published var quantityText = ""
     @Published var unitPriceText = ""
     @Published var feesText = ""
@@ -15,6 +16,7 @@ private final class StockEditorDraft: ObservableObject {
         self.stock = stock
         symbolText = stock.symbol
         nameText = stock.name
+        searchText = stock.name.isEmpty ? stock.symbol : stock.name
     }
 }
 
@@ -31,6 +33,10 @@ struct StockEditorView: View {
     @State private var errorMessage = ""
     @State private var showingError = false
     @State private var showingAuthentication = false
+    @State private var searchResults: [StockSearchResult] = []
+    @State private var isSearching = false
+    @State private var didFinishSearch = false
+    private let searchService = StockSearchService()
     let isNew: Bool
     private let originalSymbol: String
 
@@ -51,6 +57,76 @@ struct StockEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     .disabled(!isNew)
+                    if isNew {
+                        LabeledContent("搜索股票：") {
+                            IMESafeTextField(
+                                prompt: "名称、英文或代码",
+                                text: $draft.searchText,
+                                alignment: .trailing,
+                                mode: .text
+                            )
+                        }
+                        if isSearching {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("正在搜索")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                        } else if !searchResults.isEmpty {
+                            ForEach(searchResults) { result in
+                                Button {
+                                    select(result)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                                Text(result.name)
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(2)
+                                                    .layoutPriority(1)
+                                                Text(result.symbol)
+                                                    .font(.caption2.monospaced())
+                                                    .foregroundStyle(.secondary)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 3)
+                                                    .background(.quaternary, in: Capsule())
+                                            }
+                                            if result.alias != nil || result.detail != nil {
+                                                HStack(spacing: 8) {
+                                                    if let alias = result.alias,
+                                                       alias.localizedCaseInsensitiveCompare(result.name) != .orderedSame {
+                                                        Text(alias)
+                                                            .font(.caption2)
+                                                            .foregroundStyle(.secondary)
+                                                    }
+                                                    if let detail = result.detail {
+                                                        Text(detail)
+                                                            .font(.caption2)
+                                                            .foregroundStyle(.tertiary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Spacer()
+                                        Image(systemName: "arrow.down.left.circle")
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } else if didFinishSearch {
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundStyle(.secondary)
+                                Text("未找到匹配的股票")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     LabeledContent("股票代码：") {
                         IMESafeTextField(
                             prompt: symbolPrompt,
@@ -66,16 +142,16 @@ struct StockEditorView: View {
 
                 if isNew {
                     Section("新增方式") {
-                        Toggle("记录首次买入", isOn: $draft.includesInitialPurchase)
-                        if !draft.includesInitialPurchase {
-                            Text("仅保存股票代码和行情信息，不计入持仓。")
+                        Toggle("仅看盘", isOn: $draft.isWatchOnly)
+                        if draft.isWatchOnly {
+                            Text("若暂未买入，可以打开此按钮")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                if isNew, draft.includesInitialPurchase {
+                if isNew, !draft.isWatchOnly {
                     Section("首次买入") {
                         DatePicker(
                             "购买日期：",
@@ -105,6 +181,13 @@ struct StockEditorView: View {
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationView(onAuthenticated: save)
                     .iOSAuthenticationSheet()
+            }
+            .task(id: searchKey) {
+                await searchStocks()
+            }
+            .onChange(of: draft.stock.market) { _, _ in
+                searchResults = []
+                didFinishSearch = false
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -154,7 +237,7 @@ struct StockEditorView: View {
             return
         }
 
-        if isNew, draft.includesInitialPurchase {
+        if isNew, !draft.isWatchOnly {
             guard let quantity = DecimalTextParser.decimal(from: draft.quantityText), quantity > 0,
                   let unitPrice = DecimalTextParser.decimal(from: draft.unitPriceText), unitPrice > 0 else {
                 reportError("购买股数和每股价格必须大于零。")
@@ -186,6 +269,45 @@ struct StockEditorView: View {
 
         store.upsertStock(stock)
         dismiss()
+    }
+
+    private var searchKey: String {
+        "\(draft.stock.market.rawValue):\(draft.searchText.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
+    private func searchStocks() async {
+        guard isNew else {
+            searchResults = []
+            isSearching = false
+            didFinishSearch = false
+            return
+        }
+        let query = draft.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchResults = []
+            isSearching = false
+            didFinishSearch = false
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(280))
+        guard !Task.isCancelled else { return }
+        isSearching = true
+        didFinishSearch = false
+        let results = await searchService.search(query: query, market: draft.stock.market, limit: 8)
+        guard !Task.isCancelled else { return }
+        searchResults = results
+        isSearching = false
+        didFinishSearch = true
+    }
+
+    private func select(_ result: StockSearchResult) {
+        draft.symbolText = result.symbol
+        // Search results provide identification metadata only. The saved
+        // display name remains user-owned and is intentionally left blank.
+        draft.nameText = ""
+        draft.searchText = ""
+        searchResults = []
+        didFinishSearch = false
     }
 
     private func validSymbol(_ symbol: String, market: StockMarket) -> Bool {

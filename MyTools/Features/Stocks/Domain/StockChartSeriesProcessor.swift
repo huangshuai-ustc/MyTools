@@ -7,6 +7,8 @@ enum StockChartSeriesKind: String, Codable, Sendable {
     case daily
     case weekly
     case monthly
+    case quarterly
+    case yearly
 }
 
 enum StockChartSeriesProcessor {
@@ -14,9 +16,11 @@ enum StockChartSeriesProcessor {
         switch range {
         case .intraday: return .intraday
         case .fiveDays: return .fiveDayMinute
-        case .oneMonth, .threeMonths, .oneYear: return .daily
-        case .fiveYears, .tenYears: return .weekly
-        case .sinceInception: return .monthly
+        case .dayK, .oneMonth, .threeMonths, .oneYear: return .daily
+        case .weekK, .fiveYears, .tenYears: return .weekly
+        case .monthK, .sinceInception: return .monthly
+        case .quarterK: return .quarterly
+        case .yearK: return .yearly
         }
     }
 
@@ -24,12 +28,17 @@ enum StockChartSeriesProcessor {
         switch range {
         case .intraday: return [.intraday]
         case .fiveDays: return [.fiveDays]
-        case .oneMonth: return [.oneMonth, .threeMonths, .oneYear]
-        case .threeMonths: return [.threeMonths, .oneYear]
-        case .oneYear: return [.oneYear]
-        case .fiveYears: return [.fiveYears, .tenYears]
-        case .tenYears: return [.tenYears]
-        case .sinceInception: return [.sinceInception]
+        case .dayK, .weekK, .monthK, .quarterK, .yearK:
+            // Every K-line range is derived from the same complete daily
+            // source, so one successful K-line fetch covers the other bar
+            // granularities as well.
+            return [.dayK, .weekK, .monthK, .quarterK, .yearK]
+        case .oneMonth: return [.oneMonth, .threeMonths, .oneYear, .dayK]
+        case .threeMonths: return [.threeMonths, .oneYear, .dayK]
+        case .oneYear: return [.oneYear, .dayK]
+        case .fiveYears: return [.fiveYears, .tenYears, .weekK]
+        case .tenYears: return [.tenYears, .weekK]
+        case .sinceInception: return [.sinceInception, .monthK]
         }
     }
 
@@ -53,6 +62,11 @@ enum StockChartSeriesProcessor {
             return pointsOnLatestTradingDay(sortedPoints, market: market, at: now)
         case .fiveDays:
             return pointsOnLatestTradingDays(sortedPoints, count: 5, market: market, at: now)
+        case .dayK, .weekK, .monthK, .quarterK, .yearK:
+            // K-line tabs keep the complete fetched series. The presentation
+            // layer chooses the recent default viewport and lets the user
+            // pan/zoom across the remaining history.
+            return points(sortedPoints, since: inceptionDate)
         case .oneMonth:
             return points(
                 sortedPoints,
@@ -99,13 +113,15 @@ enum StockChartSeriesProcessor {
     }
 
     /// Returns the earliest reliable history boundary available in the store.
-    /// The monthly series is requested as the inception range, while weekly
-    /// history may contain stale predecessor/ticker data and is therefore not
-    /// used to infer a listing date.
+    /// The yearly series is requested as the inception range. Monthly and
+    /// daily history can be shorter display windows, while weekly history may
+    /// contain stale predecessor/ticker data and is therefore not used to
+    /// infer a listing date.
     static func inceptionDate(
         in series: [String: [StockChartPoint]]
     ) -> Date? {
         let preferredKinds: [StockChartSeriesKind] = [
+            .yearly,
             .monthly,
             .daily,
             .fiveDayMinute,
@@ -186,6 +202,7 @@ enum StockChartSeriesProcessor {
         _ snapshot: StockChartSnapshot,
         range: StockChartRange,
         market: StockMarket,
+        usesDailyTechnicalInterval: Bool = false,
         at now: Date = Date()
     ) -> StockChartSnapshot? {
         let visible: [StockChartPoint]
@@ -201,13 +218,22 @@ enum StockChartSeriesProcessor {
             visible = prepared.visible
             indicatorPoints = prepared.indicators
         } else {
-            visible = pointsThroughLatestTradingDay(
+            let preparedPoints = preparedKLinePoints(
                 snapshot.points,
+                range: range,
+                market: market
+            )
+            visible = pointsThroughLatestTradingDay(
+                preparedPoints,
                 market: market,
                 at: now
             )
             indicatorPoints = snapshot.indicatorPoints.map {
-                pointsThroughLatestTradingDay($0, market: market, at: now)
+                pointsThroughLatestTradingDay(
+                    preparedKLinePoints($0, range: range, market: market),
+                    market: market,
+                    at: now
+                )
             }
         }
 
@@ -221,6 +247,9 @@ enum StockChartSeriesProcessor {
             preMarketPoints: snapshot.preMarketPoints,
             postMarketPoints: snapshot.postMarketPoints,
             indicatorPoints: indicatorPoints,
+            dailyIndicatorPoints: usesDailyTechnicalInterval
+                ? snapshot.points
+                : snapshot.dailyIndicatorPoints,
             quoteUpdatedAt: latest.date,
             fetchedAt: snapshot.fetchedAt,
             source: snapshot.source,
@@ -243,6 +272,35 @@ enum StockChartSeriesProcessor {
             pointsByBucket[seriesBucket(for: point.date, kind: kind, calendar: calendar)] = point
         }
         return pointsByBucket.values.sorted { $0.date < $1.date }
+    }
+
+    /// Rebuilds only the aggregation buckets touched by newly received source
+    /// points. The untouched buckets remain byte-for-byte reusable from the
+    /// local derived-series cache.
+    static func updatingAggregatedPoints(
+        _ existing: [StockChartPoint],
+        sourcePoints: [StockChartPoint],
+        changedSourcePoints: [StockChartPoint],
+        kind: StockChartSeriesKind,
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        guard !changedSourcePoints.isEmpty else { return existing }
+        let calendar = marketCalendar(market)
+        let affectedBuckets = Set(changedSourcePoints.map {
+            seriesBucket(for: $0.date, kind: kind, calendar: calendar)
+        })
+        var retained = existing.filter {
+            !affectedBuckets.contains(seriesBucket(for: $0.date, kind: kind, calendar: calendar))
+        }
+        let sourceByBucket = Dictionary(grouping: sourcePoints) {
+            seriesBucket(for: $0.date, kind: kind, calendar: calendar)
+        }
+        for bucket in affectedBuckets {
+            guard let group = sourceByBucket[bucket],
+                  let aggregate = aggregatePoint(group) else { continue }
+            retained.append(aggregate)
+        }
+        return retained.sorted { $0.date < $1.date }
     }
 
     static func regularUnitedStatesSessionPoints(
@@ -279,6 +337,27 @@ enum StockChartSeriesProcessor {
                 return (570...960).contains(localMinutes)
             }
         }
+    }
+
+    /// A non-regular session should still expose the last completed regular
+    /// session. Providers can briefly return only the first few bars after a
+    /// session boundary, so use the final regular-session timestamp as a
+    /// completeness signal before accepting that response as the cache.
+    static func hasCompletedRegularSession(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> Bool {
+        guard let latest = points.max(by: { $0.date < $1.date }) else { return false }
+        let calendar = marketCalendar(market)
+        let components = calendar.dateComponents([.hour, .minute], from: latest.date)
+        guard let hour = components.hour, let minute = components.minute else { return false }
+        let localMinutes = hour * 60 + minute
+        let expectedClose: Int
+        switch market {
+        case .aShare: expectedClose = 900
+        case .hongKong, .unitedStates: expectedClose = 960
+        }
+        return localMinutes >= expectedClose - 15
     }
 
     /// Aggregates the latest completed/current regular session for the "当期数据" panel.
@@ -373,11 +452,31 @@ enum StockChartSeriesProcessor {
         switch range {
         case .intraday: return 1
         case .fiveDays: return 20
+        case .dayK: return 20
+        case .weekK: return 10
+        case .monthK: return 6
+        case .quarterK: return 4
+        case .yearK: return 2
         case .oneMonth: return 6
         case .threeMonths: return 15
         case .oneYear: return 30
         case .fiveYears, .tenYears, .sinceInception: return 2
         }
+    }
+
+    /// Technical overlays on minute charts need enough prior bars and at
+    /// least one completed day before the visible window. The cache/service
+    /// layer uses this deterministic rule to decide whether a warm-up fetch is
+    /// required; it does not affect which points are rendered.
+    static func needsMinuteTechnicalWarmup(
+        _ points: [StockChartPoint],
+        market: StockMarket
+    ) -> Bool {
+        let sortedPoints = points.sorted { $0.date < $1.date }
+        guard sortedPoints.count >= 60 else { return true }
+        let calendar = marketCalendar(market)
+        let tradingDays = Set(sortedPoints.map { calendar.startOfDay(for: $0.date) })
+        return tradingDays.count < 2
     }
 
     static func hasRequiredCoverage(
@@ -543,6 +642,10 @@ enum StockChartSeriesProcessor {
             return endDate
         case .fiveDays:
             return calendar.date(byAdding: .day, value: -12, to: endDate) ?? endDate
+        case .dayK, .weekK, .monthK, .quarterK, .yearK:
+            // All K-line tabs use the complete listing history. Providers
+            // aggregate this source into their requested bar size below.
+            return Date(timeIntervalSince1970: -2_208_988_800)
         case .oneMonth:
             return calendar.date(byAdding: .month, value: -4, to: endDate) ?? endDate
         case .threeMonths:
@@ -554,7 +657,7 @@ enum StockChartSeriesProcessor {
         case .tenYears:
             return calendar.date(byAdding: .month, value: -138, to: endDate) ?? endDate
         case .sinceInception:
-            return Date(timeIntervalSince1970: 0)
+            return Date(timeIntervalSince1970: -2_208_988_800)
         }
     }
 
@@ -588,7 +691,7 @@ enum StockChartSeriesProcessor {
         return max(startDate, boundary)
     }
 
-    private static func seriesBucket(
+    static func seriesBucket(
         for date: Date,
         kind: StockChartSeriesKind,
         calendar: Calendar
@@ -597,14 +700,107 @@ enum StockChartSeriesProcessor {
         case .intraday, .fiveDayMinute:
             return calendar.dateInterval(of: .minute, for: date)?.start ?? date
         case .daily:
-            return calendar.startOfDay(for: date)
+            return dailyBucket(for: date, calendar: calendar)
         case .weekly:
             return calendar.dateInterval(of: .weekOfYear, for: date)?.start
                 ?? calendar.startOfDay(for: date)
         case .monthly:
             return calendar.dateInterval(of: .month, for: date)?.start
                 ?? calendar.startOfDay(for: date)
+        case .quarterly:
+            let components = calendar.dateComponents([.year, .month], from: date)
+            guard let year = components.year, let month = components.month else { return date }
+            let quarterMonth = ((month - 1) / 3) * 3 + 1
+            return calendar.date(from: DateComponents(year: year, month: quarterMonth, day: 1))
+                ?? calendar.startOfDay(for: date)
+        case .yearly:
+            let year = calendar.component(.year, from: date)
+            return calendar.date(from: DateComponents(year: year, month: 1, day: 1))
+                ?? calendar.startOfDay(for: date)
         }
+    }
+
+    /// Returns the calendar-day identity used by the raw daily cache. Keeping
+    /// this separate from `seriesBucket` makes the cache merge explicit and
+    /// prevents a provider timestamp from creating duplicate daily bars.
+    static func dailyBucket(
+        for date: Date,
+        calendar: Calendar
+    ) -> Date {
+        calendar.startOfDay(for: date)
+    }
+
+    static func preparedKLinePoints(
+        _ points: [StockChartPoint],
+        range: StockChartRange,
+        market: StockMarket
+    ) -> [StockChartPoint] {
+        let calendar = marketCalendar(market)
+        switch range {
+        case .weekK:
+            return weeklyPoints(from: points, calendar: calendar)
+        case .monthK:
+            return monthlyPoints(from: points, calendar: calendar)
+        case .quarterK:
+            return aggregatePoints(
+                points,
+                kind: .quarterly,
+                calendar: calendar
+            )
+        case .yearK:
+            return aggregatePoints(
+                points,
+                kind: .yearly,
+                calendar: calendar
+            )
+        default:
+            return points.sorted { $0.date < $1.date }
+        }
+    }
+
+    static func monthlyPoints(
+        from points: [StockChartPoint],
+        calendar: Calendar
+    ) -> [StockChartPoint] {
+        aggregatePoints(points, kind: .monthly, calendar: calendar)
+    }
+
+    private static func aggregatePoints(
+        _ points: [StockChartPoint],
+        kind: StockChartSeriesKind,
+        calendar: Calendar
+    ) -> [StockChartPoint] {
+        let groups = Dictionary(grouping: points) {
+            seriesBucket(for: $0.date, kind: kind, calendar: calendar)
+        }
+        return groups.keys.sorted().compactMap { bucket in
+            guard let group = groups[bucket]?.sorted(by: { $0.date < $1.date }),
+                  let first = group.first,
+                  let last = group.last else { return nil }
+            let volumes = group.compactMap(\.volume)
+            return StockChartPoint(
+                date: last.date,
+                open: first.open,
+                high: group.map(\.high).max() ?? last.high,
+                low: group.map(\.low).min() ?? last.low,
+                close: last.close,
+                volume: volumes.isEmpty ? nil : volumes.reduce(0, +)
+            )
+        }
+    }
+
+    private static func aggregatePoint(_ points: [StockChartPoint]) -> StockChartPoint? {
+        let group = points.sorted { $0.date < $1.date }
+        guard let first = group.first, let last = group.last else { return nil }
+        let volumes = group.compactMap(\.volume)
+        return StockChartPoint(
+            date: last.date,
+            open: first.open,
+            high: group.map(\.high).max() ?? last.high,
+            low: group.map(\.low).min() ?? last.low,
+            close: last.close,
+            volume: volumes.isEmpty ? nil : volumes.reduce(0, +)
+        )
     }
 }
 

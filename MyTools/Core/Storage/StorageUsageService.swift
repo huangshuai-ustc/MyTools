@@ -4,11 +4,27 @@ struct StorageUsageSnapshot: Sendable, Equatable {
     let localVaultBytes: Int64
     let attachmentsBytes: Int64
     let attachmentCount: Int
+    let cloudSyncStateBytes: Int64
+    let localCacheBytes: Int64
+    let systemCloudKitCacheBytes: Int64
     let diagnosticsBytes: Int64
     let otherBytes: Int64
 
+    /// Bytes owned by the app and eligible for the app's cleanup controls.
+    /// The system CloudKit cache is intentionally excluded because Apple
+    /// owns its lifecycle and the app cannot safely delete it.
+    var managedBytes: Int64 {
+        totalBytes - systemCloudKitCacheBytes
+    }
+
     var totalBytes: Int64 {
-        localVaultBytes + attachmentsBytes + diagnosticsBytes + otherBytes
+        localVaultBytes
+            + attachmentsBytes
+            + cloudSyncStateBytes
+            + localCacheBytes
+            + systemCloudKitCacheBytes
+            + diagnosticsBytes
+            + otherBytes
     }
 }
 
@@ -34,14 +50,19 @@ struct StorageScanResult: Sendable, Equatable {
 final class StorageUsageService: @unchecked Sendable {
     private let fileManager: FileManager
     private let applicationSupportDirectory: URL
+    private let cachesDirectory: URL
 
     init(
         fileManager: FileManager = .default,
-        applicationSupportDirectory: URL? = nil
+        applicationSupportDirectory: URL? = nil,
+        cachesDirectory: URL? = nil
     ) {
         self.fileManager = fileManager
         self.applicationSupportDirectory = applicationSupportDirectory
             ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        self.cachesDirectory = cachesDirectory
+            ?? fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
     }
 
@@ -65,6 +86,26 @@ final class StorageUsageService: @unchecked Sendable {
         diagnosticsDirectory.appendingPathComponent("MyTools-Diagnostics.log", isDirectory: false)
     }
 
+    private var cloudSyncStateURL: URL {
+        appDirectory.appendingPathComponent("cloud-sync-state.json", isDirectory: false)
+    }
+
+    private var stockChartsDirectory: URL {
+        appDirectory.appendingPathComponent("StockCharts", isDirectory: true)
+    }
+
+    private var sportsLotteryCacheURL: URL {
+        appDirectory.appendingPathComponent("sports-lottery-cache-v1.json", isDirectory: false)
+    }
+
+    private var appCachesDirectory: URL {
+        cachesDirectory.appendingPathComponent("MyTools", isDirectory: true)
+    }
+
+    private var cloudKitCachesDirectory: URL {
+        cachesDirectory.appendingPathComponent("CloudKit", isDirectory: true)
+    }
+
     func scan(referencedStoredFileNames: Set<String>) throws -> StorageScanResult {
         let attachmentFiles = try regularFiles(in: attachmentsDirectory)
         let storedFileNames = Set(attachmentFiles.map(\.lastPathComponent))
@@ -86,11 +127,17 @@ final class StorageUsageService: @unchecked Sendable {
         let attachmentsBytes = attachmentFiles.reduce(Int64.zero) { total, fileURL in
             total + (fileSize(at: fileURL) ?? 0)
         }
+        let localCacheBytes = (try directorySize(at: stockChartsDirectory))
+            + (try directorySize(at: appCachesDirectory))
+            + (fileSize(at: sportsLotteryCacheURL) ?? 0)
         let otherBytes = try otherApplicationSupportBytes()
         let usage = StorageUsageSnapshot(
             localVaultBytes: fileSize(at: localVaultURL) ?? 0,
             attachmentsBytes: attachmentsBytes,
             attachmentCount: attachmentFiles.count,
+            cloudSyncStateBytes: fileSize(at: cloudSyncStateURL) ?? 0,
+            localCacheBytes: localCacheBytes,
+            systemCloudKitCacheBytes: try directorySize(at: cloudKitCachesDirectory),
             diagnosticsBytes: fileSize(at: diagnosticsURL) ?? 0,
             otherBytes: otherBytes
         )
@@ -138,7 +185,10 @@ final class StorageUsageService: @unchecked Sendable {
         let excludedNames = Set([
             localVaultURL.lastPathComponent,
             attachmentsDirectory.lastPathComponent,
-            diagnosticsDirectory.lastPathComponent
+            diagnosticsDirectory.lastPathComponent,
+            cloudSyncStateURL.lastPathComponent,
+            stockChartsDirectory.lastPathComponent,
+            sportsLotteryCacheURL.lastPathComponent
         ])
         return try fileManager.contentsOfDirectory(
             at: appDirectory,

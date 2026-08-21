@@ -69,7 +69,12 @@ struct StockDetailView: View {
 
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    Task { await store.refreshQuotes(for: stock?.market) }
+                    Task {
+                        await store.refreshQuotes(
+                            for: stock?.market,
+                            forceRefresh: true
+                        )
+                    }
                 } label: {
                     if store.isRefreshingQuotes {
                         ProgressView()

@@ -147,8 +147,8 @@ struct StockPortfolioEditorTests {
         #expect(allocation.isComplete)
         let aShareAllocation = try #require(allocation.holdingShare(for: aShare.id))
         let unitedStatesAllocation = try #require(allocation.holdingShare(for: unitedStates.id))
-        #expect(aShareAllocation == Decimal(1) / Decimal(8))
-        #expect(unitedStatesAllocation == Decimal(7) / Decimal(8))
+        #expect(aShareAllocation == Decimal(1) / Decimal(71))
+        #expect(unitedStatesAllocation == Decimal(70) / Decimal(71))
     }
 
     private static func transaction(

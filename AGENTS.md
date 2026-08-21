@@ -23,6 +23,8 @@
 - `Config/Shared.xcconfig` 的 `MYTOOLS_COMPILED_FEATURES` 是唯一编译清单。未编译模块不得注册、显示、启动服务、导入导出或参与 CloudKit；其本地 Vault 数据必须以不透明载荷原样保留，避免精简版本覆盖或清理数据与附件。
 - 模块显隐先读取本地 `UserDefaults`，没有显式本地值时使用编译配置声明的默认值；CloudKit 应用偏好同步优先于编译默认值。`MYTOOLS_DEFAULT_HIDDEN_FEATURES` 只能改变新安装或没有显式设置时的首页初始状态。
 - 存储与数据设置中的“删除功能数据”只允许管理员操作。每层确认都必须等待 10 秒，执行后保留 10 秒撤回窗口；`AppStore` 以模块快照恢复目标字段，撤回期不删除附件且从 CloudKit 参与模块中暂时排除目标模块，过期后才删除未被其他模块引用的附件、模块专属缓存和提醒状态，并恢复正常对账。开启 iCloud 时最终删除会同步到其他设备，备份文件不回写。
+- 存储与数据设置中的“本地缓存”只允许管理员操作，按功能调用 `ModuleLocalDataCacheClearing` 清理可重新下载的行情图、刷新状态、共享汇率和体彩赛果缓存；不得触碰业务 Vault、附件、提醒或 CloudKit 记录。股票与换汇的汇率缓存是共享资源，清理任一模块时必须同步重置共享内存状态。
+- 存储统计必须区分业务档案/附件、CloudKit 同步状态、应用缓存和系统 CloudKit 本地缓存；同步状态、行情/赛果缓存和诊断日志必须设置 `isExcludedFromBackup`，不得把包含业务档案的 `Application Support/MyTools` 根目录标记为排除。系统 CloudKit 缓存只读展示，不由 App 直接删除。
 - 同时服务多个业务模块的能力必须归入 `Core` 或 App 组合层；基础能力不得依赖任一业务模块是否开启。
 - 业务模块按 `Domain / Application / Infrastructure / Presentation` 组织。领域层保存数据和确定性规则，应用层持有用例与状态，基础设施层访问网络、地图或文件等外部系统，展示层只编排界面交互。
 - Feature 之间不直接持有彼此的 Store、View 或具体服务。跨模块通信使用 `AppStore` 组合、共享 Core 能力或窄协议。
@@ -352,7 +354,7 @@
 | `MyTools/Features/Stocks/Domain/StockInvestmentScoreModel.swift` | 基本面快照、评分输入、因子覆盖度和投资机会评分规则。 |
 | `MyTools/Features/Stocks/Domain/StockMarketTradingCalendar.swift` | A/港/美股交易日、节假日、交易时段和最终时段判断。 |
 | `MyTools/Features/Stocks/Domain/StockPortfolioAnalytics.swift` | 市场组合汇总、持仓成本、市值、盈亏、资产分配和按持仓成本计算的股票占比快照。 |
-| `MyTools/Features/Stocks/Domain/StockQuoteModels.swift` | 实时报价值对象和行情错误。 |
+| `MyTools/Features/Stocks/Domain/StockQuoteModels.swift` | 实时报价值对象、券商本地化简称元数据和行情错误。 |
 | `MyTools/Features/Stocks/Domain/StockTechnicalAnalysis.swift` | MA、布林带、MACD、RSI 等技术指标计算。 |
 | `MyTools/Features/Stocks/Domain/StockValueFormatter.swift` | 股票金额、价格、比率和汇率的统一文本格式。 |
 
@@ -366,8 +368,8 @@
 | `MyTools/Features/Stocks/Application/StockPortfolioEditor.swift` | 股票、交易、分红增删改及任意时点负持仓校验。 |
 | `MyTools/Features/Stocks/Application/StockQuoteRefreshReducer.swift` | 将新报价与旧缓存合并并判定变更的纯 Reducer。 |
 | `MyTools/Features/Stocks/Application/StockQuoteService.swift` | 按市场批量优先、多数据源回退的实时报价编排。 |
-| `MyTools/Features/Stocks/Application/StockRefreshCoordinator.swift` | iOS 后台任务注册、收盘补刷、去重和 AppDelegate 桥接。 |
-| `MyTools/Features/Stocks/Application/StockStore.swift` | 持仓状态、行情缓存、自动/手动刷新、提醒和模块生命周期。 |
+| `MyTools/Features/Stocks/Application/StockRefreshCoordinator.swift` | iOS 后台任务注册、正式时段结束后的报价/分时图顺序补刷、成功后去重、失败 5 分钟冷却重试和 AppDelegate 桥接。 |
+| `MyTools/Features/Stocks/Application/StockStore.swift` | 持仓状态、行情缓存、自动刷新、休市也可用的手动强制刷新、提醒和模块生命周期。 |
 
 ### `MyTools/Features/Stocks/Infrastructure/Charts/`：历史与分时图表
 
@@ -375,8 +377,8 @@
 | --- | --- |
 | `MyTools/Features/Stocks/Infrastructure/Charts/EastmoneyStockChartProvider.swift` | 东方财富 A/港股图表请求与响应解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/NasdaqStockChartProvider.swift` | Nasdaq 美股分时和历史图表请求与解析。 |
-| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartDiskStore.swift` | 原始时序的磁盘缓存、范围元数据和旧缓存兼容读取。 |
-| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartModels.swift` | 图表范围、OHLCV 点、快照和错误模型。 |
+| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartDiskStore.swift` | 分钟/日/周/月/季/年原始时序的磁盘缓存、日线 RSI 参考序列、范围元数据和旧缓存兼容读取。 |
+| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartModels.swift` | 市场标准七档图表周期、OHLCV 点、可见序列与独立日线技术参考序列的快照和错误模型；旧周期枚举仅用于缓存兼容。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/StockChartProvider.swift` | 图表 Provider/HTTP Client 协议、生产 URLSession 实现和 Provider 容器。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/TencentStockChartProvider.swift` | 腾讯 A/港/美股分时及 K 线图表请求与解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/YahooStockChartProvider.swift` | Yahoo 图表请求、时区和 OHLCV 响应解析。 |
@@ -391,8 +393,8 @@
 | `MyTools/Features/Stocks/Infrastructure/Quotes/NasdaqStockQuoteProvider.swift` | Nasdaq 美股报价请求和价格字段解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Quotes/OfficialAShareStockQuoteProvider.swift` | 沪深交易所公开接口的 A 股行情请求与解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Quotes/SinaStockQuoteProvider.swift` | 新浪批量行情请求、分批和响应解析。 |
-| `MyTools/Features/Stocks/Infrastructure/Quotes/StockQuoteProvider.swift` | 单股/批量 Provider、HTTP Client 协议、生产实现和支持工具。 |
-| `MyTools/Features/Stocks/Infrastructure/Quotes/TencentStockQuoteProvider.swift` | 腾讯批量行情请求、分批和响应解析。 |
+| `MyTools/Features/Stocks/Infrastructure/Quotes/StockQuoteProvider.swift` | 单股/批量行情 Provider、HTTP Client 协议、股票候选搜索 Provider/结果解析、券商简称和排序支持工具。 |
+| `MyTools/Features/Stocks/Infrastructure/Quotes/TencentStockQuoteProvider.swift` | 腾讯批量行情请求、分批和响应解析，并保留美股券商返回的中文简称元数据。 |
 | `MyTools/Features/Stocks/Infrastructure/Quotes/YahooStockQuoteProvider.swift` | Yahoo Chart 元数据方式的单股最新报价解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Fundamentals/StockFundamentalProvider.swift` | 基本面 Provider 协议及东方财富、Yahoo 两套生产实现。 |
 
@@ -404,7 +406,7 @@
 | `MyTools/Features/Stocks/Presentation/StockChartPresentation.swift` | 图表模式、交易标记、选中点和技术图层的展示模型构建。 |
 | `MyTools/Features/Stocks/Presentation/StockDetailView.swift` | 股票详情、交易/分红时间线、编辑和看盘入口。 |
 | `MyTools/Features/Stocks/Presentation/StockDividendEditorView.swift` | 分红数量、每股分红、税费和备注编辑。 |
-| `MyTools/Features/Stocks/Presentation/StockEditorView.swift` | 股票基础资料和首次买入记录编辑。 |
+| `MyTools/Features/Stocks/Presentation/StockEditorView.swift` | 股票基础资料、紧凑候选搜索（正式名称右侧代码标签、券商中文简称/交易所信息）、默认首次买入与“仅看盘”新增方式编辑。 |
 | `MyTools/Features/Stocks/Presentation/StockTransactionEditorView.swift` | 买卖流水日期、数量、价格和费用编辑。 |
 | `MyTools/Features/Stocks/Presentation/StockTrendColor.swift` | 按市场偏好把涨跌数值映射为 SwiftUI 颜色。 |
 | `MyTools/Features/Stocks/Presentation/StockWatchView.swift` | 看盘页、范围/模式切换、刷新、基本面和投资评分详情。 |
@@ -494,7 +496,7 @@
 | 模块 | 已实现能力 | 主要入口 | 数据与状态 |
 | --- | --- | --- | --- |
 | 金融账户 | 境内外银行、网络银行无网点标记、支行地图链接/导航、子账户（含支票账户）、借记卡、信用卡、账单 PDF、登录字段模板与左右滑管理、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
-| 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、“当前持仓”和“无持仓或仅看盘”分区、实时行情、历史图表、RSI14/RSI30 等技术指标、按盘前/盘中/盘后动态约束组合的图表模式、美股盘前橙色/A 股集合竞价橙色与盘后蓝色行情、盘前只显示价格、盘后成交量仅在数据源提供时显示、盘后最近有效正式周期数据、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift` |
+| 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、“当前持仓”和“无持仓或仅看盘”分区、按中文/英文/代码模糊搜索股票（按市场与交易所过滤、同代码多源合并、美股原生正式名称/券商中文简称/规范代码回填、正式名称右侧代码标签和紧凑候选行、中文名称完整/后缀/前缀/包含匹配、普通股优先于相近 ETF、主板交易所优先于 OTC、数据源相关排序和热门代码稳定兜底、证券类型标识和无结果提示）、实时行情、市场标准七档图表周期（分时/5日分钟线固定近期窗口，日K/周K/月K/季K/年K默认仅走势并可平移缩放，内部切换保持用户图层选择，底层由原始序列重新计算）、区间切换加载蒙版与进度状态、分时与5日均线/布林/MACD使用跨交易日分钟历史预热后仅投影可见柱，分时分钟级/其他范围交易日级 RSI14/RSI30、按交易价格和可见走势定位交易标记、按盘前/盘中/盘后动态约束组合的图表模式、美股盘前橙色/A 股集合竞价橙色与盘后蓝色行情、盘前只显示价格、盘后成交量仅在数据源提供时显示、盘后最近有效正式周期数据、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift`、`StockQuoteProvider.swift` |
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
 | 美食地图 | 吃过/想吃、店铺、中国省市、详细地址、地图坐标、图片、来源、标签胶囊、标签建议/筛选/搜索、总地图和第三方导航 | `Features/FoodMap/Presentation/FoodMapView.swift` | `FoodMapStore`、`FoodPlace.swift` |
@@ -530,6 +532,7 @@
 | 编辑期提交与回滚 | `AttachmentEditSession` in `Core/Attachments/AttachmentEditSession.swift` | 区分原附件与临时新增附件，取消编辑时回滚，提交后清理被移除文件 |
 | 附件预览与分享 | `AttachmentPreview`、`AttachmentPreviewSheet`、`AttachmentShareButton` in `Core/Attachments/AttachmentPresentation.swift` | iOS Quick Look、macOS 系统打开和跨平台分享 |
 | 占用与完整性扫描 | `StorageUsageService` in `Core/Storage/StorageUsageService.swift` | Vault/附件/缓存/日志空间统计、缺失附件、孤立附件和清理；业务字段清理使用模块参与者接口，不放入 Core 文件扫描服务 |
+| 模块本地缓存清理 | `ModuleLocalDataCacheClearing`、`AppStore.clearLocalCache(for:)` | 设置页按功能清理可重新下载缓存；不改业务数据和 CloudKit；股票/换汇共享汇率缓存需同时清除内存与 UserDefaults |
 
 附件加入新模块时还必须扩展备份附件映射、CloudKit 附件快照与合并、存储扫描引用集合，并测试模块关闭时附件不参与。
 
@@ -537,7 +540,7 @@
 
 | 能力与检索词 | 可复用实现 | 已提供行为 |
 | --- | --- | --- |
-| 管理员模式 | `AuthManager` in `Core/Authentication/AuthManager.swift` | 至少 8 位密码、SHA-256 摘要、Keychain 备份密码、生物识别/设备密码、前台会话和后台自动锁定 |
+| 管理员模式 | `AuthManager` in `Core/Authentication/AuthManager.swift` | 至少 8 位密码、SHA-256 摘要、Keychain 备份密码、生物识别/设备密码；支持认证有效期、永久会话和“进入后台锁定”选项 |
 | 管理员认证表单 | `AuthenticationView`、`IdentityVerificationForm` | 密码或系统认证 Sheet，可在成功后执行回调 |
 | 统一编辑入口与状态 | `AdminEditAccessButton`、`AdminModeIndicator`、`.adminModeIndicator()` | 进入/退出管理员编辑模式和统一工具栏图标 |
 | 敏感内容独立验证 | `SensitiveAccessView` | 只解锁当前查看流程，不进入管理员编辑模式 |
@@ -557,10 +560,14 @@
 | 增量备份合并 | `AppStoreBackupMerger` in `App/Composition/AppStoreBackupMerger.swift` | 只合并备份包含且当前开启的模块，按记录 ID 更新或追加 |
 | CloudKit 快照和编码 | `CloudSyncSnapshotBuilder`、`CloudSyncCoding`、`CloudSyncEntityKind`、`CloudSyncItem` in `Core/CloudSync/CloudSyncModels.swift` | 主线程只复制当前业务状态；JSON 编码和附件读取必须在 utility 后台任务执行，再按摘要生成记录级增量 |
 | CloudKit 远端合并 | `CloudSyncMerger`、`CloudSyncChange` | 按实体类型与已编译且允许同步的模块应用 upsert/delete；首页隐藏不会停止同步，删除功能数据的撤回窗口才会临时排除模块 |
-| CloudKit 生命周期 | `CloudSyncCoordinator`、`CloudKitSyncWorker` | 私有数据库、自定义 Zone、增量游标、上传/拉取、账户变化和对账；本地变更用 2 秒防抖合并差异计算，自动发送交给 `CKSyncEngine` 系统调度，手动同步才强制 fetch/send；附件在业务记录应用后后台逐个恢复且禁止整文件读入内存 |
+| CloudKit 生命周期 | `CloudSyncCoordinator`、`CloudKitSyncWorker`、`CloudSyncStateStore` | 私有数据库、自定义 Zone、增量游标、上传/拉取、账户变化和对账；本地变更用 2 秒防抖合并差异计算，股票报价等本地派生变化不触发 CloudKit 快照，成功同步后清除活动记录的重复 payload 和 CloudKit system fields（仅待上传/重试记录保留）；同步状态使用压缩本地格式并排除系统备份，自动发送交给 `CKSyncEngine` 系统调度，手动同步才强制 fetch/send；附件在业务记录应用后后台逐个恢复且禁止整文件读入内存。创建 worker 前必须检查当前构建包的 iCloud 容器 entitlement；无有效签名 entitlement 的 macOS Debug 包和 XCTest 宿主直接禁用同步，不能触发 `CKContainer(identifier:)`，正式签名的 iOS/iPadOS/macOS 包仍正常启用 |
 | 同步开关与状态 | `CloudSyncPreferences`、`CloudSyncStateStore`、`CloudSyncPreferencesBridge` | 默认关闭、Apple 账户状态、错误、游标、模块顺序/显隐与外观偏好同步 |
 
 本地 Vault 是离线事实源。行情缓存、汇率缓存、诊断日志、认证状态和 OCR 临时结果不进入 Vault、备份或 CloudKit。
+
+同步状态容量准则：已成功同步的活动记录只保留稳定记录键、摘要、版本时间和删除标记；payload 只为待发送/冲突重试记录保留，未编译模块的不透明数据才允许作为恢复所需的离线 payload 留存。数据量增长后本地状态按记录数线性增加轻量元数据，而不会按业务 JSON 大小重复增长；CloudKit 服务端仍需保存完整业务 payload，这是跨设备恢复的必要数据，不应改成一个巨型聚合记录。
+
+同步状态的读取、解压和旧格式迁移必须在 utility 后台任务执行，不能阻塞主线程创建首屏；同步 Worker 创建阶段不得直接读取几十 MB 的状态文件。
 
 #### 新增字段与 iCloud 同步准则
 
@@ -707,5 +714,5 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 - OCR 的设置测试页是临时入口，OCR 本身是可复用 Core 服务；临时页面被移除时不得删除 Core OCR 能力。
 - 股票公开行情和图表可能延迟或不可用；已有 Provider 回退与缓存，不要在页面内直接请求第三方接口。
 - 股票公开基本面数据可能延迟、缺失或口径不同；评分必须展示来源与覆盖度，缺失值不得按 0 伪造，基本面快照不进入 Vault、备份或 CloudKit。
-- 股票报价只在原有盘中时段刷新；图表按市场区分盘前、盘中和盘后三个互斥时段，盘前/盘后只更新对应扩展时段序列，收盘补刷按最终交易时段去重，不使用固定 12 小时限流。
+- 股票自动报价只在原有盘中时段刷新，手动刷新忽略交易时段并强制请求所选市场；图表按市场区分盘前、盘中和盘后三个互斥时段，盘前/盘后只更新对应扩展时段序列，同时合并并校验正式走势是否覆盖至收盘附近，必要时切换备用源；正式时段结束后顺序补刷各股票分时缓存，报价与图表都只在补刷成功后按最终交易时段去重，失败不记账且每 5 分钟允许重试，不使用固定 12 小时限流。
 - 当前仍是单 App Target，编译标记会从产物中移除 Feature 实现，但没有独立 Swift Package 提供模块级 import 访问控制；Feature 间依赖禁令仍需由代码审查和回归构建持续执行。

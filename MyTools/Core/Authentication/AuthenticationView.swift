@@ -67,7 +67,7 @@ struct AuthenticationView: View {
     @MainActor
     private func finishAuthentication() {
         // 先关闭认证页，再由仍持有原 StateObject 草稿的编辑页执行保存。
-        // 这样管理员会话在切到后台后失效，也不会因认证状态变化而重建空表单。
+        // 这样不会因认证状态变化而重建空表单；后台锁定由管理员会话策略统一处理。
         dismiss()
         guard let onAuthenticated else { return }
         Task { @MainActor in

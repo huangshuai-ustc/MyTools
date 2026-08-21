@@ -4,11 +4,34 @@ import Foundation
 struct StockQuote: Sendable {
     let symbol: String
     let name: String
+    /// The provider's localized short name, when available. This is metadata
+    /// for search/display and is intentionally not used as the formal quote name.
+    let shortName: String?
     let latestPrice: Decimal
     let previousClose: Decimal?
     let changePercent: Decimal?
     let updatedAt: Date
     let source: String
+
+    init(
+        symbol: String,
+        name: String,
+        shortName: String? = nil,
+        latestPrice: Decimal,
+        previousClose: Decimal?,
+        changePercent: Decimal?,
+        updatedAt: Date,
+        source: String
+    ) {
+        self.symbol = symbol
+        self.name = name
+        self.shortName = shortName
+        self.latestPrice = latestPrice
+        self.previousClose = previousClose
+        self.changePercent = changePercent
+        self.updatedAt = updatedAt
+        self.source = source
+    }
 }
 
 enum StockQuoteError: LocalizedError, Sendable {

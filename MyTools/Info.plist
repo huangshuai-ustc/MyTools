@@ -37,11 +37,11 @@
 		<string>comgooglemaps</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄图片并识别选定区域内的文字</string>
+	<string>用于图片的拍摄</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>用于验证管理员身份，保护银行卡信息</string>
+	<string>用于验证管理员身份，保护隐私信息</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>用于在新增美食时默认显示您附近的地图位置</string>
+	<string>用于对用户的定位</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

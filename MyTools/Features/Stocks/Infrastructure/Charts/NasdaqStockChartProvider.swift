@@ -78,6 +78,9 @@ struct NasdaqStockChartProvider: StockChartProvider {
             endingAt: endDate,
             calendar: calendar
         )
+        let pointLimit = request.usesDailyTechnicalInterval
+            ? range.dailyTechnicalPointLimit
+            : range.providerPointLimit
 
         let payload = try await fetchPayload(
             symbol: symbol,
@@ -85,7 +88,7 @@ struct NasdaqStockChartProvider: StockChartProvider {
             queryItems: [
                 URLQueryItem(name: "fromdate", value: isoDate(startDate, calendar: calendar)),
                 URLQueryItem(name: "todate", value: isoDate(endDate, calendar: calendar)),
-                URLQueryItem(name: "limit", value: "5000")
+                URLQueryItem(name: "limit", value: String(pointLimit))
             ]
         )
         guard let table = payload["tradesTable"] as? [String: Any],
@@ -110,10 +113,23 @@ struct NasdaqStockChartProvider: StockChartProvider {
             )
         }
         points.sort { $0.date < $1.date }
-        if range == .fiveDays, points.count > 5 {
+        if !request.usesDailyTechnicalInterval,
+           range == .fiveDays,
+           points.count > 5 {
             points = Array(points.suffix(5))
-        } else if range == .fiveYears || range == .tenYears {
+        } else if !request.usesDailyTechnicalInterval,
+                  range == .weekK || range == .fiveYears || range == .tenYears {
             points = StockChartSeriesProcessor.weeklyPoints(from: points, calendar: calendar)
+        } else if !request.usesDailyTechnicalInterval,
+                  range == .monthK || range == .sinceInception {
+            points = StockChartSeriesProcessor.monthlyPoints(from: points, calendar: calendar)
+        } else if !request.usesDailyTechnicalInterval,
+                  range == .quarterK || range == .yearK {
+            points = StockChartSeriesProcessor.preparedKLinePoints(
+                points,
+                range: range,
+                market: stock.market
+            )
         }
         guard StockChartSeriesProcessor.hasRequiredCoverage(
             points,

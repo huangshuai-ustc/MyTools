@@ -79,6 +79,17 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         }
     }
 
+    func clearLocalCache() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        lastRequestAt = nil
+        isRefreshing = false
+        error = nil
+        renminbiBuyingRates = [.cny: 1]
+        renminbiSellingRates = [.cny: 1]
+        updatedAt = nil
+    }
+
     private var isCapabilityNeeded: Bool {
         guard let moduleSettings else { return true }
         return moduleSettings.isVisible(.currencyExchange)

@@ -218,6 +218,80 @@ struct CloudSyncMergerTests {
         #expect(!repeatedUpgrade)
     }
 
+    @Test func cloudSyncStateUsesCompressedLocalFormatAndRoundTrips() throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MyTools-CloudSyncState-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+
+        let id = UUID()
+        let payload = Data(repeating: 0x41, count: 64 * 1_024)
+        let document = CloudSyncStoredDocument(
+            entries: [
+                CloudSyncItem.key(kind: .billRecord, id: id): CloudSyncStoredEntry(
+                    kind: .billRecord,
+                    id: id,
+                    digest: Data([1, 2, 3]),
+                    modifiedAt: Date(timeIntervalSince1970: 10),
+                    deviceID: "device-a",
+                    isDeleted: false,
+                    payload: payload,
+                    systemFields: Data(repeating: 0x42, count: 8 * 1_024)
+                )
+            ],
+            deviceID: "device-a",
+            accountRecordName: "account-a"
+        )
+        let store = CloudSyncStateStore(applicationSupportDirectory: baseDirectory)
+        try store.save(document)
+
+        let fileURL = baseDirectory
+            .appendingPathComponent("MyTools", isDirectory: true)
+            .appendingPathComponent("cloud-sync-state.json", isDirectory: false)
+        let raw = try Data(contentsOf: fileURL)
+        #expect(raw.starts(with: Data([0x4D, 0x54, 0x53, 0x43, 0x01])))
+
+        let restored = store.load()
+        let restoredEntry = try #require(restored.entries.values.first)
+        #expect(restored.deviceID == document.deviceID)
+        #expect(restored.accountRecordName == document.accountRecordName)
+        #expect(restoredEntry.payload == payload)
+        #expect(restoredEntry.systemFields == document.entries.values.first?.systemFields)
+    }
+
+    @Test func cloudSyncStateDropsOnlyNonPendingSystemFields() {
+        let pendingID = UUID()
+        let completedID = UUID()
+        let pendingKey = CloudSyncItem.key(kind: .billRecord, id: pendingID)
+        let completedKey = CloudSyncItem.key(kind: .billRecord, id: completedID)
+        var document = CloudSyncStoredDocument(entries: [
+            pendingKey: CloudSyncStoredEntry(
+                kind: .billRecord,
+                id: pendingID,
+                digest: nil,
+                modifiedAt: Date(),
+                deviceID: "device-a",
+                isDeleted: false,
+                payload: Data([1]),
+                systemFields: Data([2])
+            ),
+            completedKey: CloudSyncStoredEntry(
+                kind: .billRecord,
+                id: completedID,
+                digest: nil,
+                modifiedAt: Date(),
+                deviceID: "device-a",
+                isDeleted: false,
+                payload: nil,
+                systemFields: Data([3])
+            )
+        ])
+
+        let didDiscard = document.discardSystemFields(excluding: [pendingKey])
+        #expect(didDiscard)
+        #expect(document.entries[pendingKey]?.systemFields == Data([2]))
+        #expect(document.entries[completedKey]?.systemFields == nil)
+    }
+
     @Test func missingCloudKitEntitlementErrorHasActionableMessage() {
         let error = NSError(
             domain: CKErrorDomain,

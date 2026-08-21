@@ -38,4 +38,23 @@ struct ExchangeRateRepositoryTests {
         #expect(snapshot.renminbiBuyingRates[.hkd] == Decimal(string: "0.9200"))
         #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-v1") == nil)
     }
+
+    @Test func clearCachedSnapshotRemovesCurrentAndLegacyKeys() throws {
+        let suiteName = "MyToolsTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set([CurrencyCode.usd.rawValue: "7.1"], forKey: "boc-currency-buying-rates-v1")
+        defaults.set([CurrencyCode.usd.rawValue: "7.2"], forKey: "boc-currency-selling-rates-v1")
+        defaults.set(Date(), forKey: "boc-currency-rates-date-v1")
+        defaults.set("7.3", forKey: "stock-usd-cny-buying-rate-v1")
+        defaults.set(Date(), forKey: "stock-usd-cny-buying-rate-date-v1")
+
+        ExchangeRateRepository.clearCachedSnapshot(defaults: defaults)
+
+        #expect(defaults.object(forKey: "boc-currency-buying-rates-v1") == nil)
+        #expect(defaults.object(forKey: "boc-currency-selling-rates-v1") == nil)
+        #expect(defaults.object(forKey: "boc-currency-rates-date-v1") == nil)
+        #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-v1") == nil)
+        #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-date-v1") == nil)
+    }
 }

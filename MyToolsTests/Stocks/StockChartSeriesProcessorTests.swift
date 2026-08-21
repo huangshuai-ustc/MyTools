@@ -261,6 +261,34 @@ struct StockChartSeriesProcessorTests {
         #expect(!StockMarketTradingCalendar.isOpen(.unitedStates, at: unitedStatesPost))
     }
 
+    @Test func completedRegularSessionRejectsPartialMinuteHistory() {
+        let partial = [StockChartFixtures.point(at: StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 9,
+            minute: 50,
+            timeZone: "America/New_York"
+        ))]
+        let completed = partial + [StockChartFixtures.point(at: StockChartFixtures.date(
+            2026,
+            8,
+            7,
+            hour: 15,
+            minute: 55,
+            timeZone: "America/New_York"
+        ))]
+
+        #expect(!StockChartSeriesProcessor.hasCompletedRegularSession(
+            partial,
+            market: .unitedStates
+        ))
+        #expect(StockChartSeriesProcessor.hasCompletedRegularSession(
+            completed,
+            market: .unitedStates
+        ))
+    }
+
     @Test func fiveDaysKeepsFiveObservedTradingDaysWithoutCalendarGaps() {
         let dates = [
             (2026, 7, 27), (2026, 7, 28), (2026, 7, 29), (2026, 7, 30),
@@ -296,6 +324,44 @@ struct StockChartSeriesProcessorTests {
         #expect(indicators.count == 80)
         #expect(indicators.first?.date == allPoints[20].date)
         #expect(indicators.last?.date == allPoints.last?.date)
+    }
+
+    @Test func minuteTechnicalWarmupRequiresMultipleTradingDays() {
+        let oneDay = (0..<80).map { index in
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026,
+                    8,
+                    7,
+                    hour: 9,
+                    minute: index % 60
+                ),
+                close: 100 + Double(index)
+            )
+        }
+        #expect(
+            StockChartSeriesProcessor.needsMinuteTechnicalWarmup(
+                oneDay,
+                market: .aShare
+            )
+        )
+
+        let twoDays = oneDay + oneDay.map {
+            StockChartPoint(
+                date: $0.date.addingTimeInterval(86_400),
+                open: $0.open,
+                high: $0.high,
+                low: $0.low,
+                close: $0.close,
+                volume: $0.volume
+            )
+        }
+        #expect(
+            !StockChartSeriesProcessor.needsMinuteTechnicalWarmup(
+                twoDays,
+                market: .aShare
+            )
+        )
     }
 
     @Test func incomingMinuteReplacesExistingMinuteBucket() {
@@ -392,5 +458,58 @@ struct StockChartSeriesProcessorTests {
         #expect(weekly.first?.low == 9)
         #expect(weekly.first?.close == 13)
         #expect(weekly.first?.volume == 350)
+    }
+
+    @Test func quarterAndYearKLinesAggregateUnderlyingBars() {
+        let points = [
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(2025, 1, 3, timeZone: "America/New_York"),
+                open: 10,
+                high: 12,
+                low: 9,
+                close: 11,
+                volume: 100
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(2025, 3, 28, timeZone: "America/New_York"),
+                open: 11,
+                high: 14,
+                low: 10,
+                close: 13,
+                volume: 250
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(2025, 4, 2, timeZone: "America/New_York"),
+                open: 13,
+                high: 15,
+                low: 12,
+                close: 14,
+                volume: 300
+            )
+        ]
+
+        let quarter = StockChartSeriesProcessor.preparedKLinePoints(
+            points,
+            range: .quarterK,
+            market: .unitedStates
+        )
+        let year = StockChartSeriesProcessor.preparedKLinePoints(
+            points,
+            range: .yearK,
+            market: .unitedStates
+        )
+
+        #expect(quarter.count == 2)
+        #expect(quarter.first?.open == 10)
+        #expect(quarter.first?.high == 14)
+        #expect(quarter.first?.low == 9)
+        #expect(quarter.first?.close == 13)
+        #expect(quarter.first?.volume == 350)
+        #expect(year.count == 1)
+        #expect(year.first?.open == 10)
+        #expect(year.first?.high == 15)
+        #expect(year.first?.low == 9)
+        #expect(year.first?.close == 14)
+        #expect(year.first?.volume == 650)
     }
 }

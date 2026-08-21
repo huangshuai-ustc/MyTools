@@ -267,6 +267,10 @@ final class DiagnosticLogger: @unchecked Sendable {
             )
 #endif
         }
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        var persistedURL = fileURL
+        try? persistedURL.setResourceValues(resourceValues)
         fileHandle = try FileHandle(forWritingTo: fileURL)
         try fileHandle?.seekToEnd()
     }

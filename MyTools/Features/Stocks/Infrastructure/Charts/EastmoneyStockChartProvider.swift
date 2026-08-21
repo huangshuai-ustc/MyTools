@@ -38,6 +38,7 @@ struct EastmoneyStockChartProvider: StockChartProvider {
         let stock = request.stock
         let symbol = request.symbol
         let range = request.range
+        let usesDailyTechnicalInterval = request.usesDailyTechnicalInterval
         guard let identifier = identifier(symbol, market: stock.market) else {
             throw StockChartError.invalidSymbol
         }
@@ -48,10 +49,20 @@ struct EastmoneyStockChartProvider: StockChartProvider {
             URLQueryItem(name: "secid", value: identifier),
             URLQueryItem(name: "fields1", value: "f1,f2,f3,f4,f5,f6"),
             URLQueryItem(name: "fields2", value: "f51,f52,f53,f54,f55,f56,f57"),
-            URLQueryItem(name: "klt", value: range.eastmoneyInterval),
+            URLQueryItem(
+                name: "klt",
+                value: usesDailyTechnicalInterval ? "101" : range.eastmoneyInterval
+            ),
             URLQueryItem(name: "fqt", value: "1"),
             URLQueryItem(name: "end", value: "20500101"),
-            URLQueryItem(name: "lmt", value: String(range.providerPointLimit))
+            URLQueryItem(
+                name: "lmt",
+                value: String(
+                    usesDailyTechnicalInterval
+                        ? range.dailyTechnicalPointLimit
+                        : range.providerPointLimit
+                )
+            )
         ]
         guard let url = components?.url else { throw StockChartError.invalidSymbol }
 
@@ -65,7 +76,7 @@ struct EastmoneyStockChartProvider: StockChartProvider {
         let parsedPoints = rawLines.compactMap { parsePoint($0, market: stock.market) }
         let points: [StockChartPoint]
         let fetchedIndicatorPoints: [StockChartPoint]?
-        if range == .intraday || range == .fiveDays {
+        if !usesDailyTechnicalInterval && (range == .intraday || range == .fiveDays) {
             let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
                 parsedPoints,
                 range: range,

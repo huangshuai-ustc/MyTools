@@ -16,6 +16,43 @@ struct StockTechnicalIndicatorPoint: Identifiable {
     let rsi30: Double?
 
     var id: Date { date }
+
+    func replacingRSI(
+        with14 rsi14: Double?,
+        and30 rsi30: Double?
+    ) -> Self {
+        Self(
+            date: date,
+            movingAverage5: movingAverage5,
+            movingAverage20: movingAverage20,
+            movingAverage60: movingAverage60,
+            bollingerMiddle: bollingerMiddle,
+            bollingerUpper: bollingerUpper,
+            bollingerLower: bollingerLower,
+            macdLine: macdLine,
+            macdSignal: macdSignal,
+            macdHistogram: macdHistogram,
+            rsi14: rsi14,
+            rsi30: rsi30
+        )
+    }
+
+    func replacing(date: Date) -> Self {
+        Self(
+            date: date,
+            movingAverage5: movingAverage5,
+            movingAverage20: movingAverage20,
+            movingAverage60: movingAverage60,
+            bollingerMiddle: bollingerMiddle,
+            bollingerUpper: bollingerUpper,
+            bollingerLower: bollingerLower,
+            macdLine: macdLine,
+            macdSignal: macdSignal,
+            macdHistogram: macdHistogram,
+            rsi14: rsi14,
+            rsi30: rsi30
+        )
+    }
 }
 
 enum StockTechnicalIndicators {

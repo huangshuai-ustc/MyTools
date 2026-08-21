@@ -18,19 +18,84 @@ struct StockChartCanvas: View {
     let stock: StockHolding
     let range: StockChartRange
     let displayModes: Set<StockChartDisplayMode>
+    @Binding var visibleXDomain: ClosedRange<Double>?
     let isExpanded: Bool
     @Binding var selectedDate: Date?
     @Binding var isInteracting: Bool
+    @State private var lastPanTranslation: CGFloat = 0
+    @State private var lastMagnification: CGFloat = 1
+    @State private var hasUserAdjustedVisibleXDomain = false
+    @State private var cachedPresentation: StockChartPresentation
 
-    var body: some View {
-        let presentation = StockChartPresentation(
-            snapshot: snapshot,
-            stock: stock,
+    private struct PresentationInputKey: Equatable {
+        let snapshotFetchedAt: Date
+        let snapshotQuoteUpdatedAt: Date
+        let snapshotPointCount: Int
+        let snapshotLatestDate: Date?
+        let snapshotIndicatorPointCount: Int
+        let snapshotDailyIndicatorPointCount: Int
+        let snapshotPreMarketPointCount: Int
+        let snapshotPostMarketPointCount: Int
+        let stockMarket: StockMarket
+        let stockSymbol: String
+        let stockName: String
+        let stockQuoteName: String
+        let transactions: [StockTransaction]
+        let range: StockChartRange
+        let displayModes: Set<StockChartDisplayMode>
+    }
+
+    init(
+        snapshot: StockChartSnapshot,
+        stock: StockHolding,
+        range: StockChartRange,
+        displayModes: Set<StockChartDisplayMode>,
+        visibleXDomain: Binding<ClosedRange<Double>?>,
+        isExpanded: Bool,
+        selectedDate: Binding<Date?>,
+        isInteracting: Binding<Bool>
+    ) {
+        self.snapshot = snapshot
+        self.stock = stock
+        self.range = range
+        self.displayModes = displayModes
+        self._visibleXDomain = visibleXDomain
+        self.isExpanded = isExpanded
+        self._selectedDate = selectedDate
+        self._isInteracting = isInteracting
+        self._cachedPresentation = State(
+            initialValue: StockChartPresentation(
+                snapshot: snapshot,
+                stock: stock,
+                range: range,
+                displayModes: displayModes
+            )
+        )
+    }
+
+    private var presentationInputKey: PresentationInputKey {
+        PresentationInputKey(
+            snapshotFetchedAt: snapshot.fetchedAt,
+            snapshotQuoteUpdatedAt: snapshot.quoteUpdatedAt,
+            snapshotPointCount: snapshot.points.count,
+            snapshotLatestDate: snapshot.points.last?.date,
+            snapshotIndicatorPointCount: snapshot.indicatorPoints?.count ?? 0,
+            snapshotDailyIndicatorPointCount: snapshot.dailyIndicatorPoints?.count ?? 0,
+            snapshotPreMarketPointCount: snapshot.preMarketPoints.count,
+            snapshotPostMarketPointCount: snapshot.postMarketPoints.count,
+            stockMarket: stock.market,
+            stockSymbol: stock.symbol,
+            stockName: stock.name,
+            stockQuoteName: stock.quoteName,
+            transactions: stock.transactions,
             range: range,
             displayModes: displayModes
         )
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            summary(presentation)
+            summary(cachedPresentation)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(minHeight: 34, alignment: .top)
             if displayModes.isEmpty {
@@ -39,8 +104,41 @@ struct StockChartCanvas: View {
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                chart(presentation)
+                chart(cachedPresentation)
             }
+        }
+        .onAppear {
+            synchronizeVisibleXDomain(using: cachedPresentation)
+        }
+        .onChange(of: presentationInputKey) { _, _ in
+            let presentation = StockChartPresentation(
+                snapshot: snapshot,
+                stock: stock,
+                range: range,
+                displayModes: displayModes
+            )
+            // A cached snapshot can contain only the newest K line while the
+            // remote refresh is still filling historical data. Do not carry
+            // that automatically-created tiny viewport into the new series;
+            // preserve a viewport only after the user has panned or zoomed it.
+            if visibleXDomain == nil {
+                hasUserAdjustedVisibleXDomain = false
+            } else if !hasUserAdjustedVisibleXDomain {
+                visibleXDomain = nil
+            }
+            cachedPresentation = presentation
+            synchronizeVisibleXDomain(using: presentation)
+        }
+    }
+
+    private func synchronizeVisibleXDomain(
+        using presentation: StockChartPresentation
+    ) {
+        let requested = visibleXDomain
+            ?? presentation.defaultVisibleXDomain(isExpanded: isExpanded)
+        let clamped = presentation.clampedVisibleXDomain(requested)
+        if visibleXDomain != clamped {
+            visibleXDomain = clamped
         }
     }
 
@@ -49,6 +147,20 @@ struct StockChartCanvas: View {
         let selectedTechnicalPlotPoint = presentation.selectedTechnicalPlotPoint(
             at: selectedDate
         )
+        let requestedXDomain = visibleXDomain
+            ?? presentation.defaultVisibleXDomain(isExpanded: isExpanded)
+        let chartXDomain = presentation.clampedVisibleXDomain(requestedXDomain)
+        // Swift Charts can let fixed-width marks bleed across the domain edge.
+        // Feed it only points in the active viewport so a candle/line from the
+        // previous period cannot appear in the left gutter.
+        let visibleData = presentation.visibleData(in: chartXDomain)
+        let chartYDomain = presentation.yDomain(for: visibleData)
+        let visiblePointCount = visibleData.plotPointCount
+        let visiblePlotPoints = visibleData.plotPoints
+        let visiblePreMarketPlotPoints = visibleData.preMarketPlotPoints
+        let visiblePostMarketPlotPoints = visibleData.postMarketPlotPoints
+        let visibleTechnicalPlotPoints = visibleData.technicalPlotPoints
+        let visibleTransactionMarkers = visibleData.transactionMarkers
 
         return Chart {
             if presentation.hasBasePriceChart,
@@ -56,9 +168,10 @@ struct StockChartCanvas: View {
                let previousClose = StockChartPresentation.intradayPreviousClose(
                 snapshot: snapshot,
                 market: stock.market
-               ),
-               presentation.yDomain.contains(previousClose) {
-                RuleMark(y: .value("昨收", previousClose))
+               ) {
+                let displayedPreviousClose = StockChartPresentation
+                    .clampedReferencePrice(previousClose, to: chartYDomain)
+                RuleMark(y: .value("昨收", displayedPreviousClose))
                     .foregroundStyle(.secondary.opacity(0.5))
                     .lineStyle(StrokeStyle(
                         lineWidth: StockChartVisualStyle.referenceLineWidth,
@@ -72,7 +185,7 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.line) {
-                ForEach(presentation.plotPoints) { plotPoint in
+                ForEach(visiblePlotPoints) { plotPoint in
                     LineMark(
                         x: .value("时间", plotPoint.x),
                         y: .value("价格", plotPoint.point.close)
@@ -84,20 +197,21 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.candlestick) {
-                ForEach(presentation.plotPoints) { plotPoint in
+                ForEach(visiblePlotPoints) { plotPoint in
                     RuleMark(
                         x: .value("时间", plotPoint.x),
                         yStart: .value("最低", plotPoint.point.low),
                         yEnd: .value("最高", plotPoint.point.high)
                     )
                     .foregroundStyle(candleColor(plotPoint.point))
+                    .lineStyle(StrokeStyle(lineWidth: 0.8))
 
                     RectangleMark(
                         x: .value("时间", plotPoint.x),
                         yStart: .value("开盘", plotPoint.point.open),
                         yEnd: .value("收盘", plotPoint.point.close),
                         width: .fixed(StockChartPresentation.candleWidth(
-                            pointCount: snapshot.points.count,
+                            pointCount: visiblePointCount,
                             isExpanded: isExpanded
                         ))
                     )
@@ -106,7 +220,7 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.bollingerBands) {
-                ForEach(presentation.technicalPlotPoints) { plotPoint in
+                ForEach(visibleTechnicalPlotPoints) { plotPoint in
                     if let upper = plotPoint.indicator.bollingerUpper,
                        let lower = plotPoint.indicator.bollingerLower {
                         AreaMark(
@@ -149,7 +263,7 @@ struct StockChartCanvas: View {
             // Draw moving averages after the translucent Bollinger area so its
             // colors stay opaque and match the legend.
             if displayModes.contains(.movingAverage) {
-                ForEach(presentation.technicalPlotPoints) { plotPoint in
+                ForEach(visibleTechnicalPlotPoints) { plotPoint in
                     if let value = plotPoint.indicator.movingAverage5 {
                         LineMark(
                             x: .value("时间", plotPoint.x),
@@ -184,13 +298,13 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.volume) {
-                ForEach(presentation.plotPoints) { plotPoint in
+                ForEach(visiblePlotPoints) { plotPoint in
                     if let volume = plotPoint.point.volume {
                         BarMark(
                             x: .value("时间", plotPoint.x),
                             y: .value("成交量", volume),
                             width: .fixed(StockChartPresentation.indicatorBarWidth(
-                                pointCount: presentation.plotPoints.count,
+                                pointCount: visiblePointCount,
                                 isExpanded: isExpanded
                             ))
                         )
@@ -198,13 +312,13 @@ struct StockChartCanvas: View {
                     }
                 }
                 if presentation.hasPostMarketChart {
-                    ForEach(presentation.postMarketPlotPoints) { plotPoint in
+                    ForEach(visiblePostMarketPlotPoints) { plotPoint in
                         if let volume = plotPoint.point.volume {
                             BarMark(
                                 x: .value("\(presentation.postMarketTitle)时间", plotPoint.x),
                                 y: .value("成交量", volume),
                                 width: .fixed(StockChartPresentation.indicatorBarWidth(
-                                    pointCount: presentation.plotPoints.count,
+                                    pointCount: visiblePointCount,
                                     isExpanded: isExpanded
                                 ))
                             )
@@ -220,12 +334,12 @@ struct StockChartCanvas: View {
                     .lineStyle(StrokeStyle(
                         lineWidth: StockChartVisualStyle.referenceLineWidth
                     ))
-                ForEach(presentation.technicalPlotPoints) { plotPoint in
+                ForEach(visibleTechnicalPlotPoints) { plotPoint in
                     BarMark(
                         x: .value("时间", plotPoint.x),
                         y: .value("MACD", plotPoint.indicator.macdHistogram),
                         width: .fixed(StockChartPresentation.indicatorBarWidth(
-                            pointCount: presentation.plotPoints.count,
+                            pointCount: visiblePointCount,
                             isExpanded: isExpanded
                         ))
                     )
@@ -262,7 +376,7 @@ struct StockChartCanvas: View {
                         lineWidth: StockChartVisualStyle.referenceLineWidth,
                         dash: [4, 3]
                     ))
-                ForEach(presentation.technicalPlotPoints) { plotPoint in
+                ForEach(visibleTechnicalPlotPoints) { plotPoint in
                     if let value = plotPoint.indicator.rsi14 {
                         LineMark(
                             x: .value("时间", plotPoint.x),
@@ -287,7 +401,7 @@ struct StockChartCanvas: View {
             }
 
             if presentation.hasPreMarketChart, !presentation.preMarketPlotPoints.isEmpty {
-                ForEach(presentation.preMarketPlotPoints) { plotPoint in
+                ForEach(visiblePreMarketPlotPoints) { plotPoint in
                     LineMark(
                         x: .value("\(presentation.preMarketTitle)时间", plotPoint.x),
                         y: .value("\(presentation.preMarketTitle)价格", plotPoint.point.close),
@@ -300,7 +414,7 @@ struct StockChartCanvas: View {
             }
 
             if presentation.hasPostMarketChart, !presentation.postMarketPlotPoints.isEmpty {
-                ForEach(presentation.postMarketPlotPoints) { plotPoint in
+                ForEach(visiblePostMarketPlotPoints) { plotPoint in
                     LineMark(
                         x: .value("\(presentation.postMarketTitle)时间", plotPoint.x),
                         y: .value("\(presentation.postMarketTitle)价格", plotPoint.point.close),
@@ -313,7 +427,7 @@ struct StockChartCanvas: View {
             }
 
             if presentation.hasBasePriceChart {
-                ForEach(presentation.transactionMarkers) { marker in
+                ForEach(visibleTransactionMarkers) { marker in
                     PointMark(
                         x: .value("交易日期", marker.plotX),
                         y: .value("交易位置", marker.plotPrice)
@@ -398,15 +512,23 @@ struct StockChartCanvas: View {
                 }
             }
         }
-        .chartYScale(domain: presentation.yDomain)
+        .chartYScale(domain: chartYDomain)
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks(values: presentation.xAxisValues(isExpanded: isExpanded)) { value in
+            AxisMarks(
+                values: presentation.xAxisValues(
+                    isExpanded: isExpanded,
+                    in: chartXDomain
+                )
+            ) { value in
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel {
                     if let x = value.as(Double.self),
-                       let plotPoint = presentation.plotPoint(closestTo: x) {
+                       let plotPoint = presentation.plotPoint(
+                           closestTo: x,
+                           in: chartXDomain
+                       ) {
                         Text(presentation.axisLabelText(plotPoint.point.date))
                             .font(.caption2)
                     }
@@ -433,20 +555,35 @@ struct StockChartCanvas: View {
             }
         }
         .chartXScale(
-            domain: presentation.xDomain,
-            range: .plotDimension(startPadding: 22, endPadding: 22)
+            domain: chartXDomain,
+            range: .plotDimension(startPadding: 26, endPadding: 48)
         )
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Rectangle()
                     .fill(.clear)
                     .contentShape(Rectangle())
-                    .gesture(
+                    .highPriorityGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
                                 isInteracting = true
                                 guard let plotFrame = proxy.plotFrame else { return }
                                 let frame = geometry[plotFrame]
+                                if range.isKLineRange,
+                                   abs(value.translation.width) > 8 {
+                                    let deltaPixels = value.translation.width - lastPanTranslation
+                                    lastPanTranslation = value.translation.width
+                                    let deltaDomain = -Double(deltaPixels / max(frame.width, 1))
+                                        * (chartXDomain.upperBound - chartXDomain.lowerBound)
+                                    panViewport(
+                                        by: deltaDomain,
+                                        presentation: presentation,
+                                        isExpanded: isExpanded
+                                    )
+                                    hasUserAdjustedVisibleXDomain = true
+                                    selectedDate = nil
+                                    return
+                                }
                                 guard frame.contains(value.location) else {
                                     selectedDate = nil
                                     return
@@ -461,6 +598,7 @@ struct StockChartCanvas: View {
                                 }
                             }
                             .onEnded { _ in
+                                lastPanTranslation = 0
                                 Task { @MainActor in
                                     await Task.yield()
                                     isInteracting = false
@@ -469,9 +607,65 @@ struct StockChartCanvas: View {
                     )
             }
         }
+        .simultaneousGesture(
+            MagnificationGesture()
+                .onChanged { value in
+                    guard range.isKLineRange else { return }
+                    let scale = value / max(lastMagnification, 0.01)
+                    lastMagnification = value
+                    zoomViewport(
+                        by: 1 / Double(scale),
+                        presentation: presentation,
+                        isExpanded: isExpanded
+                    )
+                    hasUserAdjustedVisibleXDomain = true
+                }
+                .onEnded { _ in
+                    lastMagnification = 1
+                }
+        )
         .accessibilityLabel(
             "\(stock.displayName)\(range.title)\(presentation.displayModesTitle)图"
         )
+    }
+
+    private func panViewport(
+        by delta: Double,
+        presentation: StockChartPresentation,
+        isExpanded: Bool
+    ) {
+        let full = presentation.xDomain
+        let current = presentation.clampedVisibleXDomain(
+            visibleXDomain ?? presentation.defaultVisibleXDomain(isExpanded: isExpanded)
+        )
+        let length = current.upperBound - current.lowerBound
+        guard length > 0, full.upperBound > full.lowerBound else { return }
+        let lower = min(
+            max(current.lowerBound + delta, full.lowerBound),
+            full.upperBound - length
+        )
+        visibleXDomain = lower...(lower + length)
+    }
+
+    private func zoomViewport(
+        by scale: Double,
+        presentation: StockChartPresentation,
+        isExpanded: Bool
+    ) {
+        let full = presentation.xDomain
+        let current = presentation.clampedVisibleXDomain(
+            visibleXDomain ?? presentation.defaultVisibleXDomain(isExpanded: isExpanded)
+        )
+        let currentLength = current.upperBound - current.lowerBound
+        let fullLength = full.upperBound - full.lowerBound
+        guard currentLength > 0, fullLength > 0 else { return }
+        let newLength = min(max(currentLength * scale, 12), fullLength)
+        let center = (current.lowerBound + current.upperBound) / 2
+        let lower = min(
+            max(center - newLength / 2, full.lowerBound),
+            full.upperBound - newLength
+        )
+        visibleXDomain = lower...(lower + newLength)
     }
 
     @ViewBuilder
@@ -495,31 +689,32 @@ struct StockChartCanvas: View {
         )
         let volumeText = point.volume.map(StockChartPresentation.volumeText) ?? "--"
         return VStack(alignment: .leading, spacing: 4) {
-            StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
-                Text(presentation.chartDateText(point.date))
+            summaryRow {
+                Text("时间 \(presentation.chartDateText(point.date))")
                     .foregroundStyle(.secondary)
-                if presentation.hasPriceChart {
-                    Text(
-                        "\(presentation.isPreMarket(point) ? presentation.preMarketTitle : presentation.isPostMarket(point) ? presentation.postMarketTitle : "收盘") \(closeText)"
-                    )
-                        .fontWeight(.medium)
-                        .foregroundStyle(
-                            presentation.isPreMarket(point)
-                                ? Color.orange
-                                : presentation.isPostMarket(point) ? Color.blue : Color.primary
-                        )
+            }
+
+            if presentation.hasBasePriceChart {
+                summaryRow {
+                    if displayModes.contains(.candlestick) {
+                        Text("开 \(StockChartPresentation.plainPriceText(point.open))")
+                        Text("高 \(StockChartPresentation.plainPriceText(point.high))")
+                        Text("低 \(StockChartPresentation.plainPriceText(point.low))")
+                        Text("收 \(closeText)")
+                    } else {
+                        Text("走势 \(closeText)")
+                    }
                 }
-                if displayModes.contains(.candlestick) {
-                    Text(
-                        "高 \(StockChartPresentation.plainPriceText(point.high))  "
-                            + "低 \(StockChartPresentation.plainPriceText(point.low))"
-                    )
-                    .foregroundStyle(.secondary)
-                }
+                .foregroundStyle(
+                    presentation.isPreMarket(point)
+                        ? Color.orange
+                        : presentation.isPostMarket(point) ? Color.blue : Color.primary
+                )
+                .fontWeight(.medium)
             }
 
             if presentation.hasBasePriceChart, !selections.isEmpty {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     ForEach(selections) { selection in
                         Text(transactionSummary(selection))
                             .fontWeight(.semibold)
@@ -529,19 +724,19 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.movingAverage), let indicator {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     movingAverageSummary(indicator)
                 }
             }
 
             if displayModes.contains(.bollingerBands), let indicator {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     bollingerSummary(indicator)
                 }
             }
 
             if displayModes.contains(.volume) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("\(volumeDirectionText(point))成交量 \(volumeText)")
                         .fontWeight(.medium)
                 }
@@ -550,33 +745,27 @@ struct StockChartCanvas: View {
             if presentation.hasPreMarketChart,
                !presentation.isPreMarket(point),
                let preMarket = presentation.preMarketPlotPoints.last?.point {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
-                    let price = StockChartPresentation.priceText(
-                        preMarket.close,
-                        currencyCode: snapshot.currencyCode
-                    )
-                    Text("\(presentation.preMarketTitle) \(price)")
-                        .fontWeight(.medium)
-                        .foregroundStyle(.orange)
-                }
+                extendedHoursSummaryRow(
+                    title: presentation.preMarketTitle,
+                    point: preMarket,
+                    color: .orange,
+                    presentation: presentation
+                )
             }
 
             if presentation.hasPostMarketChart,
                !presentation.isPostMarket(point),
                let postMarket = presentation.postMarketPlotPoints.last?.point {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
-                    let price = StockChartPresentation.priceText(
-                        postMarket.close,
-                        currencyCode: snapshot.currencyCode
-                    )
-                    Text("\(presentation.postMarketTitle) \(price)")
-                        .fontWeight(.medium)
-                        .foregroundStyle(.blue)
-                }
+                extendedHoursSummaryRow(
+                    title: presentation.postMarketTitle,
+                    point: postMarket,
+                    color: .blue,
+                    presentation: presentation
+                )
             }
 
             if displayModes.contains(.macd), let indicator {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("DIF \(StockChartPresentation.indicatorText(indicator.macdLine))")
                         .foregroundStyle(.purple)
                     Text("DEA \(StockChartPresentation.indicatorText(indicator.macdSignal))")
@@ -587,7 +776,7 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.rsi), let rsi = indicator?.rsi14 {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("RSI14 \(StockChartPresentation.indicatorText(rsi))")
                         .fontWeight(.medium)
                         .foregroundStyle(.purple)
@@ -598,14 +787,8 @@ struct StockChartCanvas: View {
                     }
                 }
             }
-            if presentation.hasPreMarketChart,
-               !presentation.preMarketPlotPoints.isEmpty,
-               presentation.hasPriceChart {
-                Text("\(presentation.preMarketTitle)仅展示价格")
-                    .foregroundStyle(.secondary)
-            }
         }
-        .font(.caption.monospacedDigit())
+        .font(.caption2.monospacedDigit())
     }
 
     private func transactionSummary(_ selection: StockTransactionSelection) -> String {
@@ -648,52 +831,103 @@ struct StockChartCanvas: View {
         }
     }
 
+    private func summaryRow<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .lineLimit(1)
+        .minimumScaleFactor(0.72)
+    }
+
+    private func extendedHoursSummaryRow(
+        title: String,
+        point: StockChartPoint,
+        color: Color,
+        presentation: StockChartPresentation
+    ) -> some View {
+        let price = StockChartPresentation.priceText(
+            point.close,
+            currencyCode: snapshot.currencyCode
+        )
+        return summaryRow {
+            Text("\(title) \(presentation.chartDateText(point.date))")
+            Text("价格 \(price)")
+            if title == presentation.preMarketTitle {
+                Text("仅价格")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .fontWeight(.medium)
+        .foregroundStyle(color)
+    }
+
     private func summaryPlaceholder(_ presentation: StockChartPresentation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let latestPoint = presentation.latestDisplayedPoint {
+                summaryRow {
+                    Text("时间 \(presentation.chartDateText(latestPoint.date))")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                summaryRow {
+                    Text("时间 --")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if displayModes.isEmpty {
                 Text("未选择图表")
                     .foregroundStyle(.secondary)
             }
 
             if displayModes.contains(.line) || displayModes.contains(.candlestick) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     if displayModes.contains(.line) {
-                        Text("收盘价").foregroundStyle(.secondary)
+                        Text("走势 收盘价").foregroundStyle(.secondary)
                     }
                     if displayModes.contains(.candlestick) {
-                        Text("开盘 · 最高 · 最低 · 收盘").foregroundStyle(.secondary)
+                        Text("开 最高 最低 收盘").foregroundStyle(.secondary)
                     }
                 }
             }
 
             if displayModes.contains(.preMarket) {
-                Text(
-                    presentation.preMarketPlotPoints.isEmpty
-                        ? "\(presentation.preMarketTitle)暂无数据"
-                        : presentation.preMarketTitle
-                )
-                .foregroundStyle(
-                    presentation.preMarketPlotPoints.isEmpty
-                        ? Color.secondary
-                        : Color.orange
-                )
+                if let point = presentation.preMarketPlotPoints.last?.point {
+                    extendedHoursSummaryRow(
+                        title: presentation.preMarketTitle,
+                        point: point,
+                        color: .orange,
+                        presentation: presentation
+                    )
+                } else {
+                    summaryRow {
+                        Text("\(presentation.preMarketTitle)暂无数据")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if displayModes.contains(.postMarket) {
-                Text(
-                    presentation.postMarketPlotPoints.isEmpty
-                        ? "\(presentation.postMarketTitle)暂无数据"
-                        : presentation.postMarketTitle
-                )
-                .foregroundStyle(
-                    presentation.postMarketPlotPoints.isEmpty
-                        ? Color.secondary
-                        : Color.blue
-                )
+                if let point = presentation.postMarketPlotPoints.last?.point {
+                    extendedHoursSummaryRow(
+                        title: presentation.postMarketTitle,
+                        point: point,
+                        color: .blue,
+                        presentation: presentation
+                    )
+                } else {
+                    summaryRow {
+                        Text("\(presentation.postMarketTitle)暂无数据")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if displayModes.contains(.movingAverage) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("MA5").foregroundStyle(.teal)
                     Text("MA20").foregroundStyle(.purple)
                     Text("MA60").foregroundStyle(.brown)
@@ -701,7 +935,7 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.bollingerBands) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("上轨").foregroundStyle(.mint)
                     Text("中轨").foregroundStyle(.teal)
                     Text("下轨").foregroundStyle(.cyan)
@@ -713,7 +947,7 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.macd) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("DIF").foregroundStyle(.purple)
                     Text("DEA").foregroundStyle(.teal)
                     Text("MACD").foregroundStyle(.secondary)
@@ -721,20 +955,21 @@ struct StockChartCanvas: View {
             }
 
             if displayModes.contains(.rsi) {
-                StockChartSummaryFlowLayout(horizontalSpacing: 10, verticalSpacing: 4) {
+                summaryRow {
                     Text("RSI14").foregroundStyle(.purple)
                     Text("RSI30").foregroundStyle(.orange)
                 }
             }
         }
-        .font(.caption)
+        .font(.caption2.monospacedDigit())
     }
 
     private func lineColor() -> Color {
         guard let performance = StockChartPresentation.rangePerformance(
             snapshot: snapshot,
             range: range,
-            market: stock.market
+            market: stock.market,
+            visibleXDomain: visibleXDomain
         ) else { return .accentColor }
         return valueColor(performance.change)
     }

@@ -403,10 +403,16 @@ actor SportsLotteryService: SportsLotteryProviding {
         var directory = cacheFileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var directoryValues = URLResourceValues()
-        directoryValues.isExcludedFromBackup = true
+        // This directory also contains the business vault and attachments.
+        // Keep the cache itself out of device backups without excluding them.
+        directoryValues.isExcludedFromBackup = false
         try? directory.setResourceValues(directoryValues)
         let document = SportsLotteryCacheDocument(leagues: persistedLeagues.values.sorted { $0.league.leagueID < $1.league.leagueID })
         try JSONEncoder().encode(document).write(to: cacheFileURL, options: .atomic)
+        var cacheValues = URLResourceValues()
+        cacheValues.isExcludedFromBackup = true
+        var persistedCacheURL = cacheFileURL
+        try? persistedCacheURL.setResourceValues(cacheValues)
     }
 
     private static func defaultCacheFileURL() -> URL? {

@@ -28,13 +28,17 @@ private struct LiveModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
 #if MYTOOLS_FEATURE_STOCKS
             await StockChartService.shared.clearCache()
 #endif
+            ExchangeRateRepository.clearCachedSnapshot()
             break
         case .sportsLottery:
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
             await SportsLotteryService.shared.clearCache()
 #endif
             break
-        case .personalFinance, .currencyExchange, .healthRecords, .foodMap,
+        case .currencyExchange:
+            ExchangeRateRepository.clearCachedSnapshot()
+            break
+        case .personalFinance, .healthRecords, .foodMap,
              .secrets, .documents, .bills:
             break
         }
@@ -57,6 +61,9 @@ extension AppStoreDependencies {
             attachmentStore: attachmentStore,
             containerIdentifier: AppMetadata.iCloudContainerIdentifier,
             isSupported: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+                && CloudKitAvailability.isSupported(
+                    containerIdentifier: AppMetadata.iCloudContainerIdentifier
+                )
         )
         return Self(
             initialLoader: SecureStoreInitialLoader(),

@@ -23,12 +23,18 @@ final class StockRefreshCoordinator {
     private weak var store: StockStore?
     private weak var moduleSettings: ToolModuleSettings?
     private var foregroundTask: Task<Void, Never>?
-    private var lastAutomaticCheckAt: Date?
     private var lastClosingRefreshSessionEndByMarket: [StockMarket: Date] = [:]
+    private var lastClosingChartRefreshSessionEndByMarket: [StockMarket: Date] = [:]
+    private var lastClosingRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
+    private var lastClosingChartRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
+    private var isAutomaticRefreshRunning = false
     private var currentScenePhase: ScenePhase = .inactive
     private var isStocksPageVisible = false
+    private let chartService: any StockChartServing
 
-    private init() {}
+    private init(chartService: any StockChartServing = StockChartService.shared) {
+        self.chartService = chartService
+    }
 
     func attach(store: StockStore, moduleSettings: ToolModuleSettings? = nil) {
         self.store = store
@@ -113,11 +119,6 @@ final class StockRefreshCoordinator {
 
     private func startForegroundPolling() {
         guard foregroundTask == nil else { return }
-        if lastAutomaticCheckAt == nil {
-            // Include the previous day so reopening the app after a market
-            // close can perform the one required closing snapshot.
-            lastAutomaticCheckAt = Date().addingTimeInterval(-24 * 60 * 60)
-        }
         foregroundTask = Task { @MainActor [weak self] in
             DiagnosticLogger.shared.log(.lifecycle, "股票前台轮询启动")
             while !Task.isCancelled {
@@ -137,35 +138,127 @@ final class StockRefreshCoordinator {
         guard let store,
               isStockModuleVisible,
               store.isDataLoaded,
-              !store.isRefreshingQuotes else { return }
+              !isAutomaticRefreshRunning else { return }
+        isAutomaticRefreshRunning = true
+        defer { isAutomaticRefreshRunning = false }
 
         let now = Date()
-        let previousCheck = lastAutomaticCheckAt ?? now.addingTimeInterval(-60)
-        lastAutomaticCheckAt = now
 
-        let endedMarkets = closingMarketsNeedingRefresh(
+        let closingChartSessions = closingChartSessionsNeedingRefresh(
             store: store,
-            previousCheck: previousCheck,
             now: now
         )
-        if !endedMarkets.isEmpty {
-            DiagnosticLogger.shared.log(
-                .stockQuote,
-                "检测到收盘补刷市场：\(endedMarkets.map { $0.rawValue }.sorted().joined(separator: ","))"
+        if !closingChartSessions.isEmpty {
+            await refreshClosingCharts(
+                in: store,
+                sessions: closingChartSessions
             )
         }
+
+        guard !store.isRefreshingQuotes else { return }
+        let closingQuoteSessions = closingQuoteSessionsNeedingRefresh(
+            store: store,
+            now: now
+        )
+        let closingQuoteMarkets = Set(closingQuoteSessions.keys)
+        if !closingQuoteMarkets.isEmpty {
+            DiagnosticLogger.shared.log(
+                .stockQuote,
+                "检测到收盘报价补刷市场：\(closingQuoteMarkets.map { $0.rawValue }.sorted().joined(separator: ","))"
+            )
+        }
+        let previousQuoteRefreshDates = closingQuoteMarkets.reduce(
+            into: [StockMarket: Date]()
+        ) { dates, market in
+            if let refreshedAt = store.lastRefreshAt(for: market) {
+                dates[market] = refreshedAt
+            }
+        }
         await store.refreshQuotes(
-            forcedMarkets: endedMarkets,
+            forcedMarkets: closingQuoteMarkets,
             allowClosedMissingData: false
         )
+        for (market, sessionEnd) in closingQuoteSessions
+        where store.lastRefreshAt(for: market) != previousQuoteRefreshDates[market] {
+            lastClosingRefreshSessionEndByMarket[market] = sessionEnd
+        }
     }
 
-    private func closingMarketsNeedingRefresh(
+    private func closingChartSessionsNeedingRefresh(
         store: StockStore,
-        previousCheck: Date,
         now: Date
-    ) -> Set<StockMarket> {
-        var result = Set<StockMarket>()
+    ) -> [StockMarket: Date] {
+        var result: [StockMarket: Date] = [:]
+        for market in StockMarket.allCases {
+            let session = StockMarketTradingCalendar.session(for: market, at: now)
+            // Do not refresh K-lines during a live post-market stream. A
+            // pre-market launch may still catch up a missed prior close, while
+            // a normal active session waits for the final close.
+            guard session == .closed || session == .preMarket,
+                  store.stocks.contains(where: {
+                      $0.market == market && $0.hasConfiguredSymbol
+                  }),
+                  let sessionEnd = StockMarketTradingCalendar.latestCompletedFinalSessionEnd(
+                      for: market,
+                      at: now
+                  ),
+                  lastClosingChartRefreshSessionEndByMarket[market] != sessionEnd else {
+                continue
+            }
+            if let attemptedAt = lastClosingChartRefreshAttemptAtByMarket[market],
+               now.timeIntervalSince(attemptedAt) < 5 * 60 {
+                continue
+            }
+            lastClosingChartRefreshAttemptAtByMarket[market] = now
+            result[market] = sessionEnd
+        }
+        return result
+    }
+
+    private func refreshClosingCharts(
+        in store: StockStore,
+        sessions: [StockMarket: Date]
+    ) async {
+        let stocks = store.stocks.filter { sessions[$0.market] != nil && $0.hasConfiguredSymbol }
+        DiagnosticLogger.shared.log(
+            .stockQuote,
+            "检测到收盘走势图补刷标的：\(stocks.count)"
+        )
+        for market in StockMarket.displayOrder where sessions[market] != nil {
+            var didRefreshAllStocks = true
+            for stock in stocks where stock.market == market {
+                guard !Task.isCancelled else { return }
+                do {
+                    _ = try await chartService.fetchChart(
+                        for: stock,
+                        // All K-line tabs derive from the canonical daily
+                        // source, so one daily request updates day/week/month/
+                        // quarter/year caches together.
+                        range: .dayK,
+                        forceRefresh: true
+                    )
+                } catch is CancellationError {
+                    return
+                } catch {
+                    didRefreshAllStocks = false
+                    DiagnosticLogger.logError(
+                        .stockQuote,
+                        operation: "收盘走势图补刷 \(stock.symbol)",
+                        error: error
+                    )
+                }
+            }
+            if didRefreshAllStocks, let sessionEnd = sessions[market] {
+                lastClosingChartRefreshSessionEndByMarket[market] = sessionEnd
+            }
+        }
+    }
+
+    private func closingQuoteSessionsNeedingRefresh(
+        store: StockStore,
+        now: Date
+    ) -> [StockMarket: Date] {
+        var result: [StockMarket: Date] = [:]
         for market in StockMarket.allCases {
             // The post-market interval belongs to the chart's extended-hours
             // stream. Do not force a regular quote refresh until it has ended.
@@ -175,28 +268,6 @@ final class StockRefreshCoordinator {
             guard store.stocks.contains(where: { $0.market == market && $0.hasConfiguredSymbol }) else {
                 continue
             }
-
-            let latestQuoteAt = store.latestQuoteAt(for: market)
-            let quoteNeedsClosingRefresh: Bool
-            if let latestQuoteAt {
-                quoteNeedsClosingRefresh = !StockMarketTradingCalendar.isSessionActive(market, at: now)
-                    && StockMarketTradingCalendar.finalSessionEnded(
-                        for: market,
-                        between: latestQuoteAt,
-                        and: now
-                    )
-            } else {
-                quoteNeedsClosingRefresh = false
-            }
-
-            let lastRefresh = store.lastRefreshAt(for: market)
-            let baseline = max(previousCheck, lastRefresh ?? previousCheck)
-            let sessionEndedSinceRefresh = StockMarketTradingCalendar.finalSessionEnded(
-                for: market,
-                between: baseline,
-                and: now
-            )
-            guard quoteNeedsClosingRefresh || sessionEndedSinceRefresh else { continue }
 
             // A provider may still return the same intraday quote after close.
             // De-duplicate by the actual final session, so a lunch break cannot
@@ -208,8 +279,12 @@ final class StockRefreshCoordinator {
             if lastClosingRefreshSessionEndByMarket[market] == sessionEnd {
                 continue
             }
-            lastClosingRefreshSessionEndByMarket[market] = sessionEnd
-            result.insert(market)
+            if let attemptedAt = lastClosingRefreshAttemptAtByMarket[market],
+               now.timeIntervalSince(attemptedAt) < 5 * 60 {
+                continue
+            }
+            lastClosingRefreshAttemptAtByMarket[market] = now
+            result[market] = sessionEnd
         }
         return result
     }

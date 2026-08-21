@@ -12,25 +12,34 @@ struct TencentStockChartProvider: StockChartProvider {
         let stock = request.stock
         let symbol = request.symbol
         let range = request.range
+        let usesDailyTechnicalInterval = request.usesDailyTechnicalInterval
         let identifier = identifier(symbol, market: stock.market)
-        let isMinuteChart = range == .intraday || range == .fiveDays
+        let isMinuteChart = !usesDailyTechnicalInterval
+            && (range == .intraday || range == .fiveDays)
         let interval = range == .intraday ? "m5" : "m15"
         let historicalInterval: String
-        switch range {
-        case .fiveYears, .tenYears:
-            historicalInterval = "week"
-        case .sinceInception:
-            historicalInterval = "month"
-        default:
+        if usesDailyTechnicalInterval {
             historicalInterval = "day"
+        } else {
+            switch range {
+            case .weekK, .fiveYears, .tenYears:
+                historicalInterval = "week"
+            case .monthK, .quarterK, .yearK, .sinceInception:
+                historicalInterval = "month"
+            default:
+                historicalInterval = "day"
+            }
         }
+        let pointLimit = usesDailyTechnicalInterval
+            ? range.dailyTechnicalPointLimit
+            : range.providerPointLimit
         let endpoint = isMinuteChart
             ? "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline"
             : "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
         var components = URLComponents(string: endpoint)
         let parameter = isMinuteChart
-            ? "\(identifier),\(interval),,\(range.providerPointLimit)"
-            : "\(identifier),\(historicalInterval),,,\(range.providerPointLimit),qfq"
+            ? "\(identifier),\(interval),,\(pointLimit)"
+            : "\(identifier),\(historicalInterval),,,\(pointLimit),qfq"
         components?.queryItems = [URLQueryItem(name: "param", value: parameter)]
         guard let url = components?.url else { throw StockChartError.invalidSymbol }
 

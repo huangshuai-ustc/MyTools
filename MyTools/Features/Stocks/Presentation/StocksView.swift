@@ -349,7 +349,10 @@ struct StocksView: View {
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索股票名称或代码")
         .refreshable {
-            await store.refreshQuotes(for: marketFilter.market)
+            await store.refreshQuotes(
+                for: marketFilter.market,
+                forceRefresh: true
+            )
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -358,7 +361,12 @@ struct StocksView: View {
                     directionRawValue: $sortDirectionRawValue
                 )
                 Button {
-                    Task { await store.refreshQuotes(for: marketFilter.market) }
+                    Task {
+                        await store.refreshQuotes(
+                            for: marketFilter.market,
+                            forceRefresh: true
+                        )
+                    }
                 } label: {
                     if store.isRefreshingQuotes {
                         ProgressView()

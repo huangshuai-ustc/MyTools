@@ -82,6 +82,14 @@ actor ExchangeRateRepository {
         )
     }
 
+    static func clearCachedSnapshot(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: DefaultsKey.buyingRates)
+        defaults.removeObject(forKey: DefaultsKey.sellingRates)
+        defaults.removeObject(forKey: DefaultsKey.updatedAt)
+        defaults.removeObject(forKey: DefaultsKey.legacyUSDBuyingRate)
+        defaults.removeObject(forKey: DefaultsKey.legacyUpdatedAt)
+    }
+
     private static func decimalRates(from values: [String: String]?) -> [CurrencyCode: Decimal] {
         guard let values else { return [:] }
         return values.reduce(into: [:]) { result, entry in

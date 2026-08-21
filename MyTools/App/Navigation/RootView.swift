@@ -51,6 +51,9 @@ struct RootView: View {
             SportsLotteryRefreshCoordinator.shared.update(scenePhase: scenePhase)
         }
 #endif
+        .onAppear {
+            auth.applicationDidBecomeActive()
+        }
         .onChange(of: scenePhase) { _, phase in
 #if MYTOOLS_FEATURE_STOCKS
             StockRefreshCoordinator.shared.update(scenePhase: phase)
@@ -60,13 +63,14 @@ struct RootView: View {
 #endif
             if phase == .background {
                 DiagnosticLogger.shared.markEnteredBackground()
-                if auth.isAdmin { auth.lock() }
+                auth.applicationDidEnterBackground()
                 Task {
                     await store.flushPendingPersistence()
                     await DiagnosticLogger.shared.flush()
                 }
             } else if phase == .active {
                 DiagnosticLogger.shared.markBecameActive()
+                auth.applicationDidBecomeActive()
             }
         }
     }

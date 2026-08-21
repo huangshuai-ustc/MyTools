@@ -239,8 +239,8 @@ struct AppStoreFacadeTests {
 
         await store.stockStore.refreshQuotes(
             for: .unitedStates,
-            forcedMarkets: [.unitedStates],
-            allowClosedMissingData: false
+            allowClosedMissingData: false,
+            forceRefresh: true
         )
 
         #expect(store.stockStore.stocks.first?.latestPrice == 42)

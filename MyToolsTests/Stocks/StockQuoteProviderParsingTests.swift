@@ -352,12 +352,451 @@ struct StockQuoteProviderParsingTests {
         #expect(await sinaClient.recordedRequests().count == 3)
     }
 
+    @Test func stockSearchParsesTencentCandidatesAcrossMarkets() {
+        let response = #"v_hint="sh~600519~\u8d35\u5dde\u8305\u53f0~gzmt~GP^hk~700~\u817e\u8baf\u63a7\u80a1~txkg~GP^us~ko.n~\u53ef\u53e3\u53ef\u4e50~kkkl~GP^us~coke.oq~\u53ef\u53e3\u53ef\u4e50\u88c5\u74f6~kkklzp~GP";"#
+        let results = StockSearchProviderSupport.parseTencent(response)
+
+        #expect(results.contains(StockSearchResult(market: .aShare, symbol: "600519", name: "贵州茅台")))
+        #expect(results.contains(StockSearchResult(market: .hongKong, symbol: "00700", name: "腾讯控股")))
+        #expect(results.contains(StockSearchResult(
+            market: .unitedStates,
+            symbol: "KO",
+            name: "可口可乐",
+            detail: "NYSE · 普通股"
+        )))
+        #expect(results.contains(StockSearchResult(
+            market: .unitedStates,
+            symbol: "COKE",
+            name: "可口可乐装瓶",
+            detail: "NASDAQ · 普通股"
+        )))
+        #expect(!results.contains(where: { $0.name == "sh" || $0.name == "GP" }))
+        #expect(!results.contains(where: { $0.name.contains("\\u") }))
+    }
+
+    @Test func stockSearchPreservesUnitedStatesShareClassSuffix() {
+        #expect(
+            StockSearchProviderSupport.normalizedTencentSymbol("brk.b", market: .unitedStates)
+                == "BRK.B"
+        )
+    }
+
+    @Test func stockSearchUsesTencentQuoteNameForOfficialAShareAbbreviation() async {
+        var quoteFields = Array(repeating: "", count: 47)
+        quoteFields[1] = "C宇树-W"
+        quoteFields[2] = "688836"
+        quoteFields[3] = "717"
+        quoteFields[4] = "700"
+        quoteFields[30] = "20260820103045"
+        quoteFields[32] = "2.43"
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(
+                #"v_hint="sh~688836~\u5b87\u6811\u79d1\u6280W~yskjw~GP-A-KCB";"#.utf8
+            ),
+            tencentQuoteData: gb18030Data(
+                "v_sh688836=\"\(quoteFields.joined(separator: "~"))\";"
+            ),
+            yahooSearchData: Data(#"{"quotes":[]}"#.utf8)
+        )
+
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "宇树", market: .aShare, limit: 8)
+
+        #expect(results == [
+            StockSearchResult(
+                market: .aShare,
+                symbol: "688836",
+                name: "C宇树-W",
+                alias: "宇树科技W",
+                detail: "普通股 · 科创板"
+            )
+        ])
+    }
+
+    @Test func stockSearchRanksPrimaryPDDAndUsesShortChineseAlias() async throws {
+        var pddFields = Array(repeating: "", count: 47)
+        pddFields[1] = "拼多多"
+        pddFields[2] = "PDD.OQ"
+        pddFields[3] = "90.20"
+        pddFields[4] = "87.27"
+        pddFields[30] = "2026-08-19 16:00:01"
+        pddFields[32] = "3.36"
+        pddFields[46] = "Pdd Holdings Inc"
+
+        var pddlFields = Array(repeating: "", count: 47)
+        pddlFields[1] = "2倍做多拼多多ETF-GraniteShares"
+        pddlFields[2] = "PDDL.OQ"
+        pddlFields[3] = "14.85"
+        pddlFields[4] = "13.91"
+        pddlFields[30] = "2026-08-19 16:00:01"
+        pddlFields[32] = "6.80"
+        pddlFields[46] = "Graniteshares 2X Long Pdd Daily Etf"
+
+        let yahooData = try json([
+            "quotes": [
+                [
+                    "symbol": "PDD",
+                    "shortname": "PDD Holdings Inc.",
+                    "longname": "PDD Holdings Inc.",
+                    "quoteType": "EQUITY",
+                    "exchange": "NMS",
+                    "exchDisp": "NASDAQ",
+                    "typeDisp": "Equity"
+                ],
+                [
+                    "symbol": "PDDL",
+                    "shortname": "GraniteShares 2x Long PDD Daily",
+                    "quoteType": "ETF",
+                    "exchange": "NGM",
+                    "exchDisp": "NASDAQ",
+                    "typeDisp": "ETF"
+                ],
+                [
+                    "symbol": "0A2S.L",
+                    "shortname": "PDD Holdings Inc.",
+                    "quoteType": "EQUITY",
+                    "exchange": "LSE",
+                    "exchDisp": "London"
+                ]
+            ]
+        ])
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(
+                #"v_hint="us~pdd.oq~Pdd~pdd~GP^us~pddl.oq~2\u500d\u505a\u591a\u62fc\u591a\u591aetfgraniteshares~2bzdpddetfgraniteshares~GP";"#.utf8
+            ),
+            tencentQuoteData: gb18030Data(
+                "v_usPDD=\"\(pddFields.joined(separator: "~"))\";" +
+                "v_usPDDL=\"\(pddlFields.joined(separator: "~"))\";"
+            ),
+            yahooSearchData: yahooData
+        )
+
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "拼多多", market: .unitedStates, limit: 8)
+
+        #expect(results == [
+            StockSearchResult(
+                market: .unitedStates,
+                symbol: "PDD",
+                name: "PDD Holdings Inc.",
+                alias: "拼多多",
+                detail: "NASDAQ · 普通股",
+                source: .yahoo
+            ),
+            StockSearchResult(
+                market: .unitedStates,
+                symbol: "PDDL",
+                name: "GraniteShares 2x Long PDD Daily",
+                detail: "NASDAQ · ETF",
+                source: .yahoo
+            )
+        ])
+    }
+
+    @Test func stockSearchUsesBrokerShortNameInsteadOfQueryForMicron() async {
+        var quoteFields = Array(repeating: "", count: 47)
+        quoteFields[1] = "美光科技"
+        quoteFields[2] = "MU.OQ"
+        quoteFields[3] = "100"
+        quoteFields[4] = "99"
+        quoteFields[30] = "2026-08-20 16:00:01"
+        quoteFields[32] = "1.01"
+        quoteFields[46] = "Micron Technology, Inc."
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(
+                #"v_hint="us~mu.oq~美光~mg~GP";"#.utf8
+            ),
+            tencentQuoteData: gb18030Data(
+                "v_usMU=\"\(quoteFields.joined(separator: "~"))\";"
+            ),
+            yahooSearchData: Data(#"{"quotes":[]}"#.utf8)
+        )
+
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "美光", market: .unitedStates, limit: 8)
+
+        #expect(results == [
+            StockSearchResult(
+                market: .unitedStates,
+                symbol: "MU",
+                name: "Micron Technology, Inc.",
+                alias: "美光科技",
+                detail: "NASDAQ · 普通股"
+            )
+        ])
+    }
+
+    @Test func stockSearchKeepsProviderRelevanceForCocaColaFamily() async {
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(
+                #"v_hint="us~ko.n~\u53ef\u53e3\u53ef\u4e50~kkkl~GP^us~ccep.oq~\u53ef\u53e3\u53ef\u4e50\u6b27\u6d32\u592a\u5e73\u6d0b~kkkloztpy~GP^us~ccojy.ps~\u53ef\u53e3\u53ef\u4e50\u74f6\u88c5\u65e5\u672c~kkklpzrb~GP^us~coke.oq~\u53ef\u53e3\u53ef\u4e50\u88c5\u74f6~kkklzp~GP^us~kof.n~\u53ef\u53e3\u53ef\u4e50\u51e1\u8428\u74f6\u88c5~kkklfspz~GP";"#.utf8
+            ),
+            tencentQuoteData: Data(),
+            yahooSearchData: Data(#"{"quotes":[]}"#.utf8)
+        )
+
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "可口可乐", market: .unitedStates, limit: 8)
+
+        #expect(Array(results.map(\.symbol).prefix(5)) == ["KO", "COKE", "CCEP", "KOF", "CCOJY"])
+    }
+
+    @Test func stockSearchPromotesShortChineseCompanyNameForColaQuery() async {
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(
+                #"v_hint="us~ccep.oq~\u53ef\u53e3\u53ef\u4e50\u6b27\u6d32\u592a\u5e73\u6d0b~kkkloztpy~GP^us~ccojy.ps~\u53ef\u53e3\u53ef\u4e50\u74f6\u88c5\u65e5\u672c~kkklpzrb~GP^us~coke.oq~\u53ef\u53e3\u53ef\u4e50\u88c5\u74f6~kkklzp~GP^us~ko.n~\u53ef\u53e3\u53ef\u4e50~kkkl~GP^us~kof.n~\u53ef\u53e3\u53ef\u4e50\u51e1\u8428\u74f6\u88c5~kkklfspz~GP^us~pep.oq~\u767e\u4e8b\u53ef\u4e50~bskl~GP";"#.utf8
+            ),
+            tencentQuoteData: Data(),
+            yahooSearchData: Data(#"{"quotes":[]}"#.utf8)
+        )
+
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "可乐", market: .unitedStates, limit: 8)
+
+        #expect(Array(results.map(\.symbol).prefix(6)) == ["KO", "PEP", "COKE", "CCEP", "KOF", "CCOJY"])
+    }
+
+    @Test func stockSearchNormalizesYahooHongKongSymbol() {
+        let quote = StockSearchProviderSupport.YahooQuote(
+            symbol: "700.HK",
+            shortname: "腾讯控股",
+            longname: nil,
+            quoteType: "EQUITY"
+        )
+        #expect(
+            StockSearchProviderSupport.yahooResult(quote, market: .hongKong)
+                == StockSearchResult(
+                    market: .hongKong,
+                    symbol: "00700",
+                    name: "腾讯控股",
+                    source: .yahoo
+                )
+        )
+    }
+
+    @Test func stockSearchNormalizesYahooAShareSymbol() {
+        let quote = StockSearchProviderSupport.YahooQuote(
+            symbol: "600519.SS",
+            shortname: "Kweichow Moutai",
+            longname: nil,
+            quoteType: "EQUITY"
+        )
+        #expect(
+            StockSearchProviderSupport.yahooResult(quote, market: .aShare)
+                == StockSearchResult(
+                    market: .aShare,
+                    symbol: "600519",
+                    name: "Kweichow Moutai",
+                    source: .yahoo
+                )
+        )
+    }
+
+    @Test func stockSearchFiltersForeignPDDListingsAndLabelsUSCandidates() {
+        let pdd = StockSearchProviderSupport.yahooResult(
+            StockSearchProviderSupport.YahooQuote(
+                symbol: "PDD",
+                shortname: "PDD Holdings Inc.",
+                longname: "PDD Holdings Inc.",
+                quoteType: "EQUITY",
+                exchange: "NMS",
+                exchDisp: "NASDAQ",
+                typeDisp: "Equity"
+            ),
+            market: .unitedStates
+        )
+        let london = StockSearchProviderSupport.yahooResult(
+            StockSearchProviderSupport.YahooQuote(
+                symbol: "0A2S.L",
+                shortname: "PDD Holdings Inc.",
+                longname: nil,
+                quoteType: "EQUITY",
+                exchange: "LSE",
+                exchDisp: "London"
+            ),
+            market: .unitedStates
+        )
+        let frankfurt = StockSearchProviderSupport.yahooResult(
+            StockSearchProviderSupport.YahooQuote(
+                symbol: "9PDA.F",
+                shortname: "PDD Holdings Inc.",
+                longname: nil,
+                quoteType: "EQUITY",
+                exchange: "FRA",
+                exchDisp: "Frankfurt"
+            ),
+            market: .unitedStates
+        )
+
+        #expect(pdd == StockSearchResult(
+            market: .unitedStates,
+            symbol: "PDD",
+            name: "PDD Holdings Inc.",
+            detail: "NASDAQ · 普通股",
+            source: .yahoo
+        ))
+        #expect(london == nil)
+        #expect(frankfurt == nil)
+    }
+
+    @Test(arguments: [
+        (StockMarket.aShare, "600519", "600519", "600519"),
+        (StockMarket.aShare, "贵州茅台", "600519", "贵州茅台"),
+        (StockMarket.aShare, "茅台", "600519", "贵州茅台"),
+        (StockMarket.aShare, "moutai", "600519", "Kweichow Moutai"),
+        (StockMarket.aShare, "000858", "000858", "000858"),
+        (StockMarket.aShare, "五粮液", "000858", "五粮液"),
+        (StockMarket.hongKong, "700", "00700", "700"),
+        (StockMarket.hongKong, "00700", "00700", "00700"),
+        (StockMarket.hongKong, "腾讯", "00700", "腾讯"),
+        (StockMarket.hongKong, "Tencent", "00700", "tencent"),
+        (StockMarket.unitedStates, "KO", "KO", "KO"),
+        (StockMarket.unitedStates, "ko", "KO", "ko"),
+        (StockMarket.unitedStates, "可口可乐", "KO", "可口可乐"),
+        (StockMarket.unitedStates, "可乐", "KO", "可乐"),
+        (StockMarket.unitedStates, "Coca-Cola", "KO", "coca-cola"),
+        (StockMarket.unitedStates, "MU", "MU", "MU"),
+        (StockMarket.unitedStates, "micron", "MU", "micron"),
+        (StockMarket.unitedStates, "美光科技", "MU", "美光科技"),
+        (StockMarket.unitedStates, "PDD", "PDD", "PDD"),
+        (StockMarket.unitedStates, "pdd", "PDD", "pdd"),
+        (StockMarket.unitedStates, "拼多多", "PDD", "拼多多")
+    ])
+    func stockSearchSupportsQueryMatrix(
+        market: StockMarket,
+        query: String,
+        expectedSymbol: String,
+        _ queryLabel: String
+    ) async {
+        let results = await StockSearchService(httpClient: makeSearchMatrixClient())
+            .search(query: query, market: market, limit: 8)
+
+        #expect(!results.isEmpty, "query=\(queryLabel) should return candidates")
+        #expect(results.first?.symbol == expectedSymbol, "query=\(queryLabel)")
+        #expect(results.allSatisfy { !$0.name.contains("\\u") })
+        #expect(results.allSatisfy { !$0.symbol.contains(".") || market == .unitedStates })
+    }
+
+    @Test func stockSearchReturnsEmptyForUnknownQuery() async {
+        let client = StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(#"v_hint="";"#.utf8),
+            tencentQuoteData: Data(),
+            yahooSearchData: Data(#"{"quotes":[]}"#.utf8)
+        )
+        let results = await StockSearchService(httpClient: client)
+            .search(query: "完全不存在的证券名称", market: .unitedStates, limit: 8)
+
+        #expect(results.isEmpty)
+    }
+
+    @Test func stockSearchMatrixKeepsUSFormalNamesAndDetails() async {
+        let results = await StockSearchService(httpClient: makeSearchMatrixClient())
+            .search(query: "美光", market: .unitedStates, limit: 8)
+
+        #expect(results.first?.symbol == "MU")
+        #expect(results.first?.name == "Micron Technology, Inc.")
+        #expect(results.first?.alias == "美光科技")
+        #expect(results.first?.detail == "NASDAQ · 普通股")
+    }
+
+    private func makeSearchMatrixClient() -> StockSearchRoutingHTTPClient {
+        let tencentSearch = #"v_hint="sh~600519~贵州茅台~gzmt~GP^sz~000858~五粮液~wly~GP^sh~601318~中国平安~zgpa~GP^hk~700~腾讯控股~txkg~GP^hk~9988~阿里巴巴-SW~albb~GP^us~aapl.n~苹果~pg~GP^us~msft.oq~微软~wr~GP^us~mu.oq~美光科技~mg~GP^us~pdd.oq~拼多多~pdd~GP^us~ko.n~可口可乐~kkkl~GP^us~pep.oq~百事可乐~bskl~GP^us~coke.oq~可口可乐装瓶~kkklzp~GP^us~pddl.oq~2倍做多拼多多ETF~pddetf~ETF";"#
+        let yahooObject: [String: Any] = [
+            "quotes": [
+                yahooSearchQuote(
+                    symbol: "600519.SS", shortname: "Kweichow Moutai", longname: "Kweichow Moutai Co., Ltd.",
+                    quoteType: "EQUITY", exchange: "SHC", exchDisp: "Shanghai", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "000858.SZ", shortname: "Wuliangye Yibin", longname: "Wuliangye Yibin Co., Ltd.",
+                    quoteType: "EQUITY", exchange: "SHC", exchDisp: "Shenzhen", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "700.HK", shortname: "Tencent", longname: "Tencent Holdings Limited",
+                    quoteType: "EQUITY", exchange: "HKG", exchDisp: "Hong Kong", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "9988.HK", shortname: "Alibaba", longname: "Alibaba Group Holding Limited",
+                    quoteType: "EQUITY", exchange: "HKG", exchDisp: "Hong Kong", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "AAPL", shortname: "Apple", longname: "Apple Inc.",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "MSFT", shortname: "Microsoft", longname: "Microsoft Corporation",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "MU", shortname: "美光科技", longname: "Micron Technology, Inc.",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "PDD", shortname: "PDD Holdings Inc.", longname: "PDD Holdings Inc.",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "KO", shortname: "Coca-Cola", longname: "The Coca-Cola Company",
+                    quoteType: "EQUITY", exchange: "NYQ", exchDisp: "NYSE", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "PEP", shortname: "PepsiCo", longname: "PepsiCo, Inc.",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "COKE", shortname: "Coca-Cola Consolidated", longname: "Coca-Cola Consolidated, Inc.",
+                    quoteType: "EQUITY", exchange: "NMS", exchDisp: "NASDAQ", typeDisp: "Equity"
+                ),
+                yahooSearchQuote(
+                    symbol: "PDDL", shortname: "GraniteShares 2x Long PDD Daily", longname: nil,
+                    quoteType: "ETF", exchange: "NGM", exchDisp: "NASDAQ", typeDisp: "ETF"
+                )
+            ]
+        ]
+        let yahooSearch = try! JSONSerialization.data(withJSONObject: yahooObject)
+        return StockSearchRoutingHTTPClient(
+            tencentSearchData: Data(tencentSearch.utf8),
+            tencentQuoteData: Data(),
+            yahooSearchData: yahooSearch
+        )
+    }
+
+    private func yahooSearchQuote(
+        symbol: String,
+        shortname: String,
+        longname: String?,
+        quoteType: String,
+        exchange: String,
+        exchDisp: String,
+        typeDisp: String
+    ) -> [String: Any] {
+        var value: [String: Any] = [
+            "symbol": symbol,
+            "shortname": shortname,
+            "quoteType": quoteType,
+            "exchange": exchange,
+            "exchDisp": exchDisp,
+            "typeDisp": typeDisp
+        ]
+        if let longname { value["longname"] = longname }
+        return value
+    }
+
     private func makeStock(market: StockMarket, symbol: String) -> StockHolding {
         StockHolding(market: market, symbol: symbol)
     }
 
     private func json(_ object: Any) throws -> Data {
         try JSONSerialization.data(withJSONObject: object)
+    }
+
+    private func gb18030Data(_ value: String) -> Data {
+        let encoding = String.Encoding(
+            rawValue: CFStringConvertEncodingToNSStringEncoding(
+                CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+            )
+        )
+        return value.data(using: encoding) ?? Data()
     }
 
     private func timeSeries(
@@ -421,5 +860,26 @@ private actor StubStockFundamentalProvider: StockFundamentalProviding {
 
     func requestCount() -> Int {
         requests
+    }
+}
+
+private actor StockSearchRoutingHTTPClient: StockQuoteHTTPClient {
+    private let tencentSearchData: Data
+    private let tencentQuoteData: Data
+    private let yahooSearchData: Data
+
+    init(tencentSearchData: Data, tencentQuoteData: Data, yahooSearchData: Data) {
+        self.tencentSearchData = tencentSearchData
+        self.tencentQuoteData = tencentQuoteData
+        self.yahooSearchData = yahooSearchData
+    }
+
+    func data(for request: URLRequest) async throws -> Data {
+        switch request.url?.host {
+        case "smartbox.gtimg.cn": tencentSearchData
+        case "qt.gtimg.cn": tencentQuoteData
+        case "query1.finance.yahoo.com": yahooSearchData
+        default: Data()
+        }
     }
 }
