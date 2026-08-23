@@ -780,7 +780,7 @@ private struct StockRow: View {
                     metric("持仓", value: holdingQuantityText)
                     metric("成本", value: holdingCostText, leadingInset: 8)
                     metric(
-                        "涨跌",
+                        "今日涨跌",
                         value: changePercentText,
                         color: changePercentColor,
                         leadingInset: 8

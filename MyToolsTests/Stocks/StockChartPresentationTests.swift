@@ -534,7 +534,7 @@ struct StockChartPresentationTests {
         #expect(performance?.percent == 0.1)
     }
 
-    @Test func fiveDayPerformanceIncludesTheFirstTradingDayMove() {
+    @Test func fiveDayPerformanceUsesTheFirstVisibleTradingDay() {
         let previousFriday = point(day: 31, month: 7, close: 90)
         let visible = [
             point(day: 3, close: 100),
@@ -555,8 +555,8 @@ struct StockChartPresentationTests {
             market: .aShare
         )
 
-        #expect(performance?.change == 20)
-        #expect(performance?.percent == 20.0 / 90.0)
+        #expect(performance?.change == 10)
+        #expect(performance?.percent == 0.1)
     }
 
     @Test func fiveDayPerformanceFallsBackToFirstVisiblePointWithoutHistory() {

@@ -573,8 +573,6 @@ struct StockChartPresentation {
         visibleXDomain: ClosedRange<Double>? = nil
     ) -> Double? {
         guard let first = snapshot.points.first else { return nil }
-        let history = snapshot.indicatorPoints ?? snapshot.points
-
         switch range {
         case .intraday:
             return intradayPreviousClose(
@@ -582,11 +580,13 @@ struct StockChartPresentation {
                 market: market
             ) ?? first.close
         case .fiveDays:
-            return closingPrice(
-                beforeTradingDayContaining: first.date,
-                in: history,
-                market: market
-            ) ?? first.close
+            let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
+            if let visibleXDomain {
+                return sortedPoints.first(where: {
+                    $0.date.timeIntervalSinceReferenceDate >= visibleXDomain.lowerBound
+                })?.close ?? sortedPoints.first?.close ?? first.close
+            }
+            return sortedPoints.first?.close ?? first.close
         case .dayK, .weekK, .monthK, .quarterK, .yearK,
              .oneMonth, .threeMonths, .oneYear,
              .fiveYears, .tenYears, .sinceInception:

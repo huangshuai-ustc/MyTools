@@ -500,13 +500,15 @@ struct StockWatchView: View {
                             visibleXDomain: visibleXDomain
                         ) {
                             HStack(spacing: 10) {
+                                Text("区间涨跌")
+                                    .foregroundStyle(.secondary)
                                 Text(
                                     StockChartPresentation.signedPriceText(
                                         performance.change,
                                         currencyCode: snapshot.currencyCode
                                     )
                                 )
-                                Text(StockValueFormatter.percent(Decimal(performance.percent)))
+                                Text(StockValueFormatter.signedPercent(Decimal(performance.percent)))
                             }
                             .font(.subheadline.weight(.medium).monospacedDigit())
                             .foregroundStyle(

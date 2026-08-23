@@ -138,76 +138,21 @@ struct StockDetailView: View {
 
         return List {
             Section("行情") {
-                LabeledContent("市场") { StockMarketBadge(market: stock.market) }
-                LabeledContent("股票代码", value: stock.symbol)
-                if !stock.name.isEmpty {
-                    LabeledContent("自定义名称", value: stock.name)
-                }
-                LabeledContent("最新价", value: stock.latestPrice.map { StockValueFormatter.price($0, currencyCode: stock.market.currencyCode) } ?? "待同步")
-                if let changePercent = stock.changePercent {
-                    LabeledContent("涨跌幅") {
-                        Text(StockValueFormatter.percent(changePercent))
-                            .foregroundStyle(StockTrendColor.color(
-                                for: changePercent,
-                                market: stock.market,
-                                settings: stockAppearanceSettings
-                            ))
-                    }
-                }
-                if let lastQuoteAt = stock.lastQuoteAt {
-                    LabeledContent("更新时间", value: AppDateFormatter.string(from: lastQuoteAt))
-                }
-                if let source = store.quoteSources[stock.id] {
-                    LabeledContent("行情来源", value: source)
-                }
-                if let error = store.quoteErrors[stock.id] {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                StockQuoteOverview(
+                    stock: stock,
+                    quoteSource: store.quoteSources[stock.id],
+                    quoteError: store.quoteErrors[stock.id],
+                    appearanceSettings: stockAppearanceSettings
+                )
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
             Section("持仓总览") {
-                LabeledContent("当前持仓", value: "\(StockValueFormatter.quantity(stock.currentShares)) 股")
-                LabeledContent("累计买入金额", value: StockValueFormatter.money(stock.totalBuyCost, currencyCode: stock.market.currencyCode))
-                LabeledContent(
-                    "单股持有成本",
-                    value: stock.averageHoldingCost.map {
-                        StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
-                    } ?? "无持仓"
+                StockHoldingOverview(
+                    stock: stock,
+                    appearanceSettings: stockAppearanceSettings
                 )
-                LabeledContent("持仓市值", value: stock.marketValue.map { StockValueFormatter.money($0, currencyCode: stock.market.currencyCode) } ?? "待同步")
-                LabeledContent("持仓盈亏") {
-                    if let value = stock.holdingProfitLoss {
-                        Text(StockValueFormatter.moneyMagnitude(value, currencyCode: stock.market.currencyCode))
-                            .foregroundStyle(StockTrendColor.color(
-                                for: value,
-                                market: stock.market,
-                                settings: stockAppearanceSettings
-                            ))
-                    } else {
-                        Text("待同步").foregroundStyle(.secondary)
-                    }
-                }
-                LabeledContent("已变现利润（含分红）") {
-                    Text(StockValueFormatter.money(stock.realizedProfitLoss, currencyCode: stock.market.currencyCode))
-                        .foregroundStyle(StockTrendColor.color(
-                            for: stock.realizedProfitLoss,
-                            market: stock.market,
-                            settings: stockAppearanceSettings
-                        ))
-                }
-                LabeledContent("累计总收益（含已变现）") {
-                    if let totalProfitLoss = stock.totalProfitLoss {
-                        Text(StockValueFormatter.money(totalProfitLoss, currencyCode: stock.market.currencyCode))
-                            .foregroundStyle(StockTrendColor.color(
-                                for: totalProfitLoss,
-                                market: stock.market,
-                                settings: stockAppearanceSettings
-                            ))
-                    } else {
-                        Text("待同步").foregroundStyle(.secondary)
-                    }
-                }
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
             Section("交易记录") {
@@ -292,6 +237,217 @@ struct StockDetailView: View {
     private func deleteDividend(id: UUID, from dividends: [StockDividend]) {
         guard dividends.contains(where: { $0.id == id }) else { return }
         deleteDividends(ids: [id])
+    }
+}
+
+private struct StockQuoteOverview: View {
+    let stock: StockHolding
+    let quoteSource: String?
+    let quoteError: String?
+    let appearanceSettings: StockAppearanceSettings
+
+    private var changeColor: Color {
+        guard let changePercent = stock.changePercent else { return .secondary }
+        return StockTrendColor.color(
+            for: changePercent,
+            market: stock.market,
+            settings: appearanceSettings
+        )
+    }
+
+    private var changeAmount: Decimal? {
+        guard let latestPrice = stock.latestPrice,
+              let previousClose = stock.previousClose else { return nil }
+        return latestPrice - previousClose
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("最新价")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(stock.latestPrice.map {
+                        StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
+                    } ?? "待同步")
+                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("今日涨跌")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let changePercent = stock.changePercent {
+                        HStack(spacing: 6) {
+                            if let changeAmount {
+                                Text(StockValueFormatter.price(
+                                    changeAmount,
+                                    currencyCode: stock.market.currencyCode
+                                ))
+                            }
+                            Text(StockValueFormatter.signedPercent(changePercent))
+                        }
+                        .font(.subheadline.weight(.medium).monospacedDigit())
+                        .foregroundStyle(changeColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                    } else {
+                        Text("待同步")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Divider()
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                StockDetailMetricCell(title: "市场", value: stock.market.title)
+                StockDetailMetricCell(title: "股票代码", value: stock.symbol)
+                if !stock.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    StockDetailMetricCell(title: "自定义名称", value: stock.name)
+                }
+                if let lastQuoteAt = stock.lastQuoteAt {
+                    StockDetailMetricCell(
+                        title: "更新时间",
+                        value: AppDateFormatter.string(from: lastQuoteAt)
+                    )
+                }
+                if let quoteSource {
+                    StockDetailMetricCell(title: "行情来源", value: quoteSource)
+                }
+            }
+
+            if let quoteError {
+                Label(quoteError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+}
+
+private struct StockHoldingOverview: View {
+    let stock: StockHolding
+    let appearanceSettings: StockAppearanceSettings
+
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            StockDetailMetricCell(
+                title: "持仓",
+                value: "\(StockValueFormatter.integerQuantity(stock.currentShares)) 股"
+            )
+            StockDetailMetricCell(
+                title: "持仓成本",
+                value: StockValueFormatter.money(
+                    stock.holdingCost,
+                    currencyCode: stock.market.currencyCode
+                )
+            )
+            StockDetailMetricCell(
+                title: "单股成本",
+                value: stock.averageHoldingCost.map {
+                    StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
+                } ?? "无持仓"
+            )
+            StockDetailMetricCell(
+                title: "持仓市值",
+                value: stock.marketValue.map {
+                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                } ?? "待同步"
+            )
+            StockDetailMetricCell(
+                title: "持仓盈亏",
+                value: stock.holdingProfitLoss.map {
+                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                } ?? "待同步",
+                color: color(for: stock.holdingProfitLoss)
+            )
+            StockDetailMetricCell(
+                title: "盈亏率",
+                value: stock.holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "待同步",
+                color: color(for: stock.holdingProfitRate)
+            )
+            StockDetailMetricCell(
+                title: "累计买入",
+                value: StockValueFormatter.money(
+                    stock.totalBuyCost,
+                    currencyCode: stock.market.currencyCode
+                )
+            )
+            StockDetailMetricCell(
+                title: "已变现（含分红）",
+                value: StockValueFormatter.money(
+                    stock.realizedProfitLoss,
+                    currencyCode: stock.market.currencyCode
+                ),
+                color: color(stock.realizedProfitLoss)
+            )
+            StockDetailMetricCell(
+                title: "累计总收益",
+                value: stock.totalProfitLoss.map {
+                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                } ?? "待同步",
+                color: color(for: stock.totalProfitLoss)
+            )
+        }
+    }
+
+    private func color(for value: Decimal?) -> Color {
+        guard let value else { return .secondary }
+        return StockTrendColor.color(
+            for: value,
+            market: stock.market,
+            settings: appearanceSettings
+        )
+    }
+
+    private func color(_ value: Decimal) -> Color {
+        StockTrendColor.color(
+            for: value,
+            market: stock.market,
+            settings: appearanceSettings
+        )
+    }
+}
+
+private struct StockDetailMetricCell: View {
+    let title: String
+    let value: String
+    var color: Color = .primary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.subheadline.weight(.medium).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(2)
+                .minimumScaleFactor(0.68)
+                .allowsTightening(true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 

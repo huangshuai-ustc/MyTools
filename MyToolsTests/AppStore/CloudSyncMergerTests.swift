@@ -408,6 +408,39 @@ struct CloudSyncMergerTests {
         #expect(result.vault.stocks.first?.quoteName == "Provider Name")
     }
 
+    @Test func remoteNewStockIsAppendedToAnOlderPortfolio() throws {
+        var existing = StockHolding()
+        existing.symbol = "OLD"
+        var incoming = StockHolding()
+        incoming.symbol = "NEW"
+        incoming.name = "后来新增的股票"
+        let stockItem = try #require(
+            CloudSyncSnapshotBuilder
+                .make(
+                    vault: VaultData(stocks: [incoming]),
+                    secrets: [],
+                    attachmentStore: AttachmentStore(),
+                    enabledModules: [.myStocks]
+                )
+                .items
+                .first { $0.kind == .stockHolding }
+        )
+        let payload = stockItem.payload
+
+        // The payload is decoded from the same portfolio-only shape that is
+        // sent to CloudKit. A device with an older snapshot must append it by
+        // UUID instead of replacing or dropping its existing holdings.
+        let result = try CloudSyncMerger.apply(
+            [.upsert(kind: .stockHolding, id: incoming.id, payload: payload)],
+            to: VaultData(stocks: [existing]),
+            secrets: [],
+            enabledModules: [.myStocks]
+        )
+
+        #expect(result.vault.stocks.map(\.symbol) == ["OLD", "NEW"])
+        #expect(result.vault.stocks.last?.name == "后来新增的股票")
+    }
+
     @Test func snapshotStoresAttachmentsAsAssetsAndRemovesEveryBackupPayload() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

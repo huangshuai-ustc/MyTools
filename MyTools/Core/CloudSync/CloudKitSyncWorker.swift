@@ -125,6 +125,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
             await statusHandler(.syncing)
 
+            // The first remote fetch must know which modules are active. If the
+            // worker starts with an empty `activeModules` set, every remote
+            // record is stored as inactive. The reconciliation that follows
+            // can then mistake newly fetched records for local deletions.
+            let initialSnapshot = try await snapshotProvider()
+            await prepareActiveModules(using: initialSnapshot)
             try await ensureZoneExists()
             try await fetchRemoteChanges()
             let mergedSnapshot = try await snapshotProvider()
@@ -150,27 +156,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     }
 
     private func reconcileReadySnapshot(_ snapshot: CloudSyncSnapshot) async {
-        let previouslyActiveModules = activeModules
-        activeModules = snapshot.participatingModules
-
-        let activatedModules = activeModules.subtracting(previouslyActiveModules)
-        if !activatedModules.isEmpty {
-            // Apply records first. Attachment downloads are independent of the
-            // metadata merge and must not block the first usable screen.
-            attachmentRestoreTask?.cancel()
-            attachmentRestoreTask = Task { [weak self] in
-                await self?.restoreAttachments(for: activatedModules)
-            }
-            let changes = changesForActivatedModules(activatedModules)
-            if !changes.isEmpty {
-                do {
-                    try await changeHandler(changes)
-                    saveDocument()
-                    return
-                } catch {
-                    await report(error, operation: "恢复已重新开启模块的 iCloud 数据")
-                }
-            }
+        if await prepareActiveModules(using: snapshot) {
+            return
         }
 
         let now = Date()
@@ -235,6 +222,41 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
         if !changes.isEmpty || didDiscardPayloads {
             saveDocument()
+        }
+    }
+
+    /// Updates the module boundary before records are fetched or reconciled.
+    ///
+    /// A worker is created with no active modules because it cannot know the
+    /// compiled/syncable set until the first local snapshot is available. When
+    /// a module is re-enabled, records fetched while it was disabled are also
+    /// applied here before the next snapshot is compared.
+    ///
+    /// - Returns: `true` when applying re-enabled records changed the local
+    ///   vault. The caller should then discard its old snapshot and wait for a
+    ///   fresh one before running deletion reconciliation.
+    private func prepareActiveModules(using snapshot: CloudSyncSnapshot) async -> Bool {
+        let previouslyActiveModules = activeModules
+        activeModules = snapshot.participatingModules
+
+        let activatedModules = activeModules.subtracting(previouslyActiveModules)
+        guard !activatedModules.isEmpty else { return false }
+
+        // Apply records first. Attachment downloads are independent of the
+        // metadata merge and must not block the first usable screen.
+        attachmentRestoreTask?.cancel()
+        attachmentRestoreTask = Task { [weak self] in
+            await self?.restoreAttachments(for: activatedModules)
+        }
+        let changes = changesForActivatedModules(activatedModules)
+        guard !changes.isEmpty else { return false }
+        do {
+            try await changeHandler(changes)
+            saveDocument()
+            return true
+        } catch {
+            await report(error, operation: "恢复已重新开启模块的 iCloud 数据")
+            return false
         }
     }
 

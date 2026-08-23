@@ -1,6 +1,6 @@
 # MyTools 能力目录与开发准则
 
-更新日期：2026-08-14
+更新日期：2026-08-22
 
 本文件是 MyTools 的项目级开发准则和可复用能力索引。`README.md` 说明产品行为，源码和测试定义真实契约，本文件负责回答两个问题：项目已经具备什么能力，以及开发新功能时应该先复用什么。
 
@@ -19,7 +19,7 @@
 
 ## 不可破坏的架构规则
 
-- “我的 > 首页功能”的开关只控制页面、后台刷新和通知；隐藏模块的数据仍参与备份与 CloudKit 同步。只有“删除功能数据”的撤回窗口才会临时停止目标模块的 CloudKit 对账。
+- “我的 > 首页功能”的开关只控制页面、后台刷新和通知；隐藏模块的数据仍参与 CloudKit 同步，但当前加密备份导出/导入按已编译且可见的模块裁剪。只有“删除功能数据”的撤回窗口才会临时停止目标模块的 CloudKit 对账；若产品要求隐藏模块也进入备份，需要先修改 `AppStore.makeBackupDocument()` 的模块选择逻辑并补回归测试。
 - `Config/Shared.xcconfig` 的 `MYTOOLS_COMPILED_FEATURES` 是唯一编译清单。未编译模块不得注册、显示、启动服务、导入导出或参与 CloudKit；其本地 Vault 数据必须以不透明载荷原样保留，避免精简版本覆盖或清理数据与附件。
 - 模块显隐先读取本地 `UserDefaults`，没有显式本地值时使用编译配置声明的默认值；CloudKit 应用偏好同步优先于编译默认值。`MYTOOLS_DEFAULT_HIDDEN_FEATURES` 只能改变新安装或没有显式设置时的首页初始状态。
 - 存储与数据设置中的“删除功能数据”只允许管理员操作。每层确认都必须等待 10 秒，执行后保留 10 秒撤回窗口；`AppStore` 以模块快照恢复目标字段，撤回期不删除附件且从 CloudKit 参与模块中暂时排除目标模块，过期后才删除未被其他模块引用的附件、模块专属缓存和提醒状态，并恢复正常对账。开启 iCloud 时最终删除会同步到其他设备，备份文件不回写。
@@ -112,7 +112,7 @@
 | `MyTools/App/Composition/AppStore.swift` | 装配各模块 Store，加载/恢复 Vault，生成聚合快照并协调保存和 CloudKit。 |
 | `MyTools/App/Composition/AppStoreAlertEvaluator.swift` | 根据股票行情和汇率快照评估价格提醒是否触发。 |
 | `MyTools/App/Composition/AppStoreBackupMerger.swift` | 按模块与记录 ID 执行加密备份的增量数据合并。 |
-| `MyTools/App/Composition/AppStoreBackupProcessor.swift` | 按已开启模块裁剪备份、装配及恢复各模块附件。 |
+| `MyTools/App/Composition/AppStoreBackupProcessor.swift` | 按已编译且可见模块裁剪备份、装配及恢复各模块附件；导入同样按当前可见模块过滤。 |
 | `MyTools/App/Composition/AppStoreDependencies.swift` | AppStore 使用的窄协议、禁用实现和依赖容器；测试替身也遵循这些协议。 |
 | `MyTools/App/Composition/ModuleStoreContracts.swift` | 数据变更、模块生命周期、汇率观察和冗余字段清理协议及注册表。 |
 
@@ -444,7 +444,7 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyToolsTests/AppStore/AppStoreAlertEvaluatorTests.swift` | 股票和汇率阈值提醒评估及去重行为。 |
-| `MyToolsTests/AppStore/AppStoreBackupMergerTests.swift` | 备份按模块、记录 ID 和关闭模块的增量合并。 |
+| `MyToolsTests/AppStore/AppStoreBackupMergerTests.swift` | 备份按模块、记录 ID 和当前可见模块的增量合并。 |
 | `MyToolsTests/AppStore/AppStoreBackupProcessorTests.swift` | 备份模块裁剪、附件装配/恢复和错误行为。 |
 | `MyToolsTests/AppStore/AppStoreFacadeTests.swift` | AppStore 加载、依赖调用、快照、持久化和模块组合行为。 |
 | `MyToolsTests/AppStore/CloudSyncMergerTests.swift` | CloudKit 各实体 upsert/delete、模块隔离和合并规则。 |
@@ -503,9 +503,9 @@
 | 保密资料 | 六类模板、个人/工作用途、自定义字段、字段模板名称/类型编辑、普通模式按当前模板显隐、切换分类重建目标模板字段、模板字段右滑内容显隐、左滑删除与长按拖动排序、按换行自动单行/多行、默认字段遮罩、条目字段右滑内容显隐/改名、左滑删除、标签胶囊、标签建议/筛选/搜索、Apple 密码 CSV 导入、独立查看认证和管理员编辑 | `Features/Secrets/Presentation/SecretVaultView.swift` | `SecretStore`、`Secret.swift`、`ApplePasswordImport.swift` |
 | 证照 | 身份证、护照、港澳通行证、驾驶证、学历/学位/房产证、出生医学证明、预防接种证、职业资格证书和自定义模板；所有证照必填签发日期，固定期限从签发日期起算；身份证、港澳通行证和驾驶证使用年限届满日，普通护照的到期日为年限届满日前一日；到期提醒、多版本及证照状态、标签胶囊、标签建议/筛选/搜索、自定义字段、图片/PDF 附件和 OCR 候选确认/字段填充；出生日期仅作为自定义字段，旧版固定值支持无损迁移 | `Features/Documents/Presentation/DocumentsView.swift` | `DocumentsStore`、`CredentialDocument.swift` |
 | 账单 | 手工收支记录、图片区域 OCR、金额/日期/商户/支付方式候选、默认 30 条增量列表和搜索/收支/分类/标签筛选；记录/分析顶层分区与按周、月、季、年或自定义区间、按币种统计，提供上一周期对比、每日支出、分类、商户和付款方式图表；标签以胶囊显示并支持历史建议复用；设置中可按预设/自定义区间、来源、分类和收支方向导出 JSON；版本化交换协议、导入预览及来源交易号去重；支持微信支付 XLSX 和支付宝 GB18030/UTF-8 CSV，自动跳过导出摘要 | `Features/Bills/Presentation/BillsView.swift` | `BillsStore`、`BillRecord.swift`、`BillAnalytics.swift`、`BillExchange.swift` |
-| 体彩开奖 | 默认五大联赛与欧冠；进入管理员（编辑）模式后可按官方赛事简称或全称添加，赛事行使用统一配置的红色“删除”左滑动作；按赛事批量获取近期开赛结果并补齐比赛头信息与五类竞彩固定奖金；官方结果缺失时显示暂无数据；比赛行支持长按拖动并持久化自定义顺序，进入赛事比赛页自动强制刷新一次；赛果独立持久化，首次加载近 30 天、后续增量刷新，并在北京时间 10:00/22:00 自动检查；网络赛果不参与 Vault、备份或同步，但赛事选择和自定义顺序作为应用偏好同步 | `Features/SportsLottery/Presentation/SportsLotteryView.swift` | `SportsLotteryService`、`SportsLotteryModels.swift`、`SportsLotteryRefreshCoordinator.swift` |
+| 体彩开奖 | 默认五大联赛与欧冠；进入管理员（编辑）模式后可按官方赛事简称或全称添加，赛事行使用统一配置的红色“删除”左滑动作；按赛事批量获取近期开赛结果并补齐比赛头信息与五类竞彩固定奖金；官方结果缺失时显示暂无数据；比赛行支持长按拖动并持久化自定义顺序，进入赛事比赛页自动强制刷新一次；赛果独立持久化，首次加载近 30 天、后续增量刷新，并在北京时间 10:00/22:00 自动检查；网络赛果不参与 Vault、备份或 CloudKit 业务同步，但赛事选择和自定义顺序作为应用偏好同步 | `Features/SportsLottery/Presentation/SportsLotteryView.swift` | `SportsLotteryService`、`SportsLotteryModels.swift`、`SportsLotteryRefreshCoordinator.swift` |
 
-九个模块都登记在 `App/Modules/ToolModule.swift`，其中八个业务数据模块参与本地 Vault、加密备份和 CloudKit；体彩开奖是网络只读模块，不参与本地数据、备份或同步；金融、健康、美食、保密资料和证照拥有附件；股票和换汇共用汇率；股票、换汇和证照拥有提醒。
+九个模块都登记在 `App/Modules/ToolModule.swift`，其中八个业务数据模块参与本地 Vault、加密备份和 CloudKit；体彩开奖的网络赛果缓存不参与本地数据、备份或 CloudKit，赛事选择和自定义顺序作为应用偏好同步；金融、健康、美食、保密资料和证照拥有附件；股票和换汇共用汇率；股票、换汇和证照拥有提醒。
 
 ## App 级模块与组合能力
 
@@ -514,7 +514,7 @@
 | 模块声明、能力元数据、开关边界 | `ToolModule`、`ToolModuleCapability`、`ToolModuleDefinition`、`ToolModuleCatalog` in `App/Modules/ToolModule.swift` | 新模块的唯一注册源；声明本地数据、附件、汇率、行情、图表、通知、备份和 CloudKit 参与情况 |
 | 模块显隐、排序、偏好同步 | `ToolModuleSettings` in `App/Modules/ToolModuleSettings.swift` | 首页与设置共用；可见性变化会通知生命周期参与者并触发 CloudKit 偏好同步 |
 | 模块启停生命周期 | `ModuleLifecycleParticipant`、`ModuleLifecycleRegistry` in `App/Composition/ModuleStoreContracts.swift` | 后台刷新或共享服务依赖模块开关时实现该协议；当前股票、共享汇率、换汇、健康和证照参与 |
-| 模块冗余字段清理 | `ModuleDataCleanupParticipant`、`ModuleDataCleanupRegistry`、`RedundantDataCleanupReport` in `App/Composition/ModuleStoreContracts.swift` | 模块自己声明确定性的扫描和清理规则，设置页只聚合已编译且已开启模块；当前金融、健康、美食和证照参与 |
+| 模块冗余字段清理 | `ModuleDataCleanupParticipant`、`ModuleDataCleanupRegistry`、`RedundantDataCleanupReport` in `App/Composition/ModuleStoreContracts.swift` | 模块自己声明确定性的扫描和清理规则，设置页只聚合已编译且首页可见模块；当前金融、健康、美食和证照参与 |
 | 模块数据变更通知 | `VaultMutationNotifying` in `App/Composition/ModuleStoreContracts.swift` | Store 修改数据后通知根 Store 持久化及 CloudKit 对账，使用弱引用避免环 |
 | 根组合与持久化协调 | `AppStore` in `App/Composition/AppStore.swift` | 装配八个 Store、加载 Vault、生成聚合快照、协调备份和同步；不要加入模块 CRUD |
 | 外部依赖抽象 | `AppStoreDependencies` 及 `VaultInitialLoading`、`VaultPersisting`、`StockQuoteRefreshing`、`ExchangeRateProviding`、`AlertNotificationRouting`、`LocalNotificationScheduling`、`StockRefreshInvalidating`、`VaultBackupProcessing` | 测试和生产实现共用的窄协议；生产绑定集中在 `App/Bootstrap/LiveAppDependencies.swift` |
@@ -556,7 +556,7 @@
 | 本地 Vault 读写 | `SecureStore` in `Core/Persistence/SecureStore.swift` | `Application Support/MyTools/local-vault.json`、原子替换、文件保护、读取失败时阻止覆盖原文件 |
 | 合并和串行保存 | `VaultPersistenceCoordinator` | 合并高频变更、后台串行写入、立即保存和 `flush()` |
 | 加密备份格式 | `VaultBackupDocument`、`VaultBackupPayload`、`VaultBackupCrypto` in `Core/Backup/VaultBackup.swift` | `.mytools`、PBKDF2-HMAC-SHA256、AES-GCM、格式 1.0、模块集合 |
-| 备份裁剪与附件装配 | `AppStoreBackupProcessor` in `App/Composition/AppStoreBackupProcessor.swift` | 按已开启模块导出/导入、嵌入和恢复附件数据 |
+| 备份裁剪与附件装配 | `AppStoreBackupProcessor` in `App/Composition/AppStoreBackupProcessor.swift` | 按已编译且可见模块导出/导入、嵌入和恢复附件数据；隐藏模块不会进入当前备份 |
 | 增量备份合并 | `AppStoreBackupMerger` in `App/Composition/AppStoreBackupMerger.swift` | 只合并备份包含且当前开启的模块，按记录 ID 更新或追加 |
 | CloudKit 快照和编码 | `CloudSyncSnapshotBuilder`、`CloudSyncCoding`、`CloudSyncEntityKind`、`CloudSyncItem` in `Core/CloudSync/CloudSyncModels.swift` | 主线程只复制当前业务状态；JSON 编码和附件读取必须在 utility 后台任务执行，再按摘要生成记录级增量 |
 | CloudKit 远端合并 | `CloudSyncMerger`、`CloudSyncChange` | 按实体类型与已编译且允许同步的模块应用 upsert/delete；首页隐藏不会停止同步，删除功能数据的撤回窗口才会临时排除模块 |
@@ -681,12 +681,12 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 4. 在 `AppStore` 创建 Store、注入 `VaultMutationNotifying`、处理加载/快照/恢复；需要启停服务时实现并注册 `ModuleLifecycleParticipant`。
 5. 在 `ToolBoxApp` 注入所需 Store，在 `ToolModuleDestination` 增加页面入口。
 6. 在 `AppStoreBackupProcessor` 和 `AppStoreBackupMerger` 增加模块裁剪与合并；带附件时扩展附件映射。
-7. 在 `CloudSyncEntityKind`、快照构建、远端合并和模块归属中登记实体；验证关闭模块不上传、不合并、不误删远端数据。
+7. 在 `CloudSyncEntityKind`、快照构建、远端合并和模块归属中登记实体；验证未编译模块不上传、不合并、不误删远端数据，首页隐藏只停止页面、提醒和专属后台任务，删除功能数据的撤回窗口才临时排除目标模块的 CloudKit 对账。
 8. 带附件时登记 CloudKit CKAsset、备份附件和 `StorageUsageService` 的引用集合。
 9. 用该模块编译标记包裹整个 Feature 源码及 App 组合引用，并验证完整版、移除该模块版和零业务模块版都能构建；如果产品变体需要“编译但默认隐藏”，在 `Shared.xcconfig` 的 `MYTOOLS_HIDE_*` 中声明对应 `MYTOOLS_DEFAULT_HIDDEN_*` 条件。
 10. 将源码和测试同步加入 `MyTools.xcodeproj/project.pbxproj`，不得只在文件系统创建文件。
 11. 增加 Store 行为、持久化、备份和 CloudKit 开关隔离回归测试；有外部服务时增加生命周期测试。
-12. 模块存在会因类型或状态变化而隐藏的持久化字段时，实现 `ModuleDataCleanupParticipant` 的显式规则；不得扫描关闭模块或按字段名模糊猜测。
+12. 模块存在会因类型或状态变化而隐藏的持久化字段时，实现 `ModuleDataCleanupParticipant` 的显式规则；不得扫描首页隐藏或未编译模块，也不得按字段名模糊猜测。
 13. 更新本文件的业务模块、Core 能力或模块内部能力条目。
 
 ## 已有测试资产
