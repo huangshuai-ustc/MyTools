@@ -81,7 +81,7 @@
 
 ### 仓库根目录、配置、工程与文档
 
-仓库根目录保存工程级规则和发布文档；`Config/` 保存可共享构建配置；`MyTools.xcodeproj/` 保存 Xcode Target、文件归属、构建阶段和共享 Scheme；`docs/` 保存对外发布的静态文档。
+仓库根目录保存工程级规则和发布配置；`Config/` 保存可共享构建配置；`TestFlight/` 保存 Xcode Cloud 上传的本地化测试说明；`MyTools.xcodeproj/` 保存 Xcode Target、文件归属、构建阶段和共享 Scheme；`docs/` 保存对外发布的静态文档。
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
@@ -89,7 +89,7 @@
 | `AGENTS.md` | 项目开发约束、可复用能力和本逐文件定位索引；架构或文件结构变化时更新。 |
 | `ARCHITECTURE_REVIEW.md` | 历史架构审查结果与改进记录，用于理解既有技术决策，不作为实时 API 文档。 |
 | `README.md` | 产品能力、运行方式、数据与安全边界及开发者快速导航。 |
-| `TESTFLIGHT.md` | TestFlight 构建、签名、上传和测试发布流程。 |
+| `TestFlight/WhatToTest.zh-Hans.txt` | Xcode Cloud 随下一次 TestFlight 构建自动上传的简体中文“测试内容”；每次发布前静态更新。 |
 | `Config/Shared.xcconfig` | 全平台公共构建设置、`MYTOOLS_COMPILED_FEATURES` 模块编译清单和可选的 `MYTOOLS_DEFAULT_HIDDEN_FEATURES` 默认隐藏清单。 |
 | `Config/Signing.local.xcconfig.example` | 本地签名配置模板；复制出的真实本地配置不提交。 |
 | `MyTools.xcodeproj/project.pbxproj` | App/Test Target、源码和资源归属、Build Phases、编译设置及平台配置。 |

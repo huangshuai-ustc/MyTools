@@ -382,6 +382,7 @@
 		SL20000000000000000000003 /* SportsLotteryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryView.swift; sourceTree = "<group>"; };
 		SL20000000000000000000004 /* SportsLotteryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryTests.swift; sourceTree = "<group>"; };
 		SL20000000000000000000005 /* SportsLotteryRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryRefreshCoordinator.swift; sourceTree = "<group>"; };
+		TF1000000000000000000001 /* WhatToTest.zh-Hans.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "WhatToTest.zh-Hans.txt"; sourceTree = "<group>"; };
 		U10000000000000000000001 /* FoodPlace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlace.swift; sourceTree = "<group>"; };
 		U10000000000000000000002 /* FoodMapStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapStore.swift; sourceTree = "<group>"; };
 		U10000000000000000000003 /* FoodNavigationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodNavigationService.swift; sourceTree = "<group>"; };
@@ -447,9 +448,18 @@
 				D00000000000000000000006 /* MyTools */,
 				DD0000000000000000000001 /* MyToolsTests */,
 				DA0000000000000000000001 /* Config */,
+				TF2000000000000000000001 /* TestFlight */,
 				E19E9F2D301499DA0018B621 /* MyTools.app */,
 				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
+			sourceTree = "<group>";
+		};
+		TF2000000000000000000001 /* TestFlight */ = {
+			isa = PBXGroup;
+			children = (
+				TF1000000000000000000001 /* WhatToTest.zh-Hans.txt */,
+			);
+			path = TestFlight;
 			sourceTree = "<group>";
 		};
 		D00000000000000000000002 /* Features */ = {

@@ -216,6 +216,8 @@
 
 首次开启同步后，用开发签名运行 App 并新增或修改一条记录，确认 CloudKit Dashboard 的 Development 环境出现 `MyToolsEntity` 记录类型和 `MyToolsData` 自定义 Zone。上传 TestFlight 或 App Store 前，必须在 CloudKit Dashboard 执行 **Deploy Schema Changes to Production**；否则开发环境正常而正式版本无法读写。
 
+Xcode Cloud 上传 TestFlight 构建时，会读取与 `MyTools.xcodeproj` 同级的 `TestFlight/WhatToTest.zh-Hans.txt`，自动填写简体中文“测试内容”。该文件采用静态维护方式，每次触发正式 TestFlight 构建前应先更新并提交；它不会修改已经上传的旧构建，也不是 App Store 版本页的“此版本中的新内容”。
+
 首次使用建议：先进入“我的”设置管理员密码，再从“金融账户”“股票投资”和“健康档案”录入数据，最后导出一份 `.mytools` 备份。
 
 ## GitHub 仓库文件
@@ -279,11 +281,12 @@ MyTools/
 │   ├── Stocks/                          # 行情、图表、持仓、指标和评分测试
 │   ├── Stores/                          # 多模块 Store 与生命周期边界测试
 │   └── TestSupport/                     # 可复用 Fake、Stub 和 Fixture
+├── TestFlight/
+│   └── WhatToTest.zh-Hans.txt           # Xcode Cloud 自动上传的简体中文测试说明
 ├── docs/                                # 对外静态文档，当前为隐私政策
 ├── AGENTS.md                            # 开发准则、能力索引和完整逐文件地图
 ├── ARCHITECTURE_REVIEW.md               # 历史架构审查记录
-├── README.md                            # 产品说明、运行方式和快速代码导航
-└── TESTFLIGHT.md                        # TestFlight 构建与发布流程
+└── README.md                            # 产品说明、运行方式和快速代码导航
 ```
 
 ### 按修改目标快速定位
