@@ -46,11 +46,7 @@ enum StockChartRange: String, Codable, CaseIterable, Identifiable, Sendable {
         case .intraday: return "5d"
         // Yahoo only supports 1-minute history for a short recent window.
         case .fiveDays: return "5d"
-        case .dayK: return "3mo"
-        case .weekK: return "2y"
-        case .monthK: return "5y"
-        case .quarterK: return "10y"
-        case .yearK: return "max"
+        case .dayK, .weekK, .monthK, .quarterK, .yearK: return "max"
         }
     }
 

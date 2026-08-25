@@ -107,15 +107,23 @@ struct StockChartCanvas: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            summary(cachedPresentation)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: 34, alignment: .top)
             if displayModes.isEmpty {
+                summary(cachedPresentation)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 34, alignment: .top)
                 Image(systemName: "chart.xyaxis.line")
                     .font(isExpanded ? .largeTitle : .title2)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // Reserve the same information area for selected and
+                // unselected states. This keeps the plot height stable without
+                // placing a floating panel over the data.
+                ScrollView(.vertical, showsIndicators: false) {
+                    summary(cachedPresentation)
+                }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: 58)
                 chart(cachedPresentation)
             }
         }
@@ -175,7 +183,7 @@ struct StockChartCanvas: View {
         let visibleTransactionMarkers = visibleData.transactionMarkers
 
         return Chart {
-            if presentation.hasBasePriceChart,
+            if presentation.hasPriceChart,
                range == .intraday,
                let previousClose = StockChartPresentation.intradayPreviousClose(
                 snapshot: snapshot,
@@ -944,36 +952,34 @@ struct StockChartCanvas: View {
         _ presentation: StockChartPresentation,
         selectedPoint: StockChartPoint?
     ) -> some View {
-        if presentation.hasPreMarketChart {
-            let point = selectedPoint.flatMap {
-                presentation.isPreMarket($0) ? $0 : nil
-            } ?? presentation.preMarketPlotPoints.last?.point
-            fixedExtendedHoursSummaryRow(
-                title: presentation.preMarketTitle,
-                point: point,
-                color: .orange,
-                presentation: presentation,
-                onlyPrice: true
-            )
-        }
-
-        if presentation.hasBasePriceChart {
-            let point = selectedPoint.flatMap {
-                presentation.isPreMarket($0) || presentation.isPostMarket($0) ? nil : $0
-            } ?? presentation.plotPoints.last?.point
-            regularSummaryRow(point: point, presentation: presentation)
-        }
-
-        if presentation.hasPostMarketChart {
-            let point = selectedPoint.flatMap {
-                presentation.isPostMarket($0) ? $0 : nil
-            } ?? presentation.postMarketPlotPoints.last?.point
-            fixedExtendedHoursSummaryRow(
-                title: presentation.postMarketTitle,
-                point: point,
-                color: .blue,
-                presentation: presentation,
-                onlyPrice: false
+        if let selectedPoint {
+            // When extended-hours layers are combined, show only the layer
+            // under the crosshair. Falling back to each session's last bar
+            // makes the values look like they belong to the selected point.
+            if presentation.hasPreMarketChart,
+               presentation.isPreMarket(selectedPoint) {
+                fixedExtendedHoursSummaryRow(
+                    title: presentation.preMarketTitle,
+                    point: selectedPoint,
+                    color: .orange
+                )
+            } else if presentation.hasPostMarketChart,
+                      presentation.isPostMarket(selectedPoint) {
+                fixedExtendedHoursSummaryRow(
+                    title: presentation.postMarketTitle,
+                    point: selectedPoint,
+                    color: .blue
+                )
+            } else if presentation.hasBasePriceChart {
+                regularSummaryRow(point: selectedPoint, presentation: presentation)
+            }
+        } else if presentation.hasBasePriceChart {
+            // Do not display pre-market/post-market closing values as if they
+            // were part of the current selection. The regular session remains
+            // the neutral, unselected summary.
+            regularSummaryRow(
+                point: presentation.plotPoints.last?.point,
+                presentation: presentation
             )
         }
     }
@@ -1005,18 +1011,12 @@ struct StockChartCanvas: View {
     private func fixedExtendedHoursSummaryRow(
         title: String,
         point: StockChartPoint?,
-        color: Color,
-        presentation: StockChartPresentation,
-        onlyPrice: Bool
+        color: Color
     ) -> some View {
         summaryRow {
             Text(title)
             if let point {
-                Text(presentation.chartDateText(point.date))
                 Text("价格 \(StockChartPresentation.priceText(point.close, currencyCode: snapshot.currencyCode))")
-                if onlyPrice {
-                    Text("仅价格").foregroundStyle(.secondary)
-                }
             } else {
                 Text("暂无数据").foregroundStyle(.secondary)
             }

@@ -704,17 +704,19 @@ struct StockChartPresentation {
         case .fiveDays:
             let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
             if let visibleXDomain {
-                return sortedPoints.first(where: {
-                    $0.date.timeIntervalSinceReferenceDate >= visibleXDomain.lowerBound
-                })?.close ?? sortedPoints.first?.close ?? first.close
+                return pointAtVisibleStart(
+                    sortedPoints,
+                    visibleXDomain: visibleXDomain
+                )?.close ?? sortedPoints.first?.close ?? first.close
             }
             return sortedPoints.first?.close ?? first.close
         case .dayK, .weekK, .monthK, .quarterK, .yearK:
             if let visibleXDomain {
                 let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
-                if let visibleFirst = sortedPoints.first(where: {
-                    $0.date.timeIntervalSinceReferenceDate >= visibleXDomain.lowerBound
-                }) {
+                if let visibleFirst = pointAtVisibleStart(
+                    sortedPoints,
+                    visibleXDomain: visibleXDomain
+                ) {
                     return visibleFirst.close
                 }
             }
@@ -738,10 +740,28 @@ struct StockChartPresentation {
         }
     }
 
+    /// Returns the first bar visible in the dense ordinal x-domain.
+    private static func pointAtVisibleStart(
+        _ sortedPoints: [StockChartPoint],
+        visibleXDomain: ClosedRange<Double>
+    ) -> StockChartPoint? {
+        guard !sortedPoints.isEmpty else { return nil }
+        let index = min(
+            max(Int(visibleXDomain.lowerBound.rounded(.up)), 0),
+            sortedPoints.count - 1
+        )
+        return sortedPoints[index]
+    }
+
     static func intradayPreviousClose(
         snapshot: StockChartSnapshot,
         market: StockMarket
     ) -> Double? {
+        // `points` is the regular-session series shown as the current chart
+        // data. Extended-hours bars can be newer in wall-clock time, but they
+        // must not move the reference day forward: before today's opening, the
+        // displayed session is still yesterday and its previous close is the
+        // close from the trading day before yesterday.
         guard let latest = snapshot.latestPoint else { return nil }
         return closingPrice(
             beforeTradingDayContaining: latest.date,
@@ -945,18 +965,23 @@ struct StockChartPresentation {
         plotPoints: [StockChartPlotPoint]
     ) -> [StockTransactionMarker] {
         let marketCalendar = calendar(for: stock.market)
-        let sourcePoints = range.isMinuteRange
+        let sourcePoints = (range.isMinuteRange
             ? (snapshot.indicatorPoints ?? snapshot.points)
-            : snapshot.points
+            : snapshot.points)
+            .sorted { $0.date < $1.date }
         return stock.transactions.compactMap { transaction in
             guard transaction.quantity > 0,
-                  transaction.unitPrice > 0,
-                  let transactionDate = marketDate(
-                    for: transaction.tradedAt,
-                    market: stock.market
-                  ) else { return nil }
+                  transaction.unitPrice > 0 else { return nil }
+            // `tradedAt` remains a Beijing/device-calendar date in storage.
+            // US date-only entries are plotted on the preceding US calendar
+            // day, which is the trading date represented by the same Beijing
+            // date (for example, Beijing 8/22 -> US 8/21).
+            let transactionDate = chartTransactionDate(
+                for: transaction.tradedAt,
+                market: stock.market
+            )
 
-            let matchingPoints = sourcePoints.filter { point in
+            let exactMatchingPoints = sourcePoints.filter { point in
                 if range == .weekK {
                     return marketCalendar.dateInterval(of: .weekOfYear, for: point.date)?
                         .contains(transactionDate) == true
@@ -981,6 +1006,13 @@ struct StockChartPresentation {
                 }
                 return marketCalendar.isDate(point.date, inSameDayAs: transactionDate)
             }
+            // A date-only plotting date can still fall on a market holiday or
+            // weekend. Use
+            // the last trading bar on or before that instant so day K, five
+            // day, and intraday views keep the marker instead of dropping it.
+            let matchingPoints = exactMatchingPoints.isEmpty
+                ? sourcePoints.last(where: { $0.date <= transactionDate }).map { [$0] } ?? []
+                : exactMatchingPoints
             guard !matchingPoints.isEmpty else { return nil }
             let markerPoint: StockChartPoint
             let markerPrice: Double
@@ -1023,29 +1055,24 @@ struct StockChartPresentation {
         }
     }
 
-    private static func marketDate(for date: Date, market: StockMarket) -> Date? {
-        let localComponents = Calendar.autoupdatingCurrent.dateComponents(
-            [.year, .month, .day],
-            from: date
-        )
-        var marketComponents = localComponents
-        marketComponents.calendar = calendar(for: market)
-        marketComponents.timeZone = timeZone(for: market)
-        marketComponents.hour = 12
-        return marketComponents.calendar?.date(from: marketComponents)
+    private static func chartTransactionDate(
+        for date: Date,
+        market: StockMarket
+    ) -> Date {
+        guard market == .unitedStates else { return date }
+        let calendar = Calendar.autoupdatingCurrent
+        return calendar.date(byAdding: .day, value: -1, to: date) ?? date
     }
 
     private static func xValue(
-        for point: StockChartPoint,
+        for _: StockChartPoint,
         index: Int,
-        range: StockChartRange
+        range _: StockChartRange
     ) -> Double {
-        switch range {
-        case .intraday, .fiveDays:
-            return Double(index)
-        default:
-            return point.date.timeIntervalSinceReferenceDate
-        }
+        // Allocate one slot per bar for every range. Weekends and exchange
+        // holidays then do not create misleading empty gaps on the x-axis;
+        // the actual date remains available in axis labels and summaries.
+        return Double(index)
     }
 
     private static func xDomain(

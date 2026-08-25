@@ -459,24 +459,6 @@ struct StockChartSeriesProcessorTests {
         #expect(prepared.visible.map(\.date) == points.map(\.date))
     }
 
-    @Test func preparedIntradayChartDoesNotReaggregateSourceTimestamps() {
-        let firstDate = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
-        let points = [
-            StockChartFixtures.point(at: firstDate.addingTimeInterval(5), close: 10),
-            StockChartFixtures.point(at: firstDate.addingTimeInterval(55), close: 11)
-        ]
-
-        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
-            points,
-            range: .intraday,
-            market: .aShare,
-            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
-        )
-
-        #expect(prepared.visible.count == points.count)
-        #expect(prepared.visible.map(\.date) == points.map(\.date))
-    }
-
     @Test func preparedIntradayChartAggregatesOnlySubMinuteInputToOneMinute() {
         let minute = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
         let points = [

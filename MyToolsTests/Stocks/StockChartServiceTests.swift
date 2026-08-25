@@ -50,7 +50,7 @@ struct StockChartServiceTests {
             range: .fiveDays
         )
 
-        #expect(await context.recorder.calls() == ["tencent", "yahoo"])
+        #expect(await context.recorder.calls() == ["tencent", "yahoo", "yahoo"])
     }
 
     @Test func USHistoricalFallsBackToNasdaqAfterYahoo() async throws {

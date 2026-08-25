@@ -3,7 +3,6 @@ import Foundation
 
 private enum StockStoreDefaultsKey {
     static let refreshDatesByMarket = "stock-last-refresh-dates-by-market-v1"
-    static let legacyRefreshDate = "stock-last-refresh-date-v1"
 }
 
 @MainActor
@@ -46,7 +45,6 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         self.moduleSettings = moduleSettings
         self.exchangeRateStore = exchangeRateStore
         lastRefreshAtByMarket = Self.loadRefreshDates(from: defaults)
-        defaults.removeObject(forKey: StockStoreDefaultsKey.legacyRefreshDate)
     }
 
     var openStockCount: Int {
@@ -230,7 +228,6 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         quoteSources.removeAll()
         quoteRefreshError = nil
         defaults.removeObject(forKey: StockStoreDefaultsKey.refreshDatesByMarket)
-        defaults.removeObject(forKey: StockStoreDefaultsKey.legacyRefreshDate)
         refreshInvalidator.refreshEligibilityChanged()
     }
 

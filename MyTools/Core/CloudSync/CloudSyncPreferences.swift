@@ -1,7 +1,16 @@
 import Foundation
-#if !MYTOOLS_FEATURE_STOCKS
 import Combine
-#endif
+
+@MainActor
+final class AppPreferenceChangeBus: ObservableObject {
+    static let shared = AppPreferenceChangeBus()
+
+    @Published private(set) var revision = 0
+
+    func notifyChanged() {
+        revision &+= 1
+    }
+}
 
 #if !MYTOOLS_FEATURE_STOCKS
 enum StockRiseFallColorScheme: String, CaseIterable, Codable, Identifiable, Sendable {

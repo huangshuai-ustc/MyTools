@@ -169,6 +169,7 @@ struct StocksView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var didAutoSelectMarket = false
@@ -359,10 +360,10 @@ struct StocksView: View {
         }
         .navigationTitle(ToolModule.myStocks.title)
         .onChange(of: sortCriterionRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .onChange(of: sortDirectionRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索股票名称或代码")

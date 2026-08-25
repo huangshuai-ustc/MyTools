@@ -59,7 +59,9 @@ enum SportsLotteryLeaguePreferences {
         let value = unique(leagues)
         guard let data = try? JSONEncoder().encode(value) else { return }
         defaults.set(data, forKey: key)
-        NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        Task { @MainActor in
+            AppPreferenceChangeBus.shared.notifyChanged()
+        }
     }
 
     private static func unique(_ leagues: [SportsLotteryLeague]) -> [SportsLotteryLeague] {
@@ -95,7 +97,9 @@ enum SportsLotteryMatchOrderPreferences {
         orders[String(leagueID)] = order
         guard let data = try? JSONEncoder().encode(orders) else { return }
         defaults.set(data, forKey: key)
-        NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+        Task { @MainActor in
+            AppPreferenceChangeBus.shared.notifyChanged()
+        }
     }
 }
 

@@ -4,6 +4,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
@@ -75,7 +76,7 @@ struct HomeView: View {
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .onChange(of: sortOrderRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

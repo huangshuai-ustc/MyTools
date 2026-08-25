@@ -15,6 +15,28 @@ struct StockChartProviderParsingTests {
         #expect(StockChartRange.fiveDays.yahooRange == "5d")
     }
 
+    @Test func kLineRangesRequestCompleteDailyHistoryBoundary() {
+        let endingAt = StockChartFixtures.date(2026, 8, 25)
+        let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+        let expectedStart = Date(timeIntervalSince1970: -2_208_988_800)
+
+        for range in [
+            StockChartRange.dayK,
+            .weekK,
+            .monthK,
+            .quarterK,
+            .yearK
+        ] {
+            #expect(
+                StockChartSeriesProcessor.historicalStartDate(
+                    for: range,
+                    endingAt: endingAt,
+                    calendar: calendar
+                ) == expectedStart
+            )
+        }
+    }
+
     @Test func tencentProviderParsesMinuteOHLCAndQuoteMetadata() async throws {
         let payload: [String: Any] = [
             "code": 0,
@@ -48,12 +70,12 @@ struct StockChartProviderParsingTests {
         let payload: [String: Any] = [
             "code": 0,
             "data": [
-                "usNTES": [
+                "usVOO": [
                     "m3": [
                         ["202608031000", "10", "11", "12", "9", "100"],
                         ["202608031003", "11", "12", "13", "10", "200"]
                     ],
-                    "qt": ["usNTES": ["", "网易", "", "", "9.5"]]
+                    "qt": ["usVOO": ["", "VOO", "", "", "9.5"]]
                 ]
             ]
         ]
@@ -74,6 +96,12 @@ struct StockChartProviderParsingTests {
 
     @Test func yahooProviderParsesParallelQuoteArrays() async throws {
         let dates = dailyDates()
+        let values = Array(1...20)
+        let opens = values.map { 99 + $0 }
+        let highs = values.map { 101 + $0 }
+        let lows = values.map { 98 + $0 }
+        let closes = values.map { 100 + $0 }
+        let volumes = values.map { $0 * 10 }
         let payload: [String: Any] = [
             "chart": [
                 "result": [[
@@ -86,11 +114,11 @@ struct StockChartProviderParsingTests {
                     "timestamp": dates.map(\.timeIntervalSince1970),
                     "indicators": [
                         "quote": [[
-                            "open": [100, 101, 102, 103, 104, 105],
-                            "high": [102, 103, 104, 105, 106, 107],
-                            "low": [99, 100, 101, 102, 103, 104],
-                            "close": [101, 102, 103, 104, 105, 106],
-                            "volume": [10, 20, 30, 40, 50, 60]
+                            "open": opens,
+                            "high": highs,
+                            "low": lows,
+                            "close": closes,
+                            "volume": volumes
                         ]]
                     ]
                 ]]
@@ -107,14 +135,15 @@ struct StockChartProviderParsingTests {
 
         #expect(snapshot.source == "Yahoo Finance")
         #expect(snapshot.name == "Vanguard ETF")
-        #expect(snapshot.points.count == 6)
-        #expect(snapshot.points.last?.close == 106)
-        #expect(snapshot.points.last?.volume == 60)
+        #expect(snapshot.points.count == 20)
+        #expect(snapshot.points.last?.close == 120)
+        #expect(snapshot.points.last?.volume == 200)
     }
 
     @Test func eastmoneyProviderParsesKlineRowsAndFlexiblePreviousClose() async throws {
-        let lines = (1...6).map { day in
-            "2026-08-0\(day),\(99 + day),\(100 + day),\(101 + day),\(98 + day),\(day * 100)"
+        let lines: [String] = (1...20).map { day in
+            let dayText = day < 10 ? "0\(day)" : "\(day)"
+            return "2026-08-\(dayText),\(99 + day),\(100 + day),\(101 + day),\(98 + day),\(day * 100)"
         }
         let payload: [String: Any] = [
             "data": [
@@ -136,13 +165,13 @@ struct StockChartProviderParsingTests {
         #expect(snapshot.source == "东方财富")
         #expect(snapshot.name == "示例股票")
         #expect(snapshot.previousClose == 98.5)
-        #expect(snapshot.points.count == 6)
-        #expect(snapshot.points.last?.close == 106)
-        #expect(snapshot.points.last?.volume == 600)
+        #expect(snapshot.points.count == 20)
+        #expect(snapshot.points.last?.close == 120)
+        #expect(snapshot.points.last?.volume == 2_000)
     }
 
     @Test func nasdaqProviderCleansFormattedHistoricalNumbers() async throws {
-        let rows = (1...6).map { day -> [String: Any] in
+        let rows = (1...20).map { day -> [String: Any] in
             [
                 "date": "08/0\(day)/2026",
                 "open": "$\(99 + day).00",
@@ -167,9 +196,9 @@ struct StockChartProviderParsingTests {
         ))
 
         #expect(snapshot.source == "Nasdaq")
-        #expect(snapshot.points.count == 6)
-        #expect(snapshot.points.last?.close == 106)
-        #expect(snapshot.points.last?.volume == 6_000)
+        #expect(snapshot.points.count == 20)
+        #expect(snapshot.points.last?.close == 120)
+        #expect(snapshot.points.last?.volume == 20_000)
     }
 
     private func request(
@@ -185,7 +214,7 @@ struct StockChartProviderParsingTests {
     }
 
     private func dailyDates() -> [Date] {
-        (1...6).map { day in
+        (1...20).map { day in
             StockChartFixtures.date(
                 2026,
                 8,

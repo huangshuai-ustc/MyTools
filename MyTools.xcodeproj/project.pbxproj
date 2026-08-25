@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		ML2000000000000000000001 /* MapLocationSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ML1000000000000000000001 /* MapLocationSearchService.swift */; };
 		A00000000000000000000001 /* ToolBoxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* ToolBoxApp.swift */; };
 		A00000000000000000000002 /* BankCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* BankCard.swift */; };
 		A00000000000000000000003 /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* SecureStore.swift */; };
@@ -155,6 +154,7 @@
 		C20000000000000000000006 /* CloudSyncMergerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000006 /* CloudSyncMergerTests.swift */; };
 		C20000000000000000000007 /* CloudSyncPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000007 /* CloudSyncPreferences.swift */; };
 		C63564073010DD0500EBCA46 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C63564043010C59600EBCA46 /* Assets.xcassets */; };
+		ML2000000000000000000001 /* MapLocationSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ML1000000000000000000001 /* MapLocationSearchService.swift */; };
 		S10000000000000000000001 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000001 /* OCRModels.swift */; };
 		S10000000000000000000002 /* OCRDocumentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000002 /* OCRDocumentLoader.swift */; };
 		S10000000000000000000003 /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000003 /* OCRService.swift */; };
@@ -214,7 +214,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		ML1000000000000000000001 /* MapLocationSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLocationSearchService.swift; sourceTree = "<group>"; };
 		B00000000000000000000001 /* ToolBoxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolBoxApp.swift; sourceTree = "<group>"; };
 		B00000000000000000000002 /* BankCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCard.swift; sourceTree = "<group>"; };
 		B00000000000000000000003 /* SecureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStore.swift; sourceTree = "<group>"; };
@@ -370,6 +369,7 @@
 		C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsMacRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		E19E9F2D301499DA0018B621 /* MyTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ML1000000000000000000001 /* MapLocationSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLocationSearchService.swift; sourceTree = "<group>"; };
 		R10000000000000000000001 /* OCRModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRModels.swift; sourceTree = "<group>"; };
 		R10000000000000000000002 /* OCRDocumentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRDocumentLoader.swift; sourceTree = "<group>"; };
 		R10000000000000000000003 /* OCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRService.swift; sourceTree = "<group>"; };
@@ -452,14 +452,6 @@
 				E19E9F2D301499DA0018B621 /* MyTools.app */,
 				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
-			sourceTree = "<group>";
-		};
-		TF2000000000000000000001 /* TestFlight */ = {
-			isa = PBXGroup;
-			children = (
-				TF1000000000000000000001 /* WhatToTest.zh-Hans.txt */,
-			);
-			path = TestFlight;
 			sourceTree = "<group>";
 		};
 		D00000000000000000000002 /* Features */ = {
@@ -583,14 +575,6 @@
 				E16000000000000000000002 /* UI */,
 			);
 			path = Core;
-			sourceTree = "<group>";
-		};
-		ML3000000000000000000001 /* Location */ = {
-			isa = PBXGroup;
-			children = (
-				ML1000000000000000000001 /* MapLocationSearchService.swift */,
-			);
-			path = Location;
 			sourceTree = "<group>";
 		};
 		DC0000000000000000000002 /* Authentication */ = {
@@ -1036,6 +1020,14 @@
 			path = UI;
 			sourceTree = "<group>";
 		};
+		ML3000000000000000000001 /* Location */ = {
+			isa = PBXGroup;
+			children = (
+				ML1000000000000000000001 /* MapLocationSearchService.swift */,
+			);
+			path = Location;
+			sourceTree = "<group>";
+		};
 		SL10000000000000000000001 /* SportsLottery */ = {
 			isa = PBXGroup;
 			children = (
@@ -1105,6 +1097,14 @@
 				R10000000000000000000007 /* OCRTests.swift */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		TF2000000000000000000001 /* TestFlight */ = {
+			isa = PBXGroup;
+			children = (
+				TF1000000000000000000001 /* WhatToTest.zh-Hans.txt */,
+			);
+			path = TestFlight;
 			sourceTree = "<group>";
 		};
 		U30000000000000000000001 /* FoodMap */ = {

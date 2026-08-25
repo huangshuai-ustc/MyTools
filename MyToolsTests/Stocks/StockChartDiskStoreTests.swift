@@ -69,6 +69,7 @@ struct StockChartDiskStoreTests {
         try JSONEncoder().encode(unsupported).write(to: url, options: .atomic)
 
         #expect(store.load(for: key) == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
     @Test func minuteMetadataWithoutIndicatorCountRequiresRefresh() {
@@ -210,7 +211,7 @@ struct StockChartDiskStoreTests {
             store.renderedSnapshot(from: persisted, range: .yearK)
         )
 
-        #expect(rendered.points.map(\.date) == [earliestYear, latest])
+        #expect(rendered.points.map(\.date) == [earliestYear, recentMonth, latest])
     }
 
     @Test func allKLineRangesReuseOneCompleteDailySeries() throws {

@@ -124,6 +124,21 @@ struct StockChartPresentationTests {
         #expect(presentation.xAxisValues(isExpanded: false).last == 3)
     }
 
+    @Test func kLineRangesUseDenseIndexDomainAcrossTradingBreaks() {
+        let points = [
+            point(day: 1, close: 100),
+            point(day: 4, close: 101),
+            point(day: 7, close: 102)
+        ]
+
+        let presentation = makePresentation(points: points, range: .dayK)
+
+        #expect(presentation.plotPoints.map(\.x) == [0, 1, 2])
+        #expect(presentation.xDomain == 0...2)
+        #expect(presentation.xAxisValues(isExpanded: false).first == 0)
+        #expect(presentation.xAxisValues(isExpanded: false).last == 2)
+    }
+
     @Test func closestPlotPointUsesSortedCoordinatesAndVisibleViewport() throws {
         let presentation = makePresentation(
             points: [
@@ -433,6 +448,66 @@ struct StockChartPresentationTests {
         #expect(marker.date == points[0].date)
     }
 
+    @Test func transactionMarkerConvertsDeviceDateToUSTradingDayAcrossAllRanges() throws {
+        let regularPoint = StockChartFixtures.point(
+            at: StockChartFixtures.date(
+                2026,
+                8,
+                21,
+                hour: 16,
+                timeZone: "America/New_York"
+            ),
+            open: 117,
+            high: 119,
+            low: 116,
+            close: 118
+        )
+        var transaction = StockTransaction()
+        transaction.type = .buy
+        // The user entered August 22 in Beijing. In the US market calendar
+        // the plotting date is shifted to the regular session on August 21.
+        let storedDate = StockChartFixtures.date(
+            2026,
+            8,
+            22,
+            hour: 12,
+            timeZone: "Asia/Shanghai"
+        )
+        transaction.tradedAt = storedDate
+        transaction.quantity = 1
+        transaction.unitPrice = 121
+        let stock = StockHolding(
+            market: .unitedStates,
+            symbol: "BABA",
+            transactions: [transaction]
+        )
+        let snapshot = makeSnapshot(
+            points: [regularPoint],
+            indicatorPoints: [regularPoint]
+        )
+        let ranges: [StockChartRange] = [
+            .intraday,
+            .fiveDays,
+            .dayK,
+            .weekK,
+            .monthK,
+            .quarterK,
+            .yearK
+        ]
+
+        for range in ranges {
+            let presentation = StockChartPresentation(
+                snapshot: snapshot,
+                stock: stock,
+                range: range,
+                displayModes: [.line]
+            )
+            let marker = try #require(presentation.transactionMarkers.first)
+            #expect(marker.date == regularPoint.date)
+        }
+        #expect(transaction.tradedAt == storedDate)
+    }
+
     @Test func nonIntradayRSIUsesDailyReferenceSeries() throws {
         let dates = (0..<40).map {
             StockChartFixtures.date(2026, 7, 1).addingTimeInterval(Double($0) * 86_400)
@@ -599,6 +674,39 @@ struct StockChartPresentationTests {
         #expect(performance?.percent == 0.1)
     }
 
+    @Test func previousCloseKeepsRegularSessionReferenceWhenPreMarketIsNewer() {
+        let previousTradingDay = point(
+            day: 3,
+            hour: 16,
+            close: 100,
+            timeZone: "America/New_York"
+        )
+        let latestRegularPoint = point(
+            day: 4,
+            hour: 16,
+            close: 110,
+            timeZone: "America/New_York"
+        )
+        let currentPreMarketPoint = point(
+            day: 5,
+            hour: 8,
+            close: 111,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [latestRegularPoint],
+            preMarketPoints: [currentPreMarketPoint],
+            indicatorPoints: [previousTradingDay, latestRegularPoint]
+        )
+
+        #expect(
+            StockChartPresentation.intradayPreviousClose(
+                snapshot: snapshot,
+                market: .unitedStates
+            ) == 100
+        )
+    }
+
     @Test func fiveDayPerformanceUsesTheFirstVisibleTradingDay() {
         let previousFriday = point(day: 31, month: 7, close: 90)
         let visible = [
@@ -681,9 +789,7 @@ struct StockChartPresentationTests {
             point(day: 7, close: 110)
         ]
         let snapshot = makeSnapshot(points: points)
-        let visibleLower = points[1].date.timeIntervalSinceReferenceDate
-        let visibleUpper = points[2].date.timeIntervalSinceReferenceDate
-        let visibleXDomain = visibleLower...visibleUpper
+        let visibleXDomain = 1.0...2.0
 
         let performance = StockChartPresentation.rangePerformance(
             snapshot: snapshot,

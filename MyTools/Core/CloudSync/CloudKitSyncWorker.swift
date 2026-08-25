@@ -108,14 +108,15 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         document = CloudSyncStoredDocument()
     }
 
-    func start() async {
+    @discardableResult
+    func start() async -> Bool {
         await loadPersistedStateIfNeeded()
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return false }
         guard !hasStarted else {
             await synchronize()
-            return
+            return hasStarted
         }
-        guard !isStarting else { return }
+        guard !isStarting else { return false }
         isStarting = true
         defer { isStarting = false }
 
@@ -126,19 +127,19 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 break
             case .noAccount:
                 await statusHandler(.noAccount)
-                return
+                return false
             case .restricted:
                 await statusHandler(.restricted)
-                return
+                return false
             case .temporarilyUnavailable:
                 await statusHandler(.temporarilyUnavailable)
-                return
+                return false
             case .couldNotDetermine:
                 await statusHandler(.error("无法确认 iCloud 账户状态"))
-                return
+                return false
             @unknown default:
                 await statusHandler(.error("未知的 iCloud 账户状态"))
-                return
+                return false
             }
 
             let currentUser = try await container.userRecordID()
@@ -146,7 +147,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                previousUser != currentUser.recordName {
                 resetSyncState(for: currentUser)
                 await statusHandler(.accountChanged)
-                return
+                return false
             }
             if document.accountRecordName == nil {
                 document.accountRecordName = currentUser.recordName
@@ -155,7 +156,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
             try await ensureControlZoneExists()
             guard try await prepareForRebuildControl(currentUser: currentUser) else {
-                return
+                return false
             }
 
             await statusHandler(.syncing)
@@ -165,7 +166,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             // record is stored as inactive. The reconciliation that follows
             // can then mistake newly fetched records for local deletions.
             let initialSnapshot = try await snapshotProvider()
-            await prepareActiveModules(using: initialSnapshot)
+            _ = await prepareActiveModules(using: initialSnapshot)
             try await ensureZoneExists()
             try await fetchRemoteChanges()
             let mergedSnapshot = try await snapshotProvider()
@@ -173,15 +174,18 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             try await sendPendingChanges()
             _ = document.discardSystemFields(excluding: pendingRecordKeys())
             saveDocument()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return false }
             hasStarted = true
             await statusHandler(.synced(Date()))
+            return true
         } catch is OperationFailure {
             hasStarted = false
+            return false
         } catch {
             hasStarted = false
-            guard !CloudSyncErrorFormatter.isCancellation(error) else { return }
+            guard !CloudSyncErrorFormatter.isCancellation(error) else { return false }
             await report(error, operation: "启动 iCloud 同步")
+            return false
         }
     }
 

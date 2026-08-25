@@ -37,6 +37,7 @@ private enum BankNavigationApplication: String, CaseIterable, Identifiable {
 struct AccountDetailView: View {
     @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
     private let backTitle: String
@@ -134,10 +135,10 @@ struct AccountDetailView: View {
             if phase != .active { sensitiveLoginInformationRevealed = false }
         }
         .onChange(of: cardSortOrderRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .onChange(of: cardCategoryRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .onChange(of: auth.isAdmin) { _, _ in
             sensitiveLoginInformationRevealed = false

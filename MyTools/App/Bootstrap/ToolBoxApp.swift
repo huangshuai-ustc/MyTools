@@ -26,6 +26,7 @@ struct ToolBoxApp: App {
     @StateObject private var store: AppStore
     @StateObject private var auth = AuthManager()
     @StateObject private var stockAppearanceSettings: StockAppearanceSettings
+    @StateObject private var preferenceChangeBus = AppPreferenceChangeBus.shared
     @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
     @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
 
@@ -55,6 +56,7 @@ struct ToolBoxApp: App {
                 auth: auth,
                 moduleSettings: moduleSettings,
                 stockAppearanceSettings: stockAppearanceSettings,
+                preferenceChangeBus: preferenceChangeBus,
                 appearanceModeRawValue: appearanceModeRawValue,
                 fontSizeRawValue: fontSizeRawValue
             )
@@ -67,6 +69,7 @@ private struct ConfiguredRootView: View {
     let auth: AuthManager
     let moduleSettings: ToolModuleSettings
     let stockAppearanceSettings: StockAppearanceSettings
+    @ObservedObject var preferenceChangeBus: AppPreferenceChangeBus
     let appearanceModeRawValue: String
     let fontSizeRawValue: String
     @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
@@ -103,6 +106,7 @@ private struct ConfiguredRootView: View {
             .environmentObject(auth)
             .environmentObject(moduleSettings)
             .environmentObject(stockAppearanceSettings)
+            .environmentObject(preferenceChangeBus)
             .environmentObject(AppNotificationService.shared)
             .preferredColorScheme(
                 AppAppearanceMode(rawValue: appearanceModeRawValue)?.colorScheme
@@ -116,7 +120,7 @@ private struct ConfiguredRootView: View {
             .onChange(of: fontSizeRawValue) { _, _ in
                 store.preferenceSettingsDidChange()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .syncedAppPreferenceDidChange)) { _ in
+            .onChange(of: preferenceChangeBus.revision) { _, _ in
                 store.preferenceSettingsDidChange()
             }
     }

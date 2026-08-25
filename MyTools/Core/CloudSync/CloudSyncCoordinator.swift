@@ -210,7 +210,10 @@ final class CloudSyncCoordinator: ObservableObject {
                     await currentWorker.abortRebuildLease(lease)
                     throw CloudDataRebuildError.unableToRestart
                 }
-                await replacementWorker.start()
+                guard await replacementWorker.start() else {
+                    await currentWorker.abortRebuildLease(lease)
+                    throw CloudDataRebuildError.unableToRestart
+                }
                 await replacementWorker.finishRebuildLease()
             } catch {
                 guard !CloudSyncErrorFormatter.isCancellation(error) else {
@@ -258,7 +261,7 @@ final class CloudSyncCoordinator: ObservableObject {
         let operationID = UUID()
         activeOperationID = operationID
         operationTask = Task { [weak self] in
-            await worker.start()
+            _ = await worker.start()
             self?.operationDidFinish(operationID)
         }
     }

@@ -92,6 +92,7 @@ private final class SecretEditorDraft: ObservableObject {
 struct SecretVaultView: View {
     @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
+    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var categoryFilter: SecretCategoryFilter = .all
@@ -169,7 +170,7 @@ struct SecretVaultView: View {
         }
         .navigationTitle(ToolModule.secrets.title)
         .onChange(of: sortOrderRawValue) { _, _ in
-            NotificationCenter.default.post(name: .syncedAppPreferenceDidChange, object: nil)
+            preferenceChangeBus.notifyChanged()
         }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
@@ -387,43 +388,6 @@ private struct SecretPasswordImportView: View {
             )
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
-    }
-}
-
-/* Legacy preview is now handled by SecretPasswordImportView. */
-private struct ApplePasswordImportPreviewView: View {
-    @Environment(\.dismiss) private var dismiss
-    let preview: ApplePasswordImportPreview
-    let onImport: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("文件") {
-                    LabeledContent("名称", value: preview.fileName)
-                    LabeledContent("可导入", value: "\(preview.items.count) 条")
-                }
-                Section("预览") {
-                    ForEach(preview.items.prefix(20)) { item in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.title).font(.body.weight(.medium))
-                            Text(item.fields.first(where: { $0.label == "URL" })?.value ?? "")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("导入 Apple 密码")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("导入", action: onImport)
-                }
-            }
         }
     }
 }

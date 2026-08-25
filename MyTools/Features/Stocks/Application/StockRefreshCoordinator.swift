@@ -95,13 +95,13 @@ final class StockRefreshCoordinator {
     }
 
     private func hasRefreshableStocks(in store: StockStore) -> Bool {
-        store.stocks.contains(where: \.hasConfiguredSymbol)
+        store.stocks.contains { $0.hasConfiguredSymbol && !$0.isArchived }
     }
 
     private func hasEnabledRefreshableAlert(in store: StockStore) -> Bool {
         let refreshableStockIDs = Set(
             store.stocks.lazy
-                .filter(\.hasConfiguredSymbol)
+                .filter { $0.hasConfiguredSymbol && !$0.isArchived }
                 .map(\.id)
         )
         return store.priceAlerts.contains {
@@ -196,7 +196,9 @@ final class StockRefreshCoordinator {
             // completed regular-session data is already available.
             guard session != .regular,
                   store.stocks.contains(where: {
-                      $0.market == market && $0.hasConfiguredSymbol
+                      $0.market == market
+                          && $0.hasConfiguredSymbol
+                          && !$0.isArchived
                   }),
                   let sessionEnd = StockMarketTradingCalendar.latestCompletedFinalSessionEnd(
                       for: market,
@@ -220,7 +222,9 @@ final class StockRefreshCoordinator {
         sessions: [StockMarket: Date]
     ) async {
         let stocks = store.stocks.filter {
-            sessions[$0.market] != nil && $0.hasConfiguredSymbol
+            sessions[$0.market] != nil
+                && $0.hasConfiguredSymbol
+                && !$0.isArchived
         }
         DiagnosticLogger.shared.log(
             .stockQuote,

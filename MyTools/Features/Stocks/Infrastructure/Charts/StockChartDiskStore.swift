@@ -174,11 +174,19 @@ struct StockChartDiskStore {
         }
         memoryStores[key] = nil
         let url = persistentStoreURL(for: key)
-        if let data = try? Data(contentsOf: url),
-           let stored = try? JSONDecoder().decode(StockChartPersistedStore.self, from: data),
-           stored.version == StockChartPersistedStore.currentVersion,
-           stored.market == key.market,
-           stored.symbol == key.symbol {
+        if let data = try? Data(contentsOf: url) {
+            guard let stored = try? JSONDecoder().decode(
+                StockChartPersistedStore.self,
+                from: data
+            ),
+            stored.version == StockChartPersistedStore.currentVersion,
+            stored.market == key.market,
+            stored.symbol == key.symbol else {
+                // Chart files are rebuildable. Do not leave an obsolete or
+                // corrupt cache file behind after the schema changes.
+                try? fileManager.removeItem(at: url)
+                return nil
+            }
             memoryStores[key] = stored
             return stored
         }

@@ -47,6 +47,10 @@ final class AuthManager: ObservableObject {
     @Published private(set) var customSessionDurationMinutes: Int
     @Published private(set) var lockOnBackground: Bool
     private let defaults: UserDefaults
+    private enum LegacyDefaultsKey {
+        static let sessionPolicy = "admin-session-policy"
+        static let sessionDuration = "admin-session-duration"
+    }
     private let passwordKey = "admin-password-hash"
     private let sessionDurationKey = "admin-session-duration-option"
     private let customSessionDurationKey = "admin-session-duration-custom-minutes"
@@ -64,16 +68,39 @@ final class AuthManager: ObservableObject {
         customSessionDurationMinutes = storedCustomMinutes == 0
             ? 30
             : min(max(storedCustomMinutes, 1), 7 * 24 * 60)
+        let hasLegacySessionSettings = defaults.string(
+            forKey: LegacyDefaultsKey.sessionPolicy
+        ) != nil || defaults.object(forKey: LegacyDefaultsKey.sessionDuration) != nil
+        let resolvedSessionDuration: AdminSessionDuration
+        let shouldPersistSessionDuration: Bool
         if let rawValue = defaults.string(forKey: sessionDurationKey),
            let duration = AdminSessionDuration(rawValue: rawValue) {
-            sessionDuration = duration
+            resolvedSessionDuration = duration
+            shouldPersistSessionDuration = false
         } else {
-            sessionDuration = Self.migratedDuration(from: defaults)
+            resolvedSessionDuration = Self.migratedDuration(from: defaults)
+            shouldPersistSessionDuration = hasLegacySessionSettings
         }
+        let resolvedLockOnBackground: Bool
+        let shouldPersistLockOnBackground: Bool
         if defaults.object(forKey: lockOnBackgroundKey) != nil {
-            lockOnBackground = defaults.bool(forKey: lockOnBackgroundKey)
+            resolvedLockOnBackground = defaults.bool(forKey: lockOnBackgroundKey)
+            shouldPersistLockOnBackground = false
         } else {
-            lockOnBackground = Self.migratedLockOnBackground(from: defaults)
+            resolvedLockOnBackground = Self.migratedLockOnBackground(from: defaults)
+            shouldPersistLockOnBackground = hasLegacySessionSettings
+        }
+        sessionDuration = resolvedSessionDuration
+        lockOnBackground = resolvedLockOnBackground
+        if shouldPersistSessionDuration {
+            defaults.set(resolvedSessionDuration.rawValue, forKey: sessionDurationKey)
+        }
+        if shouldPersistLockOnBackground {
+            defaults.set(resolvedLockOnBackground, forKey: lockOnBackgroundKey)
+        }
+        if hasLegacySessionSettings {
+            defaults.removeObject(forKey: LegacyDefaultsKey.sessionPolicy)
+            defaults.removeObject(forKey: LegacyDefaultsKey.sessionDuration)
         }
     }
 

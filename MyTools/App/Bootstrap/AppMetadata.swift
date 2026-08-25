@@ -47,9 +47,3 @@ enum AppStorageKey {
     static let sportsLotteryLeagues = "sports-lottery-leagues-v2"
     static let sportsLotteryMatchOrder = "sports-lottery-match-order-v1"
 }
-
-extension Notification.Name {
-    static let syncedAppPreferenceDidChange = Notification.Name(
-        "MyTools.syncedAppPreferenceDidChange"
-    )
-}
