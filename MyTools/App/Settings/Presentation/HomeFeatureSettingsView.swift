@@ -15,7 +15,7 @@ struct HomeFeatureSettingsView: View {
             }
 
         }
-        .navigationTitle("首页功能")
+        .appNavigationTitle("首页功能")
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .toolbar { EditButton() }
@@ -37,7 +37,7 @@ struct HomeFeatureSettingsView: View {
                 Text(module.title)
                     .foregroundStyle(moduleSettings.isVisible(module) ? .primary : .secondary)
                 Text(module.subtitle)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
         }

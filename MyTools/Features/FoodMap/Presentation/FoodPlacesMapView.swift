@@ -29,7 +29,7 @@ struct FoodPlacesMapView: View {
                             selectedPlaceID = place.id
                         } label: {
                             Image(systemName: "fork.knife.circle.fill")
-                                .font(.title)
+                                .appFont(.title)
                                 .symbolRenderingMode(.palette)
                                 .foregroundStyle(place.status.tint, Color.white)
                                 .shadow(radius: 2, y: 1)
@@ -55,7 +55,7 @@ struct FoodPlacesMapView: View {
                 selectedPlaceBar(selectedPlace)
             }
         }
-        .navigationTitle("全部美食地点")
+        .appNavigationTitle("全部美食地点")
         .iOSLabeledBackButton("美食地图")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -85,11 +85,11 @@ struct FoodPlacesMapView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(place.displayTitle).font(.headline).lineLimit(1)
+                    Text(place.displayTitle).appFont(.headline).lineLimit(1)
                     FoodStatusLabel(status: place.status)
                 }
                 Text(place.locationSummary)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

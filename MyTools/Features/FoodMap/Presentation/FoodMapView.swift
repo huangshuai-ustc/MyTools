@@ -93,7 +93,7 @@ struct FoodMapView: View {
                 }
             }
         }
-        .navigationTitle(ToolModule.foodMap.title)
+        .appNavigationTitle(ToolModule.foodMap.title)
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索美食、店名、地点或标签")
 #if os(iOS)
@@ -158,7 +158,7 @@ private struct FoodPlaceRow: View {
                 FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 58)
             } else {
                 Image(systemName: "fork.knife")
-                    .font(.title3)
+                    .appFont(.title3)
                     .foregroundStyle(place.status.tint)
                     .frame(width: 58, height: 58)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
@@ -167,18 +167,18 @@ private struct FoodPlaceRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(place.displayTitle)
-                        .font(.headline)
+                        .appFont(.headline)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     FoodStatusLabel(status: place.status)
                 }
                 if !place.shopName.isEmpty, place.shopName != place.displayTitle {
                     Text(place.shopName)
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .lineLimit(1)
                 }
                 Text(place.locationSummary)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 AppTagCapsules(tags: place.tags, limit: 3)

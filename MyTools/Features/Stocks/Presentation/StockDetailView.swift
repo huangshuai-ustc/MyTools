@@ -41,7 +41,10 @@ struct StockDetailView: View {
                 ContentUnavailableView("股票已不存在", systemImage: "chart.line.downtrend.xyaxis")
             }
         }
-        .navigationTitle(stock?.displayName ?? "股票详情")
+        .appNavigationTitle(
+            stock?.displayName ?? "股票详情",
+            displaysMacToolbarTitle: false
+        )
         .iOSLabeledBackButton(ToolModule.myStocks.title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -56,9 +59,9 @@ struct StockDetailView: View {
                             Text(stock.displayName)
                                 .lineLimit(1)
                             Image(systemName: "chart.xyaxis.line")
-                                .font(.caption2.weight(.semibold))
+                                .appFont(.caption2.weight(.semibold))
                         }
-                        .font(.headline)
+                        .appFont(.headline)
                         .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
@@ -266,12 +269,12 @@ private struct StockQuoteOverview: View {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("最新价")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                     Text(stock.latestPrice.map {
                         StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
                     } ?? "待同步")
-                    .font(.title3.weight(.semibold).monospacedDigit())
+                    .appFont(.title3.weight(.semibold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 }
@@ -280,7 +283,7 @@ private struct StockQuoteOverview: View {
 
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("今日涨跌")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                     if let changePercent = stock.changePercent {
                         HStack(spacing: 6) {
@@ -292,13 +295,13 @@ private struct StockQuoteOverview: View {
                             }
                             Text(StockValueFormatter.signedPercent(changePercent))
                         }
-                        .font(.subheadline.weight(.medium).monospacedDigit())
+                        .appFont(.subheadline.weight(.medium).monospacedDigit())
                         .foregroundStyle(changeColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.68)
                     } else {
                         Text("待同步")
-                            .font(.subheadline.monospacedDigit())
+                            .appFont(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -329,7 +332,7 @@ private struct StockQuoteOverview: View {
 
             if let quoteError {
                 Label(quoteError, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.orange)
             }
         }
@@ -436,11 +439,11 @@ private struct StockDetailMetricCell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text(value)
-                .font(.subheadline.weight(.medium).monospacedDigit())
+                .appFont(.subheadline.weight(.medium).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(2)
                 .minimumScaleFactor(0.68)
@@ -512,7 +515,7 @@ private struct StockTransactionOrderEditorView: View {
                     }
                 }
             }
-            .navigationTitle("当日交易顺序")
+            .appNavigationTitle("当日交易顺序")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -557,17 +560,17 @@ private struct StockTransactionOrderRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("第 \(order + 1) 笔")
-                .font(.caption.weight(.semibold).monospacedDigit())
+                .appFont(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 46, alignment: .leading)
             Text(transaction.type.title)
-                .font(.subheadline.weight(.medium))
+                .appFont(.subheadline.weight(.medium))
                 .foregroundStyle(transaction.type == .buy ? .blue : .orange)
                 .frame(width: 34, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股")
                 Text(StockValueFormatter.price(transaction.unitPrice, currencyCode: currencyCode))
-                    .font(.caption.monospacedDigit())
+                    .appFont(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -587,23 +590,23 @@ private struct StockTransactionRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(transaction.type.title)
-                .font(.caption.weight(.semibold))
+                .appFont(.caption.weight(.semibold))
                 .foregroundStyle(color)
                 .frame(width: 34, alignment: .leading)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股 × \(StockValueFormatter.price(transaction.unitPrice, currencyCode: market.currencyCode))")
-                    .font(.subheadline.monospacedDigit())
+                    .appFont(.subheadline.monospacedDigit())
                 Text(AppDateFormatter.string(from: transaction.tradedAt))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
                 Text(StockValueFormatter.money(transaction.grossAmount, currencyCode: market.currencyCode))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 if transaction.fees > 0 {
                     Text("费用 \(StockValueFormatter.money(transaction.fees, currencyCode: market.currencyCode))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -620,16 +623,16 @@ private struct StockDividendRow: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(AppDateFormatter.string(from: dividend.receivedAt))
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                 if dividend.hasPerShareBreakdown {
                     Text("\(StockValueFormatter.quantity(dividend.quantity)) 股 × \(StockValueFormatter.price(dividend.dividendPerShare, currencyCode: market.currencyCode))/股")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if !dividend.note.isEmpty {
                     Text(dividend.note)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -637,10 +640,10 @@ private struct StockDividendRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
                 Text(StockValueFormatter.money(dividend.netAmount, currencyCode: market.currencyCode))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 if dividend.totalDeductions > 0 {
                     Text("税前 \(StockValueFormatter.money(dividend.grossAmount, currencyCode: market.currencyCode)) · 扣除 \(StockValueFormatter.money(dividend.totalDeductions, currencyCode: market.currencyCode))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)

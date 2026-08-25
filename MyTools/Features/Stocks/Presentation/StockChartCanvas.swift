@@ -112,7 +112,7 @@ struct StockChartCanvas: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: 34, alignment: .top)
                 Image(systemName: "chart.xyaxis.line")
-                    .font(isExpanded ? .largeTitle : .title2)
+                    .appFont(isExpanded ? .largeTitle : .title2)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -199,7 +199,7 @@ struct StockChartCanvas: View {
                     ))
                     .annotation(position: .top, alignment: .trailing, spacing: 2) {
                         Text("昨收 \(StockChartPresentation.plainPriceText(previousClose))")
-                            .font(.caption2.monospacedDigit())
+                            .appFont(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
             }
@@ -550,7 +550,7 @@ struct StockChartCanvas: View {
                            in: chartXDomain
                        ) {
                         Text(presentation.axisLabelText(plotPoint.point.date))
-                            .font(.caption2)
+                            .appFont(.caption2)
                     }
                 }
             }
@@ -893,7 +893,7 @@ struct StockChartCanvas: View {
                 }
             }
         }
-        .font(.caption2.monospacedDigit())
+        .appFont(.caption2.monospacedDigit())
     }
 
     private func transactionSummary(_ selection: StockTransactionSelection) -> String {
@@ -1081,7 +1081,7 @@ struct StockChartCanvas: View {
                 }
             }
         }
-        .font(.caption2.monospacedDigit())
+        .appFont(.caption2.monospacedDigit())
     }
 
     private func lineColor() -> Color {

@@ -113,7 +113,7 @@ struct CurrencyExchangeEditorView: View {
                     }
                 }
             }
-            .navigationTitle(store.records.contains { $0.id == draft.record.id } ? "编辑换汇" : "新增换汇")
+            .appNavigationTitle(store.records.contains { $0.id == draft.record.id } ? "编辑换汇" : "新增换汇")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

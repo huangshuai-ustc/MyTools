@@ -226,7 +226,7 @@ struct StockWatchView: View {
                 )
             }
         }
-        .navigationTitle("股票看盘")
+        .appNavigationTitle("股票看盘", displaysMacToolbarTitle: false)
         .iOSLabeledBackButton(ToolModule.myStocks.title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -366,7 +366,7 @@ struct StockWatchView: View {
                         visibleXDomain = nil
                     } label: {
                         Text(range.title)
-                            .font(.caption.weight(
+                            .appFont(.caption.weight(
                                 selectedRange == range ? .semibold : .regular
                             ))
                             .foregroundStyle(
@@ -407,7 +407,7 @@ struct StockWatchView: View {
                         toggleChartMode(mode)
                     } label: {
                         Text(mode.title)
-                            .font(.caption.weight(
+                            .appFont(.caption.weight(
                                 isSelected ? .semibold : .regular
                             ))
                             .foregroundStyle(
@@ -503,9 +503,9 @@ struct StockWatchView: View {
                 Text(currentStock.displayName)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
+                    .appFont(.caption2.weight(.semibold))
             }
-            .font(.headline)
+            .appFont(.headline)
         }
         .accessibilityLabel("切换看盘股票，当前为\(currentStock.displayName)")
         .help("切换看盘股票")
@@ -550,14 +550,14 @@ struct StockWatchView: View {
             HStack(spacing: 8) {
                 StockMarketBadge(market: stock.market)
                 Text(stock.displayName)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 Text(stock.symbol)
-                    .font(.caption.monospaced())
+                    .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Label(sessionTitle, systemImage: sessionIcon)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(sessionColor)
             }
 
@@ -568,7 +568,7 @@ struct StockWatchView: View {
                             latest.close,
                             currencyCode: snapshot.currencyCode
                         ))
-                            .font(.title2.weight(.semibold).monospacedDigit())
+                            .appFont(.title2.weight(.semibold).monospacedDigit())
                         if let performance = StockChartPresentation.rangePerformance(
                             snapshot: snapshot,
                             range: selectedRange,
@@ -586,7 +586,7 @@ struct StockWatchView: View {
                                 )
                                 Text(StockValueFormatter.signedPercent(Decimal(performance.percent)))
                             }
-                            .font(.subheadline.weight(.medium).monospacedDigit())
+                            .appFont(.subheadline.weight(.medium).monospacedDigit())
                             .foregroundStyle(
                                 valueColor(performance.change, market: stock.market)
                             )
@@ -602,7 +602,7 @@ struct StockWatchView: View {
 
             if snapshot != nil, let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.orange)
             }
         }
@@ -626,14 +626,14 @@ struct StockWatchView: View {
             } label: {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("投资机会分")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundStyle(.secondary)
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Text("\(technicalScore.value)")
-                            .font(.title2.weight(.semibold).monospacedDigit())
+                            .appFont(.title2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(technicalScoreColor(technicalScore.value))
                         Text("/ 100")
-                            .font(.caption.monospacedDigit())
+                            .appFont(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -648,7 +648,7 @@ struct StockWatchView: View {
         } else if isTechnicalScoreRefreshing {
             VStack(alignment: .trailing, spacing: 6) {
                     Text("投资机会分")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundStyle(.secondary)
                 ProgressView()
                     .controlSize(.small)
@@ -657,10 +657,10 @@ struct StockWatchView: View {
         } else {
             VStack(alignment: .trailing, spacing: 2) {
                     Text("投资机会分")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundStyle(.secondary)
                 Text("--")
-                    .font(.title2.weight(.semibold).monospacedDigit())
+                    .appFont(.title2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             .frame(minWidth: 82, alignment: .trailing)
@@ -694,7 +694,7 @@ struct StockWatchView: View {
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "chart.xyaxis.line")
-                    .font(.title2)
+                    .appFont(.title2)
                     .foregroundStyle(.secondary)
                 Text(errorMessage ?? "该时段暂无可用行情")
                     .multilineTextAlignment(.center)
@@ -742,7 +742,10 @@ struct StockWatchView: View {
                 }
             }
             .padding(16)
-            .navigationTitle("\(stock.displayName) · 行情图")
+            .appNavigationTitle(
+                "\(stock.displayName) · 行情图",
+                displaysMacToolbarTitle: false
+            )
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -911,7 +914,7 @@ struct StockWatchView: View {
                     ProgressView()
                         .controlSize(.regular)
                     Text("正在更新 \(selectedRange.title) 行情")
-                        .font(.footnote.weight(.medium))
+                        .appFont(.footnote.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
@@ -1150,10 +1153,10 @@ private struct StockWatchMetricCell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline.monospacedDigit())
+                .appFont(.subheadline.monospacedDigit())
                 .lineLimit(2)
                 .minimumScaleFactor(0.72)
         }
@@ -1172,17 +1175,17 @@ private struct StockInvestmentScoreDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(score.value)")
-                                .font(.largeTitle.weight(.bold).monospacedDigit())
+                                .appFont(.largeTitle.weight(.bold).monospacedDigit())
                                 .foregroundStyle(technicalScoreColor(score.value))
                             Text("/ 100")
-                                .font(.subheadline.monospacedDigit())
+                                .appFont(.subheadline.monospacedDigit())
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Text(score.levelTitle)
-                                .font(.headline)
+                                .appFont(.headline)
                         }
                         Text("截至 \(AppDateFormatter.string(from: score.date)) 的日线投资机会")
-                            .font(.subheadline)
+                            .appFont(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -1196,7 +1199,7 @@ private struct StockInvestmentScoreDetailView: View {
                                     .fontWeight(.medium)
                                 Spacer()
                                 Text("\(factor.directionTitle) · \(factor.displayValue)")
-                                    .font(.subheadline.monospacedDigit())
+                                    .appFont(.subheadline.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
                             ProgressView(
@@ -1205,7 +1208,7 @@ private struct StockInvestmentScoreDetailView: View {
                             )
                             .tint(technicalScoreColor(factor.displayValue))
                             Text(factor.summary)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -1217,7 +1220,7 @@ private struct StockInvestmentScoreDetailView: View {
                     Section("非线性调整") {
                         ForEach(score.adjustments, id: \.self) { adjustment in
                             Text(adjustment)
-                                .font(.subheadline)
+                                .appFont(.subheadline)
                         }
                     }
                 }
@@ -1285,7 +1288,7 @@ private struct StockInvestmentScoreDetailView: View {
                     )
                 }
             }
-            .navigationTitle("投资机会分")
+            .appNavigationTitle("投资机会分")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

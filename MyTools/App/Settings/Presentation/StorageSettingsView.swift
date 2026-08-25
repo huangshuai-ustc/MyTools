@@ -24,7 +24,7 @@ struct StorageDataView: View {
                     } label: {
                         Text("应用可管理数据")
                     }
-                        .font(.headline)
+                        .appFont(.headline)
                     storageRow("本地档案", bytes: scanResult.usage.localVaultBytes)
                     storageRow(
                         "附件",
@@ -64,7 +64,7 @@ struct StorageDataView: View {
                         )
                         .foregroundStyle(.orange)
                         Text(missingAttachmentSummary(scanResult.missingAttachments))
-                            .font(.footnote)
+                            .appFont(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 } header: {
@@ -91,7 +91,7 @@ struct StorageDataView: View {
 
                         if !auth.isAdmin {
                             Text("进入管理员模式后可以清理无效附件。")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -114,12 +114,12 @@ struct StorageDataView: View {
                                 Label(finding.title, systemImage: finding.module.systemImage)
                                     .foregroundStyle(finding.module.tint)
                                 Text(finding.detail)
-                                    .font(.footnote)
+                                    .appFont(.footnote)
                                     .foregroundStyle(.secondary)
                                 HStack {
                                     Spacer()
                                     Text("\(finding.affectedRecordCount) 条 · \(finding.affectedFieldCount) 个字段")
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -134,7 +134,7 @@ struct StorageDataView: View {
 
                         if !auth.isAdmin {
                             Text("进入管理员模式后可以清理不适用字段。")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -151,7 +151,7 @@ struct StorageDataView: View {
                                 Label(module.title, systemImage: module.systemImage)
                                     .foregroundStyle(module.tint)
                                 Text(module.localCacheDescription)
-                                    .font(.footnote)
+                                    .appFont(.footnote)
                                     .foregroundStyle(.secondary)
                                 Spacer(minLength: 8)
                                 Button(role: .destructive) {
@@ -187,7 +187,7 @@ struct StorageDataView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("已删除“\(deletion.module.title)”的本地数据")
                                 Text("\(remainingSeconds(until: deletion.expiresAt, at: context.date)) 秒后完成清理")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -251,7 +251,7 @@ struct StorageDataView: View {
                 .disabled(isScanning || !store.isInitialDataLoaded)
             }
         }
-        .navigationTitle("存储与数据")
+        .appNavigationTitle("存储与数据")
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
@@ -329,7 +329,7 @@ struct StorageDataView: View {
                 Text(formattedSize(bytes))
                 if let detail {
                     Text(detail)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -449,14 +449,14 @@ private struct ModuleLocalDataDeletionConfirmationView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 14) {
                     Image(systemName: stage == .first ? "exclamationmark.triangle.fill" : "trash.fill")
-                        .font(.system(size: 34))
+                        .appFont(.system(size: 34))
                         .foregroundStyle(.red)
                         .frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(stage == .first ? "确认数据范围" : "最后确认")
-                            .font(.title3.weight(.semibold))
+                            .appFont(.title3.weight(.semibold))
                         Text("第 \(stage == .first ? 1 : 2) 层，共 2 层")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -471,7 +471,7 @@ private struct ModuleLocalDataDeletionConfirmationView: View {
                             : "已经导出的备份不会被修改。",
                         systemImage: cloudSyncEnabled ? "icloud" : "externaldrive"
                     )
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
                 }
 
@@ -499,7 +499,7 @@ private struct ModuleLocalDataDeletionConfirmationView: View {
                 }
             }
             .padding(24)
-            .navigationTitle("删除\(module.title)数据")
+            .appNavigationTitle("删除\(module.title)数据")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }

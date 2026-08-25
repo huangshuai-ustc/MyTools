@@ -166,7 +166,7 @@ struct BillAnalysisView: View {
                 .accessibilityLabel("上个月")
 
                 Text(periodTitle)
-                    .font(.headline)
+                    .appFont(.headline)
                     .frame(maxWidth: .infinity)
 
                 Button {
@@ -326,7 +326,7 @@ struct BillAnalysisView: View {
                             Text(BillAnalysisFormatting.percentage(total.amount, of: snapshot.expense))
                                 .monospacedDigit()
                         }
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                     }
                 }
@@ -385,10 +385,10 @@ struct BillAnalysisView: View {
     private func metric(_ title: String, value: Decimal, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             Text(BillAnalysisFormatting.amount(value, currency: currency))
-                .font(.headline)
+                .appFont(.headline)
                 .foregroundStyle(color)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -421,7 +421,7 @@ struct BillAnalysisView: View {
                     DatePicker("结束日期", selection: $customEnd, displayedComponents: .date)
                 }
             }
-            .navigationTitle("选择分析时间")
+            .appNavigationTitle("选择分析时间")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { showingDatePicker = false }
@@ -489,7 +489,7 @@ private struct BillRankingRow: View {
             }
             .frame(height: 6)
             Text("\(total.transactionCount) 笔")
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)

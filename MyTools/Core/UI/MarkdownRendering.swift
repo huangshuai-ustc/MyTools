@@ -101,10 +101,10 @@ struct MarkdownValueRow: View {
         if alignment == .leading {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundStyle(.primary)
                 valueView
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.secondary)
             }
         } else {

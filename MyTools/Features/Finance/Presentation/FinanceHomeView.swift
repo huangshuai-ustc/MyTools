@@ -49,6 +49,9 @@ struct HomeView: View {
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
                         description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
+#if os(macOS)
+                    .frame(maxWidth: .infinity, minHeight: 300)
+#endif
                 }
                 ForEach(snapshot.activeAccounts) { account in
                     accountLink(account, cards: snapshot.cards(for: account))
@@ -72,7 +75,7 @@ struct HomeView: View {
                 }
             }
         }
-        .navigationTitle(ToolModule.personalFinance.title)
+        .appNavigationTitle(ToolModule.personalFinance.title)
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .onChange(of: sortOrderRawValue) { _, _ in
@@ -122,7 +125,7 @@ struct HomeView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     BankRegionBadge(region: account.region)
                     Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
-                        .font(.headline)
+                        .appFont(.headline)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     if account.status != .normal {
@@ -130,7 +133,7 @@ struct HomeView: View {
                     }
                 }
                 Text(financeRowSummary(account, cards: cards))
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
@@ -156,8 +159,8 @@ struct HomeView: View {
     private func financeMetric(_ title: String, value: Int, systemImage: String) -> some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(value)").font(.headline.monospacedDigit())
-                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text("\(value)").appFont(.headline.monospacedDigit())
+                Text(title).appFont(.caption).foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: systemImage).foregroundStyle(.blue)
@@ -274,13 +277,13 @@ struct CardRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "creditcard.fill")
-                .font(.title2)
+                .appFont(.title2)
                 .foregroundStyle(.blue)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(card.cardType.isEmpty ? "未命名卡片" : card.cardType)
-                        .font(.headline)
+                        .appFont(.headline)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     HStack(spacing: 6) {
@@ -291,7 +294,7 @@ struct CardRow: View {
                 }
                 HStack(alignment: .center, spacing: 8) {
                     Text(card.cardNumber.isEmpty ? "未填写卡号" : "•••• " + String(card.cardNumber.suffix(4)))
-                        .font(.subheadline.monospacedDigit())
+                        .appFont(.subheadline.monospacedDigit())
                         .foregroundStyle(card.cardNumber.isEmpty ? .tertiary : .secondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
@@ -351,7 +354,7 @@ struct CardNetworkTags: View {
     private var tags: some View {
         ForEach(CardNetwork.allCases.filter(networks.contains)) { network in
             Text(network.title)
-                .font(.caption2.weight(.semibold))
+                .appFont(.caption2.weight(.semibold))
                 .foregroundStyle(.indigo)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -370,7 +373,7 @@ struct CardKindText: View {
 
     var body: some View {
         Text(title)
-            .font(.caption.weight(.semibold))
+            .appFont(.caption.weight(.semibold))
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
@@ -394,7 +397,7 @@ struct BankRegionBadge: View {
 
     var body: some View {
         Text(title)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -416,7 +419,7 @@ struct CardStatusText: View {
 
     var body: some View {
         Text(status.title)
-            .font(.caption.weight(.semibold))
+            .appFont(.caption.weight(.semibold))
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)

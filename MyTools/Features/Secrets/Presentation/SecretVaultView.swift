@@ -168,7 +168,7 @@ struct SecretVaultView: View {
                 }
             }
         }
-        .navigationTitle(ToolModule.secrets.title)
+        .appNavigationTitle(ToolModule.secrets.title)
         .onChange(of: sortOrderRawValue) { _, _ in
             preferenceChangeBus.notifyChanged()
         }
@@ -265,16 +265,16 @@ private struct SecretItemRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: item.category.systemImage)
-                .font(.title3)
+                .appFont(.title3)
                 .foregroundStyle(.orange)
                 .frame(width: 32, height: 32)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(item.title.isEmpty ? "未命名条目" : item.title)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     Text(item.category.title)
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     SecretPurposeTag(purpose: item.purpose)
@@ -282,7 +282,7 @@ private struct SecretItemRow: View {
             }
             Spacer(minLength: 4)
             Image(systemName: "lock.fill")
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -293,7 +293,7 @@ private struct SecretPurposeTag: View {
 
     var body: some View {
         Text(purpose.title)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2.weight(.semibold))
             .foregroundStyle(purpose == .work ? .indigo : .green)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -329,24 +329,24 @@ private struct SecretPasswordImportView: View {
                     Section("导入预览") {
                         ForEach(preview.items.prefix(20)) { item in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.title).font(.body.weight(.medium))
+                                Text(item.title).appFont(.body.weight(.medium))
                                 Text(item.fields.first(where: { $0.label == "用户名" })?.value ?? "")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                                 Text(item.fields.first(where: { $0.label == "URL" })?.value ?? "")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
                         if preview.items.count > 20 {
                             Text("另有 \(preview.items.count - 20) 条将在确认后导入")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
-            .navigationTitle("导入 Apple 密码")
+            .appNavigationTitle("导入 Apple 密码")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -467,7 +467,7 @@ private struct SecretFieldTemplateEditorView: View {
                     }
                 }
             }
-            .navigationTitle("字段模板")
+            .appNavigationTitle("字段模板")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -550,22 +550,22 @@ private struct SecretAttachmentRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.title3)
+                .appFont(.title3)
                 .foregroundStyle(.pink)
                 .frame(width: 40, height: 40)
                 .background(.pink.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.fileName)
-                    .font(.body.weight(.medium))
+                    .appFont(.body.weight(.medium))
                     .lineLimit(1)
                 Text("\(attachment.contentType.conforms(to: .pdf) ? "PDF" : "图片") · \(attachment.displaySize)")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             if showsDisclosure {
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .appFont(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -656,7 +656,7 @@ struct SecretDetailView: View {
                         }
                     }
                 }
-                .navigationTitle(item.title.isEmpty ? "保密资料" : item.title)
+                .appNavigationTitle(item.title.isEmpty ? "保密资料" : item.title)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         if !canRevealSensitiveFields {
@@ -759,7 +759,7 @@ private struct SecretFieldValueRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(field.label.isEmpty ? "未命名字段" : field.label)
-                    .font(.subheadline.weight(.medium))
+                    .appFont(.subheadline.weight(.medium))
                 Spacer()
                 if field.isSensitive, !field.value.isEmpty, canRevealSensitiveFields {
                     Button {
@@ -905,7 +905,7 @@ struct SecretEditorView: View {
                         Button("字段模板") {
                             showingTemplateEditor = true
                         }
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .foregroundStyle(.blue)
                         .underline()
                     }
@@ -926,7 +926,7 @@ struct SecretEditorView: View {
                         .frame(minHeight: 90)
                 }
             }
-            .navigationTitle(isNew ? "新增保密资料" : "编辑保密资料")
+            .appNavigationTitle(isNew ? "新增保密资料" : "编辑保密资料")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

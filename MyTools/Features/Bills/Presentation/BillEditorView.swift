@@ -91,7 +91,7 @@ struct BillEditorView: View {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
                 }
             }
-            .navigationTitle(isExisting ? "编辑账单" : "新增账单")
+            .appNavigationTitle(isExisting ? "编辑账单" : "新增账单")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -64,7 +64,7 @@ struct MedicalRecordEditorView: View {
                 attachmentSection
                 tagAndNotesSection
             }
-            .navigationTitle(editorTitle)
+            .appNavigationTitle(editorTitle)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -162,7 +162,7 @@ struct MedicalRecordEditorView: View {
                         Text(
                             "\(associatedRecord.visitType.title) · \(AppDateFormatter.string(from: associatedRecord.date))"
                         )
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                     }
                 }
@@ -455,7 +455,7 @@ struct MedicalRecordEditorView: View {
 
     private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("\(title)：").font(.subheadline).foregroundStyle(.secondary)
+            Text("\(title)：").appFont(.subheadline).foregroundStyle(.secondary)
             IMESafeMultilineTextField(prompt: prompt, text: text)
         }
     }
@@ -471,7 +471,7 @@ struct MedicalRecordEditorView: View {
                 if containsArithmeticOperator(text.wrappedValue),
                    let value = DecimalTextParser.expression(from: text.wrappedValue) {
                     Text("= \(MedicalValueFormatter.money(value))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -496,7 +496,7 @@ struct MedicalRecordEditorView: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.fileName).lineLimit(2)
-                Text(attachment.displaySize).font(.caption).foregroundStyle(.secondary)
+                Text(attachment.displaySize).appFont(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Picker("附件类型", selection: attachmentKindBinding(for: attachment.id)) {
@@ -826,7 +826,7 @@ private struct MedicalExpenseItemEditorView: View {
                     IMESafeMultilineTextField(prompt: "可选", text: $item.note)
                 }
             }
-            .navigationTitle("费用项目")
+            .appNavigationTitle("费用项目")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -873,7 +873,7 @@ private struct MedicalExpenseItemEditorView: View {
                    text.wrappedValue.contains(where: { "+-*/×÷（）()".contains($0) }),
                    let value = DecimalTextParser.expression(from: text.wrappedValue) {
                     Text("= \(MedicalValueFormatter.money(value))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }

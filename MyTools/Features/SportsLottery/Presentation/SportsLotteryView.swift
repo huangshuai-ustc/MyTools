@@ -52,6 +52,46 @@ struct SportsLotteryView: View {
     }
 
     var body: some View {
+        content
+            .appNavigationTitle(ToolModule.sportsLottery.title)
+#if os(iOS)
+            .appAdaptiveLargeNavigationTitle()
+#endif
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    AdminEditAccessButton()
+                    if auth.isAdmin {
+                        Button {
+                            showingAddLeague = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .accessibilityLabel("添加赛事")
+                        .help("添加赛事")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddLeague) {
+                SportsLotteryAddLeagueView(
+                    existingLeagueIDs: Set(leagues.map(\.leagueID)),
+                    service: service
+                ) { league in
+                    leagues.append(league)
+                    persistLeagues()
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+#if os(macOS)
+        desktopContent
+#else
+        mobileList
+#endif
+    }
+
+    private var mobileList: some View {
         List {
             if leagues.isEmpty {
                 ContentUnavailableView("暂无赛事", systemImage: "soccerball")
@@ -67,10 +107,10 @@ struct SportsLotteryView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Label(league.title, systemImage: "sportscourt")
-                                .font(.headline)
+                                .appFont(.headline)
                             if league.officialName != league.title {
                                 Text(league.officialName)
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.leading, 28)
                             }
@@ -86,38 +126,96 @@ struct SportsLotteryView: View {
 
             Section {
                 Text("数据来源：中国体育彩票竞猜游戏官方信息发布平台。开奖结果以官方发布为准。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle(ToolModule.sportsLottery.title)
-#if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
-#endif
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button {
-                        showingAddLeague = true
-                    } label: {
-                        Image(systemName: "plus")
+    }
+
+#if os(macOS)
+    private var desktopContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if leagues.isEmpty {
+                    ContentUnavailableView("暂无赛事", systemImage: "soccerball")
+                        .frame(maxWidth: .infinity, minHeight: 360)
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 280, maximum: 460), spacing: 16)],
+                        alignment: .leading,
+                        spacing: 16
+                    ) {
+                        ForEach(leagues) { league in
+                            desktopLeagueCard(league)
+                        }
                     }
-                    .accessibilityLabel("添加赛事")
-                    .help("添加赛事")
+                }
+
+                Divider()
+
+                Label(
+                    "数据来源：中国体育彩票竞猜游戏官方信息发布平台。开奖结果以官方发布为准。",
+                    systemImage: "info.circle"
+                )
+                .appFont(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func desktopLeagueCard(_ league: SportsLotteryLeague) -> some View {
+        NavigationLink {
+            SportsLotteryLeagueView(
+                league: league,
+                service: service,
+                defaults: defaults
+            )
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "sportscourt")
+                    .appFont(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 30)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(league.title)
+                        .appFont(.headline)
+                    if league.officialName != league.title {
+                        Text(league.officialName)
+                            .appFont(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(.separator.opacity(0.65), lineWidth: 0.5)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if auth.isAdmin {
+                Button("删除", systemImage: "trash", role: .destructive) {
+                    delete(league)
                 }
             }
         }
-        .sheet(isPresented: $showingAddLeague) {
-            SportsLotteryAddLeagueView(
-                existingLeagueIDs: Set(leagues.map(\.leagueID)),
-                service: service
-            ) { league in
-                leagues.append(league)
-                persistLeagues()
-            }
-        }
     }
+#endif
 
     private func delete(_ league: SportsLotteryLeague) {
         leagues.removeAll { $0.leagueID == league.leagueID }
@@ -150,7 +248,7 @@ private struct SportsLotteryAddLeagueView: View {
                     )
                 }
             }
-            .navigationTitle("添加赛事")
+            .appNavigationTitle("添加赛事")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -240,6 +338,57 @@ private struct SportsLotteryLeagueView: View {
     }
 
     var body: some View {
+        leagueContent
+            .appNavigationTitle(league.title)
+#if os(macOS)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await model.load(forceRefresh: true) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("刷新")
+                    .help("刷新")
+                    .disabled(model.isLoading)
+                }
+            }
+            .task {
+                guard !didRefreshOnEntry else { return }
+                didRefreshOnEntry = true
+                await model.load(forceRefresh: true)
+            }
+            .refreshable { await model.load(forceRefresh: true) }
+            .alert("加载失败", isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            )) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(model.errorMessage ?? "")
+            }
+    }
+
+    @ViewBuilder
+    private var leagueContent: some View {
+#if os(macOS)
+        if model.isLoading && model.snapshot == nil {
+            ProgressView("加载中...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else if matches.isEmpty {
+            ContentUnavailableView("暂无数据", systemImage: "soccerball")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else {
+            matchList
+        }
+#else
+        matchList
+#endif
+    }
+
+    private var matchList: some View {
         List {
             if model.isLoading && model.snapshot == nil {
                 ProgressView("加载中...")
@@ -269,33 +418,6 @@ private struct SportsLotteryLeagueView: View {
                     }
                 }
             }
-        }
-        .navigationTitle(league.title)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await model.load(forceRefresh: true) }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .accessibilityLabel("刷新")
-                .help("刷新")
-                .disabled(model.isLoading)
-            }
-        }
-        .task {
-            guard !didRefreshOnEntry else { return }
-            didRefreshOnEntry = true
-            await model.load(forceRefresh: true)
-        }
-        .refreshable { await model.load(forceRefresh: true) }
-        .alert("加载失败", isPresented: Binding(
-            get: { model.errorMessage != nil },
-            set: { if !$0 { model.errorMessage = nil } }
-        )) {
-            Button("确定", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "")
         }
     }
 
@@ -344,25 +466,25 @@ private struct SportsLotteryMatchRow: View {
             HStack {
                 if let url = match.officialResultURL {
                     Link(match.matchNumber, destination: url)
-                        .font(.caption.weight(.semibold))
+                        .appFont(.caption.weight(.semibold))
                         .foregroundStyle(.tint)
                     .accessibilityLabel("查看\(match.matchNumber)完整赛果")
                     .help("打开官方完整赛果")
                 } else {
                     Text(match.matchNumber)
-                        .font(.caption.weight(.semibold))
+                        .appFont(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(Self.dateFormatter.string(from: match.date))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
                 Text(match.homeTeam)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 Text(match.displayScore ?? "暂无数据")
-                    .font(.headline.monospacedDigit())
+                    .appFont(.headline.monospacedDigit())
                     .frame(minWidth: 58)
                 Text(match.awayTeam)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -417,25 +539,25 @@ private struct SportsLotteryOutcomeColumn: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(code.title)
-                .font(.caption.weight(.medium))
+                .appFont(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
             if let outcome {
                 Text(outcome.value)
-                    .font(.subheadline.weight(.medium))
+                    .appFont(.subheadline.weight(.medium))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, minHeight: 22)
                 if let odds = outcome.odds, !odds.isEmpty {
                     Text(odds)
-                        .font(.caption2.monospacedDigit())
+                        .appFont(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             } else {
                 Text("暂无")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)

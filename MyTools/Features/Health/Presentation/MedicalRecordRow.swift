@@ -84,7 +84,7 @@ struct HospitalClassificationBadges: View {
 
     private func badge(_ title: String, color: Color) -> some View {
         Text(title)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
@@ -119,16 +119,16 @@ struct MedicalRecordRow: View {
             if isFollowUp {
                 HStack {
                     Label(linkedRecordTitle, systemImage: linkedRecordSystemImage)
-                        .font(.caption.weight(.semibold))
+                        .appFont(.caption.weight(.semibold))
                         .foregroundStyle(linkedRecordColor)
                     Spacer()
                     Text(AppDateFormatter.string(from: record.date))
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             HStack(alignment: .firstTextBaseline) {
-                Text(record.hospital).font(.headline).lineLimit(1)
+                Text(record.hospital).appFont(.headline).lineLimit(1)
                 Spacer(minLength: 8)
                 HospitalClassificationBadges(record: record)
             }
@@ -144,13 +144,13 @@ struct MedicalRecordRow: View {
                 }
                 Spacer()
                 Text(record.visitType.title)
-                    .font(.caption2.weight(.semibold))
+                    .appFont(.caption2.weight(.semibold))
                     .foregroundStyle(record.visitType.badgeColor)
                 if !isFollowUp {
                     Text(AppDateFormatter.string(from: record.date))
                 }
             }
-            .font(.subheadline)
+            .appFont(.subheadline)
             .foregroundStyle(.secondary)
 
             if !recordSummary.isEmpty {
@@ -187,7 +187,7 @@ struct MedicalRecordRow: View {
                 Text(MedicalValueFormatter.money(displayedTotalCost))
                     .monospacedDigit()
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -197,22 +197,22 @@ struct MedicalRecordRow: View {
         if record.isPharmacyPurchase {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("用药原因")
-                    .font(.caption.weight(.medium))
+                    .appFont(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Text(recordSummary)
-                    .font(.subheadline.weight(.semibold))
+                    .appFont(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
             }
             .lineLimit(2)
         } else if record.isPhysicalExam {
             MarkdownText(recordSummary)
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
                 .accessibilityLabel("查出的问题，\(recordSummary)")
         } else {
             Text(recordSummary)
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
                 .accessibilityLabel("初步诊断，\(recordSummary)")

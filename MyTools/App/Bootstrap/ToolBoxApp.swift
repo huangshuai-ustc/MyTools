@@ -11,6 +11,8 @@ enum AppOrientationController {
         supportedOrientations = orientations
     }
 }
+#elseif os(macOS)
+import AppKit
 #endif
 
 @main
@@ -27,8 +29,7 @@ struct ToolBoxApp: App {
     @StateObject private var auth = AuthManager()
     @StateObject private var stockAppearanceSettings: StockAppearanceSettings
     @StateObject private var preferenceChangeBus = AppPreferenceChangeBus.shared
-    @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
-    @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
+    @State private var desktopSelection: RootDestination? = .module(.personalFinance)
 
     init() {
         let moduleSettings = ToolModuleSettings()
@@ -57,10 +58,13 @@ struct ToolBoxApp: App {
                 moduleSettings: moduleSettings,
                 stockAppearanceSettings: stockAppearanceSettings,
                 preferenceChangeBus: preferenceChangeBus,
-                appearanceModeRawValue: appearanceModeRawValue,
-                fontSizeRawValue: fontSizeRawValue
+                desktopSelection: $desktopSelection
             )
         }
+#if os(macOS)
+        .defaultSize(width: 1280, height: 820)
+        .windowResizability(.contentMinSize)
+#endif
     }
 }
 
@@ -70,12 +74,13 @@ private struct ConfiguredRootView: View {
     let moduleSettings: ToolModuleSettings
     let stockAppearanceSettings: StockAppearanceSettings
     @ObservedObject var preferenceChangeBus: AppPreferenceChangeBus
-    let appearanceModeRawValue: String
-    let fontSizeRawValue: String
+    @Binding var desktopSelection: RootDestination?
+    @AppStorage(AppStorageKey.appearanceMode) private var appearanceModeRawValue = AppAppearanceMode.system.rawValue
+    @AppStorage(AppStorageKey.fontSize) private var fontSizeRawValue = AppFontSize.system.rawValue
     @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
 
     var body: some View {
-        RootView()
+        RootView(desktopSelection: $desktopSelection)
             .environmentObject(store)
 #if MYTOOLS_FEATURE_STOCKS
             .environmentObject(store.stockStore)
@@ -108,13 +113,29 @@ private struct ConfiguredRootView: View {
             .environmentObject(stockAppearanceSettings)
             .environmentObject(preferenceChangeBus)
             .environmentObject(AppNotificationService.shared)
+#if !os(macOS)
             .preferredColorScheme(
                 AppAppearanceMode(rawValue: appearanceModeRawValue)?.colorScheme
                     ?? AppAppearanceMode.system.colorScheme
             )
+#endif
             .environment(\.dynamicTypeSize, resolvedDynamicTypeSize)
+#if os(macOS)
+            .modifier(AppFontSizeModifier(rawValue: fontSizeRawValue))
+#endif
             .appListSpacing()
+#if os(macOS)
+            .environment(\.appFontScale, resolvedMacFontScale)
+#endif
+            .onAppear {
+#if os(macOS)
+                applyMacAppearance()
+#endif
+            }
             .onChange(of: appearanceModeRawValue) { _, _ in
+#if os(macOS)
+                applyMacAppearance()
+#endif
                 store.preferenceSettingsDidChange()
             }
             .onChange(of: fontSizeRawValue) { _, _ in
@@ -129,4 +150,62 @@ private struct ConfiguredRootView: View {
         AppFontSize(rawValue: fontSizeRawValue)?.dynamicTypeSize
             ?? systemDynamicTypeSize
     }
+
+#if os(macOS)
+    private var resolvedMacFontScale: CGFloat? {
+        (AppFontSize(rawValue: fontSizeRawValue) ?? .system).macOSScale
+    }
+
+    private func applyMacAppearance() {
+        switch AppAppearanceMode(rawValue: appearanceModeRawValue) ?? .system {
+        case .system:
+            NSApplication.shared.appearance = nil
+        case .light:
+            NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+#endif
 }
+
+#if os(macOS)
+private struct AppFontSizeModifier: ViewModifier {
+    let rawValue: String
+
+    func body(content: Content) -> some View {
+        content.font(configuredFont)
+    }
+
+    private var configuredFont: Font? {
+        guard let fontSize = AppFontSize(rawValue: rawValue),
+              let scale = fontSize.macOSScale else {
+            return nil
+        }
+        // Unstyled Text, Label and native controls must use the same complete
+        // body scale as explicit `.appFont(.body)` content. Capping this value
+        // created two visibly different font systems on the same screen.
+        return .system(size: 13 * scale)
+    }
+}
+
+private extension AppFontSize {
+    var macOSScale: CGFloat? {
+        switch self {
+        case .system: return nil
+        case .xSmall: return 0.78
+        case .small: return 0.86
+        case .medium: return 0.93
+        case .large: return 1
+        case .xLarge: return 1.12
+        case .xxLarge: return 1.25
+        case .xxxLarge: return 1.4
+        case .accessibility1: return 1.6
+        case .accessibility2: return 1.8
+        case .accessibility3: return 2
+        case .accessibility4: return 2.25
+        case .accessibility5: return 2.5
+        }
+    }
+}
+#endif

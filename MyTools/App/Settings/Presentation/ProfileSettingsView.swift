@@ -67,7 +67,7 @@ struct ProfileSettingsView: View {
                 }
             }
         }
-        .navigationTitle("设置")
+        .appNavigationTitle("设置")
         .adminModeIndicator()
         .iOSLabeledBackButton("我的")
 #if os(iOS)
@@ -132,11 +132,11 @@ private struct AdminSessionSettingsView: View {
 
             Section("说明") {
                 Text("认证方式保持不变，仍可使用管理员密码、Face ID、Touch ID 或设备密码。临时查看敏感信息仍需单独认证，不会改变管理员会话。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("管理员模式")
+        .appNavigationTitle("管理员模式")
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)

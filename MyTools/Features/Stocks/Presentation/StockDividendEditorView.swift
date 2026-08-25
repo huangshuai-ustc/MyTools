@@ -92,7 +92,7 @@ struct StockDividendEditorView: View {
                     IMESafeMultilineTextField(prompt: "可选", text: $draft.dividend.note)
                 }
             }
-            .navigationTitle(draft.dividend.grossAmount == 0 ? "添加分红" : "编辑分红")
+            .appNavigationTitle(draft.dividend.grossAmount == 0 ? "添加分红" : "编辑分红")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

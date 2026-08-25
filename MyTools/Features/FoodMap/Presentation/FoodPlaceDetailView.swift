@@ -24,7 +24,7 @@ struct FoodPlaceDetailView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(place.displayTitle).font(.title2.bold())
+                                Text(place.displayTitle).appFont(.title2.bold())
                                 Spacer()
                                 FoodStatusLabel(status: place.status)
                             }
@@ -100,7 +100,7 @@ struct FoodPlaceDetailView: View {
                         }
                     }
                 }
-                .navigationTitle(place.displayTitle)
+                .appNavigationTitle(place.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         if place.coordinate?.isValid == true {

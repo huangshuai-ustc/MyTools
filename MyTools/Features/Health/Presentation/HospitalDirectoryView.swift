@@ -42,7 +42,7 @@ struct HospitalDirectoryView: View {
                 }
             }
         }
-        .navigationTitle("医疗机构资料库")
+        .appNavigationTitle("医疗机构资料库")
         .iOSLabeledBackButton("健康档案")
         .searchable(text: $query, prompt: "搜索机构名称或分类")
         .toolbar {
@@ -82,14 +82,14 @@ private struct HospitalProfileRow: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(profile.name)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(2)
                 Text(profile.institutionTypeTitle)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                 if profile.supports(.hospital), profile.classificationTitles.isEmpty {
                     Text("未设置机构分类")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 } else if profile.supports(.hospital) {
                     HospitalClassificationBadges(profile: profile)
@@ -98,7 +98,7 @@ private struct HospitalProfileRow: View {
             Spacer(minLength: 6)
             if showsEditIndicator {
                 Image(systemName: "square.and.pencil")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -155,7 +155,7 @@ private struct HospitalProfileEditorView: View {
                     }
                 }
             }
-            .navigationTitle(isNew ? "新增机构" : "编辑机构")
+            .appNavigationTitle(isNew ? "新增机构" : "编辑机构")
             .adminModeIndicator()
             .onChange(of: profile.institutionTypes) { _, _ in
                 profile.normalizeClassification()

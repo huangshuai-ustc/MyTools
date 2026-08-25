@@ -36,7 +36,7 @@ struct CredentialVersionStatusLabel: View {
             Image(systemName: status.systemImage)
             Text(status.title)
         }
-        .font(.caption.weight(.semibold))
+        .appFont(.caption.weight(.semibold))
         .foregroundStyle(status.tint)
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
@@ -52,7 +52,7 @@ struct CredentialStatusLabel: View {
             Image(systemName: status.systemImage)
             Text(status.title)
         }
-        .font(.caption.weight(.semibold))
+        .appFont(.caption.weight(.semibold))
         .foregroundStyle(status.tint)
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
@@ -70,16 +70,16 @@ struct CredentialAttachmentRow: View {
             thumbnail
             VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.file.fileName)
-                    .font(.body.weight(.medium))
+                    .appFont(.body.weight(.medium))
                     .lineLimit(2)
                 Text("\(attachment.role.title) · \(attachment.file.displaySize)")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             if showsDisclosure {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .appFont(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -97,7 +97,7 @@ struct CredentialAttachmentRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         } else {
             Image(systemName: attachment.file.contentType.conforms(to: .pdf) ? "doc.richtext" : "paperclip")
-                .font(.title3)
+                .appFont(.title3)
                 .foregroundStyle(.teal)
                 .frame(width: 52, height: 52)
                 .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
@@ -132,7 +132,7 @@ struct CredentialAttachmentRenameView: View {
                     IMESafeTextField(prompt: "文件名", text: $fileName)
                 }
             }
-            .navigationTitle("重命名附件")
+            .appNavigationTitle("重命名附件")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

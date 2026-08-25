@@ -38,10 +38,10 @@ struct CopyableValueRow: View {
         if alignment == .leading {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundStyle(.primary)
                 valueView
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.secondary)
             }
         } else {
@@ -86,7 +86,7 @@ final class CopyToastCenter {
 private struct CopyToastBanner: View {
     var body: some View {
         Label("已复制到剪贴板", systemImage: "checkmark.circle.fill")
-            .font(.subheadline.weight(.semibold))
+            .appFont(.subheadline.weight(.semibold))
             .foregroundStyle(.primary)
             .padding(.horizontal, 22)
             .padding(.vertical, 12)

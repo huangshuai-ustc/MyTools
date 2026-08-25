@@ -30,7 +30,7 @@ struct BillImportView: View {
                         LabeledContent("文件", value: fileName)
                     }
                     Text("支持方寸账单交换 JSON、微信支付 XLSX 和支付宝 CSV。银行卡账单需按具体银行格式继续接入。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
@@ -56,7 +56,7 @@ struct BillImportView: View {
                                     Text(record.displayTitle)
                                         .lineLimit(1)
                                     Text(AppDateFormatter.dateTimeWithoutSecondsString(from: record.occurredAt))
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 8)
@@ -66,7 +66,7 @@ struct BillImportView: View {
                         }
                         if previewRecords.count > 20 {
                             Text("另有 \(previewRecords.count - 20) 笔将在确认后导入")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -79,7 +79,7 @@ struct BillImportView: View {
                     }
                 }
             }
-            .navigationTitle("导入账单")
+            .appNavigationTitle("导入账单")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

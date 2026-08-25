@@ -28,7 +28,7 @@ struct FoodStatusLabel: View {
 
     var body: some View {
         Label(status.title, systemImage: status.systemImage)
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(status.tint)
             .accessibilityElement(children: .combine)
     }
@@ -80,11 +80,11 @@ struct FoodLocationCard: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(place.shopName.isEmpty ? place.displayTitle : place.shopName)
-                            .font(.headline)
+                            .appFont(.headline)
                             .lineLimit(1)
                         if !place.address.isEmpty {
                             Text(place.address)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }

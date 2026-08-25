@@ -120,7 +120,33 @@ struct IdentityVerificationForm: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            verificationContent
+                .appNavigationTitle("验证身份")
+#if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                .scrollDismissesKeyboard(.interactively)
+#endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消", action: onCancel)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var verificationContent: some View {
+#if os(macOS)
+        macOSVerificationContent
+#else
+        Form {
+            nativeFormSections
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private var nativeFormSections: some View {
                 Section {
                     SecureField(
                         mode == .setPassword ? "至少 8 位" : "管理员密码",
@@ -174,17 +200,83 @@ struct IdentityVerificationForm: View {
                         Text(error).foregroundStyle(.red)
                     }
                 }
-            }
-            .navigationTitle("验证身份")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .scrollDismissesKeyboard(.interactively)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onCancel)
+    }
+
+#if os(macOS)
+    private var macOSVerificationContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Text(mode == .setPassword ? "设置管理员密码" : "密码验证")
+                    .appFont(.title3.weight(.semibold))
+
+                VStack(alignment: .leading, spacing: 14) {
+                    SecureField(
+                        mode == .setPassword ? "至少 8 位" : "管理员密码",
+                        text: $password
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+                    .focused($focusedField, equals: .password)
+                    .onSubmit {
+                        if mode == .setPassword {
+                            focusedField = .confirmation
+                        } else {
+                            passwordAction()
+                        }
+                    }
+
+                    if mode == .setPassword {
+                        SecureField("再次输入", text: $confirmation)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            .focused($focusedField, equals: .confirmation)
+                            .onSubmit(passwordAction)
+                    }
+
+                    Button(
+                        mode == .setPassword ? "保存并进入" : "验证",
+                        action: passwordAction
+                    )
+                    .controlSize(.large)
+                    .disabled(isVerifying)
+                }
+
+                Text(
+                    mode == .setPassword
+                        ? "管理员密码也会作为导出和导入备份的默认密码。"
+                        : "请输入管理员密码，或使用 Face ID / Touch ID 验证。"
+                )
+                .appFont(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                if mode == .verify {
+                    Divider()
+                    Button(action: biometricAction) {
+                        if isVerifying {
+                            HStack {
+                                ProgressView()
+                                Text("正在验证")
+                            }
+                        } else {
+                            Label("重新使用 Face ID / Touch ID", systemImage: "faceid")
+                        }
+                    }
+                    .controlSize(.large)
+                    .disabled(isVerifying)
+                }
+
+                if !error.isEmpty {
+                    Text(error)
+                        .appFont(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .padding(28)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
     }
+#endif
 }

@@ -126,10 +126,10 @@ struct CardEditorView: View {
                 }
                 Section {
                     Text("归属账户：\(account.name.isEmpty ? "未命名账户" : account.name)")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .appFont(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle(navigationTitle)
+            .appNavigationTitle(navigationTitle)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -210,14 +210,14 @@ struct CreditCardStatementRow: View {
                 .frame(width: 26)
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppDateFormatter.string(from: statement.statementDate))
-                    .font(.subheadline.weight(.semibold))
+                    .appFont(.subheadline.weight(.semibold))
                 Text(statement.attachment?.fileName ?? "尚未选择 PDF")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if !statement.note.isEmpty {
                     Text(statement.note)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -225,7 +225,7 @@ struct CreditCardStatementRow: View {
             Spacer(minLength: 4)
             if let attachment = statement.attachment {
                 Text(attachment.displaySize)
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundStyle(.tertiary)
             }
         }
@@ -270,7 +270,7 @@ private struct CreditCardStatementEditorView: View {
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text(attachment.fileName).lineLimit(2)
                                 Text(attachment.displaySize)
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -295,7 +295,7 @@ private struct CreditCardStatementEditorView: View {
                     IMESafeMultilineTextField(prompt: "可选", text: $statement.note)
                 }
             }
-            .navigationTitle(statement.attachment == nil ? "添加信用卡账单" : "编辑信用卡账单")
+            .appNavigationTitle(statement.attachment == nil ? "添加信用卡账单" : "编辑信用卡账单")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

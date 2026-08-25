@@ -73,7 +73,7 @@ struct BankOfChinaExchangeRatesView: View {
             Section {
                 BankOfChinaExchangeRateStatus()
                 Text("页面使用股票和换汇记录共用的中国银行牌价缓存；右上角刷新按钮会主动请求最新结售汇牌价。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             }
 
@@ -87,7 +87,7 @@ struct BankOfChinaExchangeRatesView: View {
                     )
                     Button(action: swapConverterCurrencies) {
                         Image(systemName: "arrow.left.arrow.right")
-                            .font(.caption.weight(.semibold))
+                            .appFont(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("交换换算币种")
@@ -102,7 +102,7 @@ struct BankOfChinaExchangeRatesView: View {
 
                 if leftToRightConversionRate == nil {
                     Label("所选币种的牌价待同步", systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.orange)
                 }
             } header: {
@@ -111,7 +111,7 @@ struct BankOfChinaExchangeRatesView: View {
                 Text("换算方向固定为卖出左侧币种、买入右侧币种。左侧外币按结汇价折算，右侧外币按购汇价买入；输入任意一侧均使用同一组牌价。")
             }
         }
-        .navigationTitle("中国银行结售汇牌价")
+        .appNavigationTitle("中国银行结售汇牌价")
         .adminModeIndicator()
         .iOSLabeledBackButton("换汇记录")
 #if os(iOS)
@@ -151,7 +151,7 @@ struct BankOfChinaExchangeRatesView: View {
             Text("购汇")
                 .frame(width: 88, alignment: .trailing)
         }
-        .font(.caption.weight(.semibold))
+        .appFont(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
     }
 
@@ -159,9 +159,9 @@ struct BankOfChinaExchangeRatesView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(currency.bankOfChinaName ?? currency.title)
-                    .font(.subheadline.weight(.medium))
+                    .appFont(.subheadline.weight(.medium))
                 Text(currency.rawValue)
-                    .font(.caption.monospaced())
+                    .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,7 +183,7 @@ struct BankOfChinaExchangeRatesView: View {
                     .foregroundStyle(.orange)
             }
         }
-        .font(.headline.weight(.semibold).monospacedDigit())
+        .appFont(.headline.weight(.semibold).monospacedDigit())
         .lineLimit(1)
         .minimumScaleFactor(0.7)
         .frame(width: 88, alignment: .trailing)
@@ -241,7 +241,7 @@ struct BankOfChinaExchangeRatesView: View {
             }
         } label: {
             Text((field == .source ? sourceCurrency : targetCurrency).rawValue)
-                .font(.subheadline.weight(.semibold).monospaced())
+                .appFont(.subheadline.weight(.semibold).monospaced())
                 .frame(minWidth: 42)
         }
         .buttonStyle(.borderless)
@@ -262,7 +262,7 @@ struct BankOfChinaExchangeRatesView: View {
                 .keyboardType(.decimalPad)
 #endif
             Text(currency.rawValue)
-                .font(.caption2.monospaced())
+                .appFont(.caption2.monospaced())
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)

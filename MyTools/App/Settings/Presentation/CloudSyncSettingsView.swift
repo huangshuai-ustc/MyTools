@@ -12,6 +12,9 @@ struct CloudSyncSettingsView: View {
                     .disabled(cloudSync.isRebuildingCloudData)
             } footer: {
                 Text("开启后，首页模块开关和排序，以及银行、股票、换汇、健康档案、保密资料和附件会保存到当前 Apple 账户的 CloudKit 私有数据库。行情缓存、汇率缓存、诊断日志和设备认证状态不会上传。")
+#if os(macOS)
+                    .fixedSize(horizontal: false, vertical: true)
+#endif
             }
 
             Section("同步状态") {
@@ -41,7 +44,7 @@ struct CloudSyncSettingsView: View {
 
                 if let detail = cloudSync.errorDetail {
                     Text(detail)
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -65,20 +68,23 @@ struct CloudSyncSettingsView: View {
 
                 if !auth.isAdmin {
                     Text("进入管理员模式后才能重建 iCloud 数据。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 } else if !cloudSync.isEnabled {
                     Text("请先开启 iCloud 同步。重建只清理云端数据，不会删除本机档案。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("云端维护")
             } footer: {
                 Text("重建会删除本 App 的 CloudKit 私有数据区及云端附件，再从本机资料重新上传。其他设备升级到支持重建协议的版本后会自动暂停同步；仍在使用旧版本的设备必须先关闭同步。请确认本机资料完整；Apple 回收历史版本可能需要一段时间。")
+#if os(macOS)
+                        .fixedSize(horizontal: false, vertical: true)
+#endif
             }
         }
-        .navigationTitle("iCloud 同步")
+        .appNavigationTitle("iCloud 同步")
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
@@ -119,14 +125,14 @@ private struct CloudDataRebuildConfirmationView: View {
                     Image(systemName: stage == .first
                         ? "exclamationmark.triangle.fill"
                         : "icloud.and.arrow.up")
-                        .font(.system(size: 34))
+                        .appFont(.system(size: 34))
                         .foregroundStyle(.orange)
                         .frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(stage == .first ? "确认重建范围" : "最后确认")
-                            .font(.title3.weight(.semibold))
+                            .appFont(.title3.weight(.semibold))
                         Text("第 \(stage == .first ? 1 : 2) 层，共 2 层")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -139,7 +145,7 @@ private struct CloudDataRebuildConfirmationView: View {
                         "本机档案和附件不会删除；重建完成后以本机资料重新上传。",
                         systemImage: "lock.doc"
                     )
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
                 }
 
@@ -167,7 +173,7 @@ private struct CloudDataRebuildConfirmationView: View {
                 }
             }
             .padding(24)
-            .navigationTitle("重建 iCloud 数据")
+            .appNavigationTitle("重建 iCloud 数据")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }

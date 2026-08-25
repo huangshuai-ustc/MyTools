@@ -177,7 +177,7 @@ struct DocumentsView: View {
                 }
             }
         }
-        .navigationTitle(ToolModule.documents.title)
+        .appNavigationTitle(ToolModule.documents.title)
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、号码、持有人或标签")
 #if os(iOS)
@@ -251,22 +251,22 @@ private struct CredentialDocumentRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: document.type.systemImage)
-                .font(.title3)
+                .appFont(.title3)
                 .foregroundStyle(.teal)
                 .frame(width: 42, height: 42)
                 .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 5) {
                 Text(document.displayTitle)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 HStack(spacing: 8) {
                     Text(document.typeTitle)
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     if versionCount > 1 {
                         Text("\(versionCount) 个版本")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -278,7 +278,7 @@ private struct CredentialDocumentRow: View {
             }
             Spacer(minLength: 4)
             Image(systemName: "lock.fill")
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
         }
     }

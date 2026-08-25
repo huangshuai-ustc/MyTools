@@ -46,7 +46,7 @@ struct AdminPasswordChangeView: View {
                     }
                 }
             }
-            .navigationTitle("修改管理员密码")
+            .appNavigationTitle("修改管理员密码")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -131,7 +131,7 @@ struct BackupPasswordView: View {
                     }
                 }
             }
-            .navigationTitle(mode.title)
+            .appNavigationTitle(mode.title)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

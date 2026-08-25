@@ -36,7 +36,7 @@ struct DomesticSubaccountReadOnlyView: View {
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
             }
-            .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
+            .appNavigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -116,7 +116,7 @@ struct DomesticSubaccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(
+            .appNavigationTitle(
                 draft.subaccount.name.isEmpty && draft.subaccount.accountNumber.isEmpty
                     ? "新增子账户"
                     : "编辑子账户"
@@ -182,13 +182,13 @@ private struct SubaccountSummaryRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name.isEmpty ? "未命名子账户" : name)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 AccountStatusText(status: status)
             }
             Text(accountNumber.isEmpty ? "未填写账户号" : accountNumber)
-                .font(.subheadline.monospacedDigit())
+                .appFont(.subheadline.monospacedDigit())
                 .foregroundStyle(accountNumber.isEmpty ? .tertiary : .secondary)
                 .lineLimit(1)
         }
@@ -212,7 +212,7 @@ struct ForeignSubaccountReadOnlyView: View {
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
             }
-            .navigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
+            .appNavigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -284,7 +284,7 @@ struct ForeignSubaccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增子账户" : "编辑子账户")
+            .appNavigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增子账户" : "编辑子账户")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -330,7 +330,7 @@ struct AccountStatusText: View {
 
     var body: some View {
         Text(status.title)
-            .font(.caption.weight(.semibold))
+            .appFont(.caption.weight(.semibold))
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
@@ -371,7 +371,7 @@ struct CurrencySelectionRows: View {
                 Spacer()
                 Image(systemName: currencies.contains(currency) ? "checkmark.square.fill" : "square")
                     .foregroundStyle(currencies.contains(currency) ? Color.accentColor : Color.secondary)
-                    .font(.title3)
+                    .appFont(.title3)
             }
             .contentShape(Rectangle())
         }

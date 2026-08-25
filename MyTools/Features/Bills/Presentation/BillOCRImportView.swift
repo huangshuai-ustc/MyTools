@@ -78,13 +78,13 @@ struct BillOCRImportView: View {
                 if let result {
                     Section("识别文字") {
                         Text(result.fullText.isEmpty ? "未识别到文字" : result.fullText)
-                            .font(.footnote.monospaced())
+                            .appFont(.footnote.monospaced())
                             .textSelection(.enabled)
                     }
                     confirmationSections
                 }
             }
-            .navigationTitle("图片识别账单")
+            .appNavigationTitle("图片识别账单")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -142,9 +142,9 @@ struct BillOCRImportView: View {
                                 .foregroundStyle(selectedCandidateID == candidate.id ? Color.accentColor : .secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(BillPresentation.amount(candidate.amount, currency: currency))
-                                    .font(.body.weight(.medium))
+                                    .appFont(.body.weight(.medium))
                                 Text(candidate.sourceLine)
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()

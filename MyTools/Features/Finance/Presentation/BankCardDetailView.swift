@@ -107,7 +107,7 @@ struct CardDetailView: View {
                 }
 
             }
-            .navigationTitle("银行卡详情")
+            .appNavigationTitle("银行卡详情")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

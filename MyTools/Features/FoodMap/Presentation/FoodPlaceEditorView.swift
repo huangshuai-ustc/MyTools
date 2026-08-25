@@ -122,7 +122,7 @@ struct FoodPlaceEditorView: View {
                             FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 54)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(photo.fileName).lineLimit(2)
-                                Text(photo.displaySize).font(.caption).foregroundStyle(.secondary)
+                                Text(photo.displaySize).appFont(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button(role: .destructive) {
@@ -171,7 +171,7 @@ struct FoodPlaceEditorView: View {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
                 }
             }
-            .navigationTitle(isExisting ? "编辑美食" : "新增美食")
+            .appNavigationTitle(isExisting ? "编辑美食" : "新增美食")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

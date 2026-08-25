@@ -1,6 +1,6 @@
 # MyTools 能力目录与开发准则
 
-更新日期：2026-08-22
+更新日期：2026-08-25
 
 本文件是 MyTools 的项目级开发准则和可复用能力索引。`README.md` 说明产品行为，源码和测试定义真实契约，本文件负责回答两个问题：项目已经具备什么能力，以及开发新功能时应该先复用什么。
 
@@ -227,7 +227,7 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Core/UI/IMETextInput.swift` | 中文组合输入安全的单行/多行字段和保存前 marked text 提交。 |
-| `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
+| `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、跨平台语义字体 `AppFontSpec`/`.appFont()`、可缩放导航标题 `.appNavigationTitle()`、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
 | `MyTools/Core/UI/MarkdownRendering.swift` | Markdown 渲染、容错回退、常用上标归一化和可复制值行。 |
 
 ### `MyTools/Features/Bills/`：收支账单
@@ -611,7 +611,7 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | 本地通知 | `AppNotificationService`、`LocalNotificationScheduling`、`ScheduledLocalNotification` in `Core/Notifications/AppNotificationService.swift` | 权限状态、请求权限、打开系统设置、前台展示、即时提醒去重，以及按标识前缀整体替换预约通知 |
 | 价格提醒模型 | `PriceAlertDirection`、`StockPriceAlert`、`CurrencyRateAlert` in `Core/Notifications/NotificationRule.swift` | 高于/低于阈值、启用状态、股票和汇率提醒 |
 | 诊断日志 | `DiagnosticLogger` in `Core/Diagnostics/DiagnosticLogger.swift` | 分类/级别、异步缓冲、按日期保留今天与昨天、导出、清除、flush 和稳定错误码 |
-| App 外观与字号 | `AppAppearanceMode`、`AppFontSize`、`ToolModuleSettings` | 系统/明/暗外观、Dynamic Type 档位、模块顺序和显隐 |
+| App 外观与字号 | `AppAppearanceMode`、`AppFontSize`、`ToolModuleSettings`、`AppFontSpec`、`.appFont()`、`.appNavigationTitle()` | 系统/明/暗外观、iOS/iPadOS 原生 Dynamic Type、macOS 全局语义字体倍率、随字号增长的列表行和不重复的常规字重导航标题、模块顺序和显隐；展示代码使用 `.appFont()`/`.appNavigationTitle()`，不得新增会绕过 macOS 字号设置的显式 `.font()` 或 `.navigationTitle()` |
 | 股票涨跌颜色 | `StockAppearanceSettings` in `Features/Stocks/Application/StockAppearanceSettings.swift` | 按 A/港/美市场保存颜色偏好并同步设置变更 |
 
 通知属于跨模块投递能力，但具体提醒规则和计算仍归拥有该业务数据的模块。

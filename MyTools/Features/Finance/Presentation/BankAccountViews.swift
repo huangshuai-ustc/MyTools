@@ -70,7 +70,7 @@ struct AccountDetailView: View {
                 ContentUnavailableView("账户已不存在", systemImage: "building.columns")
             }
         }
-        .navigationTitle(account?.bankName.isEmpty == false ? account?.bankName ?? "" : "银行账户详情")
+        .appNavigationTitle(account?.bankName.isEmpty == false ? account?.bankName ?? "" : "银行账户详情")
         .iOSLabeledBackButton(backTitle)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -598,7 +598,7 @@ struct AccountEditorView: View {
                     }
                 }
             }
-            .navigationTitle(navigationTitle)
+            .appNavigationTitle(navigationTitle)
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -701,7 +701,7 @@ struct AccountEditorView: View {
                 Text(draft.account.region == .domestic
                      ? "境内银行以银行卡为主；子账户用于个人养老金等没有独立卡片的账户。"
                      : "境外银行以子账户为主；每个账户可单独记录账户号、币种和状态。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -990,7 +990,7 @@ private struct AdditionalLoginFieldEditorView: View {
                 }
                 Section { Toggle("作为敏感信息隐藏", isOn: $field.isSensitive) }
             }
-            .navigationTitle(field.name.isEmpty ? "添加自定义字段" : "编辑自定义字段")
+            .appNavigationTitle(field.name.isEmpty ? "添加自定义字段" : "编辑自定义字段")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -1052,7 +1052,7 @@ private struct BankFixedLoginFieldEditorView: View {
                     }
                 }
             }
-            .navigationTitle("编辑(field.title)")
+            .appNavigationTitle("编辑(field.title)")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -1107,7 +1107,7 @@ private struct BankLoginTemplateEditorView: View {
                     Label("添加模板字段", systemImage: "plus.circle")
                 }
             }
-            .navigationTitle("(region.title)登录模板")
+            .appNavigationTitle("(region.title)登录模板")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } }
             }
@@ -1144,7 +1144,7 @@ private struct BankLoginTemplateFieldEditorView: View {
                 }
                 Toggle("作为敏感信息隐藏", isOn: $template.isSensitive)
             }
-            .navigationTitle(template.name.isEmpty ? "添加模板字段" : "编辑模板字段")
+            .appNavigationTitle(template.name.isEmpty ? "添加模板字段" : "编辑模板字段")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

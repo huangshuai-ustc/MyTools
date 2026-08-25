@@ -4,7 +4,11 @@ struct RootView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
-    @State private var desktopSelection: RootDestination? = .module(.personalFinance)
+    @Binding private var desktopSelection: RootDestination?
+
+    init(desktopSelection: Binding<RootDestination?>) {
+        _desktopSelection = desktopSelection
+    }
 
     var body: some View {
         ZStack {
@@ -104,7 +108,7 @@ struct RootView: View {
     }
 }
 
-private enum RootDestination: Hashable {
+enum RootDestination: Hashable {
     case module(ToolModule)
     case profile
 }
@@ -123,15 +127,17 @@ private struct DesktopRootView: View {
             List(selection: $selection) {
                 ForEach(visibleModules) { module in
                     Label(module.title, systemImage: module.systemImage)
+                        .appFont(.body)
                         .tag(RootDestination.module(module))
                 }
 
                 Section {
                     Label("我的", systemImage: "person.crop.circle")
+                        .appFont(.body)
                         .tag(RootDestination.profile)
                 }
             }
-            .navigationTitle("工具")
+            .appNavigationTitle("工具")
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
         } detail: {

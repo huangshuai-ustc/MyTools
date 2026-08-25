@@ -67,7 +67,7 @@ struct ProfileView: View {
 
                     if !auth.isAdmin {
                         Text("进入管理员模式后可以导出或导入备份。")
-                            .font(.footnote)
+                            .appFont(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -75,7 +75,7 @@ struct ProfileView: View {
                     LabeledContent("版本", value: AppMetadata.versionDescription)
                 }
             }
-            .navigationTitle("我的")
+            .appNavigationTitle("我的")
             .adminModeIndicator()
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()

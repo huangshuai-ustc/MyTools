@@ -32,7 +32,7 @@ struct AppearanceSettingsView: View {
                 .disabled(fontSizeRawValue == AppFontSize.system.rawValue)
             }
         }
-        .navigationTitle("外观与文字")
+        .appNavigationTitle("外观与文字")
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
@@ -88,7 +88,7 @@ struct StockAppearanceSettingsView: View {
                 Text("默认遵循市场习惯：A 股和港股红涨绿跌，美股绿涨红跌。盈亏颜色会使用对应股票市场的设置。")
             }
         }
-        .navigationTitle(ToolModule.myStocks.title)
+        .appNavigationTitle(ToolModule.myStocks.title)
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)

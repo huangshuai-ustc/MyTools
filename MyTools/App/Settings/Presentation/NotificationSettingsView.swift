@@ -40,7 +40,7 @@ struct NotificationSettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("通知权限")
                         Text(notifications.statusTitle)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -60,7 +60,7 @@ struct NotificationSettingsView: View {
                 }
 
                 Text("每条价格提醒只发送一次，成功触发后会自动关闭；重新开启后可以再次提醒。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             }
 
@@ -117,7 +117,7 @@ struct NotificationSettingsView: View {
 
                     if configuredStocks.isEmpty {
                         Text("请先添加股票后再设置价格提醒。")
-                            .font(.footnote)
+                            .appFont(.footnote)
                             .foregroundStyle(.secondary)
                     } else if auth.isEditSessionReady {
                         Button {
@@ -130,7 +130,7 @@ struct NotificationSettingsView: View {
             }
 #endif
         }
-        .navigationTitle("通知与提醒")
+        .appNavigationTitle("通知与提醒")
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -173,9 +173,9 @@ struct NotificationSettingsView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) → CNY")
-                        .font(.subheadline.weight(.medium))
+                        .appFont(.subheadline.weight(.medium))
                     Text("\(alert.direction.title) \(CurrencyExchangeValueFormatter.amount(alert.threshold, currency: .cny))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -212,9 +212,9 @@ struct NotificationSettingsView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(stock.map { "\($0.displayName)（\($0.symbol)）" } ?? "股票已不存在")
-                        .font(.subheadline.weight(.medium))
+                        .appFont(.subheadline.weight(.medium))
                     Text("\(alert.direction.title) \(StockValueFormatter.price(alert.threshold, currencyCode: currencyCode))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,11 +292,11 @@ private struct CurrencyRateAlertEditorView: View {
 
                 Section {
                     Text("例如数量填写 100、方向选择“低于”、阈值填写 670，表示 100 美元折合人民币低于 670 元时提醒。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("换汇价格提醒")
+            .appNavigationTitle("换汇价格提醒")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -403,14 +403,14 @@ private struct StockPriceAlertEditorView: View {
 #endif
                         if let selectedStock {
                             Text(selectedStock.market.currencyCode)
-                                .font(.caption.monospaced())
+                                .appFont(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }
                     }
                     Toggle("启用提醒", isOn: $draft.isEnabled)
                 }
             }
-            .navigationTitle("股票价格提醒")
+            .appNavigationTitle("股票价格提醒")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

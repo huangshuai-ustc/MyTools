@@ -111,7 +111,7 @@ struct BillsView: View {
                 BillAnalysisView(pageSelection: $selectedPage)
             }
         }
-        .navigationTitle(ToolModule.bills.title)
+        .appNavigationTitle(ToolModule.bills.title)
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
@@ -287,10 +287,10 @@ struct BillsView: View {
     private func summaryValue(_ title: String, amount: Decimal, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             Text(BillPresentation.amount(amount, currency: .cny))
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(color)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -318,13 +318,13 @@ private struct BillRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: record.category.systemImage)
-                .font(.body.weight(.semibold))
+                .appFont(.body.weight(.semibold))
                 .foregroundStyle(record.direction.tint)
                 .frame(width: 38, height: 38)
                 .background(record.direction.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
                 Text(record.displayTitle)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Text(record.category.title)
@@ -333,7 +333,7 @@ private struct BillRow: View {
                         Text(record.paymentMethod)
                     }
                 }
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 AppTagCapsules(tags: record.tags, limit: 3)
@@ -341,11 +341,11 @@ private struct BillRow: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(record.formattedAmount)
-                    .font(.body.weight(.semibold))
+                    .appFont(.body.weight(.semibold))
                     .foregroundStyle(record.direction.tint)
                     .monospacedDigit()
                 Text(record.occurredAt, format: .dateTime.hour().minute())
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
@@ -411,7 +411,7 @@ private struct BillDetailView: View {
 #if os(iOS)
                 .listStyle(.insetGrouped)
 #endif
-                .navigationTitle(record.displayTitle)
+                .appNavigationTitle(record.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         AdminEditAccessButton()
@@ -589,12 +589,12 @@ struct BillsExportSettingsView: View {
                 .disabled(filteredRecords.isEmpty || !auth.isAdmin)
                 if !auth.isAdmin {
                     Text("进入管理员模式后才能导出账单。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .navigationTitle("账单导出")
+        .appNavigationTitle("账单导出")
         .iOSLabeledBackButton("设置")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

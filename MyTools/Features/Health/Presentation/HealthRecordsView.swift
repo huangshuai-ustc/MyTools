@@ -53,7 +53,7 @@ struct HealthRecordsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("医疗机构资料库")
                             Text("\(store.hospitalProfiles.count) 家机构")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -92,7 +92,7 @@ struct HealthRecordsView: View {
                 }
             }
         }
-        .navigationTitle("健康档案")
+        .appNavigationTitle("健康档案")
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索机构、药房、诊断、费用项目或标签")
         .toolbar {
@@ -166,9 +166,9 @@ struct HealthRecordsView: View {
 
     private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).appFont(.caption).foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -183,15 +183,15 @@ struct HealthRecordsView: View {
         color: Color
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title).appFont(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(MedicalValueFormatter.money(amount))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .appFont(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Text("(\(MedicalValueFormatter.percentage(ratio)))")
-                    .font(.caption2.monospacedDigit())
+                    .appFont(.caption2.monospacedDigit())
                     .foregroundStyle(color.opacity(0.75))
                     .lineLimit(1)
             }

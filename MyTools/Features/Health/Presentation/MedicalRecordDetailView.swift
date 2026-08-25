@@ -90,7 +90,7 @@ struct MedicalRecordDetailView: View {
                 ContentUnavailableView("就诊记录已不存在", systemImage: "cross.case")
             }
         }
-        .navigationTitle(detailNavigationTitle)
+        .appNavigationTitle(detailNavigationTitle)
         .iOSLabeledBackButton("健康档案")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -174,11 +174,11 @@ struct MedicalRecordDetailView: View {
                             MedicalRecordDetailView(recordID: associatedRecord.id)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(associatedRecord.hospital).font(.headline)
+                                Text(associatedRecord.hospital).appFont(.headline)
                                 Text(
                                     "\(associatedRecord.visitType.title) · \(AppDateFormatter.string(from: associatedRecord.date))"
                                 )
-                                .font(.subheadline)
+                                .appFont(.subheadline)
                                 .foregroundStyle(.secondary)
                             }
                         }
@@ -308,7 +308,7 @@ struct MedicalRecordDetailView: View {
                         }
                         if !outOfRangeInpatientDailyRecords.isEmpty {
                             Text("区间外但已有内容的住院日记录已保留，请确认住院日期范围。")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.orange)
                         }
                         ForEach(followUps) { followUp in
@@ -437,12 +437,12 @@ struct MedicalRecordDetailView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(attachment.fileName).lineLimit(2)
                                 Text("\(attachment.kind.title) · \(attachment.displaySize)")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -503,16 +503,16 @@ private struct MedicalPhysicalExamFollowUpRow: View {
                     AppDateFormatter.string(from: record.date),
                     systemImage: "calendar.badge.clock"
                 )
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.mint)
                 Spacer()
                 Text("体检")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             if !record.diagnosis.isEmpty {
                 MarkdownText(record.diagnosis)
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.primary)
             }
             HStack {
@@ -522,7 +522,7 @@ private struct MedicalPhysicalExamFollowUpRow: View {
                 Spacer()
                 Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -564,20 +564,20 @@ private struct MedicalInpatientDayRow: View {
                     isWithinRange ? "住院第\(dayNumber)天" : "区间外记录",
                     systemImage: isWithinRange ? "bed.double" : "exclamationmark.triangle"
                 )
-                    .font(.subheadline.weight(.semibold))
+                    .appFont(.subheadline.weight(.semibold))
                     .foregroundStyle(isWithinRange ? .purple : .orange)
                 Spacer()
                 Text(AppDateFormatter.string(from: record.date))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             if !summary.isEmpty {
                 Text(summary)
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .lineLimit(2)
             } else {
                 Text("尚未记录当天情况")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundStyle(.secondary)
             }
             HStack {
@@ -587,7 +587,7 @@ private struct MedicalInpatientDayRow: View {
                 Spacer()
                 Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -603,15 +603,15 @@ private struct MedicalFollowUpRow: View {
                     AppDateFormatter.string(from: record.date),
                     systemImage: "calendar.badge.clock"
                 )
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.blue)
                 Spacer()
                 Text(record.visitType.title)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(record.visitType.badgeColor)
             }
             Text(record.diagnosis)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .lineLimit(2)
             HStack {
                 Text(record.department)
@@ -619,7 +619,7 @@ private struct MedicalFollowUpRow: View {
                 Spacer()
                 Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -635,24 +635,24 @@ private struct MedicalLinkedPharmacyPurchaseRow: View {
                     AppDateFormatter.string(from: record.date),
                     systemImage: "pills.fill"
                 )
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.green)
                 Spacer()
                 Text(record.hospital)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             let medicineNames = record.expenseItems.prefix(3).map(\.name).filter { !$0.isEmpty }
             Text(medicineNames.isEmpty ? "未记录药品" : medicineNames.joined(separator: " · "))
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .lineLimit(2)
             HStack {
                 Text("药品 \(record.expenseItems.count) 项")
                 Spacer()
                 Text(MedicalValueFormatter.money(record.totalCost)).monospacedDigit()
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
     }
@@ -663,10 +663,10 @@ struct MedicalExpenseItemRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(item.name).font(.headline)
+            Text(item.name).appFont(.headline)
             Spacer(minLength: 8)
             Text(MedicalValueFormatter.money(item.amount))
-                .font(.subheadline.weight(.semibold))
+                .appFont(.subheadline.weight(.semibold))
                 .monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -701,7 +701,7 @@ private struct MedicalExpenseItemDetailView: View {
                     }
                 }
             }
-            .navigationTitle("费用项目")
+            .appNavigationTitle("费用项目")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

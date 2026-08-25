@@ -69,7 +69,7 @@ struct CredentialOCRView: View {
                 if let result {
                     Section("识别文字") {
                         Text(result.fullText.isEmpty ? "未识别到文字" : result.fullText)
-                            .font(.footnote.monospaced())
+                            .appFont(.footnote.monospaced())
                             .textSelection(.enabled)
                     }
                 }
@@ -85,9 +85,9 @@ struct CredentialOCRView: View {
                                         .foregroundStyle(selectedKeys.contains(candidate.key) ? Color.accentColor : .secondary)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(candidate.label)
-                                            .font(.subheadline.weight(.medium))
+                                            .appFont(.subheadline.weight(.medium))
                                         Text(candidate.value)
-                                            .font(.subheadline)
+                                            .appFont(.subheadline)
                                             .foregroundStyle(.secondary)
                                             .multilineTextAlignment(.leading)
                                     }
@@ -99,7 +99,7 @@ struct CredentialOCRView: View {
                     }
                 }
             }
-            .navigationTitle("识别证照")
+            .appNavigationTitle("识别证照")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

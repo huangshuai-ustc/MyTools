@@ -60,7 +60,7 @@ struct StockTransactionEditorView: View {
                     LabeledContent("结算币种", value: stock.market.currencyCode)
                 }
             }
-            .navigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")
+            .appNavigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

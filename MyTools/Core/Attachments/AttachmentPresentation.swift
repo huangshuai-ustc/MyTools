@@ -91,7 +91,7 @@ struct AttachmentPreviewSheet: View {
         NavigationStack {
             AttachmentPreview(url: url)
                 .ignoresSafeArea(edges: .bottom)
-                .navigationTitle(attachment.fileName)
+                .appNavigationTitle(attachment.fileName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {

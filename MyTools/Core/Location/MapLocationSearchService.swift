@@ -39,10 +39,10 @@ struct MapLocationSearchResultRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name ?? "未命名地点")
-                    .font(.headline)
+                    .appFont(.headline)
                     .foregroundStyle(.primary)
                 Text(address)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -50,7 +50,7 @@ struct MapLocationSearchResultRow: View {
 
             if isSelected {
                 Image(systemName: "checkmark")
-                    .font(.body.weight(.semibold))
+                    .appFont(.body.weight(.semibold))
                     .foregroundStyle(.blue)
                     .accessibilityLabel("已选中")
             }
@@ -179,7 +179,7 @@ struct MapLocationPickerView: View {
                 .disabled(selection == nil || isResolving)
             }
             .padding()
-            .navigationTitle(configuration.title)
+            .appNavigationTitle(configuration.title)
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

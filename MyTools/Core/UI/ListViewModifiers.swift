@@ -12,6 +12,191 @@ extension EnvironmentValues {
     }
 }
 
+private struct AppFontScaleEnvironmentKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    /// A macOS-only user-selected scale. A nil value preserves the platform's
+    /// native semantic fonts, which is also the behavior used on iOS/iPadOS.
+    var appFontScale: CGFloat? {
+        get { self[AppFontScaleEnvironmentKey.self] }
+        set { self[AppFontScaleEnvironmentKey.self] = newValue }
+    }
+}
+
+struct AppFontSpec {
+    private enum TextStyle {
+        case largeTitle, title, title2, title3
+        case headline, body, subheadline, footnote, caption, caption2
+        case fixed(CGFloat)
+    }
+
+    private let style: TextStyle
+    private var weight: Font.Weight?
+    private var usesMonospacedDesign = false
+    private var usesMonospacedDigits = false
+
+    static let largeTitle = Self(style: .largeTitle)
+    static let title = Self(style: .title)
+    static let title2 = Self(style: .title2)
+    static let title3 = Self(style: .title3)
+    static let headline = Self(style: .headline)
+    static let body = Self(style: .body)
+    static let subheadline = Self(style: .subheadline)
+    static let footnote = Self(style: .footnote)
+    static let caption = Self(style: .caption)
+    static let caption2 = Self(style: .caption2)
+
+    static func system(size: CGFloat) -> Self {
+        Self(style: .fixed(size))
+    }
+
+    func weight(_ value: Font.Weight) -> Self {
+        var copy = self
+        copy.weight = value
+        return copy
+    }
+
+    func bold() -> Self {
+        weight(.bold)
+    }
+
+    func monospaced() -> Self {
+        var copy = self
+        copy.usesMonospacedDesign = true
+        return copy
+    }
+
+    func monospacedDigit() -> Self {
+        var copy = self
+        copy.usesMonospacedDigits = true
+        return copy
+    }
+
+    fileprivate func font(scale: CGFloat?) -> Font {
+        var result: Font
+#if os(macOS)
+        if let scale {
+            result = .system(
+                size: basePointSize * scale,
+                weight: weight,
+                design: usesMonospacedDesign ? .monospaced : .default
+            )
+        } else {
+            result = nativeSemanticFont
+        }
+#else
+        result = nativeSemanticFont
+#endif
+        if usesMonospacedDesign {
+            result = result.monospaced()
+        }
+        if usesMonospacedDigits {
+            result = result.monospacedDigit()
+        }
+        return result
+    }
+
+    private var nativeSemanticFont: Font {
+        let result: Font
+        switch style {
+        case .largeTitle: result = .largeTitle
+        case .title: result = .title
+        case .title2: result = .title2
+        case .title3: result = .title3
+        case .headline: result = .headline
+        case .body: result = .body
+        case .subheadline: result = .subheadline
+        case .footnote: result = .footnote
+        case .caption: result = .caption
+        case .caption2: result = .caption2
+        case .fixed(let size): result = .system(size: size)
+        }
+        guard let weight else { return result }
+        return result.weight(weight)
+    }
+
+    private var basePointSize: CGFloat {
+        switch style {
+        case .largeTitle: return 26
+        case .title: return 22
+        case .title2: return 17
+        case .title3: return 15
+        case .headline: return 13
+        case .body: return 13
+        case .subheadline: return 12
+        case .footnote: return 11
+        case .caption: return 10
+        case .caption2: return 9
+        case .fixed(let size): return size
+        }
+    }
+}
+
+private struct AppSemanticFontModifier: ViewModifier {
+    @Environment(\.appFontScale) private var scale
+    let spec: AppFontSpec
+
+    func body(content: Content) -> some View {
+        content.font(spec.font(scale: scale))
+    }
+}
+
+private struct AppNavigationTitleModifier: ViewModifier {
+    @Environment(\.appFontScale) private var fontScale
+    let title: String
+    let displaysMacToolbarTitle: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if os(macOS)
+        content
+            // A native macOS navigation title is rendered beside the back
+            // button and does not honor the app's font scale. Keep it empty so
+            // it does not duplicate the scalable principal title.
+            .navigationTitle("")
+            .toolbar {
+                if displaysMacToolbarTitle {
+                    ToolbarItem(placement: .principal) {
+                        Text(title)
+                            .appFont(.body.weight(.regular))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, navigationTitleVerticalPadding)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                }
+            }
+#else
+        content.navigationTitle(title)
+#endif
+    }
+
+#if os(macOS)
+    private var navigationTitleVerticalPadding: CGFloat {
+        min(10, 4 + max(0, (fontScale ?? 1) - 1) * 4)
+    }
+#endif
+}
+
+extension View {
+    func appFont(_ spec: AppFontSpec) -> some View {
+        modifier(AppSemanticFontModifier(spec: spec))
+    }
+
+    func appNavigationTitle(
+        _ title: String,
+        displaysMacToolbarTitle: Bool = true
+    ) -> some View {
+        modifier(AppNavigationTitleModifier(
+            title: title,
+            displaysMacToolbarTitle: displaysMacToolbarTitle
+        ))
+    }
+}
+
 enum AppTagSupport {
     static let inputSeparator = "，"
 
@@ -49,7 +234,7 @@ struct AppTagCapsule: View {
 
     var body: some View {
         Text(title)
-            .font(.caption2.weight(.medium))
+            .appFont(.caption2.weight(.medium))
             .foregroundStyle(isSelected ? Color.white : Color.primary)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -241,6 +426,32 @@ enum AppListMetrics {
     static let recordContentSpacing: CGFloat = 10
 }
 
+private struct AppListSpacingModifier: ViewModifier {
+    @Environment(\.appFontScale) private var fontScale
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        content
+            .environment(\.defaultMinListRowHeight, minimumRowHeight)
+#if os(iOS)
+            .listSectionSpacing(.compact)
+            .listRowSpacing(0)
+#endif
+    }
+
+    private var minimumRowHeight: CGFloat {
+#if os(macOS)
+        guard let fontScale else { return AppListMetrics.minimumRowHeight }
+        return max(
+            40,
+            AppListMetrics.minimumRowHeight + (fontScale - 1) * 20
+        )
+#else
+        AppListMetrics.minimumRowHeight
+#endif
+    }
+}
+
 enum SortDirection {
     case ascending
     case descending
@@ -259,6 +470,44 @@ enum SortDirection {
         }
     }
 }
+
+#if os(macOS)
+private enum MacSheetKind {
+    case large
+    case authentication
+}
+
+private struct MacAdaptiveSheetFrameModifier: ViewModifier {
+    @Environment(\.appFontScale) private var fontScale
+    let kind: MacSheetKind
+
+    func body(content: Content) -> some View {
+        content.frame(width: width, height: height)
+    }
+
+    private var effectiveScale: CGFloat {
+        min(max(fontScale ?? 1, 1), 2.5)
+    }
+
+    private var width: CGFloat {
+        switch kind {
+        case .large:
+            return min(1_100, 680 + (effectiveScale - 1) * 280)
+        case .authentication:
+            return min(920, 560 + (effectiveScale - 1) * 220)
+        }
+    }
+
+    private var height: CGFloat {
+        switch kind {
+        case .large:
+            return min(920, 720 + (effectiveScale - 1) * 140)
+        case .authentication:
+            return min(860, 520 + (effectiveScale - 1) * 200)
+        }
+    }
+}
+#endif
 struct HiddenItemsVisibilityButton: View {
     let itemsDescription: String
     @Binding var isShowing: Bool
@@ -322,13 +571,8 @@ extension View {
             .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     }
 
-    @ViewBuilder
     func appListSpacing() -> some View {
-        environment(\.defaultMinListRowHeight, AppListMetrics.minimumRowHeight)
-#if os(iOS)
-            .listSectionSpacing(.compact)
-            .listRowSpacing(0)
-#endif
+        modifier(AppListSpacingModifier())
     }
 
     func iOSLabeledBackButton(_ title: String) -> some View {
@@ -348,13 +592,7 @@ extension View {
                 .presentationDragIndicator(.visible)
         }
 #elseif os(macOS)
-        frame(
-            minWidth: 560,
-            idealWidth: 680,
-            maxWidth: 900,
-            minHeight: 500,
-            idealHeight: 720
-        )
+        modifier(MacAdaptiveSheetFrameModifier(kind: .large))
 #else
         self
 #endif
@@ -373,7 +611,7 @@ extension View {
                 .presentationDragIndicator(.visible)
         }
 #elseif os(macOS)
-        frame(width: 440, height: 360)
+        modifier(MacAdaptiveSheetFrameModifier(kind: .authentication))
 #else
         self
 #endif

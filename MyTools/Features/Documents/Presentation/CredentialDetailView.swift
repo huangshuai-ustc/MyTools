@@ -66,7 +66,7 @@ struct CredentialDetailView: View {
                         }
                         if document.validity.kind.durationYears != nil {
                             Text(CredentialValidityKind.endDateRule(for: document.type).title)
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                         if document.expiryReminder.isEnabled {
@@ -142,7 +142,7 @@ struct CredentialDetailView: View {
                         }
                     }
                 }
-                .navigationTitle(document.displayTitle)
+                .appNavigationTitle(document.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         if !canReveal {
@@ -229,7 +229,7 @@ struct CredentialDetailView: View {
         let revealed = canReveal || !field.isSensitive
         VStack(alignment: .leading, spacing: 5) {
             Text(field.label)
-                .font(.subheadline.weight(.medium))
+                .appFont(.subheadline.weight(.medium))
             Text(field.value.isEmpty ? "未填写" : (revealed ? field.value : "••••••"))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -264,7 +264,7 @@ private struct CredentialVersionRow: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Text(document.displayTitle)
-                    .font(.subheadline.weight(.medium))
+                    .appFont(.subheadline.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 CredentialVersionStatusLabel(status: document.versionStatus)
@@ -277,7 +277,7 @@ private struct CredentialVersionRow: View {
                 CredentialStatusLabel(status: document.validityStatus())
                     .layoutPriority(1)
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

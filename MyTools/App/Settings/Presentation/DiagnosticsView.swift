@@ -63,7 +63,7 @@ struct DiagnosticsView: View {
                 } else if let text = overview?.recentText, !text.isEmpty {
                     ScrollView(.horizontal) {
                         Text(text)
-                            .font(.caption2.monospaced())
+                            .appFont(.caption2.monospaced())
                             .copyableText(text)
                             .fixedSize(horizontal: true, vertical: false)
                     }
@@ -72,7 +72,7 @@ struct DiagnosticsView: View {
                 }
             }
         }
-        .navigationTitle("调试信息")
+        .appNavigationTitle("调试信息")
         .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)

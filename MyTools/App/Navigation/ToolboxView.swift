@@ -24,7 +24,7 @@ struct ToolboxView: View {
                     ContentUnavailableView("暂无已启用功能", systemImage: "square.grid.2x2")
                 }
             }
-            .navigationTitle("工具")
+            .appNavigationTitle("工具")
 #if os(iOS)
             .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)
@@ -35,13 +35,13 @@ struct ToolboxView: View {
     private func moduleRow(_ module: ToolModule) -> some View {
         HStack(spacing: 12) {
             Image(systemName: module.systemImage)
-                .font(.title3)
+                .appFont(.title3)
                 .foregroundStyle(.white)
                 .frame(width: 40, height: 40)
                 .background(module.tint, in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
-                Text(module.title).font(.headline)
-                Text(module.subtitle).font(.subheadline).foregroundStyle(.secondary)
+                Text(module.title).appFont(.headline)
+                Text(module.subtitle).appFont(.subheadline).foregroundStyle(.secondary)
             }
         }
     }

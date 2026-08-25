@@ -59,7 +59,7 @@ struct CredentialEditorView: View {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
                 }
             }
-            .navigationTitle(isExisting ? "编辑证照" : "新增证照")
+            .appNavigationTitle(isExisting ? "编辑证照" : "新增证照")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -185,11 +185,11 @@ struct CredentialEditorView: View {
                 if let endDate = draft.expirationDate() {
                     LabeledContent("自动计算到期日", value: AppDateFormatter.string(from: endDate))
                     Text(CredentialValidityKind.endDateRule(for: draft.type).title)
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
                     Text("到期日将从签发日期自动计算。")
-                        .font(.footnote)
+                        .appFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } else if draft.validity.kind == .dateRange {

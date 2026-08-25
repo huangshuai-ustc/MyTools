@@ -358,7 +358,7 @@ struct StocksView: View {
                 Text("股票行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
             }
         }
-        .navigationTitle(ToolModule.myStocks.title)
+        .appNavigationTitle(ToolModule.myStocks.title)
         .onChange(of: sortCriterionRawValue) { _, _ in
             preferenceChangeBus.notifyChanged()
         }
@@ -652,21 +652,21 @@ private struct RenminbiPortfolioSummaryRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack(spacing: 6) {
                 Label("人民币合计", systemImage: "yensign.circle.fill")
-                    .font(.headline)
+                    .appFont(.headline)
                     .foregroundStyle(.blue)
                 Button {
                     showingConversionInfo = true
                 } label: {
                     Image(systemName: "exclamationmark.circle")
                 }
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
                 .accessibilityLabel("人民币合计说明")
                 .help("人民币合计说明")
                 Spacer()
                 Text("CNY")
-                    .font(.caption.monospaced())
+                    .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
             StockSummaryMetricsHeader()
@@ -717,7 +717,7 @@ private struct RenminbiPortfolioSummaryRow: View {
 
     private func metric(_ title: String, value: String, color: Color = .primary) -> some View {
         Text(value)
-            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .appFont(.subheadline.weight(.semibold).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.68)
@@ -755,13 +755,13 @@ private struct StockMarketSummaryRow: View {
             HStack {
                 StockMarketBadge(market: summary.market)
                 Text(positionSummaryText)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer()
                 Text(summary.market.currencyCode)
-                    .font(.caption.monospaced())
+                    .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
 
@@ -810,7 +810,7 @@ private struct StockMarketSummaryRow: View {
 
     private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
         Text(value)
-            .font(.subheadline.weight(.semibold).monospacedDigit())
+            .appFont(.subheadline.weight(.semibold).monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.68)
@@ -830,7 +830,7 @@ private struct StockSummaryMetricsHeader: View {
 
     private func header(_ title: String) -> some View {
         Text(title)
-            .font(.caption.weight(.medium))
+            .appFont(.caption.weight(.medium))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -845,14 +845,14 @@ private struct StockRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 StockMarketBadge(market: stock.market)
                 Text(stock.displayName)
-                    .font(.headline)
+                    .appFont(.headline)
                     .lineLimit(1)
                 Text(stock.symbol)
-                    .font(.caption.monospaced())
+                    .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 if stock.isArchived {
                     Text("已存档")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -888,7 +888,7 @@ private struct StockRow: View {
                     )
                 }
             }
-            .font(.caption.monospacedDigit())
+            .appFont(.caption.monospacedDigit())
         }
     }
 
@@ -974,7 +974,7 @@ struct StockMarketBadge: View {
 
     var body: some View {
         Text(shortTitle)
-            .font(.caption2.weight(.semibold))
+            .appFont(.caption2.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

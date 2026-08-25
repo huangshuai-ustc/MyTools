@@ -153,14 +153,14 @@ struct CurrencyExchangeView: View {
 
             Section {
                 Text("记录分类以人民币为标准：买表示买入人民币，卖表示卖出人民币，换表示两种非人民币币种之间的兑换。人民币损耗按当前中国银行现汇买入价动态计算，将交易前的人民币成本（含手续费）与当前可换回的人民币金额进行比较。录入价格仅用于记录交易时的汇率及理论买入数，不参与当前损耗计算。")
-                    .font(.footnote)
+                    .appFont(.footnote)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("计算口径")
             }
 
         }
-        .navigationTitle("换汇记录")
+        .appNavigationTitle("换汇记录")
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索币种或代码")
 #if os(iOS)
@@ -294,10 +294,10 @@ struct CurrencyExchangeView: View {
     private func exchangeMetric(_ title: String, value: String, color: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -402,9 +402,9 @@ private struct CurrencyExchangeRecordRow: View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
             HStack {
                 Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: "arrow.left.arrow.right")
-                    .font(.headline)
+                    .appFont(.headline)
                 Text(direction.shortTitle)
-                    .font(.caption2.weight(.semibold))
+                    .appFont(.caption2.weight(.semibold))
                     .foregroundStyle(directionColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -412,7 +412,7 @@ private struct CurrencyExchangeRecordRow: View {
                     .accessibilityLabel(direction.title)
                 Spacer()
                 Text(AppDateFormatter.string(from: record.exchangedAt))
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -421,7 +421,7 @@ private struct CurrencyExchangeRecordRow: View {
                 Spacer()
                 Text("买 \(CurrencyExchangeValueFormatter.amount(record.boughtAmount, currency: record.boughtCurrency))")
             }
-            .font(.subheadline)
+            .appFont(.subheadline)
 
             HStack {
                 Text(priceText)
@@ -429,7 +429,7 @@ private struct CurrencyExchangeRecordRow: View {
                 Text(lossText)
                     .foregroundStyle(lossColor)
             }
-            .font(.caption)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())

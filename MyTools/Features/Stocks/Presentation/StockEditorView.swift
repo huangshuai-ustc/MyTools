@@ -72,7 +72,7 @@ struct StockEditorView: View {
                                 ProgressView()
                                     .controlSize(.small)
                                 Text("正在搜索")
-                                    .font(.footnote)
+                                    .appFont(.footnote)
                                     .foregroundStyle(.secondary)
                                 Spacer()
                             }
@@ -89,7 +89,7 @@ struct StockEditorView: View {
                                                     .lineLimit(2)
                                                     .layoutPriority(1)
                                                 Text(result.symbol)
-                                                    .font(.caption2.monospaced())
+                                                    .appFont(.caption2.monospaced())
                                                     .foregroundStyle(.secondary)
                                                     .padding(.horizontal, 6)
                                                     .padding(.vertical, 3)
@@ -100,12 +100,12 @@ struct StockEditorView: View {
                                                     if let alias = result.alias,
                                                        alias.localizedCaseInsensitiveCompare(result.name) != .orderedSame {
                                                         Text(alias)
-                                                            .font(.caption2)
+                                                            .appFont(.caption2)
                                                             .foregroundStyle(.secondary)
                                                     }
                                                     if let detail = result.detail {
                                                         Text(detail)
-                                                            .font(.caption2)
+                                                            .appFont(.caption2)
                                                             .foregroundStyle(.tertiary)
                                                     }
                                                 }
@@ -145,7 +145,7 @@ struct StockEditorView: View {
                         Toggle("仅看盘", isOn: $draft.isWatchOnly)
                         if draft.isWatchOnly {
                             Text("若暂未买入，可以打开此按钮")
-                                .font(.footnote)
+                                .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -164,7 +164,7 @@ struct StockEditorView: View {
                     }
                 }
             }
-            .navigationTitle(isNew ? "添加股票" : "编辑股票")
+            .appNavigationTitle(isNew ? "添加股票" : "编辑股票")
             .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
