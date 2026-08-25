@@ -52,7 +52,7 @@ struct StockChartSeriesProcessorTests {
         )
         let normalized = StockChartSeriesProcessor.normalizedSnapshot(
             snapshot,
-            range: .oneMonth,
+            range: .dayK,
             market: .unitedStates,
             at: saturdayPlaceholder
         )
@@ -150,7 +150,7 @@ struct StockChartSeriesProcessorTests {
         #expect(visible.map(\.date) == Array(points.suffix(2)).map(\.date))
     }
 
-    @Test func aShareIntradaySeparatesCallAuctionFromRegularSession() {
+    @Test func aShareIntradayDoesNotExposeCallAuctionAsExtendedHours() {
         let auction = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 20)
         let open = StockChartFixtures.date(2026, 8, 3, hour: 9, minute: 30)
         let close = StockChartFixtures.date(2026, 8, 3, hour: 15)
@@ -162,7 +162,7 @@ struct StockChartSeriesProcessorTests {
 
         #expect(
             StockChartSeriesProcessor.preMarketSessionPoints(points, market: .aShare)
-                .map(\.date) == [auction]
+                .isEmpty
         )
         #expect(
             StockChartSeriesProcessor.regularSessionPoints(points, market: .aShare)
@@ -230,6 +230,65 @@ struct StockChartSeriesProcessorTests {
         #expect(summary?.volume == 400)
     }
 
+    @Test func currentSessionSummaryIgnoresDailyBarsAndAggregatesMinuteBars() {
+        let dailyPoint = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 7),
+            open: 0.95,
+            high: 0.97,
+            low: 0.94,
+            close: 0.96,
+            volume: 0
+        )
+        let firstMinute = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30),
+            open: 0.96,
+            high: 0.965,
+            low: 0.955,
+            close: 0.962,
+            volume: 100
+        )
+        let lastMinute = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 7, hour: 14, minute: 59),
+            open: 0.963,
+            high: 0.98,
+            low: 0.958,
+            close: 0.975,
+            volume: 250
+        )
+
+        let summary = StockChartSeriesProcessor.currentSessionSummary(
+            from: [dailyPoint, firstMinute, lastMinute],
+            market: .aShare,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
+        )
+
+        #expect(summary?.open == firstMinute.open)
+        #expect(summary?.high == lastMinute.high)
+        #expect(summary?.low == firstMinute.low)
+        #expect(summary?.close == lastMinute.close)
+        #expect(summary?.volume == 350)
+        #expect(summary?.date == lastMinute.date)
+    }
+
+    @Test func currentSessionSummaryReturnsNilWithoutMinuteSessionData() {
+        let dailyPoint = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 7),
+            open: 0.95,
+            high: 0.97,
+            low: 0.94,
+            close: 0.96,
+            volume: 10_000
+        )
+
+        #expect(
+            StockChartSeriesProcessor.currentSessionSummary(
+                from: [dailyPoint],
+                market: .aShare,
+                at: StockChartFixtures.date(2026, 8, 8, hour: 12)
+            ) == nil
+        )
+    }
+
     @Test func unitedStatesPreMarketIsAnActiveRefreshSession() {
         let preMarket = StockChartFixtures.date(
             2026,
@@ -245,7 +304,7 @@ struct StockChartSeriesProcessorTests {
 
     @Test func marketSessionsAreMutuallyExclusiveAcrossTheTradingDay() {
         let aSharePost = StockChartFixtures.date(2026, 8, 7, hour: 15, minute: 1)
-        #expect(StockMarketTradingCalendar.session(for: .aShare, at: aSharePost) == .postMarket)
+        #expect(StockMarketTradingCalendar.session(for: .aShare, at: aSharePost) == .closed)
 
         let unitedStatesPost = StockChartFixtures.date(
             2026,
@@ -318,7 +377,7 @@ struct StockChartSeriesProcessorTests {
         let indicators = StockChartSeriesProcessor.indicatorPoints(
             from: allPoints,
             visiblePoints: visible,
-            range: .oneMonth
+            range: .dayK
         )
 
         #expect(indicators.count == 80)
@@ -379,11 +438,50 @@ struct StockChartSeriesProcessorTests {
         #expect(merged == [replacement])
     }
 
-    @Test func threeMinuteResamplingPreservesOHLCAndVolume() {
-        let bucket = Date(timeIntervalSince1970: 1_800_000_000)
+    @Test func preparedIntradayChartKeepsOneMinuteBarsSeparate() {
+        let firstDate = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
+        let points = [
+            StockChartFixtures.point(at: firstDate, close: 10),
+            StockChartFixtures.point(
+                at: firstDate.addingTimeInterval(60),
+                close: 11
+            )
+        ]
+
+        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
+            points,
+            range: .intraday,
+            market: .aShare,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
+        )
+
+        #expect(prepared.visible.count == 2)
+        #expect(prepared.visible.map(\.date) == points.map(\.date))
+    }
+
+    @Test func preparedIntradayChartDoesNotReaggregateSourceTimestamps() {
+        let firstDate = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
+        let points = [
+            StockChartFixtures.point(at: firstDate.addingTimeInterval(5), close: 10),
+            StockChartFixtures.point(at: firstDate.addingTimeInterval(55), close: 11)
+        ]
+
+        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
+            points,
+            range: .intraday,
+            market: .aShare,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
+        )
+
+        #expect(prepared.visible.count == points.count)
+        #expect(prepared.visible.map(\.date) == points.map(\.date))
+    }
+
+    @Test func preparedIntradayChartAggregatesOnlySubMinuteInputToOneMinute() {
+        let minute = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
         let points = [
             StockChartFixtures.point(
-                at: bucket,
+                at: minute,
                 open: 10,
                 high: 11,
                 low: 9,
@@ -391,35 +489,28 @@ struct StockChartSeriesProcessorTests {
                 volume: 100
             ),
             StockChartFixtures.point(
-                at: bucket.addingTimeInterval(60),
+                at: minute.addingTimeInterval(30),
                 open: 10.5,
                 high: 13,
                 low: 10,
                 close: 12,
                 volume: 200
-            ),
-            StockChartFixtures.point(
-                at: bucket.addingTimeInterval(120),
-                open: 12,
-                high: 12.5,
-                low: 8,
-                close: 9,
-                volume: 300
             )
         ]
 
-        let result = StockChartSeriesProcessor.resampledIntradayPoints(
+        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
             points,
-            targetMinutes: 3
+            range: .intraday,
+            market: .aShare,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
         )
 
-        #expect(result.count == 1)
-        #expect(result.first?.date == points.last?.date)
-        #expect(result.first?.open == 10)
-        #expect(result.first?.high == 13)
-        #expect(result.first?.low == 8)
-        #expect(result.first?.close == 9)
-        #expect(result.first?.volume == 600)
+        #expect(prepared.visible.count == 1)
+        #expect(prepared.visible.first?.open == 10)
+        #expect(prepared.visible.first?.high == 13)
+        #expect(prepared.visible.first?.low == 9)
+        #expect(prepared.visible.first?.close == 12)
+        #expect(prepared.visible.first?.volume == 300)
     }
 
     @Test func weeklyAggregationUsesFirstOpenLastCloseAndSummedVolume() {
@@ -458,6 +549,39 @@ struct StockChartSeriesProcessorTests {
         #expect(weekly.first?.low == 9)
         #expect(weekly.first?.close == 13)
         #expect(weekly.first?.volume == 350)
+    }
+
+    @Test func monthlyAggregationUsesStandardOHLCVRules() {
+        let points = [
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(2026, 1, 5, timeZone: "Asia/Shanghai"),
+                open: 10,
+                high: 12,
+                low: 9,
+                close: 11,
+                volume: 100
+            ),
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(2026, 1, 30, timeZone: "Asia/Shanghai"),
+                open: 11,
+                high: 14,
+                low: 10,
+                close: 13,
+                volume: 250
+            )
+        ]
+
+        let monthly = StockChartSeriesProcessor.monthlyPoints(
+            from: points,
+            calendar: StockChartSeriesProcessor.marketCalendar(.aShare)
+        )
+
+        #expect(monthly.count == 1)
+        #expect(monthly.first?.open == 10)
+        #expect(monthly.first?.high == 14)
+        #expect(monthly.first?.low == 9)
+        #expect(monthly.first?.close == 13)
+        #expect(monthly.first?.volume == 350)
     }
 
     @Test func quarterAndYearKLinesAggregateUnderlyingBars() {

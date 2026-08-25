@@ -70,7 +70,41 @@ struct StockChartPresentationTests {
         #expect(!StockChartPresentation.isModeAvailable(
             .preMarket,
             in: snapshot,
-            range: .fiveDays
+            range: .fiveDays,
+            market: .unitedStates
+        ))
+    }
+
+    @Test func extendedHoursChartModesAreOnlyAvailableForUSStocks() {
+        let snapshot = makeSnapshot(
+            points: [point(day: 7)],
+            preMarketPoints: [point(day: 7, hour: 9, minute: 20)],
+            postMarketPoints: [point(day: 7, hour: 16)]
+        )
+
+        #expect(StockChartPresentation.isModeAvailable(
+            .preMarket,
+            in: snapshot,
+            range: .intraday,
+            market: .unitedStates
+        ))
+        #expect(StockChartPresentation.isModeAvailable(
+            .postMarket,
+            in: snapshot,
+            range: .intraday,
+            market: .unitedStates
+        ))
+        #expect(!StockChartPresentation.isModeAvailable(
+            .preMarket,
+            in: snapshot,
+            range: .intraday,
+            market: .aShare
+        ))
+        #expect(!StockChartPresentation.isModeAvailable(
+            .postMarket,
+            in: snapshot,
+            range: .intraday,
+            market: .hongKong
         ))
     }
 
@@ -88,6 +122,37 @@ struct StockChartPresentationTests {
         #expect(presentation.xDomain == 0...3)
         #expect(presentation.xAxisValues(isExpanded: false).first == 0)
         #expect(presentation.xAxisValues(isExpanded: false).last == 3)
+    }
+
+    @Test func closestPlotPointUsesSortedCoordinatesAndVisibleViewport() throws {
+        let presentation = makePresentation(
+            points: [
+                point(day: 1, close: 100),
+                point(day: 3, close: 103),
+                point(day: 5, close: 105)
+            ],
+            range: .dayK
+        )
+        let points = presentation.plotPoints
+        let middle = try #require(
+            presentation.plotPoint(closestTo: points[1].x)
+        )
+        #expect(middle.point.close == 103)
+        #expect(
+            presentation.selectedPoint(at: points[1].point.date)?.close == 103
+        )
+
+        let visibleDomain = points[1].x...points[2].x
+        let clamped = try #require(
+            presentation.plotPoint(
+                closestTo: points[0].x,
+                in: visibleDomain
+            )
+        )
+        #expect(clamped.point.close == 103)
+
+        let visibleData = presentation.visibleData(in: visibleDomain)
+        #expect(visibleData.plotPoints.map(\.point.close) == [103, 105])
     }
 
     @Test func intradayPreMarketAndRegularPointsShareTheFullChartDomain() {
@@ -443,7 +508,7 @@ struct StockChartPresentationTests {
         let presentation = makePresentation(
             stock: stock,
             points: [chartPoint],
-            range: .oneMonth
+            range: .dayK
         )
 
         let selections = presentation.transactionSelections(at: chartPoint)
@@ -460,12 +525,12 @@ struct StockChartPresentationTests {
         }
         let rsi = makePresentation(
             points: points,
-            range: .oneMonth,
+            range: .dayK,
             displayModes: [.line, .rsi]
         )
         let volume = makePresentation(
             points: points,
-            range: .oneMonth,
+            range: .dayK,
             displayModes: [.line, .volume]
         )
 
@@ -580,7 +645,7 @@ struct StockChartPresentationTests {
         #expect(performance?.percent == 0.1)
     }
 
-    @Test func longerRangePerformanceUsesItsOwnVisibleWindow() {
+    @Test func kLinePerformanceUsesItsOwnVisibleWindow() {
         let visible = [
             point(day: 1, close: 80),
             point(day: 7, close: 100)
@@ -591,12 +656,11 @@ struct StockChartPresentationTests {
             previousClose: 10
         )
         let ranges: [StockChartRange] = [
-            .oneMonth,
-            .threeMonths,
-            .oneYear,
-            .fiveYears,
-            .tenYears,
-            .sinceInception
+            .dayK,
+            .weekK,
+            .monthK,
+            .quarterK,
+            .yearK
         ]
 
         for range in ranges {
@@ -724,6 +788,7 @@ struct StockChartPresentationTests {
     private func makeSnapshot(
         points: [StockChartPoint],
         preMarketPoints: [StockChartPoint] = [],
+        postMarketPoints: [StockChartPoint] = [],
         indicatorPoints: [StockChartPoint]? = nil,
         dailyIndicatorPoints: [StockChartPoint]? = nil,
         previousClose: Double? = 99
@@ -735,6 +800,7 @@ struct StockChartPresentationTests {
             previousClose: previousClose,
             points: points,
             preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
             indicatorPoints: indicatorPoints,
             dailyIndicatorPoints: dailyIndicatorPoints,
             quoteUpdatedAt: points.last?.date ?? Date(timeIntervalSince1970: 0),

@@ -24,7 +24,7 @@ struct StockChartDiskStoreTests {
         var writer = makeStore(directories)
         let persisted = writer.merging(
             snapshot,
-            range: .oneMonth,
+            range: .dayK,
             for: key,
             into: nil
         )
@@ -35,61 +35,18 @@ struct StockChartDiskStoreTests {
         let loadedStore = reader.load(for: key)
         let reloaded = try #require(loadedStore)
         let rendered = try #require(
-            reader.renderedSnapshot(from: reloaded, range: .oneMonth)
+            reader.renderedSnapshot(from: reloaded, range: .dayK)
         )
         #expect(rendered.symbol == key.symbol)
         #expect(rendered.points == StockChartSeriesProcessor.visiblePoints(
             from: points,
-            for: .oneMonth,
+            for: .dayK,
             market: key.market
         ))
         #expect(rendered.indicatorPoints?.count == 80)
         #expect(rendered.dailyIndicatorPoints?.count == 80)
+        #expect(rendered.cachedDailyTechnicalIndicators?.count == 80)
         #expect(FileManager.default.fileExists(atPath: reader.persistentStoreURL(for: key).path))
-    }
-
-    @Test func legacyRangeCacheMigratesIntoPersistentTimeSeriesFile() throws {
-        let directories = try temporaryDirectories()
-        defer { try? FileManager.default.removeItem(at: directories.root) }
-        let key = StockChartStoreKey(market: .aShare, symbol: "600519")
-        let points = samplePoints(count: 30)
-        let snapshot = StockChartSnapshot(
-            symbol: key.symbol,
-            name: "示例股票",
-            currencyCode: "CNY",
-            previousClose: 100,
-            points: points,
-            indicatorPoints: nil,
-            quoteUpdatedAt: points.last!.date,
-            fetchedAt: StockChartFixtures.date(2026, 8, 7),
-            source: "Legacy",
-            supportsCandlesticks: true
-        )
-        let legacyEntry = StockChartLegacyCacheEntry(
-            market: key.market,
-            symbol: key.symbol,
-            range: .oneMonth,
-            snapshot: snapshot
-        )
-        var store = makeStore(directories)
-        let legacyURL = store.legacyCacheURL(for: StockChartCacheKey(
-            market: key.market,
-            symbol: key.symbol,
-            range: .oneMonth
-        ))
-        try FileManager.default.createDirectory(
-            at: directories.legacy,
-            withIntermediateDirectories: true
-        )
-        try JSONEncoder().encode(legacyEntry).write(to: legacyURL, options: .atomic)
-
-        let loadedStore = store.load(for: key)
-        let migrated = try #require(loadedStore)
-
-        #expect(migrated.version == StockChartPersistedStore.currentVersion)
-        #expect(migrated.series[StockChartSeriesKind.daily.rawValue] == points)
-        #expect(FileManager.default.fileExists(atPath: store.persistentStoreURL(for: key).path))
-        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
     }
 
     @Test func unsupportedPersistentStoreVersionIsIgnored() throws {
@@ -114,7 +71,7 @@ struct StockChartDiskStoreTests {
         #expect(store.load(for: key) == nil)
     }
 
-    @Test func oldMinuteMetadataWithoutIndicatorCountRequiresRefresh() {
+    @Test func minuteMetadataWithoutIndicatorCountRequiresRefresh() {
         let point = StockChartFixtures.point(
             at: StockChartFixtures.date(2026, 8, 7, hour: 10)
         )
@@ -141,17 +98,53 @@ struct StockChartDiskStoreTests {
         #expect(!store.hasRequestedCoverage(in: persisted, for: .intraday))
     }
 
-    @Test func longerRangesAreClampedToTheInceptionSeries() throws {
+    @Test func fiveDaysSharesTheRawIntradaySeries() {
+        let points = (0..<30).map { index in
+            StockChartFixtures.point(
+                at: StockChartFixtures.date(
+                    2026,
+                    8,
+                    7,
+                    hour: 10,
+                    minute: index,
+                    timeZone: "America/New_York"
+                )
+            )
+        }
+        let snapshot = StockChartSnapshot(
+            symbol: "VOO",
+            name: "VOO",
+            currencyCode: "USD",
+            previousClose: nil,
+            points: Array(points.suffix(10)),
+            indicatorPoints: points,
+            quoteUpdatedAt: points.last!.date,
+            fetchedAt: points.last!.date,
+            source: "Test",
+            supportsCandlesticks: true
+        )
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let store = StockChartDiskStore()
+        let persisted = store.merging(
+            snapshot,
+            range: .fiveDays,
+            for: key,
+            into: nil
+        )
+
+        #expect(persisted.series[StockChartSeriesKind.intraday.rawValue] == points)
+        #expect(
+            persisted.derivedSeries[StockChartSeriesKind.fiveDayMinute.rawValue] != nil
+        )
+    }
+
+    @Test func weeklyRangeUsesDailyRawSeriesAndCachesDerivedBars() throws {
         let inception = StockChartFixtures.date(2023, 1, 3)
-        let oldWeekly = StockChartFixtures.date(2015, 1, 6)
+        let middle = StockChartFixtures.date(2023, 1, 6)
         let latest = StockChartFixtures.date(2026, 8, 7)
-        let monthlyPoints = [
+        let dailyPoints = [
             StockChartFixtures.point(at: inception, close: 20),
-            StockChartFixtures.point(at: latest, close: 40)
-        ]
-        let weeklyPoints = [
-            StockChartFixtures.point(at: oldWeekly, close: 10),
-            StockChartFixtures.point(at: inception, close: 20),
+            StockChartFixtures.point(at: middle, close: 30),
             StockChartFixtures.point(at: latest, close: 40)
         ]
         let metadata = StockChartStoredRangeMetadata(
@@ -169,30 +162,27 @@ struct StockChartDiskStoreTests {
             version: StockChartPersistedStore.currentVersion,
             market: .unitedStates,
             symbol: "NBIS",
-            series: [
-                StockChartSeriesKind.monthly.rawValue: monthlyPoints,
-                StockChartSeriesKind.weekly.rawValue: weeklyPoints
-            ],
-            rangeMetadata: [StockChartRange.tenYears.rawValue: metadata]
+            series: [StockChartSeriesKind.daily.rawValue: dailyPoints],
+            rangeMetadata: [StockChartRange.weekK.rawValue: metadata]
         )
 
         let store = StockChartDiskStore()
         let rendered = try #require(
-            store.renderedSnapshot(from: persisted, range: .tenYears)
+            store.renderedSnapshot(from: persisted, range: .weekK)
         )
 
-        #expect(rendered.points.map(\.date) == [inception, latest])
+        #expect(rendered.points.map(\.date) == [middle, latest])
+        #expect(
+            Set(persisted.series.keys) == Set([StockChartSeriesKind.daily.rawValue])
+        )
     }
 
-    @Test func yearKUsesYearlySeriesAsTheInceptionBoundary() throws {
+    @Test func yearKIsAggregatedFromDailyRawSeries() throws {
         let earliestYear = StockChartFixtures.date(2010, 1, 4)
         let recentMonth = StockChartFixtures.date(2024, 1, 2)
         let latest = StockChartFixtures.date(2026, 8, 7)
-        let yearlyPoints = [
+        let dailyPoints = [
             StockChartFixtures.point(at: earliestYear, close: 10),
-            StockChartFixtures.point(at: latest, close: 40)
-        ]
-        let monthlyPoints = [
             StockChartFixtures.point(at: recentMonth, close: 30),
             StockChartFixtures.point(at: latest, close: 40)
         ]
@@ -211,10 +201,7 @@ struct StockChartDiskStoreTests {
             version: StockChartPersistedStore.currentVersion,
             market: .unitedStates,
             symbol: "TEST",
-            series: [
-                StockChartSeriesKind.yearly.rawValue: yearlyPoints,
-                StockChartSeriesKind.monthly.rawValue: monthlyPoints
-            ],
+            series: [StockChartSeriesKind.daily.rawValue: dailyPoints],
             rangeMetadata: [StockChartRange.yearK.rawValue: metadata]
         )
 
@@ -224,31 +211,6 @@ struct StockChartDiskStoreTests {
         )
 
         #expect(rendered.points.map(\.date) == [earliestYear, latest])
-    }
-
-    @Test func yearKCacheFromLimitedProviderRequiresCompleteHistoryRefresh() {
-        let point = StockChartFixtures.point(at: StockChartFixtures.date(2026, 8, 7))
-        let metadata = StockChartStoredRangeMetadata(
-            symbol: "VOO",
-            name: "Vanguard S&P 500 ETF",
-            currencyCode: "USD",
-            previousClose: nil,
-            quoteUpdatedAt: point.date,
-            fetchedAt: point.date,
-            source: "腾讯证券",
-            supportsCandlesticks: true,
-            indicatorPointCount: nil,
-            historyCoverageRevision: 0
-        )
-        let persisted = StockChartPersistedStore(
-            version: StockChartPersistedStore.currentVersion,
-            market: .unitedStates,
-            symbol: "VOO",
-            series: [StockChartSeriesKind.yearly.rawValue: [point]],
-            rangeMetadata: [StockChartRange.yearK.rawValue: metadata]
-        )
-
-        #expect(!StockChartDiskStore().hasRequestedCoverage(in: persisted, for: .yearK))
     }
 
     @Test func allKLineRangesReuseOneCompleteDailySeries() throws {
@@ -276,6 +238,10 @@ struct StockChartDiskStoreTests {
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
         let store = StockChartDiskStore()
         let persisted = store.merging(snapshot, range: .dayK, for: key, into: nil)
+
+        #expect(
+            Set(persisted.series.keys) == Set([StockChartSeriesKind.daily.rawValue])
+        )
 
         for range in StockChartRange.allCases where range.isKLineRange {
             let rendered = try #require(store.renderedSnapshot(from: persisted, range: range))
@@ -335,10 +301,16 @@ struct StockChartDiskStoreTests {
         )
 
         #expect(updatedStore.series[StockChartSeriesKind.daily.rawValue]?.last?.close == 30)
-        #expect(updatedStore.series[StockChartSeriesKind.weekly.rawValue]?.last?.close == 30)
+        #expect(
+            updatedStore.derivedSeries[StockChartSeriesKind.weekly.rawValue]?.last?.close == 30
+        )
+        let weekly = try #require(
+            store.renderedSnapshot(from: updatedStore, range: .weekK)
+        )
+        #expect(weekly.points.last?.close == 30)
     }
 
-    @Test func incompleteDerivedSeriesIsRebuiltFromCanonicalDailySource() throws {
+    @Test func derivedKLinesAreCachedFromDailySource() throws {
         let first = StockChartFixtures.point(
             at: StockChartFixtures.date(2024, 8, 1, timeZone: "America/New_York"),
             close: 10
@@ -362,21 +334,17 @@ struct StockChartDiskStoreTests {
             source: "Yahoo Finance",
             supportsCandlesticks: true
         )
-        var persisted = store.merging(snapshot, range: .dayK, for: key, into: nil)
-        persisted.series[StockChartSeriesKind.yearly.rawValue] = [first]
-
-        let repaired = store.merging(
-            snapshot,
-            range: .dayK,
-            for: key,
-            into: persisted
+        let persisted = store.merging(snapshot, range: .dayK, for: key, into: nil)
+        #expect(persisted.series[StockChartSeriesKind.yearly.rawValue] == nil)
+        #expect(persisted.derivedSeries[StockChartSeriesKind.yearly.rawValue] != nil)
+        let yearly = try #require(
+            store.renderedSnapshot(from: persisted, range: .yearK)
         )
-
-        #expect(repaired.series[StockChartSeriesKind.yearly.rawValue]?.count == 2)
-        #expect(repaired.series[StockChartSeriesKind.yearly.rawValue]?.last?.close == 20)
+        #expect(yearly.points.count == 2)
+        #expect(yearly.points.last?.close == 20)
     }
 
-    @Test func removeAllDeletesPersistentAndLegacyCacheDirectories() throws {
+    @Test func removeAllDeletesPersistentCacheDirectory() throws {
         let directories = try temporaryDirectories()
         defer { try? FileManager.default.removeItem(at: directories.root) }
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
@@ -394,21 +362,13 @@ struct StockChartDiskStoreTests {
             supportsCandlesticks: true
         )
         var store = makeStore(directories)
-        let persisted = store.merging(snapshot, range: .oneMonth, for: key, into: nil)
+        let persisted = store.merging(snapshot, range: .dayK, for: key, into: nil)
         let didSave = store.save(persisted, for: key)
         #expect(didSave)
-        let legacyURL = store.legacyCacheURL(for: StockChartCacheKey(
-            market: key.market,
-            symbol: key.symbol,
-            range: .oneMonth
-        ))
-        try FileManager.default.createDirectory(at: directories.legacy, withIntermediateDirectories: true)
-        try Data("legacy".utf8).write(to: legacyURL)
 
         store.removeAll()
 
         #expect(!FileManager.default.fileExists(atPath: store.persistentStoreURL(for: key).path))
-        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
         #expect(store.load(for: key) == nil)
     }
 
@@ -422,21 +382,19 @@ struct StockChartDiskStoreTests {
         }
     }
 
-    private func temporaryDirectories() throws -> (root: URL, persistent: URL, legacy: URL) {
+    private func temporaryDirectories() throws -> (root: URL, persistent: URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MyToolsTests-\(UUID().uuidString)", isDirectory: true)
         let persistent = root.appendingPathComponent("Persistent", isDirectory: true)
-        let legacy = root.appendingPathComponent("Legacy", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return (root, persistent, legacy)
+        return (root, persistent)
     }
 
     private func makeStore(
-        _ directories: (root: URL, persistent: URL, legacy: URL)
+        _ directories: (root: URL, persistent: URL)
     ) -> StockChartDiskStore {
         StockChartDiskStore(
-            persistentStoreDirectory: directories.persistent,
-            legacyCacheDirectory: directories.legacy
+            persistentStoreDirectory: directories.persistent
         )
     }
 }

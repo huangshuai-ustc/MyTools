@@ -17,7 +17,7 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .preMarket: return "盘前"
-        case .line: return "走势"
+        case .line: return "盘中"
         case .postMarket: return "盘后"
         case .candlestick: return "K 线"
         case .movingAverage: return "均线"
@@ -206,16 +206,18 @@ struct StockChartPresentation {
     }
 
     var hasPreMarketChart: Bool {
-        range == .intraday && displayModes.contains(.preMarket)
+        range == .intraday
+            && stock.market.supportsExtendedHoursChart
+            && displayModes.contains(.preMarket)
     }
 
     var hasPostMarketChart: Bool {
-        range == .intraday && displayModes.contains(.postMarket)
+        range == .intraday
+            && stock.market.supportsExtendedHoursChart
+            && displayModes.contains(.postMarket)
     }
 
-    var preMarketTitle: String {
-        stock.market == .aShare ? "集合竞价" : "盘前"
-    }
+    var preMarketTitle: String { "盘前" }
 
     var postMarketTitle: String { "盘后" }
 
@@ -365,42 +367,154 @@ struct StockChartPresentation {
     }
 
     func selectedPoint(at date: Date?) -> StockChartPoint? {
-        guard let date else { return nil }
-        return allPricePlotPoints.map(\.point).min {
-            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-        }
+        selectedPlotPoint(at: date)?.point
     }
 
     func selectedPlotPoint(at date: Date?) -> StockChartPlotPoint? {
         guard let date else { return nil }
-        return allPricePlotPoints.min {
-            abs($0.point.date.timeIntervalSince(date))
-                < abs($1.point.date.timeIntervalSince(date))
-        }
+        return closestDatePlotPoint(
+            in: 0..<allPricePlotPoints.count,
+            to: date
+        )
     }
 
     func selectedTechnicalPlotPoint(at date: Date?) -> StockTechnicalPlotPoint? {
         guard let date else { return nil }
-        return technicalPlotPoints.min {
-            abs($0.indicator.date.timeIntervalSince(date))
-                < abs($1.indicator.date.timeIntervalSince(date))
+        guard !technicalPlotPoints.isEmpty else { return nil }
+        let insertion = lowerBoundTechnicalDate(for: date)
+        if insertion == 0 { return technicalPlotPoints[0] }
+        if insertion == technicalPlotPoints.count {
+            return technicalPlotPoints[insertion - 1]
         }
+        let previous = technicalPlotPoints[insertion - 1]
+        let next = technicalPlotPoints[insertion]
+        return abs(previous.indicator.date.timeIntervalSince(date))
+            <= abs(next.indicator.date.timeIntervalSince(date))
+            ? previous
+            : next
     }
 
     func plotPoint(closestTo x: Double) -> StockChartPlotPoint? {
-        allPricePlotPoints.min { abs($0.x - x) < abs($1.x - x) }
+        closestPlotPoint(
+            in: 0..<allPricePlotPoints.count,
+            to: x
+        )
     }
 
     func plotPoint(
         closestTo x: Double,
         in visibleDomain: ClosedRange<Double>
     ) -> StockChartPlotPoint? {
-        let visiblePoints = allPricePlotPoints.filter {
-            visibleDomain.contains($0.x)
+        guard !allPricePlotPoints.isEmpty else { return nil }
+        let start = lowerBound(for: visibleDomain.lowerBound)
+        let end = upperBound(for: visibleDomain.upperBound)
+        let range = start..<end
+        return range.isEmpty
+            ? plotPoint(closestTo: x)
+            : closestPlotPoint(in: range, to: x)
+    }
+
+    /// The chart's price points are sorted by their x coordinate. A binary
+    /// search keeps drag selection logarithmic instead of scanning every
+    /// cached historical bar on each touch.
+    private func closestPlotPoint(
+        in range: Range<Int>,
+        to x: Double
+    ) -> StockChartPlotPoint? {
+        guard !range.isEmpty else { return nil }
+        let insertion = lowerBound(for: x, in: range)
+        if insertion <= range.lowerBound {
+            return allPricePlotPoints[range.lowerBound]
         }
-        return (visiblePoints.isEmpty ? allPricePlotPoints : visiblePoints).min {
-            abs($0.x - x) < abs($1.x - x)
+        if insertion >= range.upperBound {
+            return allPricePlotPoints[range.upperBound - 1]
         }
+        let previous = allPricePlotPoints[insertion - 1]
+        let next = allPricePlotPoints[insertion]
+        return abs(previous.x - x) <= abs(next.x - x) ? previous : next
+    }
+
+    private func closestDatePlotPoint(
+        in range: Range<Int>,
+        to date: Date
+    ) -> StockChartPlotPoint? {
+        guard !range.isEmpty else { return nil }
+        let insertion = lowerBoundDate(for: date, in: range)
+        if insertion <= range.lowerBound {
+            return allPricePlotPoints[range.lowerBound]
+        }
+        if insertion >= range.upperBound {
+            return allPricePlotPoints[range.upperBound - 1]
+        }
+        let previous = allPricePlotPoints[insertion - 1]
+        let next = allPricePlotPoints[insertion]
+        return abs(previous.point.date.timeIntervalSince(date))
+            <= abs(next.point.date.timeIntervalSince(date))
+            ? previous
+            : next
+    }
+
+    private func lowerBound(for value: Double) -> Int {
+        lowerBound(for: value, in: 0..<allPricePlotPoints.count)
+    }
+
+    private func lowerBound(for value: Double, in range: Range<Int>) -> Int {
+        var lower = range.lowerBound
+        var upper = range.upperBound
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if allPricePlotPoints[middle].x < value {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private func lowerBoundDate(
+        for value: Date,
+        in range: Range<Int>
+    ) -> Int {
+        var lower = range.lowerBound
+        var upper = range.upperBound
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if allPricePlotPoints[middle].point.date < value {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private func lowerBoundTechnicalDate(for value: Date) -> Int {
+        var lower = 0
+        var upper = technicalPlotPoints.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if technicalPlotPoints[middle].indicator.date < value {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private func upperBound(for value: Double) -> Int {
+        var lower = 0
+        var upper = allPricePlotPoints.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if allPricePlotPoints[middle].x <= value {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
     }
 
     func isPreMarket(_ point: StockChartPoint) -> Bool {
@@ -412,7 +526,11 @@ struct StockChartPresentation {
     }
 
     func technicalIndicator(at point: StockChartPoint) -> StockTechnicalIndicatorPoint? {
-        technicalPlotPoints.first { $0.indicator.date == point.date }?.indicator
+        guard let plotPoint = selectedTechnicalPlotPoint(at: point.date),
+              plotPoint.indicator.date == point.date else {
+            return nil
+        }
+        return plotPoint.indicator
     }
 
     func transactionSelections(at point: StockChartPoint) -> [StockTransactionSelection] {
@@ -439,7 +557,11 @@ struct StockChartPresentation {
         let axisPlotPoints: [StockChartPlotPoint]
         let visibleDomain = requestedVisibleDomain
             ?? defaultVisibleXDomain(isExpanded: isExpanded)
-        let visiblePoints = sourcePoints.filter { visibleDomain.contains($0.x) }
+        let visiblePoints = visibleElements(
+            sourcePoints,
+            in: visibleDomain,
+            x: \.x
+        )
         axisPlotPoints = visiblePoints.isEmpty ? sourcePoints : visiblePoints
         guard axisPlotPoints.count > 1 else { return axisPlotPoints.map(\.x) }
         if range == .fiveDays {
@@ -463,10 +585,6 @@ struct StockChartPresentation {
         case .weekK, .monthK:
             desiredCount = isExpanded ? 9 : 6
         case .quarterK, .yearK:
-            desiredCount = isExpanded ? 10 : 6
-        case .oneMonth, .threeMonths, .oneYear:
-            desiredCount = isExpanded ? 8 : 5
-        case .fiveYears, .tenYears, .sinceInception:
             desiredCount = isExpanded ? 10 : 6
         }
         let finalIndex = axisPlotPoints.count - 1
@@ -492,10 +610,9 @@ struct StockChartPresentation {
         switch range {
         case .intraday:
             formatter.dateFormat = "HH:mm"
-        case .fiveDays, .dayK, .oneMonth, .threeMonths, .oneYear:
+        case .fiveDays, .dayK:
             formatter.dateFormat = "MM-dd"
-        case .weekK, .monthK, .quarterK, .yearK,
-             .fiveYears, .tenYears, .sinceInception:
+        case .weekK, .monthK, .quarterK, .yearK:
             formatter.dateFormat = "yyyy"
         }
         return formatter.string(from: date)
@@ -504,8 +621,13 @@ struct StockChartPresentation {
     static func isModeAvailable(
         _ mode: StockChartDisplayMode,
         in snapshot: StockChartSnapshot?,
-        range: StockChartRange? = nil
+        range: StockChartRange? = nil,
+        market: StockMarket? = nil
     ) -> Bool {
+        if (mode == .preMarket || mode == .postMarket),
+           market?.supportsExtendedHoursChart == false {
+            return false
+        }
         guard let snapshot else { return mode == .line }
         let indicatorPointCount = snapshot.indicatorPoints?.count ?? snapshot.points.count
         let dailyIndicatorPointCount = snapshot.dailyIndicatorPoints?.count
@@ -587,9 +709,7 @@ struct StockChartPresentation {
                 })?.close ?? sortedPoints.first?.close ?? first.close
             }
             return sortedPoints.first?.close ?? first.close
-        case .dayK, .weekK, .monthK, .quarterK, .yearK,
-             .oneMonth, .threeMonths, .oneYear,
-             .fiveYears, .tenYears, .sinceInception:
+        case .dayK, .weekK, .monthK, .quarterK, .yearK:
             if let visibleXDomain {
                 let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
                 if let visibleFirst = sortedPoints.first(where: {
@@ -723,12 +843,13 @@ struct StockChartPresentation {
         }
 
         if range.isMinuteRange {
-            // Keep the full minute history for indicator warm-up, then project
-            // only the visible minute bars onto the chart. This gives the
-            // first visible bar a real MA/BOLL/RSI state without drawing the
-            // historical warm-up bars themselves.
+            // Project the cached minute indicators onto visible bars. The raw
+            // history remains available for cache misses and indicator warm-up
+            // validation, but normal loads do not recalculate it here.
+            let minuteIndicators = snapshot.cachedMinuteTechnicalIndicators
+                ?? StockTechnicalIndicators.calculate(sourcePoints)
             let minutePlotPoints = projectedTechnicalPlotPoints(
-                StockTechnicalIndicators.calculate(sourcePoints),
+                minuteIndicators,
                 onto: plotPoints
             )
             guard range == .fiveDays,
@@ -740,9 +861,8 @@ struct StockChartPresentation {
             // Five-day price/overlay charts remain minute-based, but RSI keeps
             // the trading-day definition used everywhere except the intraday
             // chart. Project only the two RSI periods onto the minute points.
-            let dailyIndicators = StockTechnicalIndicators.calculate(
-                dailyPoints.sorted { $0.date < $1.date }
-            )
+            let dailyIndicators = snapshot.cachedDailyTechnicalIndicators
+                ?? StockTechnicalIndicators.calculate(dailyPoints.sorted { $0.date < $1.date })
             guard !dailyIndicators.isEmpty else { return minutePlotPoints }
             var dailyIndex = 0
             return minutePlotPoints.map { plotPoint in
@@ -765,13 +885,13 @@ struct StockChartPresentation {
             }
         }
 
-        // K-line overlays use the complete daily source regardless of the
+        // K-line overlays use the cached daily indicators regardless of the
         // display aggregation. This keeps MA/BOLL/MACD/RSI stable when moving
-        // from daily to weekly/monthly/quarterly/yearly bars and gives long-
-        // lived ETFs enough history for a 20-day Bollinger window.
+        // from daily to weekly/monthly/quarterly/yearly bars.
         let dailyPoints = (snapshot.dailyIndicatorPoints ?? sourcePoints)
             .sorted { $0.date < $1.date }
-        let dailyIndicators = StockTechnicalIndicators.calculate(dailyPoints)
+        let dailyIndicators = snapshot.cachedDailyTechnicalIndicators
+            ?? StockTechnicalIndicators.calculate(dailyPoints)
         guard !dailyIndicators.isEmpty else { return [] }
         return projectedTechnicalPlotPoints(
             dailyIndicators,
@@ -837,11 +957,11 @@ struct StockChartPresentation {
                   ) else { return nil }
 
             let matchingPoints = sourcePoints.filter { point in
-                if range == .weekK || range == .fiveYears || range == .tenYears {
+                if range == .weekK {
                     return marketCalendar.dateInterval(of: .weekOfYear, for: point.date)?
                         .contains(transactionDate) == true
                 }
-                if range == .monthK || range == .sinceInception {
+                if range == .monthK {
                     return marketCalendar.dateInterval(of: .month, for: point.date)?
                         .contains(transactionDate) == true
                 }
@@ -895,7 +1015,12 @@ struct StockChartPresentation {
                 unitPrice: transaction.unitPrice
             )
         }
-        .sorted { $0.date < $1.date }
+        .sorted {
+            if $0.plotX == $1.plotX {
+                return $0.date < $1.date
+            }
+            return $0.plotX < $1.plotX
+        }
     }
 
     private static func marketDate(for date: Date, market: StockMarket) -> Date? {
@@ -1015,20 +1140,66 @@ struct StockChartPresentation {
 
     func visibleData(in visibleXDomain: ClosedRange<Double>) -> StockChartVisibleData {
         StockChartVisibleData(
-            plotPoints: plotPoints.filter { visibleXDomain.contains($0.x) },
-            preMarketPlotPoints: preMarketPlotPoints.filter {
-                visibleXDomain.contains($0.x)
-            },
-            postMarketPlotPoints: postMarketPlotPoints.filter {
-                visibleXDomain.contains($0.x)
-            },
-            technicalPlotPoints: technicalPlotPoints.filter {
-                visibleXDomain.contains($0.x)
-            },
-            transactionMarkers: transactionMarkers.filter {
-                visibleXDomain.contains($0.plotX)
-            }
+            plotPoints: visibleElements(
+                plotPoints,
+                in: visibleXDomain,
+                x: \.x
+            ),
+            preMarketPlotPoints: visibleElements(
+                preMarketPlotPoints,
+                in: visibleXDomain,
+                x: \.x
+            ),
+            postMarketPlotPoints: visibleElements(
+                postMarketPlotPoints,
+                in: visibleXDomain,
+                x: \.x
+            ),
+            technicalPlotPoints: visibleElements(
+                technicalPlotPoints,
+                in: visibleXDomain,
+                x: \.x
+            ),
+            transactionMarkers: visibleElements(
+                transactionMarkers,
+                in: visibleXDomain,
+                x: \.plotX
+            )
         )
+    }
+
+    /// All chart-layer collections are stored in ascending plot-coordinate
+    /// order. Slice the visible window by binary search so selection redraws
+    /// do not scan the complete offline history.
+    private func visibleElements<Element>(
+        _ elements: [Element],
+        in domain: ClosedRange<Double>,
+        x: KeyPath<Element, Double>
+    ) -> [Element] {
+        guard !elements.isEmpty else { return [] }
+        var lower = 0
+        var upper = elements.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if elements[middle][keyPath: x] < domain.lowerBound {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        let start = lower
+
+        lower = start
+        upper = elements.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if elements[middle][keyPath: x] <= domain.upperBound {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return Array(elements[start..<lower])
     }
 
     func visiblePlotPointCount(in visibleXDomain: ClosedRange<Double>) -> Int {

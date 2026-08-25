@@ -24,6 +24,13 @@ enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Only US providers currently expose continuous extended-hours bars that
+    /// can be rendered as chart sessions. A-share and HK auction phases are not
+    /// equivalent to a continuous pre-market/post-market price series.
+    var supportsExtendedHoursChart: Bool {
+        self == .unitedStates
+    }
+
     static var displayOrder: [Self] {
         ordered([.unitedStates, .aShare, .hongKong])
     }
@@ -78,6 +85,12 @@ enum StockTransactionType: String, Codable, CaseIterable, Identifiable, Sendable
     var shareMultiplier: Decimal {
         self == .buy ? 1 : -1
     }
+}
+
+enum StockListState: Sendable {
+    case holding
+    case watchlist
+    case archived
 }
 
 struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
@@ -152,6 +165,9 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     var changePercent: Decimal?
     var quoteName = ""
     var lastQuoteAt: Date?
+    /// User intent for zero-position stocks. A non-nil value hides the stock
+    /// from the default watchlist without removing its transaction history.
+    var archivedAt: Date?
 
     var displayName: String {
         let preferredName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,6 +178,19 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var currentShares: Decimal {
         transactions.reduce(Decimal.zero) { $0 + $1.signedShares }
+    }
+
+    var hasHistoricalActivity: Bool {
+        !transactions.isEmpty || !dividends.isEmpty
+    }
+
+    var listState: StockListState {
+        if currentShares > 0 { return .holding }
+        return archivedAt == nil ? .watchlist : .archived
+    }
+
+    var isArchived: Bool {
+        listState == .archived
     }
 
     var firstPurchasedAt: Date? {

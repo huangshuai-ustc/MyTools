@@ -103,6 +103,35 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         didMutate()
     }
 
+    @discardableResult
+    func archiveStock(id: UUID, at date: Date = Date()) -> Bool {
+        guard let index = stocks.firstIndex(where: { $0.id == id }),
+              let archived = StockPortfolioEditor.archiving(stocks[index], at: date) else {
+            return false
+        }
+        stocks[index] = archived
+        for alertIndex in priceAlerts.indices where priceAlerts[alertIndex].stockID == id {
+            guard priceAlerts[alertIndex].isEnabled else { continue }
+            priceAlerts[alertIndex].isEnabled = false
+            alertNotifications.clearState(for: priceAlerts[alertIndex].id)
+        }
+        quoteErrors[id] = nil
+        quoteSources[id] = nil
+        didMutate()
+        refreshInvalidator.refreshEligibilityChanged()
+        return true
+    }
+
+    @discardableResult
+    func restoreArchivedStock(id: UUID) -> Bool {
+        guard let index = stocks.firstIndex(where: { $0.id == id }),
+              let restored = StockPortfolioEditor.restoring(stocks[index]) else { return false }
+        stocks[index] = restored
+        didMutate()
+        refreshInvalidator.refreshEligibilityChanged()
+        return true
+    }
+
     func deleteStocks(ids: Set<UUID>) {
         let result = StockPortfolioEditor.deletingStocks(
             ids: ids,

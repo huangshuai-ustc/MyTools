@@ -30,6 +30,21 @@ struct StockQuoteRefreshReducerTests {
         #expect(forced.map(\.id) == [complete.id])
     }
 
+    @Test func archivedStocksNeverRefreshEvenWhenForced() {
+        var archived = Self.stock(symbol: "AAPL", market: .unitedStates)
+        archived.archivedAt = Date(timeIntervalSince1970: 1_000)
+
+        let requested = StockQuoteRefreshReducer.stocksToRefresh(
+            from: [archived],
+            market: nil,
+            forcedMarkets: [.unitedStates],
+            allowClosedMissingData: true,
+            at: Date(timeIntervalSince1970: 2_000)
+        )
+
+        #expect(requested.isEmpty)
+    }
+
     @Test func quoteReductionUpdatesSuccessAndReportsMissingResponse() throws {
         let updatedAt = Date(timeIntervalSince1970: 2_000_000_000)
         var success = Self.stock(symbol: "OLD", market: .unitedStates)

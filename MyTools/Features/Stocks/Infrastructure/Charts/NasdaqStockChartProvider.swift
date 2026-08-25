@@ -78,9 +78,7 @@ struct NasdaqStockChartProvider: StockChartProvider {
             endingAt: endDate,
             calendar: calendar
         )
-        let pointLimit = request.usesDailyTechnicalInterval
-            ? range.dailyTechnicalPointLimit
-            : range.providerPointLimit
+        let pointLimit = range.providerPointLimit
 
         let payload = try await fetchPayload(
             symbol: symbol,
@@ -113,23 +111,9 @@ struct NasdaqStockChartProvider: StockChartProvider {
             )
         }
         points.sort { $0.date < $1.date }
-        if !request.usesDailyTechnicalInterval,
-           range == .fiveDays,
+        if range == .fiveDays,
            points.count > 5 {
             points = Array(points.suffix(5))
-        } else if !request.usesDailyTechnicalInterval,
-                  range == .weekK || range == .fiveYears || range == .tenYears {
-            points = StockChartSeriesProcessor.weeklyPoints(from: points, calendar: calendar)
-        } else if !request.usesDailyTechnicalInterval,
-                  range == .monthK || range == .sinceInception {
-            points = StockChartSeriesProcessor.monthlyPoints(from: points, calendar: calendar)
-        } else if !request.usesDailyTechnicalInterval,
-                  range == .quarterK || range == .yearK {
-            points = StockChartSeriesProcessor.preparedKLinePoints(
-                points,
-                range: range,
-                market: stock.market
-            )
         }
         guard StockChartSeriesProcessor.hasRequiredCoverage(
             points,

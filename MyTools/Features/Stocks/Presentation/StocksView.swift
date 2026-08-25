@@ -176,6 +176,7 @@ struct StocksView: View {
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
     @State private var watchRoute: WatchRoute?
+    @State private var showsArchivedStocks = false
     @AppStorage(AppStorageKey.stockSortCriterion) private var sortCriterionRawValue = StockSortCriterion.name.rawValue
     @AppStorage(AppStorageKey.stockSortDirection) private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
 
@@ -188,6 +189,10 @@ struct StocksView: View {
 
     private var configuredStocks: [StockHolding] {
         store.stocks.filter(\.hasConfiguredSymbol)
+    }
+
+    private var activeConfiguredStocks: [StockHolding] {
+        configuredStocks.filter { !$0.isArchived }
     }
 
     private var availableMarketFilters: [StockMarketFilter] {
@@ -216,16 +221,24 @@ struct StocksView: View {
     }
 
     private var noPositionStocks: [StockHolding] {
-        stockSorter.sorted(searchFilteredStocks.filter { $0.currentShares <= 0 })
+        stockSorter.sorted(searchFilteredStocks.filter {
+            $0.currentShares <= 0 && !$0.isArchived
+        })
+    }
+
+    private var archivedStocks: [StockHolding] {
+        stockSorter.sorted(searchFilteredStocks.filter(\.isArchived))
     }
 
     private var summaryMarkets: [StockMarket] {
         if let market = marketFilter.market {
             return [market]
         }
-        let openStocks = stocksInSelectedMarket.filter { $0.currentShares > 0 }
+        let relevantStocks = stocksInSelectedMarket.filter {
+            $0.currentShares > 0 || $0.hasHistoricalActivity
+        }
         return StockMarket.topLevelOrder.filter { market in
-            openStocks.contains { $0.market == market }
+            relevantStocks.contains { $0.market == market }
         }
     }
 
@@ -299,7 +312,7 @@ struct StocksView: View {
                 }
             }
 
-            if displayedStocks.isEmpty && noPositionStocks.isEmpty {
+            if displayedStocks.isEmpty && noPositionStocks.isEmpty && archivedStocks.isEmpty {
                 Section("当前持仓（\(displayedStocks.count)）") {
                     ContentUnavailableView(
                         emptyStocksTitle,
@@ -312,8 +325,13 @@ struct StocksView: View {
                 }
             }
             if !noPositionStocks.isEmpty {
-                Section("无持仓或仅看盘（\(noPositionStocks.count)）") {
+                Section("看盘（\(noPositionStocks.count)）") {
                     stockLinks(noPositionStocks, costAllocation: costAllocations)
+                }
+            }
+            if showsArchivedStocks && !archivedStocks.isEmpty {
+                Section("历史股票（\(archivedStocks.count)）") {
+                    stockLinks(archivedStocks, costAllocation: costAllocations)
                 }
             }
 
@@ -360,6 +378,13 @@ struct StocksView: View {
                     criterionRawValue: $sortCriterionRawValue,
                     directionRawValue: $sortDirectionRawValue
                 )
+                Button {
+                    showsArchivedStocks.toggle()
+                } label: {
+                    Image(systemName: showsArchivedStocks ? "archivebox.fill" : "archivebox")
+                }
+                .accessibilityLabel(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
+                .help(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
                 Button {
                     Task {
                         await store.refreshQuotes(
@@ -425,11 +450,12 @@ struct StocksView: View {
         }
     }
 
+    @ViewBuilder
     private func stockLink(
         _ stock: StockHolding,
         costAllocation: StockCostAllocationSnapshot
     ) -> some View {
-        NavigationLink {
+        let link = NavigationLink {
             StockDetailView(stockID: stock.id)
         } label: {
             StockRow(
@@ -437,17 +463,35 @@ struct StocksView: View {
                 costShare: costAllocation.holdingShare(for: stock.id)
             )
         }
-        .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
-            store.deleteStocks(ids: [stock.id])
-        }
-        .appSwipeActions(edge: .leading, style: AppSwipeActions.primary) {
-            Button {
-                watchRoute = WatchRoute(stockID: stock.id)
-            } label: {
-                Label("看盘", systemImage: "chart.xyaxis.line")
-            }
-            .tint(AppSwipeActions.primary.tint)
+        if stock.isArchived {
+            link
+                .appListRowStyle()
+                .appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+                    Button {
+                        _ = store.restoreArchivedStock(id: stock.id)
+                    } label: {
+                        Label("恢复看盘", systemImage: "arrow.uturn.backward")
+                    }
+                }
+                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                    store.deleteStocks(ids: [stock.id])
+                }
+        } else {
+            link
+                .appListRowStyle()
+                .modifier(StockListRemovalActions(
+                    stock: stock,
+                    isEnabled: auth.isEditSessionReady,
+                    onArchive: { _ = store.archiveStock(id: stock.id) },
+                    onDelete: { store.deleteStocks(ids: [stock.id]) }
+                ))
+                .appSwipeActions(edge: .leading, style: AppSwipeActions.primary) {
+                    Button {
+                        watchRoute = WatchRoute(stockID: stock.id)
+                    } label: {
+                        Label("看盘", systemImage: "chart.xyaxis.line")
+                    }
+                }
         }
     }
 
@@ -462,7 +506,10 @@ struct StocksView: View {
     }
 
     private var emptyStocksTitle: String {
-        if configuredStocks.isEmpty {
+        if activeConfiguredStocks.isEmpty {
+            if !configuredStocks.isEmpty {
+                return showsArchivedStocks ? "暂无可显示的股票" : "暂无股票"
+            }
             return "暂无股票"
         }
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -499,6 +546,36 @@ struct StocksView: View {
         enteringRefreshTask?.cancel()
         enteringRefreshTask = Task { @MainActor in
             await store.refreshQuotes(for: marketFilter.market)
+        }
+    }
+}
+
+private struct StockListRemovalActions: ViewModifier {
+    let stock: StockHolding
+    let isEnabled: Bool
+    let onArchive: () -> Void
+    let onDelete: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if !isEnabled {
+            content
+        } else if stock.currentShares <= 0 && stock.hasHistoricalActivity {
+            // SwiftUI places the first trailing action closest to the row edge.
+            // Keep delete first so full-swipe deletion remains unchanged, with
+            // archive rendered immediately to its left.
+            content.appSwipeActions(edge: .trailing, style: AppSwipeActions.delete) {
+                Button(role: .destructive, action: onDelete) {
+                    Label("删除", systemImage: "trash")
+                }
+                .tint(AppSwipeActions.delete.tint)
+                Button(action: onArchive) {
+                    Label("存档", systemImage: "archivebox")
+                }
+                .tint(AppSwipeActions.secondary.tint)
+            }
+        } else {
+            content.appDeleteSwipeAction(action: onDelete)
         }
     }
 }
@@ -772,6 +849,14 @@ private struct StockRow: View {
                 Text(stock.symbol)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                if stock.isArchived {
+                    Text("已存档")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                }
                 Spacer(minLength: 4)
             }
 

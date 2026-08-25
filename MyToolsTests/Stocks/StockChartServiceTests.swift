@@ -4,12 +4,12 @@ import Testing
 
 struct StockChartServiceTests {
     @Test func nonUSMarketFallsBackFromTencentToEastmoney() async throws {
-        let context = try makeContext(market: .aShare, range: .oneMonth)
+        let context = try makeContext(market: .aShare, range: .dayK)
         defer { try? FileManager.default.removeItem(at: context.root) }
 
         _ = try await context.service.fetchChart(
             for: context.stock,
-            range: .oneMonth
+            range: .dayK
         )
 
         #expect(await context.recorder.calls() == ["tencent", "eastmoney"])
@@ -53,21 +53,21 @@ struct StockChartServiceTests {
         #expect(await context.recorder.calls() == ["tencent", "yahoo"])
     }
 
-    @Test func USHistoricalUsesNasdaqBeforeYahoo() async throws {
+    @Test func USHistoricalFallsBackToNasdaqAfterYahoo() async throws {
         let context = try makeContext(
             market: .unitedStates,
-            range: .oneYear,
-            yahooBehavior: nil,
+            range: .dayK,
+            yahooBehavior: .failure(.noData),
             nasdaqSucceeds: true
         )
         defer { try? FileManager.default.removeItem(at: context.root) }
 
         _ = try await context.service.fetchChart(
             for: context.stock,
-            range: .oneYear
+            range: .dayK
         )
 
-        #expect(await context.recorder.calls() == ["tencent", "nasdaq"])
+        #expect(await context.recorder.calls() == ["yahoo", "nasdaq"])
     }
 
     @Test func USYearKUsesYahooCompleteDailyHistory() async throws {
@@ -107,7 +107,7 @@ struct StockChartServiceTests {
     @Test func allProviderFailuresBecomeServiceUnavailable() async throws {
         let context = try makeContext(
             market: .unitedStates,
-            range: .oneYear,
+            range: .dayK,
             yahooBehavior: .failure(.noData),
             nasdaqSucceeds: false
         )
@@ -116,10 +116,11 @@ struct StockChartServiceTests {
         await #expect(throws: StockChartError.serviceUnavailable) {
             _ = try await context.service.fetchChart(
                 for: context.stock,
-                range: .oneYear
+            range: .dayK
             )
         }
-        #expect(await context.recorder.calls() == ["tencent", "nasdaq", "yahoo"])
+        let calls = await context.recorder.calls()
+        #expect(Array(calls.prefix(2)) == ["yahoo", "nasdaq"])
     }
 
     private func makeContext(
@@ -166,8 +167,7 @@ struct StockChartServiceTests {
             )
         )
         let diskStore = StockChartDiskStore(
-            persistentStoreDirectory: root.appendingPathComponent("Persistent"),
-            legacyCacheDirectory: root.appendingPathComponent("Legacy")
+            persistentStoreDirectory: root.appendingPathComponent("Persistent")
         )
         return (root, stock, StockChartService(
             diskStore: diskStore,

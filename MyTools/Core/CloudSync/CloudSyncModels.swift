@@ -108,6 +108,12 @@ struct CloudSyncSnapshot: Sendable {
     static let empty = CloudSyncSnapshot(items: [])
 }
 
+struct CloudSyncRebuildLease: Sendable, Equatable {
+    let generation: Int64
+    let ownerDeviceID: String
+    let lockedUntil: Date
+}
+
 enum CloudSyncChange: Sendable {
     case upsert(kind: CloudSyncEntityKind, id: UUID, payload: Data)
     case delete(kind: CloudSyncEntityKind, id: UUID)

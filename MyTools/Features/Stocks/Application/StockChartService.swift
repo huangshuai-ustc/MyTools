@@ -12,6 +12,11 @@ protocol StockChartServing: Sendable {
         range: StockChartRange,
         forceRefresh: Bool
     ) async throws -> StockChartSnapshot
+
+    /// Refreshes every source series needed after a market's final regular
+    /// session. Derived K-lines and technical indicators are rebuilt from the
+    /// refreshed minute/daily inputs rather than treating K-lines specially.
+    func refreshAfterFinalSession(for stock: StockHolding) async throws
 }
 
 actor StockChartService: StockChartServing {
@@ -87,15 +92,13 @@ actor StockChartService: StockChartServing {
             let request = StockChartRequest(
                 stock: stock,
                 symbol: symbol,
-                range: range,
-                usesDailyTechnicalInterval: range.isKLineRange
+                range: range
             )
             let remoteSnapshot = try await fetchRemoteChart(for: request)
             guard let snapshot = StockChartSeriesProcessor.normalizedSnapshot(
                 remoteSnapshot,
                 range: range,
                 market: stock.market,
-                usesDailyTechnicalInterval: request.usesDailyTechnicalInterval,
                 at: now
             ) else {
                 throw StockChartError.noData
@@ -131,8 +134,7 @@ actor StockChartService: StockChartServing {
                     for: StockChartRequest(
                         stock: stock,
                         symbol: symbol,
-                        range: .fiveDays,
-                        usesDailyTechnicalInterval: false
+                        range: .fiveDays
                     )
                ) {
                 scopedSnapshot = snapshotByAddingMinuteIndicatorHistory(
@@ -158,8 +160,7 @@ actor StockChartService: StockChartServing {
                    for: StockChartRequest(
                        stock: stock,
                        symbol: symbol,
-                       range: dailyRange,
-                       usesDailyTechnicalInterval: true
+                       range: dailyRange
                    )
                ),
                !dailySnapshot.points.isEmpty {
@@ -175,7 +176,8 @@ actor StockChartService: StockChartServing {
             }
             if generation == cacheGeneration {
                 diskStore.save(updatedStore, for: stockKey)
-                if !StockMarketTradingCalendar.isSessionActive(stock.market, at: now) {
+                if range.isKLineRange
+                    || !StockMarketTradingCalendar.isSessionActive(stock.market, at: now) {
                     let sessionEnd = StockMarketTradingCalendar
                         .latestCompletedFinalSessionEnd(for: stock.market, at: now)
                     lastRefreshSessionEnd[canonicalRefreshKey(for: cacheKey)] = sessionEnd
@@ -187,6 +189,29 @@ actor StockChartService: StockChartServing {
         } catch {
             if !forceRefresh, let cached { return cached }
             throw error
+        }
+    }
+
+    func refreshAfterFinalSession(for stock: StockHolding) async throws {
+        var firstError: Error?
+        // These are the canonical source series. The presentation layer
+        // recalculates every MA/BOLL/MACD/RSI from them, while the disk store
+        // derives weekly/monthly/quarterly/yearly K-lines from the daily set.
+        for range in [StockChartRange.intraday, .fiveDays, .dayK] {
+            do {
+                _ = try await fetchChart(
+                    for: stock,
+                    range: range,
+                    forceRefresh: true
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                firstError = firstError ?? error
+            }
+        }
+        if let firstError {
+            throw firstError
         }
     }
 
@@ -204,7 +229,7 @@ actor StockChartService: StockChartServing {
         // requests must use providers with explicit complete-history support
         // so older listings such as VOO are not truncated.
         if request.stock.market == .unitedStates,
-           request.range.isKLineRange || request.range == .sinceInception {
+           request.range.isKLineRange {
             if let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
                 return yahooSnapshot
             }
@@ -226,7 +251,10 @@ actor StockChartService: StockChartServing {
                     || tencentSnapshot.preMarketPoints.isEmpty
                     || tencentSnapshot.postMarketPoints.isEmpty),
                let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
-                return yahooSnapshot
+                return preferredUSIntradaySnapshot(
+                    primary: tencentSnapshot,
+                    fallback: yahooSnapshot
+                )
             }
             if request.stock.market != .unitedStates,
                needsCompletedRegularSession,
@@ -250,7 +278,6 @@ actor StockChartService: StockChartServing {
 
             if request.stock.market == .unitedStates,
                request.range != .fiveDays,
-               request.range != .sinceInception,
                let fallback = try? await providers.nasdaq.fetchChart(for: request) {
                 return fallback
             }
@@ -265,6 +292,90 @@ actor StockChartService: StockChartServing {
         }
     }
 
+    /// Tencent and Yahoo can expose different extended-hours coverage for the
+    /// same US symbol. Keep the denser series for each session independently;
+    /// otherwise a sparse Yahoo pre-market response can replace a complete
+    /// Tencent one just because Yahoo supplied another field.
+    private func preferredUSIntradaySnapshot(
+        primary: StockChartSnapshot,
+        fallback: StockChartSnapshot
+    ) -> StockChartSnapshot {
+        StockChartSnapshot(
+            symbol: primary.symbol,
+            name: primary.name,
+            currencyCode: primary.currencyCode,
+            previousClose: primary.previousClose ?? fallback.previousClose,
+            points: denserMinuteSeries(primary.points, fallback.points),
+            preMarketPoints: denserMinuteSeries(
+                primary.preMarketPoints,
+                fallback.preMarketPoints
+            ),
+            postMarketPoints: denserMinuteSeries(
+                primary.postMarketPoints,
+                fallback.postMarketPoints
+            ),
+            indicatorPoints: preferredIndicatorPoints(
+                primary.indicatorPoints,
+                fallback.indicatorPoints
+            ),
+            dailyIndicatorPoints: primary.dailyIndicatorPoints
+                ?? fallback.dailyIndicatorPoints,
+            quoteUpdatedAt: max(primary.quoteUpdatedAt, fallback.quoteUpdatedAt),
+            fetchedAt: max(primary.fetchedAt, fallback.fetchedAt),
+            source: [primary.source, fallback.source]
+                .filter { !$0.isEmpty }
+                .joined(separator: " / "),
+            supportsCandlesticks: primary.supportsCandlesticks
+                || fallback.supportsCandlesticks
+        )
+    }
+
+    private func preferredIndicatorPoints(
+        _ primary: [StockChartPoint]?,
+        _ fallback: [StockChartPoint]?
+    ) -> [StockChartPoint]? {
+        guard let primary else { return fallback }
+        guard let fallback else { return primary }
+        return denserMinuteSeries(primary, fallback)
+    }
+
+    private func denserMinuteSeries(
+        _ primary: [StockChartPoint],
+        _ fallback: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        guard !primary.isEmpty else { return fallback }
+        guard !fallback.isEmpty else { return primary }
+        let primaryScore = minuteDensityScore(primary)
+        let fallbackScore = minuteDensityScore(fallback)
+        let fallbackHasComparableCoverage = primaryScore.count < 3
+            || fallbackScore.count >= max(3, primaryScore.count / 2)
+        if fallbackHasComparableCoverage,
+           fallbackScore.cadence < primaryScore.cadence {
+            return fallback
+        }
+        if fallbackHasComparableCoverage,
+           fallbackScore.cadence == primaryScore.cadence,
+           fallbackScore.count > primaryScore.count {
+            return fallback
+        }
+        return primary
+    }
+
+    private func minuteDensityScore(
+        _ points: [StockChartPoint]
+    ) -> (cadence: TimeInterval, count: Int) {
+        let sortedDates = points.map(\.date).sorted()
+        guard sortedDates.count > 1 else {
+            return (.infinity, sortedDates.count)
+        }
+        let gaps = zip(sortedDates, sortedDates.dropFirst())
+            .map { $1.timeIntervalSince($0) }
+            .filter { $0 > 0 }
+            .sorted()
+        guard !gaps.isEmpty else { return (.infinity, sortedDates.count) }
+        return (gaps[gaps.count / 2], sortedDates.count)
+    }
+
     private func shouldUseCachedChart(
         _ snapshot: StockChartSnapshot,
         for key: StockChartCacheKey,
@@ -274,14 +385,14 @@ actor StockChartService: StockChartServing {
         guard !forceRefresh else { return false }
         let session = StockMarketTradingCalendar.session(for: key.market, at: now)
         if key.range.isKLineRange {
-            // K-line data is a completed-session product. During pre-market,
-            // regular trading, and post-market keep the last completed daily
-            // cache; the closing coordinator performs one complete-history
-            // refresh after the final session ends. Manual refresh still
-            // bypasses this guard through `forceRefresh`.
+            // K-lines follow the regular-session cadence while the market is
+            // open. Extended-hours sessions belong only to the intraday chart;
+            // keep the last regular K-line cache until the final close pass.
             switch session {
-            case .preMarket, .regular, .postMarket:
+            case .preMarket, .postMarket:
                 return true
+            case .regular:
+                return false
             case .closed:
                 break
             }
@@ -561,31 +672,18 @@ actor StockChartService: StockChartServing {
             }
         }
 
-        let dailyMetadata = StockChartRange.allPersistedCases
-            .filter {
-                StockChartSeriesProcessor.seriesKind(for: $0) == .daily
-                    || store.rangeMetadata[$0.rawValue]?.dailyIndicatorPointCount != nil
-            }
-            .compactMap { store.rangeMetadata[$0.rawValue] }
-            .max { $0.fetchedAt < $1.fetchedAt }
+        let dailyMetadata = store.rangeMetadata[StockChartRange.dayK.rawValue]
         guard let dailyMetadata else { return true }
         if dailyMetadata.dailyIndicatorPointCount != nil {
             return false
         }
         return now.timeIntervalSince(dailyMetadata.fetchedAt)
-            >= StockChartRange.oneYear.cacheLifetime
+            >= StockChartRange.dayK.cacheLifetime
     }
 
     private func dailyTechnicalRange(for range: StockChartRange) -> StockChartRange? {
         guard range != .intraday else { return nil }
-        switch range {
-        case .dayK, .weekK, .monthK, .quarterK, .yearK:
-            return .sinceInception
-        case .fiveYears, .tenYears, .sinceInception:
-            return range
-        default:
-            return .oneYear
-        }
+        return .dayK
     }
 
     private func dailyTechnicalStartDate(
@@ -603,13 +701,7 @@ actor StockChartService: StockChartServing {
             return calendar.date(byAdding: .year, value: -7, to: endDate)
         case .quarterK:
             return calendar.date(byAdding: .year, value: -12, to: endDate)
-        case .fiveYears:
-            return calendar.date(byAdding: .month, value: -62, to: endDate)
-        case .tenYears:
-            return calendar.date(byAdding: .month, value: -122, to: endDate)
-        case .sinceInception:
-            return nil
-        case .intraday, .dayK, .yearK, .oneMonth, .threeMonths, .oneYear:
+        case .intraday, .dayK, .yearK:
             return nil
         }
     }

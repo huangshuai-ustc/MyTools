@@ -1,7 +1,7 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
-struct StockTechnicalIndicatorPoint: Identifiable {
+struct StockTechnicalIndicatorPoint: Identifiable, Codable, Equatable, Sendable {
     let date: Date
     let movingAverage5: Double?
     let movingAverage20: Double?

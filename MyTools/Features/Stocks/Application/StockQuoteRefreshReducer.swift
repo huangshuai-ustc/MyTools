@@ -20,6 +20,7 @@ enum StockQuoteRefreshReducer {
     ) -> [StockHolding] {
         stocks.filter { stock in
             guard stock.hasConfiguredSymbol else { return false }
+            guard !stock.isArchived else { return false }
             if let market, stock.market != market { return false }
             let quoteDataMissing = stock.latestPrice == nil
                 || stock.latestPrice.map { $0 <= 0 } == true

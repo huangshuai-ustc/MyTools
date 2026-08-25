@@ -13,8 +13,6 @@ struct StockChartCacheKey: Hashable, Sendable {
 }
 
 struct StockChartStoredRangeMetadata: Codable, Sendable {
-    static let currentCompleteHistoryRevision = 3
-
     let symbol: String
     let name: String
     let currencyCode: String
@@ -27,12 +25,11 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
     let supportsCandlesticks: Bool
     let indicatorPointCount: Int?
     let dailyIndicatorPointCount: Int?
-    let historyCoverageRevision: Int
 
     private enum CodingKeys: String, CodingKey {
         case symbol, name, currencyCode, previousClose, preMarketPoints, postMarketPoints
         case quoteUpdatedAt, fetchedAt, source, supportsCandlesticks, indicatorPointCount
-        case dailyIndicatorPointCount, historyCoverageRevision
+        case dailyIndicatorPointCount
     }
 
     init(from decoder: Decoder) throws {
@@ -58,10 +55,6 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
             Int.self,
             forKey: .dailyIndicatorPointCount
         )
-        historyCoverageRevision = try container.decodeIfPresent(
-            Int.self,
-            forKey: .historyCoverageRevision
-        ) ?? 0
     }
 
     init(snapshot: StockChartSnapshot) {
@@ -77,7 +70,6 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         supportsCandlesticks = snapshot.supportsCandlesticks
         indicatorPointCount = snapshot.indicatorPoints?.count
         dailyIndicatorPointCount = snapshot.dailyIndicatorPoints?.count
-        historyCoverageRevision = Self.currentCompleteHistoryRevision
     }
 
     init(
@@ -92,8 +84,7 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         source: String,
         supportsCandlesticks: Bool,
         indicatorPointCount: Int?,
-        dailyIndicatorPointCount: Int? = nil,
-        historyCoverageRevision: Int = Self.currentCompleteHistoryRevision
+        dailyIndicatorPointCount: Int? = nil
     ) {
         self.symbol = symbol
         self.name = name
@@ -107,13 +98,14 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         self.supportsCandlesticks = supportsCandlesticks
         self.indicatorPointCount = indicatorPointCount
         self.dailyIndicatorPointCount = dailyIndicatorPointCount
-        self.historyCoverageRevision = historyCoverageRevision
     }
 
     func snapshot(
         points: [StockChartPoint],
         indicatorPoints: [StockChartPoint],
-        dailyIndicatorPoints: [StockChartPoint]? = nil
+        dailyIndicatorPoints: [StockChartPoint]? = nil,
+        cachedMinuteTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
+        cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil
     ) -> StockChartSnapshot {
         StockChartSnapshot(
             symbol: symbol,
@@ -125,6 +117,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
             postMarketPoints: postMarketPoints,
             indicatorPoints: indicatorPoints,
             dailyIndicatorPoints: dailyIndicatorPoints,
+            cachedMinuteTechnicalIndicators: cachedMinuteTechnicalIndicators,
+            cachedDailyTechnicalIndicators: cachedDailyTechnicalIndicators,
             quoteUpdatedAt: points.last?.date ?? quoteUpdatedAt,
             fetchedAt: fetchedAt,
             source: source,
@@ -134,40 +128,34 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
 }
 
 struct StockChartPersistedStore: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 5
 
     let version: Int
     let market: StockMarket
     let symbol: String
     var series: [String: [StockChartPoint]]
+    var derivedSeries: [String: [StockChartPoint]] = [:]
+    var technicalIndicators: [String: [StockTechnicalIndicatorPoint]] = [:]
     var rangeMetadata: [String: StockChartStoredRangeMetadata]
 }
 
-// Kept only to decode the range-based cache created before the time-series store.
-struct StockChartLegacyCacheEntry: Codable, Sendable {
-    let market: StockMarket
-    let symbol: String
-    let range: StockChartRange
-    let snapshot: StockChartSnapshot
+private enum StockChartTechnicalCacheKind: String {
+    case minute
+    case daily
 }
 
 struct StockChartDiskStore {
     private let fileManager: FileManager
     private let persistentStoreDirectory: URL
-    private let legacyCacheDirectory: URL
     private var memoryStores: [StockChartStoreKey: StockChartPersistedStore] = [:]
 
     init(
         fileManager: FileManager = .default,
-        persistentStoreDirectory: URL? = nil,
-        legacyCacheDirectory: URL? = nil
+        persistentStoreDirectory: URL? = nil
     ) {
         self.fileManager = fileManager
         let cacheDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
-        self.legacyCacheDirectory = legacyCacheDirectory ?? cacheDirectory
-            .appendingPathComponent("MyTools", isDirectory: true)
-            .appendingPathComponent("StockCharts", isDirectory: true)
         let supportDirectory = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -195,11 +183,7 @@ struct StockChartDiskStore {
             return stored
         }
 
-        guard let migration = migratedLegacyStore(for: key) else { return nil }
-        if save(migration.store, for: key) {
-            removeMigratedLegacyFiles(migration.urls)
-        }
-        return migration.store
+        return nil
     }
 
     func emptyStore(for key: StockChartStoreKey) -> StockChartPersistedStore {
@@ -260,17 +244,15 @@ struct StockChartDiskStore {
 
     mutating func removeAll() {
         memoryStores.removeAll()
-        for directory in [persistentStoreDirectory, legacyCacheDirectory] {
-            guard fileManager.fileExists(atPath: directory.path) else { continue }
-            do {
-                try fileManager.removeItem(at: directory)
-            } catch {
-                DiagnosticLogger.shared.log(
-                    .stockQuote,
-                    "离线行情缓存清理失败：\(error.localizedDescription)",
-                    level: .warning
-                )
-            }
+        guard fileManager.fileExists(atPath: persistentStoreDirectory.path) else { return }
+        do {
+            try fileManager.removeItem(at: persistentStoreDirectory)
+        } catch {
+            DiagnosticLogger.shared.log(
+                .stockQuote,
+                "离线行情缓存清理失败：\(error.localizedDescription)",
+                level: .warning
+            )
         }
     }
 
@@ -284,15 +266,13 @@ struct StockChartDiskStore {
         let metadata = compatibleMetadata ?? store.rangeMetadata[range.rawValue]
         guard let metadata else { return nil }
 
-        let kind = StockChartSeriesProcessor.seriesKind(for: range)
         let dailyPoints = store.series[StockChartSeriesKind.daily.rawValue] ?? []
+        let rawMinutePoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
         let storedPoints: [StockChartPoint]
-        if range.isKLineRange, let cachedDerivedPoints = store.series[kind.rawValue],
-           !cachedDerivedPoints.isEmpty {
-            // K-line series are derived from the same cached daily source.
-            // Read the prepared series directly so switching tabs does not
-            // re-aggregate the entire history on the main thread.
-            storedPoints = cachedDerivedPoints
+        if let derivedKind = StockChartSeriesProcessor.derivedSeriesKind(for: range),
+           let cachedPoints = store.derivedSeries[derivedKind.rawValue],
+           !cachedPoints.isEmpty {
+            storedPoints = cachedPoints
         } else if range.isKLineRange, !dailyPoints.isEmpty {
             storedPoints = StockChartSeriesProcessor.preparedKLinePoints(
                 dailyPoints,
@@ -300,13 +280,10 @@ struct StockChartDiskStore {
                 market: store.market
             )
         } else {
-            storedPoints = store.series[kind.rawValue] ?? []
+            storedPoints = range.isMinuteRange ? rawMinutePoints : dailyPoints
         }
-        // The canonical daily source is the only reliable listing boundary
-        // for both the current K-line tabs and legacy time-window ranges.
-        // A coarse yearly series can contain one bar even when the daily
-        // history spans many months, which would otherwise collapse a
-        // one-month/one-year view to its last point.
+        // The canonical daily source is the reliable listing boundary for all
+        // current K-line tabs.
         let inceptionDate = dailyPoints.map(\.date).min()
             ?? StockChartSeriesProcessor.inceptionDate(in: store.series)
         let points = StockChartSeriesProcessor.visiblePoints(
@@ -321,7 +298,7 @@ struct StockChartDiskStore {
             // Keep the complete minute history for indicator warm-up. The
             // presentation layer draws only `points`, which are already
             // scoped to the latest session or latest five trading days.
-            indicatorPoints = storedPoints
+            indicatorPoints = rawMinutePoints
         } else {
             indicatorPoints = StockChartSeriesProcessor.indicatorPoints(
                 from: storedPoints,
@@ -332,7 +309,13 @@ struct StockChartDiskStore {
         return metadata.snapshot(
             points: points,
             indicatorPoints: indicatorPoints,
-            dailyIndicatorPoints: dailyPoints
+            dailyIndicatorPoints: dailyPoints,
+            cachedMinuteTechnicalIndicators: store.technicalIndicators[
+                StockChartTechnicalCacheKind.minute.rawValue
+            ],
+            cachedDailyTechnicalIndicators: store.technicalIndicators[
+                StockChartTechnicalCacheKind.daily.rawValue
+            ]
         )
     }
 
@@ -342,19 +325,6 @@ struct StockChartDiskStore {
     ) -> Bool {
         StockChartSeriesProcessor.compatibleMetadataRanges(for: range).contains {
             guard let metadata = store.rangeMetadata[$0.rawValue] else { return false }
-            let usesIncompleteUSFallback = range.isKLineRange
-                && store.market == .unitedStates
-                && metadata.source != "Yahoo Finance"
-                && metadata.source != "Nasdaq"
-            let needsCompleteHistoryRefresh = metadata.historyCoverageRevision
-                < StockChartStoredRangeMetadata.currentCompleteHistoryRevision
-                || usesIncompleteUSFallback
-            if range.isKLineRange, needsCompleteHistoryRefresh {
-                // Caches created before the complete-history request was
-                // introduced, or populated by a US fallback provider, may
-                // stop around 2016 for ETFs. Force a complete-history retry.
-                return false
-            }
             if range == .intraday || range == .fiveDays {
                 return metadata.indicatorPointCount != nil
             }
@@ -369,60 +339,23 @@ struct StockChartDiskStore {
             .appendingPathExtension("json")
     }
 
-    func legacyCacheURL(for key: StockChartCacheKey) -> URL {
-        let identifier = "\(key.market.rawValue)|\(key.symbol)|\(key.range.rawValue)"
-        return legacyCacheDirectory
-            .appendingPathComponent(fileName(for: identifier), isDirectory: false)
-            .appendingPathExtension("json")
-    }
-
-    private mutating func migratedLegacyStore(
-        for key: StockChartStoreKey
-    ) -> (store: StockChartPersistedStore, urls: [URL])? {
-        var store = emptyStore(for: key)
-        var migratedURLs: [URL] = []
-        for range in StockChartRange.allPersistedCases {
-            let cacheKey = StockChartCacheKey(
-                market: key.market,
-                symbol: key.symbol,
-                range: range
-            )
-            let url = legacyCacheURL(for: cacheKey)
-            guard let data = try? Data(contentsOf: url),
-                  let persisted = try? JSONDecoder().decode(
-                    StockChartLegacyCacheEntry.self,
-                    from: data
-                  ),
-                  persisted.market == key.market,
-                  persisted.symbol == key.symbol,
-                  persisted.range == range else { continue }
-            merge(persisted.snapshot, range: range, into: &store)
-            migratedURLs.append(url)
-        }
-        return migratedURLs.isEmpty ? nil : (store, migratedURLs)
-    }
-
-    private func removeMigratedLegacyFiles(_ urls: [URL]) {
-        for url in urls {
-            do {
-                try fileManager.removeItem(at: url)
-            } catch {
-                DiagnosticLogger.shared.log(
-                    .stockQuote,
-                    "旧行情缓存清理失败：\(error.localizedDescription)",
-                    level: .warning
-                )
-            }
-        }
-    }
-
     private func merge(
         _ snapshot: StockChartSnapshot,
         range: StockChartRange,
         into store: inout StockChartPersistedStore
     ) {
         let kind = StockChartSeriesProcessor.seriesKind(for: range)
-        let incomingPoints = snapshot.indicatorPoints ?? snapshot.points
+        let incomingPoints: [StockChartPoint]
+        if range.isKLineRange {
+            incomingPoints = snapshot.dailyIndicatorPoints
+                ?? snapshot.indicatorPoints
+                ?? snapshot.points
+        } else {
+            incomingPoints = StockChartSeriesProcessor.regularSessionPoints(
+                snapshot.indicatorPoints ?? snapshot.points,
+                market: store.market
+            )
+        }
         let existing = store.series[kind.rawValue] ?? []
         store.series[kind.rawValue] = StockChartSeriesProcessor.mergedPoints(
             existing,
@@ -430,83 +363,61 @@ struct StockChartDiskStore {
             kind: kind,
             market: store.market
         )
-        // Every visible K-line request now fetches daily bars. Preserve those
-        // bars as the canonical source even when the selected tab is week,
-        // month, quarter, or year; all displayed K-line granularities are
-        // then derived from this one source.
-        let rawDailyPoints = snapshot.dailyIndicatorPoints
-            ?? (range.isKLineRange ? incomingPoints : nil)
-        if let rawDailyPoints, !rawDailyPoints.isEmpty {
-            // When the selected range itself is daily, `store.series` was
-            // updated above. Compare against the pre-merge snapshot instead
-            // of the already-updated array, otherwise every daily change is
-            // incorrectly treated as unchanged and derived bars go stale.
-            let existingDaily = kind == .daily
-                ? existing
-                : (store.series[StockChartSeriesKind.daily.rawValue] ?? [])
-            let calendar = StockChartSeriesProcessor.marketCalendar(store.market)
-            var existingDailyByBucket: [Date: StockChartPoint] = [:]
-            for point in existingDaily {
-                existingDailyByBucket[
-                    StockChartSeriesProcessor.dailyBucket(for: point.date, calendar: calendar)
-                ] = point
-            }
-            let changedDailyPoints = rawDailyPoints.filter { point in
-                existingDailyByBucket[
-                    StockChartSeriesProcessor.dailyBucket(for: point.date, calendar: calendar)
-                ] != point
-            }
-            let mergedDaily = StockChartSeriesProcessor.mergedPoints(
-                existingDaily,
-                with: rawDailyPoints,
-                kind: .daily,
-                market: store.market
+        if range.isMinuteRange {
+            rebuildMinuteDerivedCaches(
+                in: &store,
+                at: snapshot.fetchedAt
             )
-            store.series[StockChartSeriesKind.daily.rawValue] = mergedDaily
-
-            // Keep every K-line tab derived from the same daily source. Only
-            // buckets touched by this update are recalculated.
-            for (derivedKind, _) in [
-                (StockChartSeriesKind.weekly, StockChartRange.weekK),
-                (StockChartSeriesKind.monthly, StockChartRange.monthK),
-                (StockChartSeriesKind.quarterly, StockChartRange.quarterK),
-                (StockChartSeriesKind.yearly, StockChartRange.yearK)
-            ] {
-                let existingDerived = store.series[derivedKind.rawValue] ?? []
-                let expectedBuckets = Set(mergedDaily.map {
-                    StockChartSeriesProcessor.seriesBucket(
-                        for: $0.date,
-                        kind: derivedKind,
-                        calendar: calendar
-                    )
-                })
-                let existingBuckets = Set(existingDerived.map {
-                    StockChartSeriesProcessor.seriesBucket(
-                        for: $0.date,
-                        kind: derivedKind,
-                        calendar: calendar
-                    )
-                })
-                // A previous interrupted write can leave a derived series with
-                // the same prices but missing a whole time bucket. In that
-                // case no source point appears "changed", so force a rebuild
-                // from the canonical daily source instead of preserving the
-                // incomplete aggregate.
-                let needsRebuild = expectedBuckets != existingBuckets
-                let affectedPoints = existingDerived.isEmpty || needsRebuild
-                    ? mergedDaily
-                    : changedDailyPoints
-                store.series[derivedKind.rawValue] = StockChartSeriesProcessor
-                    .updatingAggregatedPoints(
-                        existingDerived,
-                        sourcePoints: mergedDaily,
-                        changedSourcePoints: affectedPoints,
-                        kind: derivedKind,
-                        market: store.market
-                    )
-            }
+        } else if range.isKLineRange {
+            rebuildDailyDerivedCaches(in: &store)
         }
         store.rangeMetadata[range.rawValue] = StockChartStoredRangeMetadata(snapshot: snapshot)
+    }
+
+    private func rebuildMinuteDerivedCaches(
+        in store: inout StockChartPersistedStore,
+        at date: Date
+    ) {
+        let rawPoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
+        let regularPoints = StockChartSeriesProcessor.regularSessionPoints(
+            rawPoints,
+            market: store.market
+        )
+        store.derivedSeries[StockChartSeriesKind.fiveDayMinute.rawValue] =
+            StockChartSeriesProcessor.pointsOnLatestTradingDays(
+                regularPoints,
+                count: 5,
+                market: store.market,
+                at: date
+            )
+        store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
+            StockTechnicalIndicators.calculate(regularPoints.sorted { $0.date < $1.date })
+    }
+
+    private func rebuildDailyDerivedCaches(
+        in store: inout StockChartPersistedStore
+    ) {
+        let dailyPoints = (store.series[StockChartSeriesKind.daily.rawValue] ?? [])
+            .sorted { $0.date < $1.date }
+        let calendar = StockChartSeriesProcessor.marketCalendar(store.market)
+        store.derivedSeries[StockChartSeriesKind.weekly.rawValue] =
+            StockChartSeriesProcessor.weeklyPoints(from: dailyPoints, calendar: calendar)
+        store.derivedSeries[StockChartSeriesKind.monthly.rawValue] =
+            StockChartSeriesProcessor.monthlyPoints(from: dailyPoints, calendar: calendar)
+        store.derivedSeries[StockChartSeriesKind.quarterly.rawValue] =
+            StockChartSeriesProcessor.preparedKLinePoints(
+                dailyPoints,
+                range: .quarterK,
+                market: store.market
+            )
+        store.derivedSeries[StockChartSeriesKind.yearly.rawValue] =
+            StockChartSeriesProcessor.preparedKLinePoints(
+                dailyPoints,
+                range: .yearK,
+                market: store.market
+            )
+        store.technicalIndicators[StockChartTechnicalCacheKind.daily.rawValue] =
+            StockTechnicalIndicators.calculate(dailyPoints)
     }
 
     private func fileName(for identifier: String) -> String {

@@ -10,21 +10,8 @@ enum StockChartRange: String, Codable, CaseIterable, Identifiable, Sendable {
     case quarterK
     case yearK
 
-    // Legacy values remain decodable for old cache metadata. They are not
-    // exposed by the picker and are not used for new chart requests.
-    case oneMonth
-    case threeMonths
-    case oneYear
-    case fiveYears
-    case tenYears
-    case sinceInception
-
     static var allCases: [Self] {
         [.intraday, .fiveDays, .dayK, .weekK, .monthK, .quarterK, .yearK]
-    }
-
-    static var allPersistedCases: [Self] {
-        allCases + [.oneMonth, .threeMonths, .oneYear, .fiveYears, .tenYears, .sinceInception]
     }
 
     var id: Self { self }
@@ -51,82 +38,45 @@ enum StockChartRange: String, Codable, CaseIterable, Identifiable, Sendable {
         case .monthK: return "月K"
         case .quarterK: return "季K"
         case .yearK: return "年K"
-        case .oneMonth: return "1 月"
-        case .threeMonths: return "3 月"
-        case .oneYear: return "1 年"
-        case .fiveYears: return "5 年"
-        case .tenYears: return "10 年"
-        case .sinceInception: return "成立以来"
         }
     }
 
     var yahooRange: String {
         switch self {
         case .intraday: return "5d"
-        case .fiveDays: return "1mo"
+        // Yahoo only supports 1-minute history for a short recent window.
+        case .fiveDays: return "5d"
         case .dayK: return "3mo"
         case .weekK: return "2y"
         case .monthK: return "5y"
         case .quarterK: return "10y"
         case .yearK: return "max"
-        case .oneMonth: return "1mo"
-        case .threeMonths: return "3mo"
-        case .oneYear: return "1y"
-        case .fiveYears: return "5y"
-        case .tenYears: return "10y"
-        case .sinceInception: return "max"
         }
     }
 
     var yahooInterval: String {
         switch self {
-        case .intraday: return "5m"
-        case .fiveDays: return "15m"
-        case .dayK: return "1d"
-        case .weekK: return "1wk"
-        case .monthK, .quarterK, .yearK: return "1mo"
-        case .oneMonth, .threeMonths, .oneYear: return "1d"
-        case .fiveYears, .tenYears: return "1wk"
-        case .sinceInception: return "1mo"
+        case .intraday, .fiveDays: return "1m"
+        case .dayK, .weekK, .monthK, .quarterK, .yearK: return "1d"
         }
     }
 
     var eastmoneyInterval: String {
         switch self {
-        case .intraday: return "5"
-        case .fiveDays: return "15"
-        case .dayK: return "101"
-        case .weekK: return "102"
-        case .monthK, .quarterK, .yearK: return "103"
-        case .oneMonth, .threeMonths, .oneYear: return "101"
-        case .fiveYears, .tenYears: return "102"
-        case .sinceInception: return "103"
+        case .intraday, .fiveDays: return "1"
+        case .dayK, .weekK, .monthK, .quarterK, .yearK: return "101"
         }
     }
 
     var providerPointLimit: Int {
         switch self {
         case .intraday: return 1_500
+        // Five regular US sessions require about 1,950 one-minute bars;
+        // 2,000 also covers A-share/HK sessions without requesting a month.
         case .fiveDays: return 2_000
         // K-line tabs share the same complete historical source. The range
         // only controls the aggregation granularity after fetching.
         case .dayK, .weekK, .monthK, .quarterK, .yearK: return 20_000
-        case .oneMonth: return 100
-        case .threeMonths: return 150
-        case .oneYear: return 330
-        case .fiveYears: return 330
-        case .tenYears: return 600
-        case .sinceInception: return 1_500
-        }
-    }
-
-    var dailyTechnicalPointLimit: Int {
-        switch self {
-        case .dayK, .weekK, .monthK, .quarterK, .yearK: return 20_000
-        case .fiveYears: return 1_500
-        case .tenYears: return 3_000
-        case .sinceInception: return 20_000
-        default: return 330
         }
     }
 
@@ -139,9 +89,6 @@ enum StockChartRange: String, Codable, CaseIterable, Identifiable, Sendable {
         case .monthK: return 30 * 60
         case .quarterK: return 60 * 60
         case .yearK: return 2 * 60 * 60
-        case .oneMonth, .threeMonths, .oneYear: return 5 * 60
-        case .fiveYears, .tenYears: return 15 * 60
-        case .sinceInception: return 30 * 60
         }
     }
 }
@@ -181,6 +128,10 @@ struct StockChartSnapshot: Codable, Equatable, Sendable {
     /// `indicatorPoints` instead, with historical warm-up bars kept out of
     /// the visible chart.
     let dailyIndicatorPoints: [StockChartPoint]?
+    /// Persisted technical overlays calculated from the raw minute and daily
+    /// sources. They are presentation caches, not additional source data.
+    let cachedMinuteTechnicalIndicators: [StockTechnicalIndicatorPoint]?
+    let cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]?
     let quoteUpdatedAt: Date
     let fetchedAt: Date
     let source: String
@@ -196,6 +147,8 @@ struct StockChartSnapshot: Codable, Equatable, Sendable {
         postMarketPoints: [StockChartPoint] = [],
         indicatorPoints: [StockChartPoint]?,
         dailyIndicatorPoints: [StockChartPoint]? = nil,
+        cachedMinuteTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
+        cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
         quoteUpdatedAt: Date,
         fetchedAt: Date,
         source: String,
@@ -210,6 +163,8 @@ struct StockChartSnapshot: Codable, Equatable, Sendable {
         self.postMarketPoints = postMarketPoints
         self.indicatorPoints = indicatorPoints
         self.dailyIndicatorPoints = dailyIndicatorPoints
+        self.cachedMinuteTechnicalIndicators = cachedMinuteTechnicalIndicators
+        self.cachedDailyTechnicalIndicators = cachedDailyTechnicalIndicators
         self.quoteUpdatedAt = quoteUpdatedAt
         self.fetchedAt = fetchedAt
         self.source = source
@@ -218,7 +173,8 @@ struct StockChartSnapshot: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case symbol, name, currencyCode, previousClose, points, preMarketPoints, postMarketPoints
-        case indicatorPoints, dailyIndicatorPoints, quoteUpdatedAt, fetchedAt, source
+        case indicatorPoints, dailyIndicatorPoints, cachedMinuteTechnicalIndicators
+        case cachedDailyTechnicalIndicators, quoteUpdatedAt, fetchedAt, source
         case supportsCandlesticks
     }
 
@@ -244,6 +200,14 @@ struct StockChartSnapshot: Codable, Equatable, Sendable {
         dailyIndicatorPoints = try container.decodeIfPresent(
             [StockChartPoint].self,
             forKey: .dailyIndicatorPoints
+        )
+        cachedMinuteTechnicalIndicators = try container.decodeIfPresent(
+            [StockTechnicalIndicatorPoint].self,
+            forKey: .cachedMinuteTechnicalIndicators
+        )
+        cachedDailyTechnicalIndicators = try container.decodeIfPresent(
+            [StockTechnicalIndicatorPoint].self,
+            forKey: .cachedDailyTechnicalIndicators
         )
         quoteUpdatedAt = try container.decode(Date.self, forKey: .quoteUpdatedAt)
         fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)

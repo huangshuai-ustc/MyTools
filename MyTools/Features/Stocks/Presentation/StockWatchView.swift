@@ -28,6 +28,8 @@ struct StockWatchView: View {
         let symbol: String
     }
 
+    private typealias SessionSummaryLoadKey = ScoreLoadKey
+
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
@@ -41,6 +43,8 @@ struct StockWatchView: View {
     @State private var hasAppliedDefaultDisplayModes = false
     @State private var snapshot: StockChartSnapshot?
     @State private var cachedSessionSummary: StockChartSessionSummary?
+    @State private var cachedSessionSnapshot: StockChartSnapshot?
+    @State private var cachedSessionSummaryKey: SessionSummaryLoadKey?
     @State private var technicalScore: StockInvestmentScore?
     @State private var selectedDate: Date?
     @State private var isRefreshing = false
@@ -71,6 +75,10 @@ struct StockWatchView: View {
         guard let stock else { return selectedDisplayModes }
         let session = StockMarketTradingCalendar.session(for: stock.market)
         var modes = selectedDisplayModes
+        if !stock.market.supportsExtendedHoursChart {
+            modes.remove(.preMarket)
+            modes.remove(.postMarket)
+        }
         if selectedRange != .intraday {
             // Extended-hours series are only meaningful on the intraday axis;
             // five-day and K-line charts must remain regular-session charts.
@@ -110,18 +118,90 @@ struct StockWatchView: View {
         )
     }
 
-    private func updateSessionSummary(
-        for snapshot: StockChartSnapshot,
-        stock: StockHolding
+    private var sessionSummaryLoadKey: SessionSummaryLoadKey {
+        scoreLoadKey
+    }
+
+    private var isSelectedChartAutoRefreshAllowed: Bool {
+        guard let stock else { return false }
+        let session = StockMarketTradingCalendar.session(for: stock.market)
+        switch selectedRange {
+        case .intraday:
+            return session != .closed
+        case .fiveDays:
+            return session == .regular
+        case .dayK, .weekK, .monthK, .quarterK, .yearK:
+            // K-lines follow the same regular-session refresh cadence as the
+            // formal intraday trend. Extended-hours special handling belongs
+            // only to the intraday chart.
+            return session == .regular
+        }
+    }
+
+    private func applySessionSummary(
+        from intradaySnapshot: StockChartSnapshot,
+        stock: StockHolding,
+        requestedKey: SessionSummaryLoadKey
     ) {
-        cachedSessionSummary = StockChartSeriesProcessor.currentSessionSummary(
-            from: snapshot.indicatorPoints ?? snapshot.points,
-            market: stock.market
+        guard !Task.isCancelled, sessionSummaryLoadKey == requestedKey else { return }
+        // The current-period panel always consumes the regular-session points
+        // from this independent intraday snapshot. It never derives from the
+        // selected K-line range.
+        let summary = StockChartSeriesProcessor.currentSessionSummary(
+            from: intradaySnapshot.points,
+            market: stock.market,
+            at: Date()
+        )
+        cachedSessionSummary = summary
+        cachedSessionSnapshot = summary == nil ? nil : intradaySnapshot
+        cachedSessionSummaryKey = summary == nil ? nil : requestedKey
+    }
+
+    private func refreshSessionSummary(
+        forceRefresh: Bool,
+        requestedKey: SessionSummaryLoadKey
+    ) async {
+        guard let stock else { return }
+        let session = StockMarketTradingCalendar.session(for: stock.market)
+        let summarySnapshot: StockChartSnapshot?
+        if forceRefresh || session != .closed {
+            summarySnapshot = try? await chartService.fetchChart(
+                for: stock,
+                range: .intraday,
+                forceRefresh: forceRefresh
+            )
+        } else {
+            // Closed markets do not auto-fetch. A cached last session can still
+            // be displayed, while the toolbar's manual refresh remains able to
+            // request it explicitly.
+            summarySnapshot = await chartService.cachedChart(
+                for: stock,
+                range: .intraday
+            )
+        }
+        guard !Task.isCancelled,
+              let summarySnapshot else { return }
+        applySessionSummary(
+            from: summarySnapshot,
+            stock: stock,
+            requestedKey: requestedKey
+        )
+    }
+
+    private func loadSessionSummaryIfNeeded() async {
+        guard stock != nil else { return }
+        let requestedKey = sessionSummaryLoadKey
+        guard cachedSessionSummaryKey != requestedKey else { return }
+        await refreshSessionSummary(
+            forceRefresh: false,
+            requestedKey: requestedKey
         )
     }
 
     private func clearSessionSummary() {
         cachedSessionSummary = nil
+        cachedSessionSnapshot = nil
+        cachedSessionSummaryKey = nil
     }
 
     private var currentSessionSummary: StockChartSessionSummary? {
@@ -174,10 +254,15 @@ struct StockWatchView: View {
         .task(id: loadKey) {
             selectedDate = nil
             visibleXDomain = nil
-            clearSessionSummary()
+            if cachedSessionSummaryKey != sessionSummaryLoadKey {
+                clearSessionSummary()
+            }
             applyDefaultDisplayModesIfNeeded()
             await loadChart(forceRefresh: false)
-            await pollMinuteChartIfNeeded()
+            if selectedRange != .intraday {
+                await loadSessionSummaryIfNeeded()
+            }
+            await pollActiveDataIfNeeded()
         }
         .task(id: scoreLoadKey) {
             technicalScore = nil
@@ -187,6 +272,12 @@ struct StockWatchView: View {
             guard phase == .active else { return }
             Task {
                 await loadChart(forceRefresh: false, showsProgress: false)
+                if selectedRange != .intraday {
+                    await refreshSessionSummary(
+                        forceRefresh: false,
+                        requestedKey: sessionSummaryLoadKey
+                    )
+                }
                 await loadTechnicalScore(forceRefresh: false, showsProgress: false)
             }
         }
@@ -243,53 +334,18 @@ struct StockWatchView: View {
             }
 
             if let snapshot, let summary = currentSessionSummary {
+                let summarySnapshot = cachedSessionSnapshot ?? snapshot
                 Section("当期数据") {
-                    LabeledContent(
-                        "开盘",
-                        value: StockChartPresentation.priceText(
-                            summary.open,
-                            currencyCode: snapshot.currencyCode
-                        )
+                    StockCurrentPeriodOverview(
+                        summary: summary,
+                        snapshot: summarySnapshot
                     )
-                    LabeledContent(
-                        "最高",
-                        value: StockChartPresentation.priceText(
-                            summary.high,
-                            currencyCode: snapshot.currencyCode
-                        )
-                    )
-                    LabeledContent(
-                        "最低",
-                        value: StockChartPresentation.priceText(
-                            summary.low,
-                            currencyCode: snapshot.currencyCode
-                        )
-                    )
-                    LabeledContent(
-                        "收盘 / 最新",
-                        value: StockChartPresentation.priceText(
-                            summary.close,
-                            currencyCode: snapshot.currencyCode
-                        )
-                    )
-                    if let volume = summary.volume {
-                        LabeledContent(
-                            "成交量",
-                            value: StockChartPresentation.volumeText(volume)
-                        )
-                    }
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 }
 
                 Section {
-                    LabeledContent("行情来源", value: snapshot.source)
-                    LabeledContent(
-                        "行情时间",
-                        value: AppDateFormatter.dateTimeString(from: snapshot.quoteUpdatedAt)
-                    )
-                    LabeledContent(
-                        "获取时间",
-                        value: AppDateFormatter.dateTimeString(from: snapshot.fetchedAt)
-                    )
+                    StockChartMetadataOverview(snapshot: summarySnapshot)
+                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 } footer: {
                     Text("公开行情可能存在延迟，仅供查看，请以交易所和券商数据为准。")
                 }
@@ -339,11 +395,12 @@ struct StockWatchView: View {
     private var chartModePicker: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
-                ForEach(StockChartDisplayMode.allCases) { mode in
+                ForEach(availableChartDisplayModes) { mode in
                     let isAvailable = StockChartPresentation.isModeAvailable(
                         mode,
                         in: snapshot,
-                        range: selectedRange
+                        range: selectedRange,
+                        market: stock?.market
                     )
                     let isSelected = displayModesForCurrentSession.contains(mode)
                     Button {
@@ -378,7 +435,21 @@ struct StockWatchView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var availableChartDisplayModes: [StockChartDisplayMode] {
+        guard let market = stock?.market else { return StockChartDisplayMode.allCases }
+        return StockChartDisplayMode.allCases.filter { mode in
+            ![.preMarket, .postMarket].contains(mode)
+                || market.supportsExtendedHoursChart
+        }
+    }
+
     private func toggleChartMode(_ mode: StockChartDisplayMode) {
+        guard StockChartPresentation.isModeAvailable(
+            mode,
+            in: snapshot,
+            range: selectedRange,
+            market: stock?.market
+        ) else { return }
         var currentModes = displayModesForCurrentSession
         if currentModes.contains(mode) {
             currentModes.remove(mode)
@@ -455,6 +526,26 @@ struct StockWatchView: View {
         let isRegularSession = StockMarketTradingCalendar.isOpen(stock.market)
         let isPreMarketSession = StockMarketTradingCalendar.isPreMarketOpen(stock.market)
         let isPostMarketSession = StockMarketTradingCalendar.isPostMarketOpen(stock.market)
+        let sessionTitle: String
+        let sessionIcon: String
+        let sessionColor: Color
+        if isRegularSession {
+            sessionTitle = "交易中"
+            sessionIcon = "circle.fill"
+            sessionColor = .green
+        } else if isPreMarketSession && stock.market.supportsExtendedHoursChart {
+            sessionTitle = "盘前交易"
+            sessionIcon = "clock.arrow.2.circlepath"
+            sessionColor = .orange
+        } else if isPostMarketSession && stock.market.supportsExtendedHoursChart {
+            sessionTitle = "盘后交易"
+            sessionIcon = "clock"
+            sessionColor = .blue
+        } else {
+            sessionTitle = "已休市"
+            sessionIcon = "moon.zzz"
+            sessionColor = .secondary
+        }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 StockMarketBadge(market: stock.market)
@@ -465,24 +556,9 @@ struct StockWatchView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                Label(
-                    isRegularSession
-                        ? "交易中"
-                        : isPreMarketSession
-                            ? "盘前交易"
-                            : isPostMarketSession ? "盘后交易" : "已休市",
-                    systemImage: isRegularSession
-                        ? "circle.fill"
-                        : isPreMarketSession
-                            ? "clock.arrow.2.circlepath"
-                            : isPostMarketSession ? "clock" : "moon.zzz"
-                )
+                Label(sessionTitle, systemImage: sessionIcon)
                 .font(.caption)
-                .foregroundStyle(
-                    isRegularSession
-                        ? .green
-                        : isPreMarketSession ? .orange : isPostMarketSession ? .blue : .secondary
-                )
+                .foregroundStyle(sessionColor)
             }
 
             if let snapshot, let latest = snapshot.latestPoint {
@@ -776,14 +852,30 @@ struct StockWatchView: View {
             }
         }
 
-        if !forceRefresh,
-           let cached = await chartService.cachedChart(
+        let cached = forceRefresh
+            ? nil
+            : await chartService.cachedChart(
                 for: stock,
                 range: selectedRange
-            ) {
+            )
+        if let cached {
             guard !Task.isCancelled else { return }
             snapshot = cached
-            updateSessionSummary(for: cached, stock: stock)
+            if selectedRange == .intraday {
+                applySessionSummary(
+                    from: cached,
+                    stock: stock,
+                    requestedKey: sessionSummaryLoadKey
+                )
+            }
+        }
+
+        guard forceRefresh
+                || StockMarketTradingCalendar.isSessionActive(stock.market) else {
+            return
+        }
+        guard forceRefresh || cached == nil || isSelectedChartAutoRefreshAllowed else {
+            return
         }
 
         do {
@@ -794,7 +886,13 @@ struct StockWatchView: View {
             )
             guard !Task.isCancelled else { return }
             snapshot = updated
-            updateSessionSummary(for: updated, stock: stock)
+            if selectedRange == .intraday {
+                applySessionSummary(
+                    from: updated,
+                    stock: stock,
+                    requestedKey: sessionSummaryLoadKey
+                )
+            }
             removeUnavailableChartModes(for: updated)
             errorMessage = nil
         } catch is CancellationError {
@@ -828,6 +926,12 @@ struct StockWatchView: View {
     private func refreshChartAndScore() async {
         guard let stock else { return }
         await loadChart(forceRefresh: true)
+        if selectedRange != .intraday {
+            await refreshSessionSummary(
+                forceRefresh: true,
+                requestedKey: sessionSummaryLoadKey
+            )
+        }
         if selectedRange == .dayK, let snapshot {
             let fundamentals = await fundamentalService.fundamentals(
                 for: stock,
@@ -859,11 +963,13 @@ struct StockWatchView: View {
             forceRefresh: forceRefresh
         )
 
-        if !forceRefresh,
-           let cached = await chartService.cachedChart(
+        let cached = forceRefresh
+            ? nil
+            : await chartService.cachedChart(
                 for: stock,
                 range: .dayK
-           ) {
+            )
+        if let cached {
             guard !Task.isCancelled, scoreLoadKey == requestedKey else { return }
             technicalScore = StockInvestmentScoreModel.calculate(
                 StockInvestmentScoreInput(
@@ -871,6 +977,12 @@ struct StockWatchView: View {
                     fundamentals: fundamentals
                 )
             )
+        }
+
+        guard forceRefresh
+                || (cached == nil
+                    && StockMarketTradingCalendar.isSessionActive(stock.market)) else {
+            return
         }
 
         do {
@@ -899,7 +1011,8 @@ struct StockWatchView: View {
                 StockChartPresentation.isModeAvailable(
                     $0,
                     in: snapshot,
-                    range: selectedRange
+                    range: selectedRange,
+                    market: stock?.market
                 )
             }
         )
@@ -915,8 +1028,7 @@ struct StockWatchView: View {
         hasAppliedDefaultDisplayModes = true
     }
 
-    private func pollMinuteChartIfNeeded() async {
-        guard selectedRange == .intraday || selectedRange == .fiveDays else { return }
+    private func pollActiveDataIfNeeded() async {
         while !Task.isCancelled {
             do {
                 let interval = selectedRange == .intraday ? 30 : 60
@@ -928,16 +1040,124 @@ struct StockWatchView: View {
                   scenePhase == .active,
                   let stock else { continue }
             let session = StockMarketTradingCalendar.session(for: stock.market)
-            // Five-day data is regular-session minute data. Only the intraday
-            // tab follows pre-market/post-market updates; otherwise this loop
-            // would repeatedly request an unchanged five-day series while an
-            // extended-hours stream is active.
-            guard session == .regular
-                    || (selectedRange == .intraday && session != .closed) else {
+            guard session != .closed else {
                 continue
             }
-            await loadChart(forceRefresh: false, showsProgress: false)
+            if selectedRange == .intraday {
+                // The intraday tab follows the active session: US pre-market,
+                // regular trading, or US post-market. A/HK only reach regular.
+                await loadChart(forceRefresh: false, showsProgress: false)
+            } else if selectedRange == .fiveDays, session == .regular {
+                await loadChart(forceRefresh: false, showsProgress: false)
+            } else if selectedRange.isKLineRange,
+                      (session == .regular || session == .postMarket) {
+                // During post-market this first reads the disk result of the
+                // coordinator's complete final-session refresh. The service
+                // cache policy prevents another remote K-line request.
+                await loadChart(forceRefresh: false, showsProgress: false)
+            }
+
+            // The current-period panel is independent of the selected chart
+            // range, so K-line and five-day pages refresh its minute snapshot
+            // during the same active session without reloading their chart.
+            if selectedRange != .intraday {
+                await refreshSessionSummary(
+                    forceRefresh: false,
+                    requestedKey: sessionSummaryLoadKey
+                )
+            }
         }
+    }
+}
+
+private struct StockCurrentPeriodOverview: View {
+    let summary: StockChartSessionSummary
+    let snapshot: StockChartSnapshot
+
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            StockWatchMetricCell(
+                title: "开盘",
+                value: priceText(summary.open)
+            )
+            StockWatchMetricCell(
+                title: "最高",
+                value: priceText(summary.high)
+            )
+            StockWatchMetricCell(
+                title: "最低",
+                value: priceText(summary.low)
+            )
+            StockWatchMetricCell(
+                title: "收盘 / 最新",
+                value: priceText(summary.close)
+            )
+            if let volume = summary.volume {
+                StockWatchMetricCell(
+                    title: "成交量",
+                    value: StockChartPresentation.volumeText(volume)
+                )
+            }
+            StockWatchMetricCell(
+                title: "数据日期",
+                value: AppDateFormatter.string(from: summary.date)
+            )
+        }
+    }
+
+    private func priceText(_ value: Double) -> String {
+        StockChartPresentation.priceText(value, currencyCode: snapshot.currencyCode)
+    }
+}
+
+private struct StockChartMetadataOverview: View {
+    let snapshot: StockChartSnapshot
+
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            StockWatchMetricCell(title: "行情来源", value: snapshot.source)
+            StockWatchMetricCell(
+                title: "行情时间",
+                value: AppDateFormatter.dateTimeString(from: snapshot.quoteUpdatedAt)
+            )
+            StockWatchMetricCell(
+                title: "获取时间",
+                value: AppDateFormatter.dateTimeString(from: snapshot.fetchedAt)
+            )
+        }
+    }
+}
+
+private struct StockWatchMetricCell: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.monospacedDigit())
+                .lineLimit(2)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

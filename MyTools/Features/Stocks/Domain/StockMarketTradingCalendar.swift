@@ -56,12 +56,7 @@ enum StockMarketTradingCalendar {
     static func isPreMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
         switch market {
         case .aShare:
-            return isOpen(
-                date,
-                timeZone: "Asia/Shanghai",
-                sessions: [(555, 570)],
-                holiday: isAShareHoliday
-            )
+            return false
         case .hongKong:
             return false
         case .unitedStates:
@@ -77,12 +72,7 @@ enum StockMarketTradingCalendar {
     static func isPostMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
         switch market {
         case .aShare:
-            return isOpen(
-                date,
-                timeZone: "Asia/Shanghai",
-                sessions: [(900, 903)],
-                holiday: isAShareHoliday
-            )
+            return false
         case .hongKong:
             return false
         case .unitedStates:

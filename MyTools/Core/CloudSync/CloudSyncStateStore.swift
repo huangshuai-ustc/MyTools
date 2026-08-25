@@ -23,19 +23,22 @@ struct CloudSyncStoredDocument: Codable, Sendable {
     var deviceID: String
     var accountRecordName: String?
     var reconciliationVersion: Int?
+    var rebuildGeneration: Int64?
 
     init(
         engineState: CKSyncEngine.State.Serialization? = nil,
         entries: [String: CloudSyncStoredEntry] = [:],
         deviceID: String = UUID().uuidString.lowercased(),
         accountRecordName: String? = nil,
-        reconciliationVersion: Int? = Self.currentReconciliationVersion
+        reconciliationVersion: Int? = Self.currentReconciliationVersion,
+        rebuildGeneration: Int64? = 0
     ) {
         self.engineState = engineState
         self.entries = entries
         self.deviceID = deviceID
         self.accountRecordName = accountRecordName
         self.reconciliationVersion = reconciliationVersion
+        self.rebuildGeneration = rebuildGeneration
     }
 
     mutating func prepareForCurrentReconciliationVersion() -> Bool {
@@ -46,6 +49,19 @@ struct CloudSyncStoredDocument: Codable, Sendable {
         entries = [:]
         reconciliationVersion = Self.currentReconciliationVersion
         return true
+    }
+
+    mutating func resetForRemoteRebuild(
+        accountRecordName: String?,
+        rebuildGeneration: Int64? = nil
+    ) {
+        engineState = nil
+        entries = [:]
+        self.accountRecordName = accountRecordName
+        reconciliationVersion = Self.currentReconciliationVersion
+        if let rebuildGeneration {
+            self.rebuildGeneration = rebuildGeneration
+        }
     }
 
     /// CloudKit system fields are only needed while a record is being retried.

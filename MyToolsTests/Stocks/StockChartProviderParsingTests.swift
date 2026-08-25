@@ -3,12 +3,24 @@ import Testing
 @testable import MyTools
 
 struct StockChartProviderParsingTests {
+    @Test func minuteRangesUseOneMinuteProviderIntervals() {
+        #expect(StockChartRange.intraday.yahooInterval == "1m")
+        #expect(StockChartRange.fiveDays.yahooInterval == "1m")
+        #expect(StockChartRange.intraday.eastmoneyInterval == "1")
+        #expect(StockChartRange.fiveDays.eastmoneyInterval == "1")
+        #expect(StockChartRange.weekK.yahooInterval == "1d")
+        #expect(StockChartRange.monthK.yahooInterval == "1d")
+        #expect(StockChartRange.weekK.eastmoneyInterval == "101")
+        #expect(StockChartRange.monthK.eastmoneyInterval == "101")
+        #expect(StockChartRange.fiveDays.yahooRange == "5d")
+    }
+
     @Test func tencentProviderParsesMinuteOHLCAndQuoteMetadata() async throws {
         let payload: [String: Any] = [
             "code": 0,
             "data": [
                 "usVOO": [
-                    "m5": [["202608031000", "10", "11", "12", "9", "100"]],
+                    "m1": [["202608031000", "10", "11", "12", "9", "100"]],
                     "qt": ["usVOO": ["", "VOO Name", "", "", "9.5"]]
                 ]
             ]
@@ -30,6 +42,34 @@ struct StockChartProviderParsingTests {
         #expect(snapshot.points.first?.low == 9)
         #expect(snapshot.points.first?.close == 11)
         #expect(snapshot.points.first?.volume == 100)
+    }
+
+    @Test func tencentProviderKeepsCoarserReturnedMinuteInterval() async throws {
+        let payload: [String: Any] = [
+            "code": 0,
+            "data": [
+                "usNTES": [
+                    "m3": [
+                        ["202608031000", "10", "11", "12", "9", "100"],
+                        ["202608031003", "11", "12", "13", "10", "200"]
+                    ],
+                    "qt": ["usNTES": ["", "网易", "", "", "9.5"]]
+                ]
+            ]
+        ]
+        let provider = TencentStockChartProvider(
+            httpClient: StubStockChartHTTPClient(responseData: try json(payload))
+        )
+
+        let snapshot = try await provider.fetchChart(for: request(
+            market: .unitedStates,
+            range: .intraday
+        ))
+
+        #expect(snapshot.points.count == 2)
+        #expect(
+            snapshot.points[1].date.timeIntervalSince(snapshot.points[0].date) == 180
+        )
     }
 
     @Test func yahooProviderParsesParallelQuoteArrays() async throws {
@@ -62,7 +102,7 @@ struct StockChartProviderParsingTests {
 
         let snapshot = try await provider.fetchChart(for: request(
             market: .unitedStates,
-            range: .oneMonth
+            range: .dayK
         ))
 
         #expect(snapshot.source == "Yahoo Finance")
@@ -90,7 +130,7 @@ struct StockChartProviderParsingTests {
 
         let snapshot = try await provider.fetchChart(for: request(
             market: .aShare,
-            range: .oneMonth
+            range: .dayK
         ))
 
         #expect(snapshot.source == "东方财富")
@@ -123,7 +163,7 @@ struct StockChartProviderParsingTests {
 
         let snapshot = try await provider.fetchChart(for: request(
             market: .unitedStates,
-            range: .oneMonth
+            range: .dayK
         ))
 
         #expect(snapshot.source == "Nasdaq")

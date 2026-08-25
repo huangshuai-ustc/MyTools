@@ -218,6 +218,42 @@ struct CloudSyncMergerTests {
         #expect(!repeatedUpgrade)
     }
 
+    @Test func remoteRebuildResetsOnlyCloudSyncState() {
+        let id = UUID()
+        let key = CloudSyncItem.key(kind: .billRecord, id: id)
+        var document = CloudSyncStoredDocument(
+            entries: [
+                key: CloudSyncStoredEntry(
+                    kind: .billRecord,
+                    id: id,
+                    digest: Data([1, 2, 3]),
+                    modifiedAt: Date(timeIntervalSince1970: 100),
+                    deviceID: "remote-device",
+                    isDeleted: false,
+                    payload: Data([4, 5, 6]),
+                    systemFields: Data([7, 8, 9])
+                )
+            ],
+            deviceID: "local-device",
+            accountRecordName: "old-account"
+        )
+
+        document.resetForRemoteRebuild(
+            accountRecordName: "current-account",
+            rebuildGeneration: 7
+        )
+
+        #expect(document.entries.isEmpty)
+        #expect(document.engineState == nil)
+        #expect(document.deviceID == "local-device")
+        #expect(document.accountRecordName == "current-account")
+        #expect(document.rebuildGeneration == 7)
+        #expect(
+            document.reconciliationVersion
+                == CloudSyncStoredDocument.currentReconciliationVersion
+        )
+    }
+
     @Test func cloudSyncStateUsesCompressedLocalFormatAndRoundTrips() throws {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MyTools-CloudSyncState-\(UUID().uuidString)", isDirectory: true)

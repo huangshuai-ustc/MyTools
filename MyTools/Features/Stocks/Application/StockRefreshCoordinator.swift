@@ -149,7 +149,7 @@ final class StockRefreshCoordinator {
             now: now
         )
         if !closingChartSessions.isEmpty {
-            await refreshClosingCharts(
+            await refreshClosingData(
                 in: store,
                 sessions: closingChartSessions
             )
@@ -191,10 +191,10 @@ final class StockRefreshCoordinator {
         var result: [StockMarket: Date] = [:]
         for market in StockMarket.allCases {
             let session = StockMarketTradingCalendar.session(for: market, at: now)
-            // Do not refresh K-lines during a live post-market stream. A
-            // pre-market launch may still catch up a missed prior close, while
-            // a normal active session waits for the final close.
-            guard session == .closed || session == .preMarket,
+            // The complete source refresh is keyed to the final regular-session
+            // close. For US stocks it can run during post-market while the
+            // completed regular-session data is already available.
+            guard session != .regular,
                   store.stocks.contains(where: {
                       $0.market == market && $0.hasConfiguredSymbol
                   }),
@@ -215,40 +215,36 @@ final class StockRefreshCoordinator {
         return result
     }
 
-    private func refreshClosingCharts(
+    private func refreshClosingData(
         in store: StockStore,
         sessions: [StockMarket: Date]
     ) async {
-        let stocks = store.stocks.filter { sessions[$0.market] != nil && $0.hasConfiguredSymbol }
+        let stocks = store.stocks.filter {
+            sessions[$0.market] != nil && $0.hasConfiguredSymbol
+        }
         DiagnosticLogger.shared.log(
             .stockQuote,
-            "检测到收盘走势图补刷标的：\(stocks.count)"
+            "检测到收市完整行情补刷标的：\(stocks.count)"
         )
         for market in StockMarket.displayOrder where sessions[market] != nil {
             var didRefreshAllStocks = true
             for stock in stocks where stock.market == market {
                 guard !Task.isCancelled else { return }
                 do {
-                    _ = try await chartService.fetchChart(
-                        for: stock,
-                        // All K-line tabs derive from the canonical daily
-                        // source, so one daily request updates day/week/month/
-                        // quarter/year caches together.
-                        range: .dayK,
-                        forceRefresh: true
-                    )
+                    _ = try await chartService.refreshAfterFinalSession(for: stock)
                 } catch is CancellationError {
                     return
                 } catch {
                     didRefreshAllStocks = false
                     DiagnosticLogger.logError(
                         .stockQuote,
-                        operation: "收盘走势图补刷 \(stock.symbol)",
+                        operation: "收市完整行情补刷 \(stock.symbol)",
                         error: error
                     )
                 }
             }
-            if didRefreshAllStocks, let sessionEnd = sessions[market] {
+            if didRefreshAllStocks,
+               let sessionEnd = sessions[market] {
                 lastClosingChartRefreshSessionEndByMarket[market] = sessionEnd
             }
         }

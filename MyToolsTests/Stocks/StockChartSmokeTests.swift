@@ -4,7 +4,6 @@ import Testing
 struct StockChartSmokeTests {
     @Test func chartRangesRemainStable() {
         #expect(StockChartRange.allCases.count == 7)
-        #expect(StockChartRange.allPersistedCases.count == 13)
         #expect(StockChartRange.allCases.map(\.title) == [
             "分时", "5 日", "日K", "周K", "月K", "季K", "年K"
         ])

@@ -47,28 +47,20 @@ struct YahooStockChartProvider: StockChartProvider {
         let stock = request.stock
         let symbol = request.symbol
         let range = request.range
-        let usesDailyTechnicalInterval = request.usesDailyTechnicalInterval
         let path = "/v8/finance/chart/\(identifier(symbol, market: stock.market))"
         var queryItems = [
             URLQueryItem(
                 name: "interval",
-                value: usesDailyTechnicalInterval ? "1d" : range.yahooInterval
+                value: range.isKLineRange ? "1d" : range.yahooInterval
             ),
             URLQueryItem(name: "includePrePost", value: "true"),
             URLQueryItem(name: "events", value: "div,splits")
         ]
-        if range == .yearK && !usesDailyTechnicalInterval {
+        if range == .yearK {
             // `max` is Yahoo's complete-history mode. It avoids relying on a
             // guessed start date that can be interpreted as a finite window.
             queryItems.append(URLQueryItem(name: "range", value: range.yahooRange))
-        } else if range == .sinceInception {
-            // Yahoo accepts pre-Unix timestamps, so old listings are not truncated at 1970.
-            queryItems.append(URLQueryItem(name: "period1", value: "-2208988800"))
-            queryItems.append(URLQueryItem(
-                name: "period2",
-                value: String(Int(Date().timeIntervalSince1970))
-            ))
-        } else if usesDailyTechnicalInterval || (range != .intraday && range != .fiveDays) {
+        } else if range.isKLineRange {
             let endDate = Date()
             let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
             let startDate = StockChartSeriesProcessor.historicalStartDate(
@@ -110,25 +102,22 @@ struct YahooStockChartProvider: StockChartProvider {
                 volume: value(in: values.volume, at: index)
             )
         }
-        let rawPreMarketPoints = !usesDailyTechnicalInterval
-            && stock.market == .unitedStates && range == .intraday
+        let rawPreMarketPoints = stock.market == .unitedStates && range == .intraday
             ? StockChartSeriesProcessor.preMarketUnitedStatesSessionPoints(parsedPoints)
                 .sorted { $0.date < $1.date }
             : []
-        let rawPostMarketPoints = !usesDailyTechnicalInterval
-            && stock.market == .unitedStates && range == .intraday
+        let rawPostMarketPoints = stock.market == .unitedStates && range == .intraday
             ? StockChartSeriesProcessor.postMarketSessionPoints(parsedPoints, market: .unitedStates)
                 .sorted { $0.date < $1.date }
             : []
-        let regularPoints = !usesDailyTechnicalInterval
-            && stock.market == .unitedStates
+        let regularPoints = stock.market == .unitedStates
             && (range == .intraday || range == .fiveDays)
             ? StockChartSeriesProcessor.regularUnitedStatesSessionPoints(parsedPoints)
             : parsedPoints
         guard !regularPoints.isEmpty else { throw StockChartError.noData }
         let points: [StockChartPoint]
         let fetchedIndicatorPoints: [StockChartPoint]?
-        if !usesDailyTechnicalInterval && (range == .intraday || range == .fiveDays) {
+        if range == .intraday || range == .fiveDays {
             let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
                 regularPoints,
                 range: range,

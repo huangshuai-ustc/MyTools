@@ -1,5 +1,6 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Charts
+import Foundation
 import SwiftUI
 
 private enum StockChartVisualStyle {
@@ -24,6 +25,13 @@ struct StockChartCanvas: View {
     @Binding var isInteracting: Bool
     @State private var lastPanTranslation: CGFloat = 0
     @State private var lastMagnification: CGFloat = 1
+    @State private var isLongPressPanning = false
+    @State private var didBeginLongPressPan = false
+    @State private var isPointerDown = false
+    @State private var longPressTask: Task<Void, Never>?
+    @State private var initialPointerLocation: CGPoint = .zero
+    @State private var latestPointerLocation: CGPoint = .zero
+    @State private var lastSelectionUpdateTime: TimeInterval = 0
     @State private var hasUserAdjustedVisibleXDomain = false
     @State private var cachedPresentation: StockChartPresentation
 
@@ -34,6 +42,8 @@ struct StockChartCanvas: View {
         let snapshotLatestDate: Date?
         let snapshotIndicatorPointCount: Int
         let snapshotDailyIndicatorPointCount: Int
+        let cachedMinuteIndicatorPointCount: Int
+        let cachedDailyIndicatorPointCount: Int
         let snapshotPreMarketPointCount: Int
         let snapshotPostMarketPointCount: Int
         let stockMarket: StockMarket
@@ -81,6 +91,8 @@ struct StockChartCanvas: View {
             snapshotLatestDate: snapshot.points.last?.date,
             snapshotIndicatorPointCount: snapshot.indicatorPoints?.count ?? 0,
             snapshotDailyIndicatorPointCount: snapshot.dailyIndicatorPoints?.count ?? 0,
+            cachedMinuteIndicatorPointCount: snapshot.cachedMinuteTechnicalIndicators?.count ?? 0,
+            cachedDailyIndicatorPointCount: snapshot.cachedDailyTechnicalIndicators?.count ?? 0,
             snapshotPreMarketPointCount: snapshot.preMarketPoints.count,
             snapshotPostMarketPointCount: snapshot.postMarketPoints.count,
             stockMarket: stock.market,
@@ -560,57 +572,111 @@ struct StockChartCanvas: View {
         )
         .chartOverlay { proxy in
             GeometryReader { geometry in
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .highPriorityGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                isInteracting = true
-                                guard let plotFrame = proxy.plotFrame else { return }
-                                let frame = geometry[plotFrame]
-                                if range.isKLineRange,
-                                   abs(value.translation.width) > 8 {
-                                    let deltaPixels = value.translation.width - lastPanTranslation
-                                    lastPanTranslation = value.translation.width
-                                    let deltaDomain = -Double(deltaPixels / max(frame.width, 1))
-                                        * (chartXDomain.upperBound - chartXDomain.lowerBound)
-                                    panViewport(
-                                        by: deltaDomain,
+                if range.isKLineRange {
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        // A normal drag selects the nearest point. The
+                        // same gesture upgrades to viewport panning after a
+                        // deliberate hold; using one drag recognizer avoids
+                        // two competing DragGesture state machines.
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    if !isPointerDown {
+                                        beginLongPressTimer(at: value.location)
+                                    }
+                                    latestPointerLocation = value.location
+                                    isInteracting = true
+                                    if isLongPressPanning {
+                                        if !didBeginLongPressPan {
+                                            // Ignore the movement that was
+                                            // already used for point selection
+                                            // before the hold threshold.
+                                            lastPanTranslation = value.translation.width
+                                            didBeginLongPressPan = true
+                                        } else if let plotFrame = proxy.plotFrame {
+                                            let frame = geometry[plotFrame]
+                                            let deltaPixels = value.translation.width
+                                                - lastPanTranslation
+                                            lastPanTranslation = value.translation.width
+                                            let deltaDomain = -Double(
+                                                deltaPixels / max(frame.width, 1)
+                                            ) * (chartXDomain.upperBound
+                                                - chartXDomain.lowerBound)
+                                            panViewport(
+                                                by: deltaDomain,
+                                                presentation: presentation,
+                                                isExpanded: isExpanded
+                                            )
+                                            hasUserAdjustedVisibleXDomain = true
+                                        }
+                                    } else {
+                                        selectPoint(
+                                            at: value.location,
+                                            proxy: proxy,
+                                            geometry: geometry,
+                                            presentation: presentation,
+                                            visibleDomain: chartXDomain
+                                        )
+                                    }
+                                }
+                                .onEnded { value in
+                                    endLongPressTimer()
+                                    if !isLongPressPanning {
+                                        selectPoint(
+                                            at: value.location,
+                                            proxy: proxy,
+                                            geometry: geometry,
+                                            presentation: presentation,
+                                            visibleDomain: chartXDomain,
+                                            force: true
+                                        )
+                                    }
+                                    isLongPressPanning = false
+                                    didBeginLongPressPan = false
+                                    lastPanTranslation = 0
+                                    initialPointerLocation = .zero
+                                    latestPointerLocation = .zero
+                                    finishInteraction()
+                                }
+                        )
+                } else {
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    isInteracting = true
+                                    selectPoint(
+                                        at: value.location,
+                                        proxy: proxy,
+                                        geometry: geometry,
                                         presentation: presentation,
-                                        isExpanded: isExpanded
+                                        visibleDomain: chartXDomain
                                     )
-                                    hasUserAdjustedVisibleXDomain = true
-                                    selectedDate = nil
-                                    return
                                 }
-                                guard frame.contains(value.location) else {
-                                    selectedDate = nil
-                                    return
+                                .onEnded { value in
+                                    selectPoint(
+                                        at: value.location,
+                                        proxy: proxy,
+                                        geometry: geometry,
+                                        presentation: presentation,
+                                        visibleDomain: chartXDomain,
+                                        force: true
+                                    )
+                                    finishInteraction()
                                 }
-                                let location = CGPoint(
-                                    x: value.location.x - frame.minX,
-                                    y: value.location.y - frame.minY
-                                )
-                                if let x: Double = proxy.value(atX: location.x),
-                                   let plotPoint = presentation.plotPoint(closestTo: x) {
-                                    selectedDate = plotPoint.point.date
-                                }
-                            }
-                            .onEnded { _ in
-                                lastPanTranslation = 0
-                                Task { @MainActor in
-                                    await Task.yield()
-                                    isInteracting = false
-                                }
-                            }
-                    )
+                        )
+                }
             }
         }
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { value in
                     guard range.isKLineRange else { return }
+                    selectedDate = nil
                     let scale = value / max(lastMagnification, 0.01)
                     lastMagnification = value
                     zoomViewport(
@@ -627,6 +693,80 @@ struct StockChartCanvas: View {
         .accessibilityLabel(
             "\(stock.displayName)\(range.title)\(presentation.displayModesTitle)图"
         )
+    }
+
+    private func selectPoint(
+        at location: CGPoint,
+        proxy: ChartProxy,
+        geometry: GeometryProxy,
+        presentation: StockChartPresentation,
+        visibleDomain: ClosedRange<Double>,
+        force: Bool = false
+    ) {
+        guard let plotFrame = proxy.plotFrame else { return }
+        let frame = geometry[plotFrame]
+        guard frame.contains(location) else {
+            if selectedDate != nil {
+                selectedDate = nil
+            }
+            return
+        }
+        let localLocation = CGPoint(
+            x: location.x - frame.minX,
+            y: location.y - frame.minY
+        )
+        if let x: Double = proxy.value(atX: localLocation.x),
+           let plotPoint = presentation.plotPoint(
+               closestTo: x,
+               in: visibleDomain
+           ) {
+            let pointDate = plotPoint.point.date
+            guard selectedDate != pointDate else { return }
+            let now = Date.timeIntervalSinceReferenceDate
+            guard force || now - lastSelectionUpdateTime >= (1 / 30) else {
+                return
+            }
+            lastSelectionUpdateTime = now
+            selectedDate = pointDate
+        }
+    }
+
+    private func finishInteraction() {
+        lastSelectionUpdateTime = 0
+        Task { @MainActor in
+            await Task.yield()
+            isInteracting = false
+        }
+    }
+
+    private func beginLongPressTimer(at location: CGPoint) {
+        isPointerDown = true
+        initialPointerLocation = location
+        latestPointerLocation = location
+        isLongPressPanning = false
+        didBeginLongPressPan = false
+        longPressTask?.cancel()
+        longPressTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            let distance = hypot(
+                latestPointerLocation.x - initialPointerLocation.x,
+                latestPointerLocation.y - initialPointerLocation.y
+            )
+            guard isPointerDown, distance <= 14 else { return }
+            isLongPressPanning = true
+            didBeginLongPressPan = false
+            selectedDate = nil
+        }
+    }
+
+    private func endLongPressTimer() {
+        isPointerDown = false
+        longPressTask?.cancel()
+        longPressTask = nil
     }
 
     private func panViewport(
@@ -683,10 +823,6 @@ struct StockChartCanvas: View {
     ) -> some View {
         let indicator = presentation.technicalIndicator(at: point)
         let selections = presentation.transactionSelections(at: point)
-        let closeText = StockChartPresentation.priceText(
-            point.close,
-            currencyCode: snapshot.currencyCode
-        )
         let volumeText = point.volume.map(StockChartPresentation.volumeText) ?? "--"
         return VStack(alignment: .leading, spacing: 4) {
             summaryRow {
@@ -694,24 +830,7 @@ struct StockChartCanvas: View {
                     .foregroundStyle(.secondary)
             }
 
-            if presentation.hasBasePriceChart {
-                summaryRow {
-                    if displayModes.contains(.candlestick) {
-                        Text("开 \(StockChartPresentation.plainPriceText(point.open))")
-                        Text("高 \(StockChartPresentation.plainPriceText(point.high))")
-                        Text("低 \(StockChartPresentation.plainPriceText(point.low))")
-                        Text("收 \(closeText)")
-                    } else {
-                        Text("走势 \(closeText)")
-                    }
-                }
-                .foregroundStyle(
-                    presentation.isPreMarket(point)
-                        ? Color.orange
-                        : presentation.isPostMarket(point) ? Color.blue : Color.primary
-                )
-                .fontWeight(.medium)
-            }
+            sessionSummaryRows(presentation, selectedPoint: point)
 
             if presentation.hasBasePriceChart, !selections.isEmpty {
                 summaryRow {
@@ -740,28 +859,6 @@ struct StockChartCanvas: View {
                     Text("\(volumeDirectionText(point))成交量 \(volumeText)")
                         .fontWeight(.medium)
                 }
-            }
-
-            if presentation.hasPreMarketChart,
-               !presentation.isPreMarket(point),
-               let preMarket = presentation.preMarketPlotPoints.last?.point {
-                extendedHoursSummaryRow(
-                    title: presentation.preMarketTitle,
-                    point: preMarket,
-                    color: .orange,
-                    presentation: presentation
-                )
-            }
-
-            if presentation.hasPostMarketChart,
-               !presentation.isPostMarket(point),
-               let postMarket = presentation.postMarketPlotPoints.last?.point {
-                extendedHoursSummaryRow(
-                    title: presentation.postMarketTitle,
-                    point: postMarket,
-                    color: .blue,
-                    presentation: presentation
-                )
             }
 
             if displayModes.contains(.macd), let indicator {
@@ -842,22 +939,86 @@ struct StockChartCanvas: View {
         .minimumScaleFactor(0.72)
     }
 
-    private func extendedHoursSummaryRow(
-        title: String,
-        point: StockChartPoint,
-        color: Color,
+    @ViewBuilder
+    private func sessionSummaryRows(
+        _ presentation: StockChartPresentation,
+        selectedPoint: StockChartPoint?
+    ) -> some View {
+        if presentation.hasPreMarketChart {
+            let point = selectedPoint.flatMap {
+                presentation.isPreMarket($0) ? $0 : nil
+            } ?? presentation.preMarketPlotPoints.last?.point
+            fixedExtendedHoursSummaryRow(
+                title: presentation.preMarketTitle,
+                point: point,
+                color: .orange,
+                presentation: presentation,
+                onlyPrice: true
+            )
+        }
+
+        if presentation.hasBasePriceChart {
+            let point = selectedPoint.flatMap {
+                presentation.isPreMarket($0) || presentation.isPostMarket($0) ? nil : $0
+            } ?? presentation.plotPoints.last?.point
+            regularSummaryRow(point: point, presentation: presentation)
+        }
+
+        if presentation.hasPostMarketChart {
+            let point = selectedPoint.flatMap {
+                presentation.isPostMarket($0) ? $0 : nil
+            } ?? presentation.postMarketPlotPoints.last?.point
+            fixedExtendedHoursSummaryRow(
+                title: presentation.postMarketTitle,
+                point: point,
+                color: .blue,
+                presentation: presentation,
+                onlyPrice: false
+            )
+        }
+    }
+
+    private func regularSummaryRow(
+        point: StockChartPoint?,
         presentation: StockChartPresentation
     ) -> some View {
-        let price = StockChartPresentation.priceText(
-            point.close,
-            currencyCode: snapshot.currencyCode
-        )
-        return summaryRow {
-            Text("\(title) \(presentation.chartDateText(point.date))")
-            Text("价格 \(price)")
-            if title == presentation.preMarketTitle {
-                Text("仅价格")
-                    .foregroundStyle(.secondary)
+        summaryRow {
+            if let point {
+                Text("盘中")
+                if displayModes.contains(.candlestick) {
+                    Text("开 \(StockChartPresentation.plainPriceText(point.open))")
+                    Text("高 \(StockChartPresentation.plainPriceText(point.high))")
+                    Text("低 \(StockChartPresentation.plainPriceText(point.low))")
+                    Text("收 \(StockChartPresentation.priceText(point.close, currencyCode: snapshot.currencyCode))")
+                } else {
+                    Text(StockChartPresentation.priceText(point.close, currencyCode: snapshot.currencyCode))
+                }
+            } else {
+                Text("盘中").foregroundStyle(.secondary)
+                Text("暂无数据").foregroundStyle(.secondary)
+            }
+        }
+        .fontWeight(.medium)
+        .foregroundStyle(.primary)
+    }
+
+    private func fixedExtendedHoursSummaryRow(
+        title: String,
+        point: StockChartPoint?,
+        color: Color,
+        presentation: StockChartPresentation,
+        onlyPrice: Bool
+    ) -> some View {
+        summaryRow {
+            Text(title)
+            if let point {
+                Text(presentation.chartDateText(point.date))
+                Text("价格 \(StockChartPresentation.priceText(point.close, currencyCode: snapshot.currencyCode))")
+                if onlyPrice {
+                    Text("仅价格").foregroundStyle(.secondary)
+                }
+            } else {
+                Text("暂无数据").foregroundStyle(.secondary)
             }
         }
         .fontWeight(.medium)
@@ -883,48 +1044,7 @@ struct StockChartCanvas: View {
                     .foregroundStyle(.secondary)
             }
 
-            if displayModes.contains(.line) || displayModes.contains(.candlestick) {
-                summaryRow {
-                    if displayModes.contains(.line) {
-                        Text("走势 收盘价").foregroundStyle(.secondary)
-                    }
-                    if displayModes.contains(.candlestick) {
-                        Text("开 最高 最低 收盘").foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            if displayModes.contains(.preMarket) {
-                if let point = presentation.preMarketPlotPoints.last?.point {
-                    extendedHoursSummaryRow(
-                        title: presentation.preMarketTitle,
-                        point: point,
-                        color: .orange,
-                        presentation: presentation
-                    )
-                } else {
-                    summaryRow {
-                        Text("\(presentation.preMarketTitle)暂无数据")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            if displayModes.contains(.postMarket) {
-                if let point = presentation.postMarketPlotPoints.last?.point {
-                    extendedHoursSummaryRow(
-                        title: presentation.postMarketTitle,
-                        point: point,
-                        color: .blue,
-                        presentation: presentation
-                    )
-                } else {
-                    summaryRow {
-                        Text("\(presentation.postMarketTitle)暂无数据")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            sessionSummaryRows(presentation, selectedPoint: nil)
 
             if displayModes.contains(.movingAverage) {
                 summaryRow {

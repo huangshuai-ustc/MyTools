@@ -26,6 +26,68 @@ struct StockPortfolioEditorTests {
         #expect(StockPortfolioEditor.normalizedHolding(aShare).symbol == "600000")
     }
 
+    @Test func stockListStateSeparatesPositionWatchlistAndArchive() throws {
+        var watchOnly = StockHolding(symbol: "AAPL")
+        #expect(watchOnly.listState == .watchlist)
+
+        var holding = watchOnly
+        let buy = Self.transaction(type: .buy, day: 1, quantity: 2)
+        holding.transactions = [buy]
+        #expect(holding.listState == .holding)
+
+        var closed = holding
+        var sell = Self.transaction(type: .sell, day: 2, quantity: 2)
+        sell.unitPrice = 12
+        closed.transactions.append(sell)
+        let archivedAt = Self.date(day: 3)
+        closed = try #require(StockPortfolioEditor.archiving(closed, at: archivedAt))
+        #expect(closed.listState == .archived)
+        #expect(closed.archivedAt == archivedAt)
+        #expect(closed.realizedProfitLoss == 4)
+        let summary = StockPortfolioSummary(market: .aShare, stocks: [closed])
+        #expect(summary.totalProfitLoss == 4)
+        #expect(StockPortfolioEditor.restoring(closed)?.listState == .watchlist)
+    }
+
+    @Test func archivingRequiresHistoricalActivityAndZeroPosition() {
+        let watchOnly = StockHolding(symbol: "AAPL")
+        #expect(StockPortfolioEditor.archiving(watchOnly, at: Date()) == nil)
+
+        var holding = watchOnly
+        holding.transactions = [Self.transaction(type: .buy, day: 1, quantity: 1)]
+        #expect(StockPortfolioEditor.archiving(holding, at: Date()) == nil)
+    }
+
+    @Test func addingTransactionRestoresAnArchivedStock() throws {
+        var stock = StockHolding(symbol: "AAPL")
+        stock.transactions = [
+            Self.transaction(type: .buy, day: 1, quantity: 1),
+            Self.transaction(type: .sell, day: 2, quantity: 1)
+        ]
+        stock = try #require(StockPortfolioEditor.archiving(stock, at: Self.date(day: 3)))
+
+        let rebuy = Self.transaction(type: .buy, day: 4, quantity: 2)
+        let restored = try #require(StockPortfolioEditor.upserting(rebuy, in: stock))
+        #expect(restored.archivedAt == nil)
+        #expect(restored.listState == .holding)
+        #expect(restored.currentShares == 2)
+    }
+
+    @Test func legacyStockPayloadWithoutArchiveDateStillDecodes() throws {
+        var stock = StockHolding(symbol: "AAPL")
+        stock.archivedAt = Self.date(day: 3)
+        let encoded = try JSONEncoder().encode(stock)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "archivedAt")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(StockHolding.self, from: legacyData)
+        #expect(decoded.archivedAt == nil)
+        #expect(decoded.listState == .watchlist)
+    }
+
     @Test func deletingStocksAlsoRemovesOnlyTheirAlerts() {
         var deletedStock = StockHolding()
         deletedStock.id = UUID()

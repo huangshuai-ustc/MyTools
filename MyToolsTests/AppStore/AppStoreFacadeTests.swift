@@ -145,6 +145,36 @@ struct AppStoreFacadeTests {
         #expect(persistence.scheduleCount == 1)
     }
 
+    @Test func archivingClosedStockKeepsHistoryAndTotalProfit() throws {
+        let defaults = Self.makeDefaults()
+        let persistence = RecordingVaultPersistence()
+        var stock = StockHolding(symbol: "TEST")
+        var buy = StockTransaction()
+        buy.type = .buy
+        buy.tradedAt = Date(timeIntervalSince1970: 1)
+        buy.quantity = 2
+        buy.unitPrice = 10
+        var sell = StockTransaction()
+        sell.type = .sell
+        sell.tradedAt = Date(timeIntervalSince1970: 2)
+        sell.quantity = 2
+        sell.unitPrice = 12
+        stock.transactions = [buy, sell]
+        let store = AppStore(
+            initialVault: VaultData(stocks: [stock]),
+            dependencies: Self.dependencies(defaults: defaults, persistence: persistence)
+        )
+
+        #expect(store.stockStore.archiveStock(id: stock.id, at: Date(timeIntervalSince1970: 10)))
+        let archived = try #require(store.stockStore.stocks.first)
+        #expect(archived.isArchived)
+        #expect(archived.realizedProfitLoss == 4)
+        #expect(
+            StockPortfolioSummary(market: .aShare, stocks: store.stockStore.stocks).totalProfitLoss == 4
+        )
+        #expect(persistence.scheduleCount == 1)
+    }
+
     @Test func moduleLocalDataDeletionCanBeUndoneWithoutTouchingOtherModules() async throws {
         let defaults = Self.makeDefaults()
         let persistence = RecordingVaultPersistence()

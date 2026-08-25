@@ -12,33 +12,17 @@ struct TencentStockChartProvider: StockChartProvider {
         let stock = request.stock
         let symbol = request.symbol
         let range = request.range
-        let usesDailyTechnicalInterval = request.usesDailyTechnicalInterval
         let identifier = identifier(symbol, market: stock.market)
-        let isMinuteChart = !usesDailyTechnicalInterval
-            && (range == .intraday || range == .fiveDays)
-        let interval = range == .intraday ? "m5" : "m15"
-        let historicalInterval: String
-        if usesDailyTechnicalInterval {
-            historicalInterval = "day"
-        } else {
-            switch range {
-            case .weekK, .fiveYears, .tenYears:
-                historicalInterval = "week"
-            case .monthK, .quarterK, .yearK, .sinceInception:
-                historicalInterval = "month"
-            default:
-                historicalInterval = "day"
-            }
-        }
-        let pointLimit = usesDailyTechnicalInterval
-            ? range.dailyTechnicalPointLimit
-            : range.providerPointLimit
+        let isMinuteChart = range == .intraday || range == .fiveDays
+        let requestedInterval = "m1"
+        let historicalInterval = "day"
+        let pointLimit = range.providerPointLimit
         let endpoint = isMinuteChart
             ? "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline"
             : "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
         var components = URLComponents(string: endpoint)
         let parameter = isMinuteChart
-            ? "\(identifier),\(interval),,\(pointLimit)"
+            ? "\(identifier),\(requestedInterval),,\(pointLimit)"
             : "\(identifier),\(historicalInterval),,,\(pointLimit),qfq"
         components?.queryItems = [URLQueryItem(name: "param", value: parameter)]
         guard let url = components?.url else { throw StockChartError.invalidSymbol }
@@ -57,7 +41,10 @@ struct TencentStockChartProvider: StockChartProvider {
 
         let rawPoints: [[Any]]?
         if isMinuteChart {
-            rawPoints = payload[interval] as? [[Any]]
+            // Some US symbols are returned by Tencent at a coarser interval
+            // despite an m1 request. Keep the smallest interval actually
+            // returned; never synthesize missing minute bars locally.
+            rawPoints = minutePayload(in: payload, requestedInterval: requestedInterval)
         } else {
             rawPoints = (payload["qfq\(historicalInterval)"] as? [[Any]])
                 ?? (payload[historicalInterval] as? [[Any]])
@@ -76,13 +63,13 @@ struct TencentStockChartProvider: StockChartProvider {
                 market: stock.market
             )
             points = prepared.visible
-            preMarketPoints = range == .intraday
+            preMarketPoints = range == .intraday && stock.market.supportsExtendedHoursChart
                 ? StockChartSeriesProcessor.preMarketSessionPoints(
                     prepared.indicators,
                     market: stock.market
                 )
                 : []
-            postMarketPoints = range == .intraday
+            postMarketPoints = range == .intraday && stock.market.supportsExtendedHoursChart
                 ? StockChartSeriesProcessor.postMarketSessionPoints(
                     prepared.indicators,
                     market: stock.market
@@ -95,11 +82,12 @@ struct TencentStockChartProvider: StockChartProvider {
             postMarketPoints = []
             fetchedIndicatorPoints = nil
         }
+        guard let latest = points.last else { throw StockChartError.noData }
         guard StockChartSeriesProcessor.hasRequiredCoverage(
             points,
             for: range,
             market: stock.market
-        ), let latest = points.last else {
+        ) else {
             throw StockChartError.noData
         }
 
@@ -186,6 +174,25 @@ struct TencentStockChartProvider: StockChartProvider {
     private func stringValue(in values: [Any]?, at index: Int) -> String? {
         guard let values, index < values.count else { return nil }
         return values[index] as? String
+    }
+
+    private func minutePayload(
+        in payload: [String: Any],
+        requestedInterval: String
+    ) -> [[Any]]? {
+        if let requested = payload[requestedInterval] as? [[Any]] {
+            return requested
+        }
+        let candidates = payload.keys.compactMap { key -> (minutes: Int, key: String)? in
+            guard key.first == "m",
+                  let minutes = Int(String(key.dropFirst())),
+                  minutes >= 1 else { return nil }
+            return (minutes, key)
+        }
+        guard let selected = candidates.min(by: { $0.minutes < $1.minutes }) else {
+            return nil
+        }
+        return payload[selected.key] as? [[Any]]
     }
 }
 

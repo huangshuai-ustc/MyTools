@@ -3,6 +3,17 @@ import CryptoKit
 import Foundation
 
 actor CloudKitSyncWorker: CKSyncEngineDelegate {
+    private struct RebuildControl: Codable, Sendable {
+        let generation: Int64
+        let ownerDeviceID: String?
+        let lockedUntil: Date?
+
+        var isLocked: Bool {
+            guard let lockedUntil else { return false }
+            return lockedUntil > Date()
+        }
+    }
+
     private struct OperationFailure: LocalizedError, Sendable {
         let message: String
 
@@ -22,6 +33,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     private static let recordType = "MyToolsEntity"
     private static let zoneName = "MyToolsData"
+    private static let controlZoneName = "MyToolsControl"
+    private static let controlRecordName = "rebuild-control"
     private static let schemaVersion: Int64 = 1
 
     private let container: CKContainer
@@ -31,6 +44,9 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private let snapshotProvider: CloudSyncSnapshotProvider
     private let changeHandler: CloudSyncChangeHandler
     private let zoneID: CKRecordZone.ID
+    private let controlZoneID: CKRecordZone.ID
+    private let controlRecordID: CKRecord.ID
+    private let rebuildLease: CloudSyncRebuildLease?
     private var document: CloudSyncStoredDocument
     private var hasLoadedState = false
     // Treat feature data as inactive until the first local snapshot supplies the
@@ -41,9 +57,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private var isStarting = false
     private var operationFailure: OperationFailure?
     private var isPerformingRequestedOperation = false
+    private var isRebuildingRemoteData = false
+    private var isResettingRemoteState = false
     private var attachmentRestoreTask: Task<Void, Never>?
 
-    private lazy var syncEngine: CKSyncEngine = {
+    private lazy var syncEngine: CKSyncEngine = makeSyncEngine()
+
+    private func makeSyncEngine() -> CKSyncEngine {
         var configuration = CKSyncEngine.Configuration(
             database: container.privateCloudDatabase,
             stateSerialization: document.engineState,
@@ -52,12 +72,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         configuration.automaticallySync = true
         configuration.subscriptionID = "mytools-private-database-v1"
         return CKSyncEngine(configuration)
-    }()
+    }
 
     init(
         containerIdentifier: String,
         attachmentStore: AttachmentStore,
         stateStore: CloudSyncStateStore = CloudSyncStateStore(),
+        rebuildLease: CloudSyncRebuildLease? = nil,
         statusHandler: @escaping @MainActor @Sendable (CloudSyncStatus) -> Void,
         snapshotProvider: @escaping CloudSyncSnapshotProvider,
         changeHandler: @escaping CloudSyncChangeHandler
@@ -72,6 +93,15 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             zoneName: Self.zoneName,
             ownerName: CKCurrentUserDefaultName
         )
+        controlZoneID = CKRecordZone.ID(
+            zoneName: Self.controlZoneName,
+            ownerName: CKCurrentUserDefaultName
+        )
+        controlRecordID = CKRecord.ID(
+            recordName: Self.controlRecordName,
+            zoneID: controlZoneID
+        )
+        self.rebuildLease = rebuildLease
         // Loading and decoding the persisted sync state can involve tens of
         // megabytes. It is deliberately deferred to `start()` so creating the
         // worker from the main-actor coordinator never blocks the first screen.
@@ -123,6 +153,11 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 saveDocument()
             }
 
+            try await ensureControlZoneExists()
+            guard try await prepareForRebuildControl(currentUser: currentUser) else {
+                return
+            }
+
             await statusHandler(.syncing)
 
             // The first remote fetch must know which modules are active. If the
@@ -152,6 +187,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     func reconcile(snapshot: CloudSyncSnapshot) async {
         guard hasStarted else { return }
+        guard (try? await ensureRemoteSyncAllowed()) == true else {
+            if !hasStarted {
+                await start()
+            }
+            return
+        }
         await reconcileReadySnapshot(snapshot)
     }
 
@@ -286,6 +327,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
         await statusHandler(.syncing)
         do {
+            guard try await ensureRemoteSyncAllowed() else {
+                if !hasStarted {
+                    await start()
+                }
+                return
+            }
             try await fetchRemoteChanges()
             let mergedSnapshot = try await snapshotProvider()
             await reconcileReadySnapshot(mergedSnapshot)
@@ -309,6 +356,58 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         await syncEngine.cancelOperations()
     }
 
+    /// Deletes only this app's private CloudKit zone. The local vault and
+    /// attachment directory are owned by AppStore/AttachmentStore and are not
+    /// touched. The coordinator replaces this worker after the reset so the
+    /// next start uses a fresh CKSyncEngine state and uploads the local snapshot.
+    func deleteRemoteZoneForRebuild() async throws -> CloudSyncRebuildLease {
+        await loadPersistedStateIfNeeded()
+        guard !Task.isCancelled else { throw CancellationError() }
+
+        let currentUser = try await container.userRecordID()
+        if let previousUser = document.accountRecordName,
+           previousUser != currentUser.recordName {
+            throw OperationFailure(message: "iCloud 账户已变化，无法重建云端数据")
+        }
+
+        isRebuildingRemoteData = true
+        var acquiredLease: CloudSyncRebuildLease?
+        do {
+            let lease = try await acquireRebuildLease(
+                ownerDeviceID: document.deviceID,
+                localGeneration: document.rebuildGeneration ?? 0
+            )
+            acquiredLease = lease
+            attachmentRestoreTask?.cancel()
+            attachmentRestoreTask = nil
+            await syncEngine.cancelOperations()
+            let results = try await container.privateCloudDatabase.modifyRecordZones(
+                saving: [],
+                deleting: [zoneID]
+            )
+            if let result = results.deleteResults[zoneID] {
+                do {
+                    _ = try result.get()
+                } catch {
+                    guard Self.isMissingZone(error) else { throw error }
+                }
+            }
+            document.resetForRemoteRebuild(
+                accountRecordName: currentUser.recordName,
+                rebuildGeneration: lease.generation
+            )
+            saveDocument()
+            hasStarted = false
+            return lease
+        } catch {
+            if let acquiredLease {
+                try? await releaseRebuildLease(acquiredLease)
+            }
+            isRebuildingRemoteData = false
+            throw error
+        }
+    }
+
     private func loadPersistedStateIfNeeded() async {
         guard !hasLoadedState else { return }
         let loaded = await Task.detached(priority: .utility) { [stateStore] in
@@ -324,6 +423,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     }
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+        guard !isRebuildingRemoteData, !isResettingRemoteState else { return }
         switch event {
         case .stateUpdate(let event):
             document.engineState = event.stateSerialization
@@ -356,9 +456,11 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
 
         case .fetchedDatabaseChanges(let event):
+            guard (try? await ensureRemoteSyncAllowed()) == true else { return }
             await handleFetchedDatabaseChanges(event, syncEngine: syncEngine)
 
         case .fetchedRecordZoneChanges(let event):
+            guard (try? await ensureRemoteSyncAllowed()) == true else { return }
             await handleFetchedRecords(
                 event.modifications.map(\.record),
                 deletions: event.deletions.map(\.recordID),
@@ -371,6 +473,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
 
         case .sentRecordZoneChanges(let event):
+            guard (try? await ensureRemoteSyncAllowed()) == true else { return }
             await handleSentRecords(event, syncEngine: syncEngine)
 
         case .didFetchRecordZoneChanges(let event):
@@ -400,6 +503,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         _ context: CKSyncEngine.SendChangesContext,
         syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
+        guard (try? await ensureRemoteSyncAllowed()) == true else { return nil }
         let pendingChanges = syncEngine.state.pendingRecordZoneChanges.filter {
             guard context.options.scope.contains($0) else { return false }
             switch $0 {
@@ -800,6 +904,9 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         _ event: CKSyncEngine.Event.SentRecordZoneChanges,
         syncEngine: CKSyncEngine
     ) async {
+        guard !isRebuildingRemoteData,
+              !isResettingRemoteState,
+              (try? await ensureRemoteSyncAllowed()) == true else { return }
         for recordID in event.deletedRecordIDs {
             document.entries[recordID.recordName]?.systemFields = nil
         }
@@ -871,6 +978,244 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
         _ = try result.get()
         syncEngine.state.remove(pendingDatabaseChanges: [.saveZone(zone)])
+    }
+
+    private func ensureControlZoneExists() async throws {
+        let zone = CKRecordZone(zoneID: controlZoneID)
+        let results = try await container.privateCloudDatabase.modifyRecordZones(
+            saving: [zone],
+            deleting: []
+        )
+        guard let result = results.saveResults[controlZoneID] else {
+            throw NSError(
+                domain: "MyToolsCloudSync",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "CloudKit 未返回重建控制区结果"]
+            )
+        }
+        _ = try result.get()
+    }
+
+    private func prepareForRebuildControl(currentUser: CKRecord.ID) async throws -> Bool {
+        let control = try await loadRebuildControl()
+        let localGeneration = document.rebuildGeneration ?? 0
+        if control.generation > localGeneration {
+            document.resetForRemoteRebuild(
+                accountRecordName: currentUser.recordName,
+                rebuildGeneration: control.generation
+            )
+            saveDocument()
+            await resetSyncEngineForRemoteGenerationChange()
+            hasStarted = false
+        }
+        guard !control.isLocked || ownsRebuildLease(control) else {
+            await statusHandler(.rebuildInProgress)
+            return false
+        }
+        return true
+    }
+
+    private func ensureRemoteSyncAllowed() async throws -> Bool {
+        let control = try await loadRebuildControl()
+        let localGeneration = document.rebuildGeneration ?? 0
+        if control.generation > localGeneration {
+            document.resetForRemoteRebuild(
+                accountRecordName: document.accountRecordName,
+                rebuildGeneration: control.generation
+            )
+            saveDocument()
+            await resetSyncEngineForRemoteGenerationChange()
+            hasStarted = false
+            return false
+        }
+        guard !control.isLocked || ownsRebuildLease(control) else {
+            hasStarted = false
+            await statusHandler(.rebuildInProgress)
+            return false
+        }
+        return true
+    }
+
+    private func resetSyncEngineForRemoteGenerationChange() async {
+        isResettingRemoteState = true
+        await syncEngine.cancelOperations()
+        syncEngine = makeSyncEngine()
+        isResettingRemoteState = false
+    }
+
+    private func loadRebuildControl() async throws -> RebuildControl {
+        do {
+            let record = try await container.privateCloudDatabase.record(
+                for: controlRecordID
+            )
+            guard let payload = record.encryptedValues[Field.payload] as? Data else {
+                return RebuildControl(generation: 0, ownerDeviceID: nil, lockedUntil: nil)
+            }
+            return try CloudSyncCoding.decoder().decode(RebuildControl.self, from: payload)
+        } catch {
+            guard Self.isMissingZoneOrRecord(error) else { throw error }
+            return RebuildControl(generation: 0, ownerDeviceID: nil, lockedUntil: nil)
+        }
+    }
+
+    private func acquireRebuildLease(
+        ownerDeviceID: String,
+        localGeneration: Int64
+    ) async throws -> CloudSyncRebuildLease {
+        for _ in 0..<3 {
+            var existingRecord: CKRecord?
+            let control: RebuildControl
+            do {
+                existingRecord = try await container.privateCloudDatabase.record(
+                    for: controlRecordID
+                )
+                if let existingRecord,
+                   let payload = existingRecord.encryptedValues[Field.payload] as? Data {
+                    control = try CloudSyncCoding.decoder().decode(
+                        RebuildControl.self,
+                        from: payload
+                    )
+                } else {
+                    control = RebuildControl(
+                        generation: localGeneration,
+                        ownerDeviceID: nil,
+                        lockedUntil: nil
+                    )
+                }
+            } catch {
+                guard Self.isMissingZoneOrRecord(error) else { throw error }
+                existingRecord = nil
+                control = RebuildControl(
+                    generation: localGeneration,
+                    ownerDeviceID: nil,
+                    lockedUntil: nil
+                )
+            }
+
+            if control.isLocked,
+               control.ownerDeviceID != ownerDeviceID {
+                throw OperationFailure(message: "另一台设备正在重建 iCloud 数据，请稍后重试")
+            }
+
+            let generation = max(control.generation, localGeneration) + 1
+            let lockedUntil = Date().addingTimeInterval(30 * 60)
+            let lease = CloudSyncRebuildLease(
+                generation: generation,
+                ownerDeviceID: ownerDeviceID,
+                lockedUntil: lockedUntil
+            )
+            let record = existingRecord ?? CKRecord(
+                recordType: Self.recordType,
+                recordID: controlRecordID
+            )
+            try apply(
+                RebuildControl(
+                    generation: generation,
+                    ownerDeviceID: ownerDeviceID,
+                    lockedUntil: lockedUntil
+                ),
+                to: record,
+                ownerDeviceID: ownerDeviceID
+            )
+
+            do {
+                let results = try await container.privateCloudDatabase.modifyRecords(
+                    saving: [record],
+                    deleting: []
+                )
+                if let result = results.saveResults[controlRecordID] {
+                    _ = try result.get()
+                    return lease
+                }
+            } catch {
+                guard Self.isServerRecordChanged(error) else { throw error }
+            }
+        }
+        throw OperationFailure(message: "无法取得 iCloud 重建锁，请稍后重试")
+    }
+
+    private func ownsRebuildLease(_ control: RebuildControl) -> Bool {
+        guard let rebuildLease else { return false }
+        return control.generation == rebuildLease.generation
+            && control.ownerDeviceID == rebuildLease.ownerDeviceID
+            && rebuildLease.lockedUntil > Date()
+    }
+
+    func finishRebuildLease() async {
+        guard let rebuildLease else { return }
+        do {
+            try await releaseRebuildLease(rebuildLease)
+        } catch {
+            await report(error, operation: "释放 iCloud 重建锁")
+        }
+    }
+
+    func abortRebuildLease(_ lease: CloudSyncRebuildLease) async {
+        do {
+            try await releaseRebuildLease(lease)
+        } catch {
+            await report(error, operation: "释放 iCloud 重建锁")
+        }
+    }
+
+    private func releaseRebuildLease(_ lease: CloudSyncRebuildLease) async throws {
+        let record = try await container.privateCloudDatabase.record(for: controlRecordID)
+        guard let payload = record.encryptedValues[Field.payload] as? Data else { return }
+        let current = try CloudSyncCoding.decoder().decode(RebuildControl.self, from: payload)
+        guard current.generation == lease.generation,
+              current.ownerDeviceID == lease.ownerDeviceID else { return }
+        try apply(
+            RebuildControl(
+                generation: lease.generation,
+                ownerDeviceID: nil,
+                lockedUntil: nil
+            ),
+            to: record,
+            ownerDeviceID: document.deviceID
+        )
+        let results = try await container.privateCloudDatabase.modifyRecords(
+            saving: [record],
+            deleting: []
+        )
+        if let result = results.saveResults[controlRecordID] {
+            _ = try result.get()
+        }
+    }
+
+    private func apply(
+        _ control: RebuildControl,
+        to record: CKRecord,
+        ownerDeviceID: String
+    ) throws {
+        record[Field.kind] = "rebuildControl" as NSString
+        record[Field.entityID] = Self.controlRecordName as NSString
+        record[Field.modifiedAt] = Date() as NSDate
+        record[Field.deviceID] = ownerDeviceID as NSString
+        record[Field.isDeleted] = NSNumber(value: control.isLocked)
+        record[Field.schemaVersion] = NSNumber(value: Self.schemaVersion)
+        record.encryptedValues[Field.payload] = try CloudSyncCoding.encoder().encode(control) as NSData
+    }
+
+    private static func isMissingZoneOrRecord(_ error: Error) -> Bool {
+        let value = error as NSError
+        guard value.domain == CKErrorDomain,
+              let code = CKError.Code(rawValue: value.code) else { return false }
+        return code == .zoneNotFound || code == .unknownItem
+    }
+
+    private static func isServerRecordChanged(_ error: Error) -> Bool {
+        let value = error as NSError
+        if value.domain == CKErrorDomain,
+           let code = CKError.Code(rawValue: value.code),
+           code == .serverRecordChanged {
+            return true
+        }
+        guard value.domain == CKErrorDomain,
+              let code = CKError.Code(rawValue: value.code),
+              code == .partialFailure,
+              let errors = value.userInfo[CKPartialErrorsByItemIDKey]
+                as? [AnyHashable: Error] else { return false }
+        return errors.values.contains(where: isServerRecordChanged)
     }
 
     private func fetchRemoteChanges() async throws {
@@ -975,10 +1320,18 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     }
 
     private func resetSyncState(for account: CKRecord.ID) {
-        document.engineState = nil
-        document.entries = [:]
-        document.accountRecordName = account.recordName
+        document.resetForRemoteRebuild(
+            accountRecordName: account.recordName,
+            rebuildGeneration: 0
+        )
         saveDocument()
+    }
+
+    private static func isMissingZone(_ error: Error) -> Bool {
+        let value = error as NSError
+        guard value.domain == CKErrorDomain,
+              let code = CKError.Code(rawValue: value.code) else { return false }
+        return code == .zoneNotFound || code == .unknownItem
     }
 
     private func report(_ error: Error, operation: String) async {

@@ -25,7 +25,25 @@ enum StockPortfolioEditor {
     static func normalizedHolding(_ stock: StockHolding) -> StockHolding {
         var normalized = stock
         normalized.symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        if normalized.currentShares > 0 {
+            normalized.archivedAt = nil
+        }
         return normalized
+    }
+
+    static func archiving(_ stock: StockHolding, at date: Date) -> StockHolding? {
+        guard stock.listState == .watchlist,
+              stock.hasHistoricalActivity else { return nil }
+        var archived = stock
+        archived.archivedAt = date
+        return archived
+    }
+
+    static func restoring(_ stock: StockHolding) -> StockHolding? {
+        guard stock.isArchived else { return nil }
+        var restored = stock
+        restored.archivedAt = nil
+        return restored
     }
 
     static func deletingStocks(
@@ -78,6 +96,9 @@ enum StockPortfolioEditor {
             containing: storedTransaction.tradedAt,
             appending: staysOnSameDay ? nil : storedTransaction.id
         )
+        if candidate.currentShares > 0 {
+            candidate.archivedAt = nil
+        }
         return candidate.hasValidTransactionOrder ? candidate : nil
     }
 
