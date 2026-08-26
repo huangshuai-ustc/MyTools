@@ -387,6 +387,11 @@ enum StockChartSeriesProcessor {
         for range: StockChartRange,
         market: StockMarket
     ) -> Bool {
+        // A newly listed stock may have only one or a few daily bars. That is
+        // still valid K-line data; technical overlays are independently
+        // gated by their history requirements in the presentation layer.
+        guard !points.isEmpty else { return false }
+        if range.isKLineRange { return true }
         guard points.count >= minimumPointCount(for: range) else { return false }
         guard range == .fiveDays else { return true }
 

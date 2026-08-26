@@ -139,6 +139,25 @@ struct StockChartPresentationTests {
         #expect(presentation.xAxisValues(isExpanded: false).last == 2)
     }
 
+    @Test func shortKLineHistoryUsesAllAvailableBarsAsDefaultWindow() {
+        let points = [
+            point(day: 24, close: 580),
+            point(day: 25, close: 590),
+            point(day: 26, close: 607)
+        ]
+
+        for range in [
+            StockChartRange.dayK,
+            .weekK,
+            .monthK,
+            .quarterK,
+            .yearK
+        ] {
+            let presentation = makePresentation(points: points, range: range)
+            #expect(presentation.defaultVisibleXDomain(isExpanded: false) == presentation.xDomain)
+        }
+    }
+
     @Test func closestPlotPointUsesSortedCoordinatesAndVisibleViewport() throws {
         let presentation = makePresentation(
             points: [

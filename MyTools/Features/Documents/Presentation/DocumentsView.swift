@@ -256,7 +256,7 @@ private struct CredentialDocumentRow: View {
                 .frame(width: 42, height: 42)
                 .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 5) {
-                Text(document.displayTitle)
+                Text(document.listDisplayTitle)
                     .appFont(.headline)
                     .lineLimit(1)
                 HStack(spacing: 8) {

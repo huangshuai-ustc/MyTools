@@ -156,25 +156,113 @@ enum CredentialFieldKind: String, Codable, CaseIterable, Identifiable, Sendable 
     var title: String { self == .text ? "单行文本" : "多行文本" }
 }
 
+enum CredentialFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable {
+    case text
+    case url
+    case date
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .text: return "文本"
+        case .url: return "网址"
+        case .date: return "日期"
+        }
+    }
+
+    init(kind: CredentialFieldKind) {
+        self = .text
+    }
+}
+
 struct CredentialField: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var label = ""
     var value = ""
     var kind: CredentialFieldKind = .text
+    var inputType: CredentialFieldInputType = .text
     var isSensitive = true
+
+    /// The editor derives the layout from the actual value. `kind` remains in
+    /// the persisted model for older documents, but an empty value is always
+    /// rendered as a single-line field until the user enters a line break.
+    var isMultiline: Bool {
+        value.contains(where: { $0.isNewline })
+    }
 
     init(
         id: UUID = UUID(),
         label: String = "",
         value: String = "",
         kind: CredentialFieldKind = .text,
+        inputType: CredentialFieldInputType? = nil,
         isSensitive: Bool = true
     ) {
         self.id = id
         self.label = label
         self.value = value
         self.kind = kind
+        self.inputType = inputType ?? CredentialFieldInputType(kind: kind)
         self.isSensitive = isSensitive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, label, value, kind, inputType, isSensitive
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decodeIfPresent(CredentialFieldKind.self, forKey: .kind) ?? .text
+        self.init(
+            id: try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+            label: try container.decodeIfPresent(String.self, forKey: .label) ?? "",
+            value: try container.decodeIfPresent(String.self, forKey: .value) ?? "",
+            kind: kind,
+            inputType: try container.decodeIfPresent(
+                CredentialFieldInputType.self,
+                forKey: .inputType
+            ) ?? CredentialFieldInputType(kind: kind),
+            isSensitive: try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? true
+        )
+    }
+}
+
+struct CredentialFieldTemplate: Codable, Equatable, Identifiable, Sendable {
+    var documentType: CredentialDocumentType
+    var fields: [CredentialField]
+
+    var id: CredentialDocumentType { documentType }
+
+    static var defaultTemplates: [Self] {
+        CredentialDocumentType.allCases.map {
+            Self(documentType: $0, fields: $0.defaultFields)
+        }
+    }
+
+    func makeFields() -> [CredentialField] {
+        fields.map { field in
+            CredentialField(
+                label: field.label,
+                kind: field.isMultiline ? .multiline : .text,
+                inputType: field.inputType,
+                isSensitive: field.isSensitive
+            )
+        }
+    }
+
+    func normalized() -> Self {
+        Self(
+            documentType: documentType,
+            fields: fields.map {
+                CredentialField(
+                    label: $0.label.trimmingCharacters(in: .whitespacesAndNewlines),
+                    kind: $0.isMultiline ? .multiline : .text,
+                    inputType: $0.inputType,
+                    isSensitive: $0.isSensitive
+                )
+            }
+        )
     }
 }
 
@@ -529,6 +617,7 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
                     label: $0.label,
                     value: $0.value,
                     kind: $0.kind,
+                    inputType: $0.inputType,
                     isSensitive: $0.isSensitive
                 )
             },
@@ -601,8 +690,14 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
     }
 
     var displayTitle: String {
-        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? typeTitle : name
+        listDisplayTitle
+    }
+
+    var listDisplayTitle: String {
+        let type = typeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let holder = holderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !holder.isEmpty else { return type }
+        return "\(type)-\(holder)"
     }
 
     var attachmentFiles: [FileAttachment] {
@@ -722,6 +817,7 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return true }
         return displayTitle.localizedCaseInsensitiveContains(term)
+            || title.localizedCaseInsensitiveContains(term)
             || typeTitle.localizedCaseInsensitiveContains(term)
             || holderName.localizedCaseInsensitiveContains(term)
             || documentNumber.localizedCaseInsensitiveContains(term)

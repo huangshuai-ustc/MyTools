@@ -399,6 +399,8 @@ private struct SecretFieldTemplateEditorView: View {
     @State private var showingNewField = false
     @State private var newFieldName = ""
     @State private var draggedFieldID: UUID?
+    @State private var editingFieldID: UUID?
+    @State private var fieldNameDraft = ""
     let onSave: (SecretFieldTemplate) -> Void
 
     init(category: SecretCategory, template: SecretFieldTemplate, onSave: @escaping (SecretFieldTemplate) -> Void) {
@@ -431,22 +433,19 @@ private struct SecretFieldTemplateEditorView: View {
                         }
                         .onDrop(
                             of: [.text],
-                            delegate: SecretFieldDropDelegate(
+                            delegate: TemplateFieldDropDelegate(
                                 targetID: field.wrappedValue.id,
                                 draggedID: $draggedFieldID,
                                 move: moveField
                             )
                         )
-                        .appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
-                            Button {
-                                field.wrappedValue.isSensitive.toggle()
-                            } label: {
-                                Label(
-                                    field.wrappedValue.isSensitive ? "显示" : "隐藏",
-                                    systemImage: field.wrappedValue.isSensitive ? "eye" : "eye.slash"
-                                )
-                            }
-                            .tint(AppSwipeActions.visibility.tint)
+                        .appTemplateFieldSwipeActions(
+                            isSensitive: field.wrappedValue.isSensitive
+                        ) {
+                            field.wrappedValue.isSensitive.toggle()
+                        } onRename: {
+                            editingFieldID = field.wrappedValue.id
+                            fieldNameDraft = field.wrappedValue.label
                         }
                         .appDeleteSwipeAction {
                             fields.removeAll { $0.id == field.wrappedValue.id }
@@ -455,7 +454,7 @@ private struct SecretFieldTemplateEditorView: View {
                 } header: {
                     Text("字段模板 · \(category.title)")
                 } footer: {
-                    Text("模板只保存字段定义；右滑可显示/隐藏内容，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
+                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
                 }
 
                 Section {
@@ -499,6 +498,19 @@ private struct SecretFieldTemplateEditorView: View {
                     fields.append(SecretField(label: label, kind: .text, isSensitive: true))
                 }
             }
+            .alert(
+                "编辑字段名称",
+                isPresented: Binding(
+                    get: { editingFieldID != nil },
+                    set: { if !$0 { editingFieldID = nil } }
+                )
+            ) {
+                TextField("字段名称", text: $fieldNameDraft)
+                Button("取消", role: .cancel) { editingFieldID = nil }
+                Button("保存") { saveFieldName() }
+            } message: {
+                Text("请输入字段的显示名称。")
+            }
         }
     }
 
@@ -512,25 +524,16 @@ private struct SecretFieldTemplateEditorView: View {
         let insertionIndex = fields.firstIndex(where: { $0.id == targetID }) ?? targetIndex
         fields.insert(movedField, at: insertionIndex)
     }
-}
 
-private struct SecretFieldDropDelegate: DropDelegate {
-    let targetID: UUID
-    @Binding var draggedID: UUID?
-    let move: (UUID, UUID) -> Void
-
-    func dropEntered(info: DropInfo) {
-        guard let draggedID, draggedID != targetID else { return }
-        move(draggedID, targetID)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        draggedID = nil
-        return true
+    private func saveFieldName() {
+        guard let editingFieldID else { return }
+        let label = fieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty,
+              let index = fields.firstIndex(where: { $0.id == editingFieldID }) else {
+            return
+        }
+        fields[index].label = label
+        self.editingFieldID = nil
     }
 }
 

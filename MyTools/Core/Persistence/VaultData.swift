@@ -115,8 +115,10 @@ typealias SecretFieldTemplateVaultValue = OpaqueModuleValue
 
 #if MYTOOLS_FEATURE_DOCUMENTS
 typealias CredentialDocumentVaultValue = CredentialDocument
+typealias CredentialFieldTemplateVaultValue = CredentialFieldTemplate
 #else
 typealias CredentialDocumentVaultValue = OpaqueModuleValue
+typealias CredentialFieldTemplateVaultValue = OpaqueModuleValue
 #endif
 
 #if MYTOOLS_FEATURE_BILLS
@@ -136,6 +138,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var hospitalProfiles: [HospitalProfileVaultValue] = []
     var foodPlaces: [FoodPlaceVaultValue] = []
     var credentialDocuments: [CredentialDocumentVaultValue] = []
+    var credentialFieldTemplates: [CredentialFieldTemplateVaultValue] = []
     var billRecords: [BillRecordVaultValue] = []
     var medicalRecordTags: [String] = []
     var foodPlaceTags: [String] = []
@@ -157,6 +160,7 @@ struct VaultData: Codable, @unchecked Sendable {
         hospitalProfiles: [HospitalProfileVaultValue] = [],
         foodPlaces: [FoodPlaceVaultValue] = [],
         credentialDocuments: [CredentialDocumentVaultValue] = [],
+        credentialFieldTemplates: [CredentialFieldTemplateVaultValue] = [],
         billRecords: [BillRecordVaultValue] = [],
         medicalRecordTags: [String] = [],
         foodPlaceTags: [String] = [],
@@ -177,6 +181,7 @@ struct VaultData: Codable, @unchecked Sendable {
         self.hospitalProfiles = hospitalProfiles
         self.foodPlaces = foodPlaces
         self.credentialDocuments = credentialDocuments
+        self.credentialFieldTemplates = credentialFieldTemplates
         self.billRecords = billRecords
         self.medicalRecordTags = medicalRecordTags
         self.foodPlaceTags = foodPlaceTags
@@ -199,6 +204,7 @@ struct VaultData: Codable, @unchecked Sendable {
         case hospitalProfiles
         case foodPlaces
         case credentialDocuments
+        case credentialFieldTemplates
         case billRecords
         case medicalRecordTags
         case foodPlaceTags
@@ -233,6 +239,10 @@ struct VaultData: Codable, @unchecked Sendable {
         credentialDocuments = try container.decodeIfPresent(
             [CredentialDocumentVaultValue].self,
             forKey: .credentialDocuments
+        ) ?? []
+        credentialFieldTemplates = try container.decodeIfPresent(
+            [CredentialFieldTemplateVaultValue].self,
+            forKey: .credentialFieldTemplates
         ) ?? []
         billRecords = try container.decodeIfPresent([BillRecordVaultValue].self, forKey: .billRecords) ?? []
         medicalRecordTags = try container.decodeIfPresent([String].self, forKey: .medicalRecordTags) ?? []

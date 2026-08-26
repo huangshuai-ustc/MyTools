@@ -20,6 +20,76 @@ struct DocumentsTests {
         #expect(CredentialValidityKind.isAlwaysPermanent(for: .vaccinationCertificate))
     }
 
+    @Test func documentListTitleUsesTypeAndHolderInsteadOfCustomTitle() {
+        let document = CredentialDocument(
+            title: "旧自定义名称",
+            type: .identityCard,
+            holderName: "张三"
+        )
+
+        #expect(document.listDisplayTitle == "身份证-张三")
+    }
+
+    @Test func credentialFieldTemplatesCreateAndUpdateFieldsWithoutOverwritingValues() throws {
+        let store = DocumentsStore(attachmentStore: AttachmentStore())
+        var template = store.fieldTemplate(for: .passport)
+        template.fields = [
+            CredentialField(label: "国籍", isSensitive: false),
+            CredentialField(label: "签发地点", kind: .multiline, isSensitive: true)
+        ]
+        store.upsertFieldTemplate(template)
+
+        #expect(store.makeFields(for: .passport).map(\.label) == ["国籍", "签发地点"])
+        #expect(store.makeFields(for: .passport)[1].kind == .text)
+        #expect(!store.makeFields(for: .passport)[1].isMultiline)
+
+        var document = CredentialDocument(
+            type: .passport,
+            fields: [
+                CredentialField(label: "国籍", value: "中国", isSensitive: true),
+                CredentialField(label: "签发地点", value: "北京", isSensitive: true)
+            ]
+        )
+        store.upsert(document)
+        template.fields[0].isSensitive = false
+        store.upsertFieldTemplate(template)
+
+        document = try #require(store.documents.first)
+        #expect(document.fields[0].value == "中国")
+        #expect(document.fields[0].isSensitive == false)
+        #expect(document.fields[1].value == "北京")
+    }
+
+    @Test func credentialFieldDecodingDefaultsNewInputTypeForExistingData() throws {
+        let data = Data(#"{"label":"地址","value":"北京","kind":"multiline","isSensitive":false}"#.utf8)
+        let field = try JSONDecoder().decode(CredentialField.self, from: data)
+
+        #expect(field.inputType == .text)
+        #expect(field.kind == .multiline)
+        #expect(!field.isMultiline)
+        #expect(field.value == "北京")
+    }
+
+    @Test func credentialFieldLayoutFollowsActualLineBreaks() {
+        var field = CredentialField(label: "地址", value: "北京市", kind: .multiline)
+        #expect(!field.isMultiline)
+
+        field.value = "北京市\n东城区"
+        #expect(field.isMultiline)
+
+        field.value = "北京市东城区"
+        #expect(!field.isMultiline)
+    }
+
+    @Test func documentsMetadataDecodesBeforeFieldTemplateSyncWasAdded() throws {
+        let data = Data(#"{"tags":["重要证件"]}"#.utf8)
+        let metadata = try JSONDecoder().decode(CloudSyncDocumentsMetadata.self, from: data)
+
+        #expect(metadata.fieldTemplates.isEmpty)
+        #expect(!metadata.includesFieldTemplates)
+        #expect(metadata.tags == ["重要证件"])
+    }
+
     @Test func expirationUsesMandatoryIssuanceDateForAllFixedTerms() {
         let issuedAt = Self.date(year: 2026, month: 8, day: 12)
         let calendar = Self.calendar
@@ -252,7 +322,7 @@ struct DocumentsTests {
         store.upsert(edited)
 
         let stored = try #require(store.documents.first)
-        #expect(stored.title == "我的护照")
+        #expect(stored.title.isEmpty)
         #expect(stored.documentNumber == "E12345678")
         #expect(stored.tags == ["旅行"])
         #expect(fileManager.fileExists(atPath: attachmentStore.url(for: retained).path))
@@ -329,7 +399,7 @@ struct DocumentsTests {
         let vault = try JSONDecoder().decode(VaultData.self, from: source)
         let document = try #require(vault.credentialDocuments.first)
 
-        #expect(document.displayTitle == "旧身份证")
+        #expect(document.displayTitle == "身份证")
         #expect(document.parentDocumentID == nil)
         #expect(document.versionStatus == .normal)
         #expect(document.fields.map(\.label) == ["性别", "民族", "住址"])
@@ -375,6 +445,33 @@ struct DocumentsTests {
         #expect(store.documents.isEmpty)
         #expect(!fileManager.fileExists(atPath: attachmentStore.url(for: rootFile).path))
         #expect(!fileManager.fileExists(atPath: attachmentStore.url(for: versionFile).path))
+    }
+
+    @Test func attachmentDisplayNamesMayRepeatAndRenameKeepsOpaqueStoragePath() throws {
+        let fileManager = FileManager.default
+        let directoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("AttachmentNames-\(UUID().uuidString)", isDirectory: true)
+        let attachmentStore = AttachmentStore(fileManager: fileManager, directoryURL: directoryURL)
+        defer { try? fileManager.removeItem(at: directoryURL) }
+
+        let first = try attachmentStore.save(
+            data: Data("first".utf8),
+            originalFileName: "证照.jpg",
+            contentType: .jpeg
+        )
+        let second = try attachmentStore.save(
+            data: Data("second".utf8),
+            originalFileName: "证照.jpg",
+            contentType: .jpeg
+        )
+        #expect(first.fileName == second.fileName)
+        #expect(first.storedFileName != second.storedFileName)
+
+        let renamed = try attachmentStore.rename(first, to: "证照.jpg")
+        #expect(renamed.fileName == "证照.jpg")
+        #expect(renamed.storedFileName == first.storedFileName)
+        #expect(try attachmentStore.data(for: renamed) == Data("first".utf8))
+        #expect(try attachmentStore.data(for: second) == Data("second".utf8))
     }
 
     @Test func backupRestoresDocumentAttachmentsOnlyInsideModuleBoundary() async throws {
@@ -443,6 +540,7 @@ struct DocumentsTests {
             enabledModules: [.documents]
         )
         let documentItem = try #require(snapshot.items.first { $0.kind == .credentialDocument })
+        let metadataItem = try #require(snapshot.items.first { $0.kind == .documentsMetadata })
         let attachmentItem = try #require(snapshot.items.first { $0.kind == .attachment })
         let synced = try CloudSyncCoding.decoder().decode(
             CredentialDocument.self,
@@ -450,6 +548,12 @@ struct DocumentsTests {
         )
 
         #expect(documentItem.module == .documents)
+        let metadata = try CloudSyncCoding.decoder().decode(
+            CloudSyncDocumentsMetadata.self,
+            from: metadataItem.payload
+        )
+        #expect(metadata.includesFieldTemplates)
+        #expect(!metadata.fieldTemplates.isEmpty)
         #expect(attachmentItem.module == .documents)
         #expect(synced.attachments.first?.file.backupData == nil)
 

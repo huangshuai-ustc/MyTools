@@ -3,6 +3,29 @@ import Testing
 @testable import MyTools
 
 struct StockChartSeriesProcessorTests {
+    @Test func newlyListedStocksAcceptShortKLineHistory() {
+        let point = StockChartFixtures.point(
+            at: StockChartFixtures.date(2026, 8, 26),
+            close: 600
+        )
+
+        for range in [
+            StockChartRange.dayK,
+            .weekK,
+            .monthK,
+            .quarterK,
+            .yearK
+        ] {
+            #expect(
+                StockChartSeriesProcessor.hasRequiredCoverage(
+                    [point],
+                    for: range,
+                    market: .aShare
+                )
+            )
+        }
+    }
+
     @Test func latestTradingDaySkipsWeekendPlaceholder() throws {
         let friday = StockChartFixtures.date(
             2026,

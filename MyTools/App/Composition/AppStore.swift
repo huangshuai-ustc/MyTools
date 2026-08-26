@@ -166,6 +166,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_DOCUMENTS
         documentsStore = DocumentsStore(
             documents: initialVault?.credentialDocuments ?? [],
+            fieldTemplates: initialVault?.credentialFieldTemplates ?? [],
             knownTags: initialVault?.credentialTags ?? [],
             attachmentStore: attachmentStore,
             notificationScheduler: dependencies.localNotificationScheduler,
@@ -349,6 +350,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_DOCUMENTS
         documentsStore.replace(
             documents: vault.credentialDocuments,
+            fieldTemplates: vault.credentialFieldTemplates,
             knownTags: vault.credentialTags
         )
 #endif
@@ -616,6 +618,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         vault.credentialDocuments = documentsStore.documents
+        vault.credentialFieldTemplates = documentsStore.fieldTemplates
         vault.credentialTags = documentsStore.knownTags
 #endif
 #if MYTOOLS_FEATURE_BILLS
@@ -767,6 +770,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         case .documents:
 #if MYTOOLS_FEATURE_DOCUMENTS
             vault.credentialDocuments = []
+            vault.credentialFieldTemplates = []
             vault.credentialTags = []
 #endif
             break
@@ -869,6 +873,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             vault.credentialDocuments = mergingRestored(
                 snapshot.vault.credentialDocuments,
                 into: vault.credentialDocuments
+            )
+            vault.credentialFieldTemplates = mergingRestored(
+                snapshot.vault.credentialFieldTemplates,
+                into: vault.credentialFieldTemplates
             )
             vault.credentialTags = AppTagSupport.merged(
                 vault.credentialTags,

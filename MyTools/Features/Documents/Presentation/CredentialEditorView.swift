@@ -17,6 +17,12 @@ struct CredentialEditorView: View {
     @State private var showingFileImporter = false
     @State private var showingCamera = false
     @State private var showingAuthentication = false
+    @State private var showingFieldNameEditor = false
+    @State private var showingNewFieldNameEditor = false
+    @State private var showingTemplateEditor = false
+    @State private var editingFieldID: UUID?
+    @State private var fieldNameDraft = ""
+    @State private var newFieldNameDraft = ""
     @State private var renamingAttachment: CredentialAttachment?
     @State private var ocrAttachment: CredentialAttachment?
     @State private var errorMessage: String?
@@ -59,6 +65,7 @@ struct CredentialEditorView: View {
                     IMESafeMultilineTextField(prompt: "备注", text: $draft.note)
                 }
             }
+            .appListSpacing()
             .appNavigationTitle(isExisting ? "编辑证照" : "新增证照")
             .adminModeIndicator()
 #if os(iOS)
@@ -86,6 +93,26 @@ struct CredentialEditorView: View {
             .sheet(item: $ocrAttachment) { attachment in
                 CredentialOCRView(attachment: attachment.file, documentType: draft.type) { suggestion in
                     apply(suggestion)
+                }
+                .iOSLargeSheet()
+            }
+            .sheet(isPresented: $showingTemplateEditor) {
+                CredentialFieldTemplateEditorView(
+                    documentType: draft.type,
+                    template: store.fieldTemplate(for: draft.type)
+                ) { template in
+                    let previousTemplate = store.fieldTemplate(for: draft.type)
+                    let shouldRefreshDraft = !isExisting
+                        && fieldsMatchTemplate(draft.fields, template: previousTemplate)
+                    store.upsertFieldTemplate(template)
+                    if shouldRefreshDraft {
+                        draft.fields = template.makeFields()
+                    } else {
+                        draft.fields = applyTemplateSensitivity(
+                            to: draft.fields,
+                            matching: template
+                        )
+                    }
                 }
                 .iOSLargeSheet()
             }
@@ -130,6 +157,20 @@ struct CredentialEditorView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
+            .alert("编辑字段名称", isPresented: $showingFieldNameEditor) {
+                TextField("字段名称", text: $fieldNameDraft)
+                Button("取消", role: .cancel) {}
+                Button("保存") { saveFieldName() }
+            } message: {
+                Text("保存后只更新字段显示名称，不会改变字段内容。")
+            }
+            .alert("添加字段", isPresented: $showingNewFieldNameEditor) {
+                TextField("字段名称", text: $newFieldNameDraft)
+                Button("取消", role: .cancel) {}
+                Button("添加") { addNewField() }
+            } message: {
+                Text("请输入新字段的显示名称。")
+            }
         }
     }
 
@@ -146,7 +187,6 @@ struct CredentialEditorView: View {
             if draft.type == .other {
                 labeledField("类型名称", prompt: "必填", text: $draft.customTypeName)
             }
-            labeledField("显示名称", prompt: draft.typeTitle, text: $draft.title)
             Picker("证照状态", selection: $draft.versionStatus) {
                 ForEach(CredentialVersionStatus.allCases) { status in
                     Label(status.title, systemImage: status.systemImage).tag(status)
@@ -236,44 +276,37 @@ struct CredentialEditorView: View {
     }
 
     private var customFieldsSection: some View {
-        Section("其他信息") {
+        return Section {
             if draft.fields.isEmpty {
                 Text("暂无其他字段")
                     .foregroundStyle(.secondary)
             }
             ForEach(draft.fields) { field in
                 let binding = fieldBinding(for: field.id, fallback: field)
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("字段名称") {
-                        IMESafeTextField(
-                            prompt: "字段名称",
-                            text: binding.label,
-                            alignment: .trailing
-                        )
-                        .frame(maxWidth: 240)
+                credentialFieldEditorRow(field: binding)
+                    .modifier(CredentialFieldSwipeActionsModifier(
+                        field: binding,
+                        onRename: { beginFieldNameEdit(field) }
+                    ))
+                    .appDeleteSwipeAction {
+                        draft.fields.removeAll { $0.id == field.id }
                     }
-                    Picker("输入形式", selection: binding.kind) {
-                        ForEach(CredentialFieldKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
-                        }
-                    }
-                    Toggle("查看时隐藏内容", isOn: binding.isSensitive)
-                    if binding.wrappedValue.kind == .multiline {
-                        IMESafeMultilineTextField(prompt: "字段内容", text: binding.value)
-                    } else {
-                        IMESafeTextField(prompt: "字段内容", text: binding.value)
-                    }
-                }
-                .padding(.vertical, 4)
-                .appDeleteSwipeAction {
-                    draft.fields.removeAll { $0.id == field.id }
-                }
             }
             .onMove { draft.fields.move(fromOffsets: $0, toOffset: $1) }
             Button {
-                draft.fields.append(CredentialField(label: "新字段"))
+                newFieldNameDraft = ""
+                showingNewFieldNameEditor = true
             } label: {
                 Label("添加字段", systemImage: "plus.circle")
+            }
+        } header: {
+            HStack {
+                Text("其他信息")
+                Spacer()
+                Button("字段模板") { showingTemplateEditor = true }
+                    .appFont(.subheadline)
+                    .foregroundStyle(.blue)
+                    .underline()
             }
         }
     }
@@ -344,6 +377,7 @@ struct CredentialEditorView: View {
             IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
                 .frame(maxWidth: 260)
         }
+        .frame(minHeight: AppListMetrics.minimumRowHeight)
     }
 
     private func optionalDateRow(_ title: String, date: Binding<Date?>) -> some View {
@@ -370,14 +404,19 @@ struct CredentialEditorView: View {
     }
 
     private func requiredDateRow(_ title: String, date: Binding<Date?>) -> some View {
-        DatePicker(
-            title,
-            selection: Binding(
-                get: { date.wrappedValue ?? Date() },
-                set: { date.wrappedValue = $0 }
-            ),
-            displayedComponents: .date
-        )
+        LabeledContent(title) {
+            DatePicker(
+                "",
+                selection: Binding(
+                    get: { date.wrappedValue ?? Date() },
+                    set: { date.wrappedValue = $0 }
+                ),
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.compact)
+        }
+        .frame(minHeight: AppListMetrics.minimumRowHeight)
     }
 
     private func fieldBinding(for id: UUID, fallback: CredentialField) -> Binding<CredentialField> {
@@ -388,6 +427,125 @@ struct CredentialEditorView: View {
                 draft.fields[index] = value
             }
         )
+    }
+
+    @ViewBuilder
+    private func credentialFieldEditorRow(field: Binding<CredentialField>) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(field.wrappedValue.label.isEmpty ? "未命名字段" : field.wrappedValue.label)
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
+            switch field.wrappedValue.inputType {
+            case .date:
+                DatePicker(
+                    "",
+                    selection: dateBinding(for: field),
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .datePickerStyle(.compact)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .text, .url:
+                if field.wrappedValue.isMultiline {
+                    IMESafeMultilineTextField(
+                        prompt: "请在此处键入\(field.wrappedValue.label)",
+                        text: field.value,
+                        minHeight: 34,
+                        maxHeight: 180
+                    )
+                } else {
+                    IMESafeTextField(
+                        prompt: "请在此处键入\(field.wrappedValue.label)",
+                        text: field.value,
+                        alignment: .leading,
+                        mode: field.wrappedValue.inputType == .url ? .url : .text
+                    )
+                }
+            }
+        }
+        .frame(minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
+        .onChange(of: field.wrappedValue.value) { _, value in
+            guard field.wrappedValue.inputType != .date else { return }
+            field.wrappedValue.kind = value.contains(where: { $0.isNewline }) ? .multiline : .text
+        }
+    }
+
+    private func dateBinding(for field: Binding<CredentialField>) -> Binding<Date> {
+        Binding(
+            get: { Self.dateFormatter.date(from: field.wrappedValue.value) ?? Date() },
+            set: { field.wrappedValue.value = Self.dateFormatter.string(from: $0) }
+        )
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private func beginFieldNameEdit(_ field: CredentialField) {
+        editingFieldID = field.id
+        fieldNameDraft = field.label
+        showingFieldNameEditor = true
+    }
+
+    private func saveFieldName() {
+        guard let editingFieldID else { return }
+        let label = fieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty,
+              let index = draft.fields.firstIndex(where: { $0.id == editingFieldID }) else {
+            return
+        }
+        draft.fields[index].label = label
+        self.editingFieldID = nil
+    }
+
+    private func addNewField() {
+        let label = newFieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return }
+        draft.fields.append(CredentialField(label: label, kind: .text, inputType: .text))
+    }
+
+    private func fieldsMatchTemplate(
+        _ fields: [CredentialField],
+        template: CredentialFieldTemplate
+    ) -> Bool {
+        let normalizedFields = fields
+            .filter { $0.value.isEmpty }
+            .map { "\($0.label)|\($0.isMultiline)|\($0.inputType.rawValue)|\($0.isSensitive)" }
+            .sorted()
+        let normalizedTemplate = template.fields
+            .map { "\($0.label)|\($0.isMultiline)|\($0.inputType.rawValue)|\($0.isSensitive)" }
+            .sorted()
+        return fields.count == template.fields.count && normalizedFields == normalizedTemplate
+    }
+
+    private func fieldsMatchTemplate(
+        _ fields: [CredentialField],
+        for type: CredentialDocumentType
+    ) -> Bool {
+        fieldsMatchTemplate(
+            fields,
+            template: store.fieldTemplate(for: type)
+        )
+    }
+
+    private func applyTemplateSensitivity(
+        to fields: [CredentialField],
+        matching template: CredentialFieldTemplate
+    ) -> [CredentialField] {
+        fields.map { field in
+            guard let templateField = template.fields.first(where: {
+                $0.label == field.label && $0.inputType == field.inputType
+            }) else {
+                return field
+            }
+            var updated = field
+            updated.isSensitive = templateField.isSensitive
+            return updated
+        }
     }
 
     private func attachmentBinding(
@@ -405,10 +563,7 @@ struct CredentialEditorView: View {
 
     private func typeDidChange(from oldType: CredentialDocumentType, to newType: CredentialDocumentType) {
         if fieldsMatchTemplate(draft.fields, for: oldType) {
-            draft.fields = newType.defaultFields
-        }
-        if draft.title == oldType.title {
-            draft.title = newType.title
+            draft.fields = store.makeFields(for: newType)
         }
         let previousEndDate = draft.expirationDate()
         if CredentialValidityKind.isAlwaysPermanent(for: newType) {
@@ -425,20 +580,6 @@ struct CredentialEditorView: View {
                     kind: CredentialValidityKind.options(for: newType).first ?? .permanent
                 )
             }
-        }
-    }
-
-    private func fieldsMatchTemplate(
-        _ fields: [CredentialField],
-        for type: CredentialDocumentType
-    ) -> Bool {
-        let template = type.defaultFields
-        guard fields.count == template.count else { return false }
-        return zip(fields, template).allSatisfy { field, expected in
-            field.label == expected.label
-                && field.value.isEmpty
-                && field.kind == expected.kind
-                && field.isSensitive == expected.isSensitive
         }
     }
 
@@ -602,6 +743,30 @@ struct CredentialEditorView: View {
                 "取消证照编辑时，附件回滚失败：\(failures.joined(separator: "；"))",
                 level: .error
             )
+        }
+    }
+}
+
+private struct CredentialFieldSwipeActionsModifier: ViewModifier {
+    let field: Binding<CredentialField>
+    let onRename: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        content.appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+            Button {
+                field.wrappedValue.isSensitive.toggle()
+            } label: {
+                Label(
+                    field.wrappedValue.isSensitive ? "显示内容" : "隐藏内容",
+                    systemImage: field.wrappedValue.isSensitive ? "eye" : "eye.slash"
+                )
+            }
+            .tint(AppSwipeActions.visibility.tint)
+            Button(action: onRename) {
+                Label("编辑名称", systemImage: "pencil")
+            }
+            .tint(AppSwipeActions.edit.tint)
         }
     }
 }

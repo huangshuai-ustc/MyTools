@@ -7,6 +7,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     static let notificationIdentifierPrefix = "credential-expiry-"
 
     @Published private(set) var documents: [CredentialDocument]
+    @Published private(set) var fieldTemplates: [CredentialFieldTemplate]
     @Published private(set) var knownTags: [String]
 
     private let attachmentStore: AttachmentStore
@@ -16,6 +17,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
 
     init(
         documents: [CredentialDocument] = [],
+        fieldTemplates: [CredentialFieldTemplate] = CredentialFieldTemplate.defaultTemplates,
         knownTags: [String] = [],
         attachmentStore: AttachmentStore,
         notificationScheduler: any LocalNotificationScheduling = DisabledLocalNotificationScheduler(),
@@ -23,6 +25,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     ) {
         let normalizedDocuments = documents.map(Self.normalizedTags(in:))
         self.documents = normalizedDocuments
+        self.fieldTemplates = Self.normalizedTemplates(fieldTemplates)
         self.knownTags = AppTagSupport.merged(knownTags, with: normalizedDocuments.flatMap(\.tags))
         self.attachmentStore = attachmentStore
         self.notificationScheduler = notificationScheduler
@@ -37,14 +40,61 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         self.mutationNotifier = mutationNotifier
     }
 
-    func replace(documents: [CredentialDocument], knownTags: [String]? = nil) {
+    func replace(
+        documents: [CredentialDocument],
+        fieldTemplates: [CredentialFieldTemplate]? = nil,
+        knownTags: [String]? = nil
+    ) {
         let normalizedDocuments = documents.map(Self.normalizedTags(in:))
         self.documents = normalizedDocuments
+        if let fieldTemplates {
+            self.fieldTemplates = Self.normalizedTemplates(fieldTemplates)
+        }
         self.knownTags = AppTagSupport.merged(
             knownTags ?? self.knownTags,
             with: normalizedDocuments.flatMap(\.tags)
         )
         reconcileExpiryNotifications()
+    }
+
+    func fieldTemplate(for documentType: CredentialDocumentType) -> CredentialFieldTemplate {
+        fieldTemplates.first(where: { $0.documentType == documentType })
+            ?? CredentialFieldTemplate(documentType: documentType, fields: documentType.defaultFields)
+    }
+
+    func makeFields(for documentType: CredentialDocumentType) -> [CredentialField] {
+        fieldTemplate(for: documentType).makeFields()
+    }
+
+    func upsertFieldTemplate(_ template: CredentialFieldTemplate) {
+        let normalized = template.normalized()
+        if let index = fieldTemplates.firstIndex(where: {
+            $0.documentType == normalized.documentType
+        }) {
+            fieldTemplates[index] = normalized
+        } else {
+            fieldTemplates.append(normalized)
+        }
+        fieldTemplates = Self.normalizedTemplates(fieldTemplates)
+        let changedAt = Date()
+        documents = documents.map { document in
+            guard document.type == normalized.documentType else { return document }
+            var updated = document
+            var didUpdate = false
+            updated.fields = document.fields.map { field in
+                guard let templateField = matchingTemplateField(for: field, in: normalized),
+                      field.isSensitive != templateField.isSensitive else {
+                    return field
+                }
+                var field = field
+                field.isSensitive = templateField.isSensitive
+                didUpdate = true
+                return field
+            }
+            if didUpdate { updated.updatedAt = changedAt }
+            return updated
+        }
+        didMutate()
     }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
@@ -210,7 +260,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         if result.parentDocumentID == result.id {
             result.parentDocumentID = nil
         }
-        result.title = normalizedText(result.title)
+        result.title = ""
         result.customTypeName = normalizedText(result.customTypeName)
         result.holderName = normalizedText(result.holderName)
         result.documentNumber = normalizedText(result.documentNumber).uppercased()
@@ -322,6 +372,34 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         var result = document
         result.tags = AppTagSupport.normalize(document.tags)
         return result
+    }
+
+    private static func normalizedTemplates(
+        _ templates: [CredentialFieldTemplate]
+    ) -> [CredentialFieldTemplate] {
+        var byType = Dictionary(uniqueKeysWithValues: templates.map {
+            ($0.documentType, $0.normalized())
+        })
+        for fallback in CredentialFieldTemplate.defaultTemplates
+        where byType[fallback.documentType] == nil {
+            byType[fallback.documentType] = fallback
+        }
+        return CredentialDocumentType.allCases.compactMap { byType[$0] }
+    }
+
+    private func matchingTemplateField(
+        for field: CredentialField,
+        in template: CredentialFieldTemplate
+    ) -> CredentialField? {
+        if let exactMatch = template.fields.first(where: {
+            $0.label == field.label && $0.inputType == field.inputType
+        }) {
+            return exactMatch
+        }
+        let kindMatches = template.fields.filter {
+            $0.kind == field.kind && $0.inputType == field.inputType
+        }
+        return kindMatches.count == 1 ? kindMatches.first : nil
     }
 
     private func reconcileExpiryNotifications(forceEnabled: Bool? = nil, now: Date = Date()) {

@@ -160,7 +160,32 @@ struct CloudSyncSecretsMetadata: Codable, Equatable, Sendable {
 
 struct CloudSyncDocumentsMetadata: Codable, Equatable, Sendable {
     static let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000014")!
+    var fieldTemplates: [CredentialFieldTemplateVaultValue]
     var tags: [String]
+    var includesFieldTemplates: Bool
+
+    init(
+        fieldTemplates: [CredentialFieldTemplateVaultValue] = [],
+        tags: [String] = []
+    ) {
+        self.fieldTemplates = fieldTemplates
+        self.tags = tags
+        self.includesFieldTemplates = true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fieldTemplates, tags
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        includesFieldTemplates = container.contains(.fieldTemplates)
+        fieldTemplates = try container.decodeIfPresent(
+            [CredentialFieldTemplateVaultValue].self,
+            forKey: .fieldTemplates
+        ) ?? []
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+    }
 }
 
 struct CloudSyncBillsMetadata: Codable, Equatable, Sendable {
@@ -288,7 +313,10 @@ enum CloudSyncSnapshotBuilder {
                 to: &items
             )
             try append(
-                CloudSyncDocumentsMetadata(tags: vault.credentialTags),
+                CloudSyncDocumentsMetadata(
+                    fieldTemplates: vault.credentialFieldTemplates,
+                    tags: vault.credentialTags
+                ),
                 id: CloudSyncDocumentsMetadata.itemID,
                 kind: .documentsMetadata,
                 encoder: encoder,
@@ -623,10 +651,14 @@ enum CloudSyncMerger {
                     break
                 case .documentsMetadata:
 #if MYTOOLS_FEATURE_DOCUMENTS
-                    vault.credentialTags = try decoder.decode(
+                    let metadata = try decoder.decode(
                         CloudSyncDocumentsMetadata.self,
                         from: payload
-                    ).tags
+                    )
+                    if metadata.includesFieldTemplates {
+                        vault.credentialFieldTemplates = metadata.fieldTemplates
+                    }
+                    vault.credentialTags = metadata.tags
 #endif
                     break
                 case .billsMetadata:

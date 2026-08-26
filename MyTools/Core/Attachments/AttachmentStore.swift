@@ -141,32 +141,16 @@ final class AttachmentStore: @unchecked Sendable {
             throw AttachmentStoreError.invalidFileName
         }
 
-        let originalExtension = URL(fileURLWithPath: attachment.fileName).pathExtension
-        let requestedExtension = URL(fileURLWithPath: trimmedName).pathExtension
-        let name: String
-        if !originalExtension.isEmpty {
-            let baseName = requestedExtension.isEmpty
-                ? trimmedName
-                : URL(fileURLWithPath: trimmedName).deletingPathExtension().lastPathComponent
-            name = "\(baseName).\(originalExtension)"
-        } else {
-            name = trimmedName
-        }
         let sourceURL = url(for: attachment)
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw AttachmentStoreError.fileMissing(attachment.fileName)
         }
 
-        try ensureDirectory()
-        let storedFileName = uniqueFileName(name, excluding: sourceURL)
-        let destinationURL = directoryURL.appendingPathComponent(storedFileName, isDirectory: false)
-        if sourceURL.path != destinationURL.path {
-            try fileManager.moveItem(at: sourceURL, to: destinationURL)
-        }
-
+        // Display names are metadata and may intentionally repeat. The file
+        // on disk keeps its opaque UUID-backed stored name, so renaming one
+        // attachment never collides with another or moves its contents.
         var renamed = attachment
-        renamed.fileName = storedFileName
-        renamed.storedFileName = storedFileName
+        renamed.fileName = trimmedName
         return renamed
     }
 
@@ -198,29 +182,6 @@ final class AttachmentStore: @unchecked Sendable {
 #else
         [.atomic]
 #endif
-    }
-
-    private func uniqueFileName(_ requestedName: String, excluding sourceURL: URL) -> String {
-        let requestedURL = directoryURL.appendingPathComponent(requestedName, isDirectory: false)
-        guard fileManager.fileExists(atPath: requestedURL.path), requestedURL.path != sourceURL.path else {
-            return requestedName
-        }
-
-        let nameURL = URL(fileURLWithPath: requestedName)
-        let baseName = nameURL.deletingPathExtension().lastPathComponent
-        let fileExtension = nameURL.pathExtension
-        var suffix = 2
-        while true {
-            let candidateBase = "\(baseName) \(suffix)"
-            let candidate = fileExtension.isEmpty
-                ? candidateBase
-                : "\(candidateBase).\(fileExtension)"
-            let candidateURL = directoryURL.appendingPathComponent(candidate, isDirectory: false)
-            if !fileManager.fileExists(atPath: candidateURL.path) {
-                return candidate
-            }
-            suffix += 1
-        }
     }
 
     private func inferredKind(for contentType: UTType) -> AttachmentKind {

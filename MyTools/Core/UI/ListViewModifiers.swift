@@ -419,6 +419,49 @@ enum AppSwipeActions {
     static let rename = AppSwipeActionStyle(tint: .blue, allowsFullSwipe: false)
 }
 
+struct TemplateFieldSwipeActionsModifier: ViewModifier {
+    let isSensitive: Bool
+    let toggleVisibility: () -> Void
+    let onRename: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        content.appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+            Button(action: toggleVisibility) {
+                Label(
+                    isSensitive ? "显示" : "隐藏",
+                    systemImage: isSensitive ? "eye" : "eye.slash"
+                )
+            }
+            .tint(AppSwipeActions.visibility.tint)
+            Button(action: onRename) {
+                Label("编辑名称", systemImage: "pencil")
+            }
+            .tint(AppSwipeActions.edit.tint)
+        }
+    }
+}
+
+struct TemplateFieldDropDelegate: DropDelegate {
+    let targetID: UUID
+    @Binding var draggedID: UUID?
+    let move: (UUID, UUID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        move(draggedID, targetID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedID = nil
+        return true
+    }
+}
+
 enum AppListMetrics {
     static let rowVerticalInset: CGFloat = 10
     static let rowHorizontalInset: CGFloat = 16
@@ -573,6 +616,18 @@ extension View {
 
     func appListSpacing() -> some View {
         modifier(AppListSpacingModifier())
+    }
+
+    func appTemplateFieldSwipeActions(
+        isSensitive: Bool,
+        toggleVisibility: @escaping () -> Void,
+        onRename: @escaping () -> Void
+    ) -> some View {
+        modifier(TemplateFieldSwipeActionsModifier(
+            isSensitive: isSensitive,
+            toggleVisibility: toggleVisibility,
+            onRename: onRename
+        ))
     }
 
     func iOSLabeledBackButton(_ title: String) -> some View {

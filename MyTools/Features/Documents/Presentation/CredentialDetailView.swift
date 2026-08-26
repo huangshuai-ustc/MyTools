@@ -10,6 +10,7 @@ struct CredentialDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     let documentID: UUID
     @Binding var isUnlocked: Bool
+    @State private var hiddenFieldIDs: Set<UUID> = []
     @State private var showingSensitiveAccess = false
     @State private var editingDocument: CredentialDocument?
     @State private var previewAttachment: FileAttachment?
@@ -35,13 +36,13 @@ struct CredentialDetailView: View {
             if let document {
                 Form {
                     Section("证照信息") {
-                        LabeledContent("类型", value: document.typeTitle)
-                        HStack(spacing: 12) {
-                            Text("证照状态")
-                            Spacer(minLength: 12)
+                        detailRow("类型") {
+                            Text(document.typeTitle)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        detailRow("证照状态") {
                             CredentialVersionStatusLabel(status: document.versionStatus)
                         }
-                        .frame(maxWidth: .infinity)
                         protectedRow("持有人", value: document.holderName)
                         protectedRow("证件号码", value: document.documentNumber, monospaced: true)
                         protectedRow("签发机构", value: document.issuingAuthority)
@@ -197,9 +198,13 @@ struct CredentialDetailView: View {
 #endif
         .onChange(of: auth.isAdmin) { _, isAdmin in
             isUnlocked = isAdmin
+            if isAdmin { hiddenFieldIDs = [] }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { isUnlocked = false }
+            if phase != .active {
+                isUnlocked = false
+                hiddenFieldIDs = []
+            }
         }
         .alert(
             "无法打开附件",
@@ -215,8 +220,22 @@ struct CredentialDetailView: View {
     }
 
     @ViewBuilder
+    private func detailRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 12)
+            content()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
+    }
+
+    @ViewBuilder
     private func protectedRow(_ title: String, value: String, monospaced: Bool = false) -> some View {
-        LabeledContent(title) {
+        detailRow(title) {
             Text(value.isEmpty ? "未填写" : (canReveal ? value : "••••••"))
                 .fontDesign(monospaced && canReveal ? .monospaced : .default)
                 .multilineTextAlignment(.trailing)
@@ -226,15 +245,47 @@ struct CredentialDetailView: View {
 
     @ViewBuilder
     private func fieldRow(_ field: CredentialField) -> some View {
-        let revealed = canReveal || !field.isSensitive
+        let revealed = !field.isSensitive || (canReveal && !hiddenFieldIDs.contains(field.id))
         VStack(alignment: .leading, spacing: 5) {
-            Text(field.label)
-                .appFont(.subheadline.weight(.medium))
-            Text(field.value.isEmpty ? "未填写" : (revealed ? field.value : "••••••"))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(field.kind == .multiline ? 8 : 2)
-                .copyableText(revealed && !field.value.isEmpty ? field.value : nil)
+            HStack {
+                Text(field.label.isEmpty ? "未命名字段" : field.label)
+                    .appFont(.subheadline.weight(.medium))
+                Spacer()
+                if field.isSensitive, !field.value.isEmpty, canReveal {
+                    Button {
+                        if hiddenFieldIDs.contains(field.id) {
+                            hiddenFieldIDs.remove(field.id)
+                        } else {
+                            hiddenFieldIDs.insert(field.id)
+                        }
+                    } label: {
+                        Image(systemName: revealed ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(revealed ? "隐藏内容" : "显示内容")
+                }
+            }
+            if revealed,
+               field.inputType == .url,
+               let url = URL(string: field.value.trimmingCharacters(in: .whitespacesAndNewlines)),
+               !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Link(destination: url) {
+                    Text(field.value)
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(.blue)
+                        .underline()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(2)
+                }
+                .copyableText(field.value)
+            } else {
+                Text(field.value.isEmpty ? "未填写" : (revealed ? field.value : "••••••"))
+                    .fontDesign(revealed ? .monospaced : .default)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(field.isMultiline ? 8 : 2)
+                    .copyableText(revealed && !field.value.isEmpty ? field.value : nil)
+            }
         }
         .padding(.vertical, 3)
     }
@@ -287,6 +338,157 @@ private struct CredentialVersionRow: View {
     private var issueDateTitle: String {
         guard let issuedAt = document.issuedAt else { return "未设置签发日期" }
         return "签发于 \(AppDateFormatter.string(from: issuedAt))"
+    }
+}
+
+struct CredentialFieldTemplateEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    let documentType: CredentialDocumentType
+    @State private var fields: [CredentialField]
+    @State private var showingNewField = false
+    @State private var newFieldName = ""
+    @State private var draggedFieldID: UUID?
+    @State private var editingFieldID: UUID?
+    @State private var fieldNameDraft = ""
+    let onSave: (CredentialFieldTemplate) -> Void
+
+    init(
+        documentType: CredentialDocumentType,
+        template: CredentialFieldTemplate,
+        onSave: @escaping (CredentialFieldTemplate) -> Void
+    ) {
+        self.documentType = documentType
+        _fields = State(initialValue: template.fields)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach($fields) { field in
+                        HStack(spacing: 12) {
+                            TextField("字段名称", text: field.label)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Picker("字段类型", selection: field.inputType) {
+                                ForEach(CredentialFieldInputType.allCases) { inputType in
+                                    Text(inputType.title).tag(inputType)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .fixedSize()
+                        }
+                        .frame(minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
+                        .padding(.vertical, 4)
+                        .onDrag {
+                            draggedFieldID = field.wrappedValue.id
+                            return NSItemProvider(object: NSString(string: field.wrappedValue.id.uuidString))
+                        }
+                        .onDrop(
+                            of: [.text],
+                            delegate: TemplateFieldDropDelegate(
+                                targetID: field.wrappedValue.id,
+                                draggedID: $draggedFieldID,
+                                move: moveField
+                            )
+                        )
+                        .appTemplateFieldSwipeActions(
+                            isSensitive: field.wrappedValue.isSensitive
+                        ) {
+                            field.wrappedValue.isSensitive.toggle()
+                        } onRename: {
+                            editingFieldID = field.wrappedValue.id
+                            fieldNameDraft = field.wrappedValue.label
+                        }
+                        .appDeleteSwipeAction {
+                            fields.removeAll { $0.id == field.wrappedValue.id }
+                        }
+                    }
+                } header: {
+                    Text("字段模板 · \(documentType.title)")
+                } footer: {
+                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建证照时会生成空白字段。")
+                }
+
+                Section {
+                    Button {
+                        newFieldName = ""
+                        showingNewField = true
+                    } label: {
+                        Label("添加模板字段", systemImage: "plus.circle")
+                    }
+                }
+            }
+            .appNavigationTitle("字段模板")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let cleaned = fields.filter {
+                            !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }.map {
+                            CredentialField(
+                                label: $0.label.trimmingCharacters(in: .whitespacesAndNewlines),
+                                kind: $0.kind,
+                                inputType: $0.inputType,
+                                isSensitive: $0.isSensitive
+                            )
+                        }
+                        onSave(CredentialFieldTemplate(documentType: documentType, fields: cleaned))
+                        dismiss()
+                    }
+                    .disabled(fields.allSatisfy {
+                        $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    })
+                }
+            }
+            .alert("添加模板字段", isPresented: $showingNewField) {
+                TextField("字段名称", text: $newFieldName)
+                Button("取消", role: .cancel) {}
+                Button("添加") {
+                    let label = newFieldName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !label.isEmpty else { return }
+                    fields.append(CredentialField(label: label, isSensitive: true))
+                }
+            }
+            .alert(
+                "编辑字段名称",
+                isPresented: Binding(
+                    get: { editingFieldID != nil },
+                    set: { if !$0 { editingFieldID = nil } }
+                )
+            ) {
+                TextField("字段名称", text: $fieldNameDraft)
+                Button("取消", role: .cancel) { editingFieldID = nil }
+                Button("保存") { saveFieldName() }
+            } message: {
+                Text("请输入字段的显示名称。")
+            }
+        }
+    }
+
+    private func moveField(_ draggedID: UUID, before targetID: UUID) {
+        guard draggedID != targetID,
+              let sourceIndex = fields.firstIndex(where: { $0.id == draggedID }) else {
+            return
+        }
+        let movedField = fields.remove(at: sourceIndex)
+        let insertionIndex = fields.firstIndex(where: { $0.id == targetID }) ?? fields.count
+        fields.insert(movedField, at: insertionIndex)
+    }
+
+    private func saveFieldName() {
+        guard let editingFieldID else { return }
+        let label = fieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty,
+              let index = fields.firstIndex(where: { $0.id == editingFieldID }) else {
+            return
+        }
+        fields[index].label = label
+        self.editingFieldID = nil
     }
 }
 

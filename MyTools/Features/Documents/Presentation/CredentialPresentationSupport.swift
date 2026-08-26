@@ -117,11 +117,14 @@ struct CredentialAttachmentRow: View {
 
 struct CredentialAttachmentRenameView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var fileName: String
+    @State private var baseName: String
+    @State private var fileExtension: String
     let onSave: (String) -> Void
 
     init(fileName: String, onSave: @escaping (String) -> Void) {
-        _fileName = State(initialValue: fileName)
+        let url = URL(fileURLWithPath: fileName)
+        _baseName = State(initialValue: url.deletingPathExtension().lastPathComponent)
+        _fileExtension = State(initialValue: url.pathExtension)
         self.onSave = onSave
     }
 
@@ -129,7 +132,10 @@ struct CredentialAttachmentRenameView: View {
         NavigationStack {
             Form {
                 Section("文件名") {
-                    IMESafeTextField(prompt: "文件名", text: $fileName)
+                    IMESafeTextField(prompt: "文件名", text: $baseName)
+                }
+                Section("扩展名") {
+                    IMESafeTextField(prompt: "例如 jpg 或 pdf（不含点号）", text: $fileExtension)
                 }
             }
             .appNavigationTitle("重命名附件")
@@ -143,11 +149,15 @@ struct CredentialAttachmentRenameView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         commitPendingTextInput {
-                            onSave(fileName)
+                            let name = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let suffix = fileExtension
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                            onSave(suffix.isEmpty ? name : "\(name).\(suffix)")
                             dismiss()
                         }
                     }
-                    .disabled(fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(baseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

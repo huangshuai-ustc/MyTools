@@ -363,6 +363,15 @@ struct StockWatchView: View {
                 ForEach(StockChartRange.allCases) { range in
                     Button {
                         selectedRange = range
+                        // A range change must never leave the previous
+                        // period's snapshot on screen when the new request
+                        // fails. The old chart can otherwise appear together
+                        // with an error message and be mistaken for data from
+                        // the selected range.
+                        snapshot = nil
+                        clearSessionSummary()
+                        errorMessage = nil
+                        selectedDate = nil
                         visibleXDomain = nil
                     } label: {
                         Text(range.title)
