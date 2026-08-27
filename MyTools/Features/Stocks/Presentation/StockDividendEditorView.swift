@@ -32,6 +32,7 @@ struct StockDividendEditorView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: StockDividendEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
@@ -51,11 +52,7 @@ struct StockDividendEditorView: View {
         NavigationStack {
             Form {
                 Section("分红信息") {
-                    DatePicker(
-                        "到账日期：",
-                        selection: $draft.dividend.receivedAt,
-                        displayedComponents: .date
-                    )
+                    DateFieldRow(title: "到账日期：", date: $draft.dividend.receivedAt)
                     decimalField(
                         "分红股数：",
                         placeholder: "必填",
@@ -69,6 +66,7 @@ struct StockDividendEditorView: View {
                         field: .dividendPerShare
                     )
                     LabeledContent("税前分红", value: grossAmountText)
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     decimalField(
                         "预扣税：",
                         placeholder: "可选",
@@ -150,14 +148,8 @@ struct StockDividendEditorView: View {
         text: Binding<String>,
         field: Field
     ) -> some View {
-        LabeledContent(title) {
-            TextField(placeholder, text: text)
-                .multilineTextAlignment(.trailing)
-                .focused($focusedField, equals: field)
-#if os(iOS)
-                .keyboardType(.decimalPad)
-#endif
-        }
+        NumericFieldRow(title: title, prompt: placeholder, text: text)
+            .focused($focusedField, equals: field)
     }
 
     private func requestSave() {

@@ -23,6 +23,7 @@ struct StockTransactionEditorView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: StockTransactionEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
@@ -45,11 +46,7 @@ struct StockTransactionEditorView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    DatePicker(
-                        "交易日期：",
-                        selection: $draft.transaction.tradedAt,
-                        displayedComponents: .date
-                    )
+                    DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt)
                     decimalField("交易股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                     decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
                     decimalField("交易费用：", placeholder: "可选", text: $draft.feesText, field: .fees)
@@ -57,7 +54,9 @@ struct StockTransactionEditorView: View {
 
                 Section {
                     LabeledContent("当前持仓", value: "\(StockValueFormatter.quantity(stock.currentShares)) 股")
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     LabeledContent("结算币种", value: stock.market.currencyCode)
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                 }
             }
             .appNavigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")
@@ -92,14 +91,8 @@ struct StockTransactionEditorView: View {
         text: Binding<String>,
         field: Field
     ) -> some View {
-        LabeledContent(title) {
-            TextField(placeholder, text: text)
-                .multilineTextAlignment(.trailing)
-                .focused($focusedField, equals: field)
-#if os(iOS)
-                .keyboardType(.decimalPad)
-#endif
-        }
+        NumericFieldRow(title: title, prompt: placeholder, text: text)
+            .focused($focusedField, equals: field)
     }
 
     private func requestSave() {

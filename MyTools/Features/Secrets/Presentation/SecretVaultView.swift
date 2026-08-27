@@ -94,6 +94,7 @@ struct SecretVaultView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
     @State private var categoryFilter: SecretCategoryFilter = .all
     @State private var selectedTag = ""
@@ -260,6 +261,7 @@ struct SecretVaultView: View {
 }
 
 private struct SecretItemRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let item: SecretItem
 
     var body: some View {
@@ -268,7 +270,7 @@ private struct SecretItemRow: View {
                 .appFont(.title3)
                 .foregroundStyle(.orange)
                 .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(item.title.isEmpty ? "未命名条目" : item.title)
                     .appFont(.headline)
                     .lineLimit(1)
@@ -394,6 +396,7 @@ private struct SecretPasswordImportView: View {
 
 private struct SecretFieldTemplateEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     let category: SecretCategory
     @State private var fields: [SecretField]
     @State private var showingNewField = false
@@ -426,6 +429,7 @@ private struct SecretFieldTemplateEditorView: View {
                             .labelsHidden()
                             .fixedSize()
                         }
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
                         .padding(.vertical, 4)
                         .onDrag {
                             draggedFieldID = field.wrappedValue.id
@@ -825,6 +829,7 @@ struct SecretEditorView: View {
     @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: SecretEditorDraft
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
@@ -860,10 +865,8 @@ struct SecretEditorView: View {
         NavigationStack {
             Form {
                 Section("条目信息") {
-                    LabeledContent("名称") {
-                        IMESafeTextField(prompt: "例如 Cloudflare", text: $draft.item.title, alignment: .trailing)
-                    }
-                    Picker("分类", selection: $draft.item.category) {
+                    FieldEditorRow(title: "名称", prompt: "例如 Cloudflare", text: $draft.item.title)
+                    PickerFieldRow(title: "分类", selection: $draft.item.category) {
                         ForEach(SecretCategory.allCases) { category in
                             Label(category.title, systemImage: category.systemImage).tag(category)
                         }
@@ -874,7 +877,7 @@ struct SecretEditorView: View {
                         }
                         draft.item.fields = store.makeFields(for: newCategory)
                     }
-                    Picker("用途", selection: $draft.item.purpose) {
+                    PickerFieldRow(title: "用途", selection: $draft.item.purpose) {
                         ForEach(SecretPurpose.allCases) { purpose in
                             Text(purpose.title).tag(purpose)
                         }
@@ -1054,6 +1057,7 @@ struct SecretEditorView: View {
                 )
             }
         }
+        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
         .onChange(of: field.wrappedValue.value) { _, value in
             if field.wrappedValue.inputType == .text,
                value.contains(where: { $0.isNewline }) {

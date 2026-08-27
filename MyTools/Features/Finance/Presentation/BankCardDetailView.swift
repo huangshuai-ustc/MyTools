@@ -24,19 +24,21 @@ struct CardDetailView: View {
         NavigationStack {
             Form {
                 Section {
-                    CopyableValueRow(title: "卡片名称", value: card.cardType)
-                    CopyableValueRow(title: "卡片类型", value: card.kind.title)
-                    ProtectedValueRow(
-                        title: "卡号",
+                    DetailValueRow(title: "卡片名称", value: card.cardType)
+                    DetailValueRow(title: "卡片类型", value: card.kind.title)
+                    DetailValueRow.protected(
+                        "卡号",
                         value: card.cardNumber,
                         concealedValue: maskedCardNumber,
-                        isRevealed: canShowSensitiveInformation
+                        isRevealed: canShowSensitiveInformation,
+                        monospaced: true
                     )
-                    ProtectedValueRow(
-                        title: "CVV",
+                    DetailValueRow.protected(
+                        "CVV",
                         value: card.cvv,
                         concealedValue: "•••",
-                        isRevealed: canShowSensitiveInformation
+                        isRevealed: canShowSensitiveInformation,
+                        monospaced: true
                     )
                     LabeledContent("有效期") {
                         Text(canShowSensitiveInformation ? expiryText : "已隐藏")
@@ -50,7 +52,7 @@ struct CardDetailView: View {
                             CardNetworkTags(networks: card.networks)
                         }
                     }
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "开卡时间",
                         value: AppDateFormatter.string(from: card.openedAt)
                     )
@@ -58,12 +60,12 @@ struct CardDetailView: View {
                         CardStatusText(status: card.status)
                             .copyableText(card.status.title)
                     }
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "币种",
                         value: card.currencySummary,
                         emptyValue: "未选择"
                     )
-                    CopyableValueRow(title: "持卡人", value: card.holderName)
+                    DetailValueRow(title: "持卡人", value: card.holderName)
 
                     if !auth.isAdmin, hasSensitiveInformation {
                         Button {

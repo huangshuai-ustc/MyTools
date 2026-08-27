@@ -5,6 +5,7 @@ struct BillEditorView: View {
     @EnvironmentObject private var store: BillsStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @State private var draft: BillRecord
     @State private var amountText: String
     @State private var tagsText: String
@@ -35,19 +36,12 @@ struct BillEditorView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    LabeledContent("金额") {
-                        TextField("必填", text: $amountText)
-                            .multilineTextAlignment(.trailing)
-#if os(iOS)
-                            .keyboardType(.decimalPad)
-#endif
-                    }
-                    Picker("币种", selection: $draft.currency) {
+                    NumericFieldRow(title: "金额", prompt: "必填", text: $amountText)
+                    PickerFieldRow(title: "币种", selection: $draft.currency) {
                         ForEach(CurrencyCode.selectableCases) { currency in
                             Text(currency.title).tag(currency)
                         }
                     }
-                    .pickerStyle(.menu)
                     LabeledContent("交易时间") {
                         HStack(spacing: 6) {
                             DatePicker("", selection: $draft.occurredAt, displayedComponents: [.date, .hourAndMinute])
@@ -62,18 +56,17 @@ struct BillEditorView: View {
 #endif
                         }
                     }
-                    Picker("状态", selection: $draft.status) {
+                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    PickerFieldRow(title: "状态", selection: $draft.status) {
                         ForEach(BillTransactionStatus.allCases) { status in
                             Text(status.title).tag(status)
                         }
                     }
-                    .pickerStyle(.menu)
-                    Picker("分类", selection: $draft.category) {
+                    PickerFieldRow(title: "分类", selection: $draft.category) {
                         ForEach(BillCategory.allCases) { category in
                             Label(category.title, systemImage: category.systemImage).tag(category)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
 
                 Section("明细") {
@@ -124,9 +117,7 @@ struct BillEditorView: View {
     }
 
     private func safeField(_ label: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(label) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-        }
+        FieldEditorRow(title: label, prompt: prompt, text: text, maxFieldWidth: .infinity)
     }
 
     private func requestSave() {

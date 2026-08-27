@@ -853,6 +853,26 @@ struct StockWatchView: View {
     }
 #endif
 
+    /// Whether `cached` already reflects today's completed regular session,
+    /// as opposed to being a mid-session snapshot fetched before the close.
+    /// Minute ranges compare the latest point's time-of-day against the
+    /// market's close; K-line ranges fall back to the fetch timestamp since
+    /// their points are daily+ granularity and don't carry an intraday clock.
+    private func isCachedChartFinal(_ cached: StockChartSnapshot?, market: StockMarket) -> Bool {
+        guard let cached else { return false }
+        if selectedRange.isMinuteRange {
+            return StockChartSeriesProcessor.hasCompletedRegularSession(
+                cached.points,
+                market: market
+            )
+        }
+        guard let sessionEnd = StockMarketTradingCalendar
+            .latestCompletedFinalSessionEnd(for: market) else {
+            return false
+        }
+        return cached.fetchedAt >= sessionEnd
+    }
+
     private func loadChart(forceRefresh: Bool, showsProgress: Bool = true) async {
         guard let stock else { return }
         let requestedKey = loadKey
@@ -882,8 +902,15 @@ struct StockWatchView: View {
             }
         }
 
+        // "Market closed" alone doesn't mean the cache is final — if the last
+        // fetch predates today's close (e.g. the post-close backfill in
+        // StockRefreshCoordinator never ran while this page was open), the
+        // cache is still a mid-session snapshot missing the tail end of the
+        // trading day. Only skip the refetch once the cache actually reflects
+        // a completed regular session.
         guard forceRefresh
-                || StockMarketTradingCalendar.isSessionActive(stock.market) else {
+                || StockMarketTradingCalendar.isSessionActive(stock.market)
+                || !isCachedChartFinal(cached, market: stock.market) else {
             return
         }
         guard forceRefresh || cached == nil || isSelectedChartAutoRefreshAllowed else {

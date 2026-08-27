@@ -5,6 +5,7 @@ struct HomeView: View {
     @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
+    @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
@@ -121,7 +122,7 @@ struct HomeView: View {
         NavigationLink {
             AccountDetailView(account: account, backTitle: ToolModule.personalFinance.title)
         } label: {
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     BankRegionBadge(region: account.region)
                     Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
@@ -272,6 +273,7 @@ private struct FinanceViewSnapshot {
 }
 
 struct CardRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let card: BankCard
 
     var body: some View {
@@ -280,7 +282,7 @@ struct CardRow: View {
                 .appFont(.title2)
                 .foregroundStyle(.blue)
                 .frame(width: 30)
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(card.cardType.isEmpty ? "未命名卡片" : card.cardType)
                         .appFont(.headline)

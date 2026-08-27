@@ -190,34 +190,34 @@ struct MedicalRecordDetailView: View {
             }
 
             Section(informationSectionTitle) {
-                CopyableValueRow(
+                DetailValueRow(
                     title: dayRecordDateTitle,
                     value: AppDateFormatter.string(from: record.date)
                 )
                 if record.isInpatientEpisode {
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "出院日期",
                         value: AppDateFormatter.string(from: record.inpatientEndDate ?? record.date)
                     )
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "住院天数",
                         value: "\(inpatientDayCount(for: record)) 天"
                     )
                 }
-                CopyableValueRow(title: record.institutionLabel, value: record.hospital)
+                DetailValueRow(title: record.institutionLabel, value: record.hospital)
                 if !record.hospitalClassificationTitles.isEmpty {
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "机构分类",
                         value: record.hospitalClassificationTitles.joined(separator: " · ")
                     )
                 }
-                CopyableValueRow(title: "类型", value: record.visitType.title)
+                DetailValueRow(title: "类型", value: record.visitType.title)
                 if record.isPharmacyPurchase {
                     if !record.chiefComplaint.isEmpty {
-                        CopyableValueRow(title: "用药原因", value: record.chiefComplaint)
+                        DetailValueRow(title: "用药原因", value: record.chiefComplaint)
                     }
                 } else if record.isPhysicalExam {
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "主要内容",
                         value: record.physicalExamDetails?.packageName ?? ""
                     )
@@ -227,55 +227,55 @@ struct MedicalRecordDetailView: View {
                         alignment: .leading
                     )
                 } else if record.isInpatient {
-                    CopyableValueRow(title: "科室", value: record.department)
-                    if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
+                    DetailValueRow(title: "科室", value: record.department)
+                    if !record.doctor.isEmpty { DetailValueRow(title: "医生", value: record.doctor) }
                     if record.isInpatientDailyRecord {
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "当天情况",
                             value: record.chiefComplaint,
                             alignment: .leading
                         )
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "当天诊疗结果",
                             value: record.diagnosis,
                             alignment: .leading
                         )
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "当天用药与操作",
                             value: record.treatment,
                             alignment: .leading
                         )
                     } else {
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "入院原因",
                             value: record.chiefComplaint,
                             alignment: .leading
                         )
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "主要诊断",
                             value: record.diagnosis,
                             alignment: .leading
                         )
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "治疗方案",
                             value: record.treatment,
                             alignment: .leading
                         )
                     }
                 } else {
-                    CopyableValueRow(title: "科室", value: record.department)
-                    if !record.doctor.isEmpty { CopyableValueRow(title: "医生", value: record.doctor) }
-                    CopyableValueRow(
+                    DetailValueRow(title: "科室", value: record.department)
+                    if !record.doctor.isEmpty { DetailValueRow(title: "医生", value: record.doctor) }
+                    DetailValueRow(
                         title: "主诉",
                         value: record.chiefComplaint,
                         alignment: .leading
                     )
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "初步诊断",
                         value: record.diagnosis,
                         alignment: .leading
                     )
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "治疗建议",
                         value: record.treatment,
                         alignment: .leading
@@ -362,9 +362,9 @@ struct MedicalRecordDetailView: View {
 
             Section("费用") {
                 if !record.hasAssociatedRecord, (!followUps.isEmpty || !pharmacyPurchases.isEmpty) {
-                    CopyableValueRow(title: "本次费用", value: MedicalValueFormatter.money(record.totalCost))
+                    DetailValueRow(title: "本次费用", value: MedicalValueFormatter.money(record.totalCost))
                     if !followUps.isEmpty {
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: record.isPhysicalExam
                                 ? "其他检查批次费用"
                                 : (record.isInpatient ? "住院日费用" : "复诊费用"),
@@ -372,25 +372,25 @@ struct MedicalRecordDetailView: View {
                         )
                     }
                     if !pharmacyPurchases.isEmpty {
-                        CopyableValueRow(
+                        DetailValueRow(
                             title: "关联购药费用",
                             value: MedicalValueFormatter.money(pharmacyPurchaseCostSummary.totalCost)
                         )
                     }
                 }
-                CopyableValueRow(
+                DetailValueRow(
                     title: "总费用",
                     value: MedicalValueFormatter.money(episodeCostSummary.totalCost)
                 )
-                CopyableValueRow(
+                DetailValueRow(
                     title: "医保支付",
                     value: MedicalValueFormatter.money(episodeCostSummary.insuranceCost)
                 )
-                CopyableValueRow(
+                DetailValueRow(
                     title: "自费",
                     value: MedicalValueFormatter.money(episodeCostSummary.selfPayCost)
                 )
-                CopyableValueRow(
+                DetailValueRow(
                     title: followUps.isEmpty && pharmacyPurchases.isEmpty ? "支付方式" : "本次支付方式",
                     value: record.paymentMethod.title
                 )
@@ -494,10 +494,11 @@ struct MedicalRecordDetailView: View {
 }
 
 private struct MedicalPhysicalExamFollowUpRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: MedicalRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 Label(
                     AppDateFormatter.string(from: record.date),
@@ -536,6 +537,7 @@ private func inpatientDateIsWithinRange(_ date: Date, parent: MedicalRecord) -> 
 }
 
 private struct MedicalInpatientDayRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: MedicalRecord
     let parent: MedicalRecord
 
@@ -558,7 +560,7 @@ private struct MedicalInpatientDayRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 Label(
                     isWithinRange ? "住院第\(dayNumber)天" : "区间外记录",
@@ -594,10 +596,11 @@ private struct MedicalInpatientDayRow: View {
 }
 
 private struct MedicalFollowUpRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: MedicalRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 Label(
                     AppDateFormatter.string(from: record.date),
@@ -626,10 +629,11 @@ private struct MedicalFollowUpRow: View {
 }
 
 private struct MedicalLinkedPharmacyPurchaseRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: MedicalRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 Label(
                     AppDateFormatter.string(from: record.date),
@@ -682,16 +686,16 @@ private struct MedicalExpenseItemDetailView: View {
         NavigationStack {
             List {
                 Section("项目") {
-                    CopyableValueRow(title: "项目名称", value: item.name)
-                    CopyableValueRow(
+                    DetailValueRow(title: "项目名称", value: item.name)
+                    DetailValueRow(
                         title: "金额",
                         value: MedicalValueFormatter.money(item.amount)
                     )
-                    CopyableValueRow(
+                    DetailValueRow(
                         title: "数量",
                         value: MedicalValueFormatter.number(item.quantity)
                     )
-                    CopyableValueRow(title: "单位", value: item.unit)
+                    DetailValueRow(title: "单位", value: item.unit)
                 }
 
                 if !item.note.isEmpty {

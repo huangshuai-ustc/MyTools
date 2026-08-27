@@ -203,14 +203,8 @@ struct StockEditorView: View {
         text: Binding<String>,
         field: Field
     ) -> some View {
-        LabeledContent(title) {
-            TextField(placeholder, text: text)
-                .multilineTextAlignment(.trailing)
-                .focused($focusedField, equals: field)
-#if os(iOS)
-                .keyboardType(.decimalPad)
-#endif
-        }
+        NumericFieldRow(title: title, prompt: placeholder, text: text)
+            .focused($focusedField, equals: field)
     }
 
     private func requestSave() {

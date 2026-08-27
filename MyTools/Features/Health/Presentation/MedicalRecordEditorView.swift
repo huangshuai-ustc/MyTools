@@ -176,16 +176,16 @@ struct MedicalRecordEditorView: View {
     private var basicInformationSection: some View {
         Section(informationSectionTitle) {
             if draft.record.isInpatientEpisode {
-                DatePicker("入院日期：", selection: $draft.record.date, displayedComponents: .date)
+                DateFieldRow(title: "入院日期：", date: $draft.record.date)
                     .onChange(of: draft.record.date) { _, admissionDate in
                         let endDate = draft.record.inpatientEndDate ?? admissionDate
                         if MedicalRecord.normalizedDate(endDate) < MedicalRecord.normalizedDate(admissionDate) {
                             draft.record.inpatientEndDate = admissionDate
                         }
                     }
-                DatePicker("出院日期：", selection: inpatientEndDateBinding, displayedComponents: .date)
+                DateFieldRow(title: "出院日期：", date: inpatientEndDateBinding)
             } else {
-                DatePicker(dateLabel, selection: $draft.record.date, displayedComponents: .date)
+                DateFieldRow(title: dateLabel, date: $draft.record.date)
             }
             safeField(
                 draft.record.isPharmacyPurchase
@@ -213,17 +213,17 @@ struct MedicalRecordEditorView: View {
                 }
             }
             if draft.record.institutionType == .hospital {
-                Picker("机构级别：", selection: $draft.record.hospitalLevel) {
+                PickerFieldRow(title: "机构级别：", selection: $draft.record.hospitalLevel) {
                     ForEach(HospitalLevel.displayOrder) { level in
                         Text(level.title).tag(level)
                     }
                 }
-                Picker("机构等次：", selection: $draft.record.hospitalGrade) {
+                PickerFieldRow(title: "机构等次：", selection: $draft.record.hospitalGrade) {
                     ForEach(HospitalGrade.displayOrder) { grade in
                         Text(grade.title).tag(grade)
                     }
                 }
-                Picker("医院性质：", selection: $draft.record.hospitalCategory) {
+                PickerFieldRow(title: "医院性质：", selection: $draft.record.hospitalCategory) {
                     ForEach(HospitalCategory.allCases) { category in
                         Text(category.title).tag(category)
                     }
@@ -447,10 +447,7 @@ struct MedicalRecordEditorView: View {
     }
 
     private func safeField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-                .frame(maxWidth: 260)
-        }
+        FieldEditorRow(title: title, prompt: prompt, text: text)
     }
 
     private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
@@ -461,21 +458,13 @@ struct MedicalRecordEditorView: View {
     }
 
     private func expressionField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            VStack(alignment: .trailing, spacing: 2) {
-                TextField(prompt, text: text)
-                    .multilineTextAlignment(.trailing)
-#if os(iOS)
-                    .keyboardType(.numbersAndPunctuation)
-#endif
-                if containsArithmeticOperator(text.wrappedValue),
-                   let value = DecimalTextParser.expression(from: text.wrappedValue) {
-                    Text("= \(MedicalValueFormatter.money(value))")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
+        NumericFieldRow(
+            title: title,
+            prompt: prompt,
+            text: text,
+            allowsExpression: true,
+            previewFormatter: MedicalValueFormatter.money
+        )
     }
 
     private func calculatedCostRow(_ title: String, amount: Decimal?) -> some View {
@@ -750,10 +739,6 @@ struct MedicalRecordEditorView: View {
         }
     }
 
-    private func containsArithmeticOperator(_ text: String) -> Bool {
-        text.contains { "+-*/×÷（）()".contains($0) }
-    }
-
     private var sortedHospitalProfiles: [HospitalProfile] {
         store.hospitalProfiles
             .filter { $0.supports(draft.record.institutionType) }
@@ -850,10 +835,7 @@ private struct MedicalExpenseItemEditorView: View {
     }
 
     private func field(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-                .frame(maxWidth: 260)
-        }
+        FieldEditorRow(title: title, prompt: prompt, text: text)
     }
 
     private func numericField(
@@ -862,23 +844,13 @@ private struct MedicalExpenseItemEditorView: View {
         text: Binding<String>,
         allowsExpression: Bool
     ) -> some View {
-        LabeledContent(title) {
-            VStack(alignment: .trailing, spacing: 2) {
-                TextField(prompt, text: text)
-                    .multilineTextAlignment(.trailing)
-#if os(iOS)
-                    .keyboardType(allowsExpression ? .numbersAndPunctuation : .decimalPad)
-#endif
-                if allowsExpression,
-                   text.wrappedValue.contains(where: { "+-*/×÷（）()".contains($0) }),
-                   let value = DecimalTextParser.expression(from: text.wrappedValue) {
-                    Text("= \(MedicalValueFormatter.money(value))")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: 260)
-        }
+        NumericFieldRow(
+            title: title,
+            prompt: prompt,
+            text: text,
+            allowsExpression: allowsExpression,
+            previewFormatter: MedicalValueFormatter.money
+        )
     }
 
     private func save() {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ToolboxView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
+    @Environment(\.appFontScale) private var fontScale
 
     private var visibleModules: [ToolModule] {
         moduleSettings.orderedModules.filter(moduleSettings.isVisible)
@@ -39,7 +40,7 @@ struct ToolboxView: View {
                 .foregroundStyle(.white)
                 .frame(width: 40, height: 40)
                 .background(module.tint, in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(module.title).appFont(.headline)
                 Text(module.subtitle).appFont(.subheadline).foregroundStyle(.secondary)
             }

@@ -395,11 +395,12 @@ private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable, H
 }
 
 private struct CurrencyExchangeRecordRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: CurrencyExchangeRecord
     let buyingRates: [CurrencyCode: Decimal]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: "arrow.left.arrow.right")
                     .appFont(.headline)

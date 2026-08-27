@@ -44,17 +44,13 @@ struct CurrencyExchangeEditorView: View {
         NavigationStack {
             Form {
                 Section("币种与日期") {
-                    DatePicker(
-                        "换汇日期：",
-                        selection: exchangeDate,
-                        displayedComponents: .date
-                    )
+                    DateFieldRow(title: "换汇日期：", date: exchangeDate)
                     currencyPicker("卖出币种：", selection: $draft.record.soldCurrency)
                     currencyPicker("买入币种：", selection: $draft.record.boughtCurrency)
                 }
 
                 Section {
-                    Picker("价格口径：", selection: $draft.record.quoteConvention) {
+                    PickerFieldRow(title: "价格口径：", selection: $draft.record.quoteConvention) {
                         ForEach(CurrencyExchangeQuoteConvention.allCases) { convention in
                             Text(convention.title(
                                 soldCurrency: draft.record.soldCurrency,
@@ -162,7 +158,7 @@ struct CurrencyExchangeEditorView: View {
     }
 
     private func currencyPicker(_ title: String, selection: Binding<CurrencyCode>) -> some View {
-        Picker(title, selection: selection) {
+        PickerFieldRow(title: title, selection: selection) {
             ForEach(CurrencyCode.selectableCases(including: selection.wrappedValue)) { currency in
                 Text(currency.title).tag(currency)
             }
@@ -175,14 +171,8 @@ struct CurrencyExchangeEditorView: View {
         text: Binding<String>,
         field: Field
     ) -> some View {
-        LabeledContent(title) {
-            TextField(placeholder, text: text)
-                .multilineTextAlignment(.trailing)
-                .focused($focusedField, equals: field)
-#if os(iOS)
-                .keyboardType(.decimalPad)
-#endif
-        }
+        NumericFieldRow(title: title, prompt: placeholder, text: text)
+            .focused($focusedField, equals: field)
     }
 
     private func requestSave() {

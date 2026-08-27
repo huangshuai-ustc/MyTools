@@ -162,13 +162,7 @@ struct BillOCRImportView: View {
                 }
             }
             .pickerStyle(.segmented)
-            LabeledContent("金额") {
-                TextField("必填", text: $amountText)
-                    .multilineTextAlignment(.trailing)
-#if os(iOS)
-                    .keyboardType(.decimalPad)
-#endif
-            }
+            NumericFieldRow(title: "金额", prompt: "必填", text: $amountText)
             Picker("币种", selection: $currency) {
                 ForEach(CurrencyCode.selectableCases) { currency in
                     Text(currency.title).tag(currency)
@@ -193,9 +187,7 @@ struct BillOCRImportView: View {
     }
 
     private func safeField(_ label: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(label) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-        }
+        FieldEditorRow(title: label, prompt: prompt, text: text, maxFieldWidth: .infinity)
     }
 
     private func loadPhoto(_ item: PhotosPickerItem) {

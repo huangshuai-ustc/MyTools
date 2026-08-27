@@ -164,7 +164,7 @@
 | `MyTools/Core/Authentication/AdminModeViews.swift` | 统一管理员编辑入口、状态指示和 View modifier。 |
 | `MyTools/Core/Authentication/AuthManager.swift` | 管理员密码、Keychain、生物识别/设备认证和会话自动锁定。 |
 | `MyTools/Core/Authentication/AuthenticationView.swift` | 进入管理员模式或执行认证回调的通用表单。 |
-| `MyTools/Core/Authentication/ProtectedContent.swift` | 敏感值遮罩、显示、长按复制和跨平台复制提示。 |
+| `MyTools/Core/Authentication/ProtectedContent.swift` | 敏感值长按复制手势与跨平台复制提示（`.copyableText(...)`、`CopyToastCenter`）；标签/值遮罩展示行已迁移至 `Core/UI/FormRowComponents.swift` 的 `DetailValueRow`。 |
 | `MyTools/Core/Authentication/SensitiveAccessView.swift` | 仅解锁当前敏感详情、不进入管理员编辑模式的验证页。 |
 
 ### `MyTools/Core/Backup/`：加密备份格式
@@ -229,6 +229,7 @@
 | `MyTools/Core/UI/IMETextInput.swift` | 中文组合输入安全的单行/多行字段和保存前 marked text 提交。 |
 | `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、模板字段显隐/改名滑动动作和拖动代理、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、跨平台语义字体 `AppFontSpec`/`.appFont()`、可缩放导航标题 `.appNavigationTitle()`、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
 | `MyTools/Core/UI/MarkdownRendering.swift` | Markdown 渲染、容错回退、常用上标归一化和可复制值行。 |
+| `MyTools/Core/UI/FormRowComponents.swift` | 详情页/编辑页/新增页统一"标签+值"行：`DetailValueRow`（展示态，trailing 单行截断+复制+`.protected(...)` 敏感遮罩+`.link(...)` 超链接，leading 多行用于地址/备注类）、`FieldEditorRow`（编辑态标签+单行输入框）、`DateFieldRow`（编辑态标签+日期选择器）、`PickerFieldRow`（编辑态标签+原生 `Picker`，修正原生 Picker/Toggle 行不遵循 `defaultMinListRowHeight` 导致的行高不一致）、`NumericFieldRow`（编辑态标签+数值/算式输入框，可选算式预览）；除 `FieldEditorRow` 外均固定 `.frame(minHeight: AppListMetrics.minimumRowHeight)`，四类值行统一处理文本、日期、超链接和选择器，焦点绑定由调用处自行附加。 |
 
 ### `MyTools/Features/Bills/`：收支账单
 
@@ -544,7 +545,7 @@
 | 管理员认证表单 | `AuthenticationView`、`IdentityVerificationForm` | 密码或系统认证 Sheet，可在成功后执行回调 |
 | 统一编辑入口与状态 | `AdminEditAccessButton`、`AdminModeIndicator`、`.adminModeIndicator()` | 进入/退出管理员编辑模式和统一工具栏图标 |
 | 敏感内容独立验证 | `SensitiveAccessView` | 只解锁当前查看流程，不进入管理员编辑模式 |
-| 遮罩、复制、提示 | `ProtectedContent` 相关 View 与 `.copyableText(...)` in `Core/Authentication/ProtectedContent.swift` | 敏感值显隐、长按复制和跨平台复制反馈 |
+| 遮罩、复制、提示 | `.copyableText(...)`、`CopyToastCenter` in `Core/Authentication/ProtectedContent.swift`；敏感值遮罩展示行用 `DetailValueRow.protected(...)` in `Core/UI/FormRowComponents.swift` | 敏感值显隐、长按复制和跨平台复制反馈 |
 
 新增、编辑、删除业务数据沿用管理员模式；只查看敏感值沿用独立验证，两种权限语义不得混用。
 
@@ -625,9 +626,10 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | 数字和表达式解析 | `DecimalTextParser` in `Core/Formatting/DecimalTextParser.swift` | Decimal、可选值及 `+ - * / × ÷`、括号表达式，不要自行写金额字符串解析器 |
 | 日期格式化 | `AppDateFormatting` helpers in `Core/Formatting/AppDateFormatting.swift` | 跨页面统一日期显示 |
 | Markdown 展示 | `MarkdownText`、`MarkdownRenderer`、`MarkdownValueRow` in `Core/UI/MarkdownRendering.swift` | Swift Markdown、容错回退、常见 `$...^...$` 上标归一化和可复制值 |
-| 列表和弹窗规范 | `AppListMetrics`、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 统一列表密度、红色“删除”与模板字段显隐/改名右滑动作的颜色/全滑策略、iPhone/iPad/macOS Sheet 和宽屏可读宽度；列表不得直接声明 `.swipeActions` |
+| 列表和弹窗规范 | `AppListMetrics`（`minimumRowHeight(fontScale:)`/`rowVerticalInset(fontScale:)`/`recordContentSpacing(fontScale:)` 均按当前系统 body 字体行高 × `densityScale` 计算，随 Dynamic Type/辅助功能字号自适应，且可用 `AppListMetrics.densityScale` 统一微调全局密度）、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 统一列表密度、红色“删除”与模板字段显隐/改名右滑动作的颜色/全滑策略、iPhone/iPad/macOS Sheet 和宽屏可读宽度；列表不得直接声明 `.swipeActions`；新调用点需要从 `@Environment(\.appFontScale)` 读取 `fontScale` 后传给这些函数 |
 | 隐藏项开关和排序方向 | `HiddenItemsVisibilityButton`、`SortDirection` | 统一显示/隐藏按钮与升降序语义 |
 | 页面诊断 | `.diagnosticScreen(...)` | 自动记录页面进入和离开 |
+| 详情页/编辑页/新增页统一行 | `DetailValueRow`、`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` in `Core/UI/FormRowComponents.swift` | 展示态标签+值行（单行截断防止行高不一致、`.protected(...)` 敏感遮罩、`.link(...)` 可点击超链接，或 leading 多行用于地址/备注）；编辑态标签+单行输入框/日期选择器/原生 Picker/数值算式输入框四类行，全部固定 `AppListMetrics.minimumRowHeight(fontScale:)`（原生 `Picker`/`Toggle` 不可靠遵循 `defaultMinListRowHeight`，必须用 `PickerFieldRow` 包裹才能和其它行同高）；新增证照/保密资料/金融/健康/美食/账单/换汇/股票的"标签+值"或"标签+单行输入框/日期/选择器"行必须复用这五个组件，不得再手搓 `LabeledContent`/裸 `Picker`/`DatePicker` 组合；仅 `.pickerStyle(.segmented)` 全宽选择器或独立成段的选择器可以保留裸 `Picker`（视觉上不会与相邻标签行对比出高度差）。这五个组件内部都会读取 `@Environment(\.appFontScale)` 传给 `AppListMetrics`，调用方无需关心 |
 
 所有可能输入中文或其他组合输入法文本的持久化字段都必须直接使用 `IMESafeTextField` 或 `IMESafeMultilineTextField`，保存动作同时调用 `commitPendingTextInput`。只调用提交函数不能替代安全输入控件；普通 SwiftUI `TextField`、`TextEditor` 仅用于不持久化的搜索或明确不接受组合输入的数值字段。
 

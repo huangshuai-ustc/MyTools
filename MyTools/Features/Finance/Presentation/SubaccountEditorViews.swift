@@ -29,9 +29,9 @@ struct DomesticSubaccountReadOnlyView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    CopyableValueRow(title: "账户名称", value: subaccount.name)
+                    DetailValueRow(title: "账户名称", value: subaccount.name)
                     LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
-                    CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
+                    DetailValueRow(title: "账户号", value: subaccount.accountNumber)
                     LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
@@ -57,6 +57,7 @@ private final class DomesticSubaccountDraft: ObservableObject {
 
 struct DomesticSubaccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: DomesticSubaccountDraft
     @State private var selectedType: DomesticAccountType
     let onSave: (DomesticSubaccount) -> Void
@@ -86,7 +87,8 @@ struct DomesticSubaccountEditorView: View {
                     LabeledContent("账户名称：") {
                         IMESafeTextField(prompt: "例如退休金账户", text: $draft.subaccount.name, alignment: .trailing)
                     }
-                    Picker("账户类型：", selection: $selectedType) {
+                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    PickerFieldRow(title: "账户类型：", selection: $selectedType) {
                         ForEach(DomesticAccountType.allCases) { type in
                             Text(type.title).tag(type)
                         }
@@ -95,10 +97,12 @@ struct DomesticSubaccountEditorView: View {
                         LabeledContent("自定义类型：") {
                             IMESafeTextField(prompt: "例如私人理财账户", text: $draft.subaccount.type, alignment: .trailing)
                         }
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     }
                     LabeledContent("账户号：") {
                         IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
+                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     Picker("状态：", selection: $draft.subaccount.status) {
                         ForEach(AccountStatus.allCases) { status in
                             Text(status.title).tag(status)
@@ -174,12 +178,13 @@ struct ForeignSubaccountDetailRow: View {
 }
 
 private struct SubaccountSummaryRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let name: String
     let accountNumber: String
     let status: AccountStatus
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name.isEmpty ? "未命名子账户" : name)
                     .appFont(.headline)
@@ -205,9 +210,9 @@ struct ForeignSubaccountReadOnlyView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    CopyableValueRow(title: "账户名称", value: subaccount.name)
+                    DetailValueRow(title: "账户名称", value: subaccount.name)
                     LabeledContent("账户类型", value: subaccount.typeTitle)
-                    CopyableValueRow(title: "账户号", value: subaccount.accountNumber)
+                    DetailValueRow(title: "账户号", value: subaccount.accountNumber)
                     LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
                     LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
                 }
@@ -233,6 +238,7 @@ private final class ForeignSubaccountDraft: ObservableObject {
 
 struct ForeignSubaccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: ForeignSubaccountDraft
     let onSave: (ForeignSubaccount) -> Void
 
@@ -256,17 +262,20 @@ struct ForeignSubaccountEditorView: View {
                     LabeledContent("账户名称：") {
                         IMESafeTextField(prompt: "例如港币储蓄", text: $draft.subaccount.name, alignment: .trailing)
                     }
-                    Picker("账户类型：", selection: $draft.subaccount.type) {
+                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    PickerFieldRow(title: "账户类型：", selection: $draft.subaccount.type) {
                         ForEach(ForeignAccountType.allCases) { Text($0.title).tag($0) }
                     }
                     if draft.subaccount.type == .other {
                         LabeledContent("自定义类型：") {
                             IMESafeTextField(prompt: "例如贵金属账户", text: customType, alignment: .trailing)
                         }
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     }
                     LabeledContent("账户号：") {
                         IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
                     }
+                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     Picker("状态：", selection: $draft.subaccount.status) {
                         ForEach(AccountStatus.allCases) { status in
                             Text(status.title).tag(status)

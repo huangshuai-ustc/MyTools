@@ -11,6 +11,7 @@ struct CredentialEditorView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: AppNotificationService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     @State private var draft: CredentialDocument
     @State private var tagsText: String
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -176,7 +177,7 @@ struct CredentialEditorView: View {
 
     private var basicInformationSection: some View {
         Section("基本信息") {
-            Picker("证照类型", selection: $draft.type) {
+            PickerFieldRow(title: "证照类型", selection: $draft.type) {
                 ForEach(CredentialDocumentType.allCases) { type in
                     Label(type.title, systemImage: type.systemImage).tag(type)
                 }
@@ -185,17 +186,16 @@ struct CredentialEditorView: View {
                 typeDidChange(from: oldType, to: newType)
             }
             if draft.type == .other {
-                labeledField("类型名称", prompt: "必填", text: $draft.customTypeName)
+                FieldEditorRow(title: "类型名称", prompt: "必填", text: $draft.customTypeName)
             }
-            Picker("证照状态", selection: $draft.versionStatus) {
+            PickerFieldRow(title: "证照状态", selection: $draft.versionStatus) {
                 ForEach(CredentialVersionStatus.allCases) { status in
                     Label(status.title, systemImage: status.systemImage).tag(status)
                 }
             }
-            .pickerStyle(.menu)
-            labeledField("持有人", prompt: "姓名或权利人", text: $draft.holderName)
-            labeledField("证件号码", prompt: "可选", text: $draft.documentNumber)
-            labeledField("签发机构", prompt: "可选", text: $draft.issuingAuthority)
+            FieldEditorRow(title: "持有人", prompt: "姓名或权利人", text: $draft.holderName)
+            FieldEditorRow(title: "证件号码", prompt: "可选", text: $draft.documentNumber)
+            FieldEditorRow(title: "签发机构", prompt: "可选", text: $draft.issuingAuthority)
             requiredDateRow("签发日期", date: $draft.issuedAt)
                 .onChange(of: draft.issuedAt) { _, value in
                     if draft.validity.kind == .dateRange {
@@ -372,14 +372,6 @@ struct CredentialEditorView: View {
         }
     }
 
-    private func labeledField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            IMESafeTextField(prompt: prompt, text: text, alignment: .trailing)
-                .frame(maxWidth: 260)
-        }
-        .frame(minHeight: AppListMetrics.minimumRowHeight)
-    }
-
     private func optionalDateRow(_ title: String, date: Binding<Date?>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(
@@ -416,7 +408,7 @@ struct CredentialEditorView: View {
             .labelsHidden()
             .datePickerStyle(.compact)
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight)
+        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 
     private func fieldBinding(for id: UUID, fallback: CredentialField) -> Binding<CredentialField> {
@@ -463,7 +455,7 @@ struct CredentialEditorView: View {
                 }
             }
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
+        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
         .onChange(of: field.wrappedValue.value) { _, value in
             guard field.wrappedValue.inputType != .date else { return }
             field.wrappedValue.kind = value.contains(where: { $0.isNewline }) ? .multiline : .text

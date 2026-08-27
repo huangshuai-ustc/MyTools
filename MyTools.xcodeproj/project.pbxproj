@@ -35,6 +35,7 @@
 		A1000000000000000000000B /* StockEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* StockEditorView.swift */; };
 		A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* StockTransactionEditorView.swift */; };
 		A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ForeignExchangeRateService.swift */; };
+		A1000000000000000000000E /* FormRowComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* FormRowComponents.swift */; };
 		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
@@ -243,6 +244,7 @@
 		B1000000000000000000000B /* StockEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* StockTransactionEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTransactionEditorView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* ForeignExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForeignExchangeRateService.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* FormRowComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormRowComponents.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
@@ -1016,6 +1018,7 @@
 				B10000000000000000000005 /* IMETextInput.swift */,
 				B10000000000000000000007 /* ListViewModifiers.swift */,
 				BP0000000000000000000002 /* MarkdownRendering.swift */,
+				B1000000000000000000000E /* FormRowComponents.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -1442,6 +1445,7 @@
 				A1000000000000000000000C /* StockTransactionEditorView.swift in Sources */,
 				A50000000000000000000001 /* StockDividendEditorView.swift in Sources */,
 				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
+				A1000000000000000000000E /* FormRowComponents.swift in Sources */,
 				A60000000000000000000001 /* DiagnosticLogger.swift in Sources */,
 				A60000000000000000000002 /* DiagnosticsView.swift in Sources */,
 				A70000000000000000000001 /* Secret.swift in Sources */,

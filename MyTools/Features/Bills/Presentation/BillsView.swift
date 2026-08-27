@@ -313,6 +313,7 @@ struct BillsView: View {
 }
 
 private struct BillRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: BillRecord
 
     var body: some View {
@@ -322,7 +323,7 @@ private struct BillRow: View {
                 .foregroundStyle(record.direction.tint)
                 .frame(width: 38, height: 38)
                 .background(record.direction.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(record.displayTitle)
                     .appFont(.headline)
                     .lineLimit(1)

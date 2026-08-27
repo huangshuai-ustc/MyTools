@@ -73,6 +73,8 @@ CloudKit 使用 `CloudSyncSnapshotBuilder` 的实体白名单按记录增量同�
 3. **外部系统边界明确。** 股票报价、图表、基本面和体彩接口位于 Infrastructure；Core OCR、地图搜索、附件、通知和 CloudKit 通过协议或专用服务隔离。
 4. **根 Store 已不再拥有业务 CRUD。** `AppStore` 的正常职责是装配 Store、加载/保存 Vault、备份合并、CloudKit 变更应用和模块生命周期协调；模块 CRUD 保留在 Feature Store。
 5. **跨模块共享能力没有落入某个 Feature。** 币种/汇率、附件、认证、OCR、通知、输入和存储统计都位于 Core；股票和换汇只通过 `ExchangeRateStore` 共享汇率状态。
+6. **详情/编辑页的"标签+值"行已统一。** 证照、保密资料、金融、健康、美食、账单、换汇、股票八个模块此前各自实现了结构相同但细节不一致的展示行/编辑行（部分甚至缺少 `lineLimit`，导致长文本换行撑高单行），现已统一收敛到 `Core/UI/FormRowComponents.swift` 的 `DetailValueRow`/`FieldEditorRow`/`DateFieldRow`/`PickerFieldRow`/`NumericFieldRow` 五个组件，Core 里旧的 `CopyableValueRow`/`ProtectedValueRow` 已随之移除；原生 `Picker` 不遵循 `defaultMinListRowHeight` 导致的裸 Picker 行矮于其它行的问题，通过 `PickerFieldRow` 强制外层高度解决。
+7. **行高/间距常量改为字体驱动的计算属性，不再是固定磅值。** `AppListMetrics.minimumRowHeight`/`rowVerticalInset`/`recordContentSpacing` 从 `static let` 改为 `static func(fontScale:)`，以当前系统 body 字体行高为基准（iOS 走 Dynamic Type，macOS 走 App 自身的 `appFontScale`）乘以系数计算，叠加一个全局 `AppListMetrics.densityScale` 供统一微调；`IMESafeUITextField`/`IMESafeMultilineTextField` 的固定像素高度（原 34pt/84pt/220pt）同样改为按实际字体行高计算，避免大字号下输入框内容被裁切。这一变化影响所有引用这些常量的调用点，均已同步改为传入 `@Environment(\.appFontScale)` 读到的 `fontScale`。
 
 ### 仍需关注的部分
 

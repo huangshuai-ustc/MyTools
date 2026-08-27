@@ -68,9 +68,18 @@ struct IMESafeMultilineTextField: View {
     }
 }
 
-private enum IMEMultilineMetrics {
-    static let minimumHeight: CGFloat = 84
-    static let maximumHeight: CGFloat = 220
+/// 多行输入框的高度范围，随系统当前 body 字体行高缩放，避免大字号下文字被裁切。
+enum IMEMultilineMetrics {
+    private static var bodyLineHeight: CGFloat {
+#if os(iOS)
+        UIFont.preferredFont(forTextStyle: .body).lineHeight
+#elseif os(macOS)
+        NSFont.preferredFont(forTextStyle: .body).boundingRectForFont.height
+#endif
+    }
+
+    static var minimumHeight: CGFloat { bodyLineHeight * 4 }
+    static var maximumHeight: CGFloat { bodyLineHeight * 10 }
 }
 
 #if os(iOS)
@@ -113,7 +122,8 @@ private struct IMESafeUITextField: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? uiView.intrinsicContentSize.width, height: 34)
+        let lineHeight = uiView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+        return CGSize(width: proposal.width ?? uiView.intrinsicContentSize.width, height: lineHeight * 1.5)
     }
 
     final class Coordinator: NSObject, UITextFieldDelegate {

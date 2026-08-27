@@ -80,17 +80,11 @@ struct FoodPlaceDetailView: View {
                     if !place.sourceTitle.isEmpty || !place.sourceURL.isEmpty {
                         Section("信息来源") {
                             detailRow("来源", value: place.sourceTitle)
-                            if let url = FoodSourceLink.url(from: place.sourceURL) {
-                                Link(destination: url) {
-                                    LabeledContent("链接") {
-                                        Text(place.sourceURL)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-                                }
-                            } else {
-                                detailRow("链接", value: place.sourceURL)
-                            }
+                            DetailValueRow.link(
+                                "链接",
+                                urlString: place.sourceURL,
+                                resolveURL: FoodSourceLink.url(from:)
+                            )
                         }
                     }
 
@@ -158,11 +152,7 @@ struct FoodPlaceDetailView: View {
     @ViewBuilder
     private func detailRow(_ title: String, value: String) -> some View {
         if !value.isEmpty {
-            LabeledContent(title) {
-                Text(value)
-                    .multilineTextAlignment(.trailing)
-                    .textSelection(.enabled)
-            }
+            DetailValueRow(title: title, value: value, alignment: .leading)
         }
     }
 

@@ -161,7 +161,7 @@ struct AccountDetailView: View {
                     BankRegionBadge(region: account.region)
                         .copyableText(account.region.title)
                 }
-                CopyableValueRow(title: "银行", value: account.bankName)
+                DetailValueRow(title: "银行", value: account.bankName)
                 if account.isOnlineBank {
                     LabeledContent(account.region == .domestic ? "开户网点" : "分行/网点") {
                         Label("网络银行", systemImage: "network")
@@ -193,7 +193,7 @@ struct AccountDetailView: View {
                     }
                 }
                 if !account.name.isEmpty {
-                    CopyableValueRow(title: "备注名称", value: account.name)
+                    DetailValueRow(title: "备注名称", value: account.name)
                 }
                 LabeledContent("状态") { AccountStatusText(status: account.status) }
                 LabeledContent("档案统计") {
@@ -201,7 +201,7 @@ struct AccountDetailView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
                 }
-                CopyableValueRow(
+                DetailValueRow(
                     title: "建立日期",
                     value: AppDateFormatter.string(from: account.openedAt)
                 )
@@ -343,8 +343,8 @@ struct AccountDetailView: View {
                 optionalDetail("绑定手机号", account.boundPhoneNumber)
                 optionalDetail("登录账号", account.loginAccount)
                 if !account.loginPassword.isEmpty {
-                    ProtectedValueRow(
-                        title: "登录密码",
+                    DetailValueRow.protected(
+                        "登录密码",
                         value: account.loginPassword,
                         concealedValue: "••••••••",
                         isRevealed: auth.isAdmin || sensitiveLoginInformationRevealed
@@ -352,14 +352,14 @@ struct AccountDetailView: View {
                 }
                 ForEach(additionalFields) { field in
                     if field.isSensitive {
-                        ProtectedValueRow(
-                            title: field.name,
+                        DetailValueRow.protected(
+                            field.name,
                             value: field.value,
                             concealedValue: "••••••••",
                             isRevealed: auth.isAdmin || sensitiveLoginInformationRevealed
                         )
                     } else {
-                        CopyableValueRow(title: field.name, value: field.value)
+                        DetailValueRow(title: field.name, value: field.value)
                     }
                 }
                 if !auth.isAdmin, hasSensitive {
@@ -489,7 +489,7 @@ struct AccountDetailView: View {
         alignment: TextAlignment = .trailing
     ) -> some View {
         if !value.isEmpty {
-            CopyableValueRow(title: title, value: value, alignment: alignment)
+            DetailValueRow(title: title, value: value, alignment: alignment)
         }
     }
 }

@@ -1,5 +1,10 @@
 import SwiftUI
 import Foundation
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 private struct SidebarCollapsedEnvironmentKey: EnvironmentKey {
     static let defaultValue = false
@@ -462,11 +467,37 @@ struct TemplateFieldDropDelegate: DropDelegate {
     }
 }
 
+@MainActor
 enum AppListMetrics {
-    static let rowVerticalInset: CGFloat = 10
+    /// 系统当前 body 文本样式的行高。iOS 原生跟随 Dynamic Type；macOS 没有系统级
+    /// Dynamic Type，改用 App 自己的 `appFontScale` 对基准行高做线性缩放。
+    static func baseLineHeight(fontScale: CGFloat?) -> CGFloat {
+#if os(iOS)
+        UIFont.preferredFont(forTextStyle: .body).lineHeight
+#elseif os(macOS)
+        let base = NSFont.preferredFont(forTextStyle: .body).boundingRectForFont.height
+        return base * (fontScale ?? 1)
+#endif
+    }
+
+    /// 全局密度系数：小于 1 更紧凑，大于 1 更宽松。调整这一个值即可整体缩放所有行间距，
+    /// 且不破坏“随字体自适应”的关系。具体数值由使用者自行微调。
+    static let densityScale: CGFloat = 1.0
+    /// 每一行的最小高度
+    static func minimumRowHeight(fontScale: CGFloat?) -> CGFloat {
+        max(32, baseLineHeight(fontScale: fontScale) * 1.7 * densityScale)
+    }
+    /// 单元格内容上下留白
+    static func rowVerticalInset(fontScale: CGFloat?) -> CGFloat {
+        baseLineHeight(fontScale: fontScale) * 0.6 * densityScale
+    }
+
+    /// 横向内边距与字体行高的关系较弱，暂保持固定值。单元格内容左右留白
     static let rowHorizontalInset: CGFloat = 16
-    static let minimumRowHeight: CGFloat = 46
-    static let recordContentSpacing: CGFloat = 10
+    /// 单条记录内部元素间距
+    static func recordContentSpacing(fontScale: CGFloat?) -> CGFloat {
+        baseLineHeight(fontScale: fontScale) * 0.4 * densityScale
+    }
 }
 
 private struct AppListSpacingModifier: ViewModifier {
@@ -475,23 +506,27 @@ private struct AppListSpacingModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         content
-            .environment(\.defaultMinListRowHeight, minimumRowHeight)
+            .environment(\.defaultMinListRowHeight, AppListMetrics.minimumRowHeight(fontScale: fontScale))
 #if os(iOS)
             .listSectionSpacing(.compact)
             .listRowSpacing(0)
 #endif
     }
+}
 
-    private var minimumRowHeight: CGFloat {
-#if os(macOS)
-        guard let fontScale else { return AppListMetrics.minimumRowHeight }
-        return max(
-            40,
-            AppListMetrics.minimumRowHeight + (fontScale - 1) * 20
-        )
-#else
-        AppListMetrics.minimumRowHeight
-#endif
+private struct AppListRowStyleModifier: ViewModifier {
+    @Environment(\.appFontScale) private var fontScale
+
+    func body(content: Content) -> some View {
+        content
+            .listRowInsets(EdgeInsets(
+                top: AppListMetrics.rowVerticalInset(fontScale: fontScale),
+                leading: AppListMetrics.rowHorizontalInset,
+                bottom: AppListMetrics.rowVerticalInset(fontScale: fontScale),
+                trailing: AppListMetrics.rowHorizontalInset
+            ))
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     }
 }
 
@@ -604,14 +639,7 @@ extension View {
     }
 
     func appListRowStyle() -> some View {
-        listRowInsets(EdgeInsets(
-            top: AppListMetrics.rowVerticalInset,
-            leading: AppListMetrics.rowHorizontalInset,
-            bottom: AppListMetrics.rowVerticalInset,
-            trailing: AppListMetrics.rowHorizontalInset
-        ))
-            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-            .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
+        modifier(AppListRowStyleModifier())
     }
 
     func appListSpacing() -> some View {

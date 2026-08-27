@@ -72,6 +72,7 @@ struct HospitalDirectoryView: View {
 }
 
 private struct HospitalProfileRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let profile: HospitalProfile
     let showsEditIndicator: Bool
 
@@ -80,7 +81,7 @@ private struct HospitalProfileRow: View {
             Image(systemName: profile.institutionTypeSystemImage)
                 .foregroundStyle(.pink)
                 .frame(width: 24)
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(profile.name)
                     .appFont(.headline)
                     .lineLimit(2)

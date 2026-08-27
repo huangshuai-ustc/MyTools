@@ -8,6 +8,7 @@ struct CredentialDetailView: View {
     @EnvironmentObject private var store: DocumentsStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.appFontScale) private var fontScale
     let documentID: UUID
     @Binding var isUnlocked: Bool
     @State private var hiddenFieldIDs: Set<UUID> = []
@@ -36,18 +37,31 @@ struct CredentialDetailView: View {
             if let document {
                 Form {
                     Section("证照信息") {
-                        detailRow("类型") {
-                            Text(document.typeTitle)
-                                .multilineTextAlignment(.trailing)
-                        }
+                        LabeledContent("类型", value: document.typeTitle)
+                            .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                         detailRow("证照状态") {
                             CredentialVersionStatusLabel(status: document.versionStatus)
                         }
-                        protectedRow("持有人", value: document.holderName)
-                        protectedRow("证件号码", value: document.documentNumber, monospaced: true)
-                        protectedRow("签发机构", value: document.issuingAuthority)
+                        DetailValueRow.protected("持有人", value: document.holderName, isRevealed: canReveal)
+                        DetailValueRow.protected(
+                            "证件号码",
+                            value: document.documentNumber,
+                            isRevealed: canReveal,
+                            monospaced: true,
+                            truncationMode: .middle
+                        )
+                        DetailValueRow.protected(
+                            "签发机构",
+                            value: document.issuingAuthority,
+                            isRevealed: canReveal,
+                            truncationMode: .middle
+                        )
                         if let date = document.issuedAt {
-                            protectedRow("签发日期", value: AppDateFormatter.string(from: date))
+                            DetailValueRow.protected(
+                                "签发日期",
+                                value: AppDateFormatter.string(from: date),
+                                isRevealed: canReveal
+                            )
                         }
                     }
 
@@ -60,10 +74,18 @@ struct CredentialDetailView: View {
                         }
                         .frame(maxWidth: .infinity)
                         if let date = document.issuedAt ?? document.validity.startDate {
-                            protectedRow("有效期起始", value: AppDateFormatter.string(from: date))
+                            DetailValueRow.protected(
+                                "有效期起始",
+                                value: AppDateFormatter.string(from: date),
+                                isRevealed: canReveal
+                            )
                         }
                         if let date = document.expirationDate() {
-                            protectedRow("到期日期", value: AppDateFormatter.string(from: date))
+                            DetailValueRow.protected(
+                                "到期日期",
+                                value: AppDateFormatter.string(from: date),
+                                isRevealed: canReveal
+                            )
                         }
                         if document.validity.kind.durationYears != nil {
                             Text(CredentialValidityKind.endDateRule(for: document.type).title)
@@ -230,17 +252,7 @@ struct CredentialDetailView: View {
             content()
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity, minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
-    }
-
-    @ViewBuilder
-    private func protectedRow(_ title: String, value: String, monospaced: Bool = false) -> some View {
-        detailRow(title) {
-            Text(value.isEmpty ? "未填写" : (canReveal ? value : "••••••"))
-                .fontDesign(monospaced && canReveal ? .monospaced : .default)
-                .multilineTextAlignment(.trailing)
-                .copyableText(canReveal && !value.isEmpty ? value : nil)
-        }
+        .frame(maxWidth: .infinity, minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
     }
 
     @ViewBuilder
@@ -343,6 +355,7 @@ private struct CredentialVersionRow: View {
 
 struct CredentialFieldTemplateEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appFontScale) private var fontScale
     let documentType: CredentialDocumentType
     @State private var fields: [CredentialField]
     @State private var showingNewField = false
@@ -379,7 +392,7 @@ struct CredentialFieldTemplateEditorView: View {
                             .labelsHidden()
                             .fixedSize()
                         }
-                        .frame(minHeight: AppListMetrics.minimumRowHeight, alignment: .center)
+                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
                         .padding(.vertical, 4)
                         .onDrag {
                             draggedFieldID = field.wrappedValue.id

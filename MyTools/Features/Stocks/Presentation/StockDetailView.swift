@@ -580,6 +580,7 @@ private struct StockTransactionOrderRow: View {
 }
 
 private struct StockTransactionRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let transaction: StockTransaction
     let market: StockMarket
 
@@ -593,7 +594,7 @@ private struct StockTransactionRow: View {
                 .appFont(.caption.weight(.semibold))
                 .foregroundStyle(color)
                 .frame(width: 34, alignment: .leading)
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股 × \(StockValueFormatter.price(transaction.unitPrice, currencyCode: market.currencyCode))")
                     .appFont(.subheadline.monospacedDigit())
                 Text(AppDateFormatter.string(from: transaction.tradedAt))
@@ -601,7 +602,7 @@ private struct StockTransactionRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(StockValueFormatter.money(transaction.grossAmount, currencyCode: market.currencyCode))
                     .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 if transaction.fees > 0 {
@@ -616,12 +617,13 @@ private struct StockTransactionRow: View {
 }
 
 private struct StockDividendRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let dividend: StockDividend
     let market: StockMarket
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(AppDateFormatter.string(from: dividend.receivedAt))
                     .appFont(.subheadline)
                 if dividend.hasPerShareBreakdown {
@@ -638,7 +640,7 @@ private struct StockDividendRow: View {
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing) {
+            VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(StockValueFormatter.money(dividend.netAmount, currencyCode: market.currencyCode))
                     .appFont(.subheadline.weight(.semibold).monospacedDigit())
                 if dividend.totalDeductions > 0 {

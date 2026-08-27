@@ -94,6 +94,7 @@ struct HospitalClassificationBadges: View {
 }
 
 struct MedicalRecordRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let record: MedicalRecord
     let isFollowUp: Bool
     let followUpCount: Int
@@ -115,7 +116,7 @@ struct MedicalRecordRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             if isFollowUp {
                 HStack {
                     Label(linkedRecordTitle, systemImage: linkedRecordSystemImage)

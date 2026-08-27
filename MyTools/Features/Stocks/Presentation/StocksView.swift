@@ -585,6 +585,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
+    @Environment(\.appFontScale) private var fontScale
     let marketFilter: StockMarketFilter
     @State private var showingConversionInfo = false
 
@@ -649,7 +650,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack(spacing: 6) {
                 Label("人民币合计", systemImage: "yensign.circle.fill")
                     .appFont(.headline)
@@ -746,12 +747,13 @@ private struct RenminbiPortfolioSummaryRow: View {
 
 private struct StockMarketSummaryRow: View {
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
+    @Environment(\.appFontScale) private var fontScale
     let summary: StockPortfolioSummary
     let allocation: Decimal?
     let showsAllocation: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
                 StockMarketBadge(market: summary.market)
                 Text(positionSummaryText)
@@ -837,11 +839,12 @@ private struct StockSummaryMetricsHeader: View {
 }
 
 private struct StockRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let stock: StockHolding
     let costShare: Decimal?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing) {
+        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 StockMarketBadge(market: stock.market)
                 Text(stock.displayName)

@@ -5,63 +5,6 @@ import UIKit
 import AppKit
 #endif
 
-struct ProtectedValueRow: View {
-    let title: String
-    let value: String
-    let concealedValue: String
-    let isRevealed: Bool
-
-    var body: some View {
-        LabeledContent(title) {
-            HStack(spacing: 8) {
-                Text(displayValue)
-                    .fontDesign(isRevealed ? .monospaced : .default)
-                    .multilineTextAlignment(.trailing)
-                    .copyableText(isRevealed ? value : nil)
-            }
-        }
-    }
-
-    private var displayValue: String {
-        guard !value.isEmpty else { return "未填写" }
-        return isRevealed ? value : concealedValue
-    }
-}
-
-struct CopyableValueRow: View {
-    let title: String
-    let value: String
-    var alignment: TextAlignment = .trailing
-    var emptyValue = "未填写"
-
-    var body: some View {
-        if alignment == .leading {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .appFont(.body)
-                    .foregroundStyle(.primary)
-                valueView
-                    .appFont(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            LabeledContent(title) {
-                valueView
-            }
-        }
-    }
-
-    private var valueView: some View {
-        Text(value.isEmpty ? emptyValue : value)
-            .multilineTextAlignment(alignment)
-            .frame(
-                maxWidth: .infinity,
-                alignment: alignment == .leading ? .leading : .trailing
-            )
-            .copyableText(value.isEmpty ? nil : value)
-    }
-}
-
 @MainActor
 final class CopyToastCenter {
     static let shared = CopyToastCenter()
