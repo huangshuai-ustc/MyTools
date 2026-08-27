@@ -951,40 +951,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         vault: VaultData,
         secrets: [SecretVaultValue]
     ) -> [FileAttachment] {
-        switch module {
-        case .personalFinance:
-#if MYTOOLS_FEATURE_FINANCE
-            return vault.cards.flatMap(\.statements).compactMap(\.attachment)
-#else
-            return []
-#endif
-        case .healthRecords:
-#if MYTOOLS_FEATURE_HEALTH
-            return vault.medicalRecords.flatMap(\.attachments)
-#else
-            return []
-#endif
-        case .foodMap:
-#if MYTOOLS_FEATURE_FOOD_MAP
-            return vault.foodPlaces.flatMap(\.photos)
-#else
-            return []
-#endif
-        case .secrets:
-#if MYTOOLS_FEATURE_SECRETS
-            return secrets.flatMap(\.attachments)
-#else
-            return []
-#endif
-        case .documents:
-#if MYTOOLS_FEATURE_DOCUMENTS
-            return vault.credentialDocuments.flatMap(\.attachmentFiles)
-#else
-            return []
-#endif
-        case .myStocks, .currencyExchange, .bills, .sportsLottery:
-            return []
-        }
+        ModuleAttachmentReferenceIndex.attachments(
+            for: module,
+            vault: vault,
+            secrets: secrets
+        )
     }
 
     private func mergingRestored<Value: Identifiable>(
@@ -999,48 +970,14 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         vault: VaultData,
         secrets: [SecretVaultValue]
     ) -> [UUID: FileAttachment] {
-        var values: [FileAttachment] = []
-#if MYTOOLS_FEATURE_FINANCE
-        values += vault.cards.flatMap(\.statements).compactMap(\.attachment)
-#endif
-#if MYTOOLS_FEATURE_HEALTH
-        values += vault.medicalRecords.flatMap(\.attachments)
-#endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        values += vault.foodPlaces.flatMap(\.photos)
-#endif
-#if MYTOOLS_FEATURE_SECRETS
-        values += secrets.flatMap(\.attachments)
-#endif
-#if MYTOOLS_FEATURE_DOCUMENTS
-        values += vault.credentialDocuments.flatMap(\.attachmentFiles)
-#endif
-        return Dictionary(values.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        ModuleAttachmentReferenceIndex.byID(vault: vault, secrets: secrets)
     }
 
     var referencedAttachmentStoredFileNames: Set<String> {
-        let vault = currentVaultData()
-        var result = vault.opaqueAttachmentStoredFileNames
-#if MYTOOLS_FEATURE_FINANCE
-        result.formUnion(
-            vault.cards.flatMap(\.statements).compactMap(\.attachment).map(\.storedFileName)
+        ModuleAttachmentReferenceIndex.referencedStoredFileNames(
+            vault: currentVaultData(),
+            secrets: currentSecrets
         )
-#endif
-#if MYTOOLS_FEATURE_HEALTH
-        result.formUnion(vault.medicalRecords.flatMap(\.attachments).map(\.storedFileName))
-#endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        result.formUnion(vault.foodPlaces.flatMap(\.photos).map(\.storedFileName))
-#endif
-#if MYTOOLS_FEATURE_SECRETS
-        result.formUnion(currentSecrets.flatMap(\.attachments).map(\.storedFileName))
-#else
-        result.formUnion(currentSecrets.flatMap(\.attachmentStoredFileNames))
-#endif
-#if MYTOOLS_FEATURE_DOCUMENTS
-        result.formUnion(vault.credentialDocuments.flatMap(\.attachmentFiles).map(\.storedFileName))
-#endif
-        return result.filter { !$0.isEmpty }
     }
 
 }

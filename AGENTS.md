@@ -19,7 +19,7 @@
 
 ## 不可破坏的架构规则
 
-- “我的 > 首页功能”的开关只控制页面、后台刷新和通知；隐藏模块的数据仍参与 CloudKit 同步，但当前加密备份导出/导入按已编译且可见的模块裁剪。只有“删除功能数据”的撤回窗口才会临时停止目标模块的 CloudKit 对账；若产品要求隐藏模块也进入备份，需要先修改 `AppStore.makeBackupDocument()` 的模块选择逻辑并补回归测试。
+- “我的 > 首页功能”的开关只控制页面、后台刷新和通知；隐藏模块的数据仍参与 CloudKit 同步，但当前加密备份导出/导入按已编译且可见的模块裁剪。这是已确认的产品契约：隐藏模块不参与加密备份（`AppStoreFacadeTests.hiddenModuleIsExcludedFromBackup` 锁定），与 CloudKit 参与范围不同。只有“删除功能数据”的撤回窗口才会临时停止目标模块的 CloudKit 对账。
 - `Config/Shared.xcconfig` 的 `MYTOOLS_COMPILED_FEATURES` 是唯一编译清单。未编译模块不得注册、显示、启动服务、导入导出或参与 CloudKit；其本地 Vault 数据必须以不透明载荷原样保留，避免精简版本覆盖或清理数据与附件。
 - 模块显隐先读取本地 `UserDefaults`，没有显式本地值时使用编译配置声明的默认值；CloudKit 应用偏好同步优先于编译默认值。`MYTOOLS_DEFAULT_HIDDEN_FEATURES` 只能改变新安装或没有显式设置时的首页初始状态。
 - 存储与数据设置中的“删除功能数据”只允许管理员操作。每层确认都必须等待 10 秒，执行后保留 10 秒撤回窗口；`AppStore` 以模块快照恢复目标字段，撤回期不删除附件且从 CloudKit 参与模块中暂时排除目标模块，过期后才删除未被其他模块引用的附件、模块专属缓存和提醒状态，并恢复正常对账。开启 iCloud 时最终删除会同步到其他设备，备份文件不回写。
@@ -114,6 +114,7 @@
 | `MyTools/App/Composition/AppStoreBackupMerger.swift` | 按模块与记录 ID 执行加密备份的增量数据合并。 |
 | `MyTools/App/Composition/AppStoreBackupProcessor.swift` | 按已编译且可见模块裁剪备份、装配及恢复各模块附件；导入同样按当前可见模块过滤。 |
 | `MyTools/App/Composition/AppStoreDependencies.swift` | AppStore 使用的窄协议、禁用实现和依赖容器；测试替身也遵循这些协议。 |
+| `MyTools/App/Composition/ModuleAttachmentReferenceIndex.swift` | 跨模块附件引用规则索引：按模块枚举附件、按 ID 建索引、汇总引用存储文件名，供备份恢复、冗余清理和存储完整性扫描复用。 |
 | `MyTools/App/Composition/ModuleStoreContracts.swift` | 数据变更、模块生命周期、汇率观察和冗余字段清理协议及注册表。 |
 
 ### `MyTools/App/Modules/`：模块目录与用户配置
@@ -162,7 +163,8 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Core/Authentication/AdminModeViews.swift` | 统一管理员编辑入口、状态指示和 View modifier。 |
-| `MyTools/Core/Authentication/AuthManager.swift` | 管理员密码、Keychain、生物识别/设备认证和会话自动锁定。 |
+| `MyTools/Core/Authentication/AuthManager.swift` | 管理员加盐 PBKDF2 密码摘要（旧无盐 SHA-256 验证后自动迁移）、Keychain、生物识别/设备认证和会话自动锁定。 |
+| `MyTools/Core/Authentication/AdminPasswordHash.swift` | 管理员密码加盐 PBKDF2-HMAC-SHA256 摘要、旧格式验证、恒定时间比较和存储格式。 |
 | `MyTools/Core/Authentication/AuthenticationView.swift` | 进入管理员模式或执行认证回调的通用表单。 |
 | `MyTools/Core/Authentication/ProtectedContent.swift` | 敏感值长按复制手势与跨平台复制提示（`.copyableText(...)`、`CopyToastCenter`）；标签/值遮罩展示行已迁移至 `Core/UI/FormRowComponents.swift` 的 `DetailValueRow`。 |
 | `MyTools/Core/Authentication/SensitiveAccessView.swift` | 仅解锁当前敏感详情、不进入管理员编辑模式的验证页。 |
@@ -218,7 +220,9 @@
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyTools/Core/Persistence/SecureStore.swift` | 本地 Vault 载入/原子写入、失败保护和串行合并保存协调器。 |
+| `MyTools/Core/Persistence/SecureStore.swift` | 本地 Vault 载入/原子写入、AES-GCM 静态加密与旧明文档案原地升级、失败保护和串行合并保存协调器。 |
+| `MyTools/Core/Persistence/VaultCrypto.swift` | 本地 Vault 加密信封（格式 2.0）加解密、格式判断、PBKDF2-HMAC-SHA256 派生和系统安全随机字节；派生原语同时供备份加密和管理员密码摘要复用。 |
+| `MyTools/Core/Persistence/VaultEncryptionKey.swift` | Vault 加密密钥提供者协议和 Keychain 生产实现；密钥 `WhenUnlockedThisDeviceOnly`，仅本机、不可迁移。 |
 | `MyTools/Core/Persistence/VaultData.swift` | 所有已编译模块数据和五个用户标签库的 Codable 聚合根，以及未编译模块不透明 JSON 保留。 |
 | `MyTools/Core/Storage/StorageUsageService.swift` | Vault/附件/缓存/日志占用、缺失引用、孤立附件扫描和清理。 |
 
@@ -541,7 +545,7 @@
 
 | 能力与检索词 | 可复用实现 | 已提供行为 |
 | --- | --- | --- |
-| 管理员模式 | `AuthManager` in `Core/Authentication/AuthManager.swift` | 至少 8 位密码、SHA-256 摘要、Keychain 备份密码、生物识别/设备密码；支持认证有效期、永久会话和“进入后台锁定”选项 |
+| 管理员模式 | `AuthManager` in `Core/Authentication/AuthManager.swift` | 至少 8 位密码、加盐 PBKDF2-HMAC-SHA256（210,000 轮）摘要（旧无盐 SHA-256 验证成功后自动迁移）、Keychain 备份密码、生物识别/设备密码；支持认证有效期、永久会话和“进入后台锁定”选项 |
 | 管理员认证表单 | `AuthenticationView`、`IdentityVerificationForm` | 密码或系统认证 Sheet，可在成功后执行回调 |
 | 统一编辑入口与状态 | `AdminEditAccessButton`、`AdminModeIndicator`、`.adminModeIndicator()` | 进入/退出管理员编辑模式和统一工具栏图标 |
 | 敏感内容独立验证 | `SensitiveAccessView` | 只解锁当前查看流程，不进入管理员编辑模式 |
@@ -554,8 +558,8 @@
 | 能力与检索词 | 可复用实现 | 已提供行为 |
 | --- | --- | --- |
 | 全业务持久化聚合 | `VaultData` in `Core/Persistence/VaultData.swift` | 八模块实体、提醒和健康/美食/证照字段模板/账单/保密资料标签库的 Codable 聚合根；未编译模块保留为不透明 JSON |
-| 本地 Vault 读写 | `SecureStore` in `Core/Persistence/SecureStore.swift` | `Application Support/MyTools/local-vault.json`、原子替换、文件保护、读取失败时阻止覆盖原文件 |
-| 合并和串行保存 | `VaultPersistenceCoordinator` | 合并高频变更、后台串行写入、立即保存和 `flush()` |
+| 本地 Vault 读写 | `SecureStore` in `Core/Persistence/SecureStore.swift` | `Application Support/MyTools/local-vault.json`、原子替换、AES-GCM 静态加密（格式 2.0，密钥在 Keychain 仅本机）、旧明文档案首次读取后原地升级、文件保护、读取失败时阻止覆盖原文件；Keychain 不可用时降级明文读写并在下次保存重试；读写与并发保护测试见 `MyToolsTests/Core/SecureStoreEncryptionTests.swift` |
+| 合并和串行保存 | `VaultPersistenceCoordinator` | 合并高频变更、后台串行写入、立即保存和 `flush()`；并发 `schedule` 保护测试见 `MyToolsTests/Core/SecureStoreEncryptionTests.swift` |
 | 加密备份格式 | `VaultBackupDocument`、`VaultBackupPayload`、`VaultBackupCrypto` in `Core/Backup/VaultBackup.swift` | `.mytools`、PBKDF2-HMAC-SHA256、AES-GCM、格式 1.0、模块集合 |
 | 备份裁剪与附件装配 | `AppStoreBackupProcessor` in `App/Composition/AppStoreBackupProcessor.swift` | 按已编译且可见模块导出/导入、嵌入和恢复附件数据；隐藏模块不会进入当前备份 |
 | 增量备份合并 | `AppStoreBackupMerger` in `App/Composition/AppStoreBackupMerger.swift` | 只合并备份包含且当前开启的模块，按记录 ID 更新或追加 |
@@ -711,8 +715,8 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 
 ## 当前明确限制
 
-- 本地 Vault JSON 和附件尚无应用层静态加密；App 沙盒与系统文件保护不能替代该能力。导出的 `.mytools` 备份已加密。
-- 管理员密码当前使用无独立盐的 SHA-256 摘要保存；这是已知安全边界，不要在新模块另建密码体系。
+- 本地 Vault JSON 已使用 AES-GCM 静态加密（格式 2.0），随机 256 位密钥保存在 Keychain（`WhenUnlockedThisDeviceOnly`，仅本机、不可迁移）；密钥丢失时只能通过 `.mytools` 加密备份恢复。图片与 PDF 附件尚无应用层静态加密，App 沙盒与系统文件保护不能替代该能力。导出的 `.mytools` 备份已加密。
+- 管理员密码使用加盐 PBKDF2-HMAC-SHA256（210,000 轮）摘要保存，旧无盐 SHA-256 摘要验证成功后自动迁移；不要在新模块另建密码体系。
 - OCR 的设置测试页是临时入口，OCR 本身是可复用 Core 服务；临时页面被移除时不得删除 Core OCR 能力。
 - 股票公开行情和图表可能延迟或不可用；已有 Provider 回退与缓存，不要在页面内直接请求第三方接口。
 - 股票公开基本面数据可能延迟、缺失或口径不同；评分必须展示来源与覆盖度，缺失值不得按 0 伪造，基本面快照不进入 Vault、备份或 CloudKit。

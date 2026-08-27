@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import OSLog
 
 struct LocalVaultLoadResult: @unchecked Sendable {
@@ -22,18 +23,41 @@ private struct LocalVaultDocument: Codable {
     }
 }
 
+private enum VaultReadError: LocalizedError {
+    case keyUnavailable
+    case authenticationFailed
+    case unsupportedVersion
+    case invalidPayload
+
+    var errorDescription: String? {
+        switch self {
+        case .keyUnavailable:
+            return "本地存档已加密但加密密钥不可用，原文件已保留"
+        case .authenticationFailed:
+            return "本地存档解密失败（密钥不匹配或内容被篡改），原文件已保留"
+        case .unsupportedVersion:
+            return "本地存档加密格式版本不受支持，原文件已保留"
+        case .invalidPayload:
+            return "本地存档解密后内容无效，原文件已保留"
+        }
+    }
+}
+
 final class SecureStore {
     private let fileManager: FileManager
     private let applicationSupportDirectory: URL
+    private let keyProvider: any VaultEncryptionKeyProviding
 
     init(
         fileManager: FileManager = .default,
-        applicationSupportDirectory: URL? = nil
+        applicationSupportDirectory: URL? = nil,
+        keyProvider: any VaultEncryptionKeyProviding = KeychainVaultEncryptionKey()
     ) {
         self.fileManager = fileManager
         self.applicationSupportDirectory = applicationSupportDirectory
             ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
+        self.keyProvider = keyProvider
     }
 
     private var localVaultDirectory: URL {
@@ -56,29 +80,24 @@ final class SecureStore {
                 // mapping setup and first-page faults seen on cold launches on physical devices.
                 let data = try Data(contentsOf: localVaultURL)
                 readMilliseconds += elapsedMilliseconds(since: readStartedAt)
+
                 let decodeStartedAt = ProcessInfo.processInfo.systemUptime
-                let document = try JSONDecoder().decode(LocalVaultDocument.self, from: data)
+                let document = try decodeDocument(from: data)
                 decodeMilliseconds += elapsedMilliseconds(since: decodeStartedAt)
 
                 return loadResult(
                     vault: document.vault,
                     secrets: document.secrets,
                     byteCount: data.count,
-                    source: "Application Support",
+                    source: document.source,
                     canPersist: true,
                     readMilliseconds: readMilliseconds,
                     decodeMilliseconds: decodeMilliseconds,
                     totalStartedAt: totalStartedAt
                 )
             } catch {
-                logLoadFailure("本地存档读取或解码失败，已禁止空档案覆盖", error: error)
-                let attributes = try? fileManager.attributesOfItem(atPath: localVaultURL.path)
-                return loadResult(
-                    vault: VaultData(),
-                    secrets: [],
-                    byteCount: (attributes?[.size] as? NSNumber)?.intValue ?? 0,
-                    source: "存档读取失败（原文件已保留）",
-                    canPersist: false,
+                return failedLoadResult(
+                    error: error,
                     readMilliseconds: readMilliseconds,
                     decodeMilliseconds: decodeMilliseconds,
                     totalStartedAt: totalStartedAt
@@ -99,22 +118,149 @@ final class SecureStore {
     }
 
     func saveVault(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
-        try writeVaultFile(LocalVaultDocument(vault: vault, secrets: secrets))
+        let document = LocalVaultDocument(vault: vault, secrets: secrets)
+        let payload = try JSONEncoder().encode(document)
+        try writeVaultFile(payload)
     }
 
-    private func writeVaultFile(_ document: LocalVaultDocument) throws {
-        let payload = try JSONEncoder().encode(document)
+    // MARK: - Decode and migration
+
+    private struct DecodedVaultDocument {
+        let vault: VaultData
+        let secrets: [SecretVaultValue]
+        let source: String
+    }
+
+    private func decodeDocument(from data: Data) throws -> DecodedVaultDocument {
+        if VaultCrypto.isEncryptedEnvelope(data) {
+            guard let key = try? keyProvider.loadKey() else {
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "本地存档已加密但加密密钥不可用，原文件已保留",
+                    level: .error
+                )
+                throw VaultReadError.keyUnavailable
+            }
+            let payload: Data
+            do {
+                payload = try VaultCrypto.decrypt(data, using: key)
+            } catch VaultCryptoError.unsupportedVersion {
+                throw VaultReadError.unsupportedVersion
+            } catch {
+                throw VaultReadError.authenticationFailed
+            }
+            do {
+                let document = try JSONDecoder().decode(LocalVaultDocument.self, from: payload)
+                return DecodedVaultDocument(
+                    vault: document.vault,
+                    secrets: document.secrets,
+                    source: "Application Support（已加密）"
+                )
+            } catch {
+                throw VaultReadError.invalidPayload
+            }
+        }
+
+        // 旧版明文格式：正常解码，并尽可能立即原地升级为加密信封。
+        let document = try JSONDecoder().decode(LocalVaultDocument.self, from: data)
+        if let migratedSource = migratePlaintextToEncryption(data) {
+            return DecodedVaultDocument(
+                vault: document.vault,
+                secrets: document.secrets,
+                source: migratedSource
+            )
+        }
+        return DecodedVaultDocument(
+            vault: document.vault,
+            secrets: document.secrets,
+            source: "Application Support（未加密）"
+        )
+    }
+
+    /// 把已读入的明文档案原地升级为加密信封。失败时返回 nil，继续以明文运行，
+    /// 下一次保存会再次尝试加密，不会因为升级失败而丢失数据。
+    private func migratePlaintextToEncryption(_ plaintext: Data) -> String? {
+        do {
+            let key: SymmetricKey
+            if let existing = try keyProvider.loadKey() {
+                key = existing
+            } else {
+                key = try keyProvider.createAndStoreKey()
+            }
+            let encrypted = try VaultCrypto.encrypt(plaintext, using: key)
+            try encrypted.write(to: localVaultURL, options: .atomic)
+            applyFileProtectionIfNeeded()
+            return "Application Support（已升级加密）"
+        } catch {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "本地存档加密升级未完成，仍以明文运行 error=\(DiagnosticLogger.errorCode(error))",
+                level: .warning
+            )
+            return nil
+        }
+    }
+
+    // MARK: - Write
+
+    private func writeVaultFile(_ payload: Data) throws {
+        let dataToWrite: Data
+        do {
+            let key: SymmetricKey
+            if let existing = try keyProvider.loadKey() {
+                key = existing
+            } else {
+                key = try keyProvider.createAndStoreKey()
+            }
+            dataToWrite = try VaultCrypto.encrypt(payload, using: key)
+        } catch {
+            // Keychain 或加密原语不可用时降级为明文写入，保证数据不丢失；
+            // 下次保存会再次尝试加密。
+            persistenceLogger.error("本地存档加密不可用，暂以明文写入")
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "本地存档加密不可用，暂以明文写入 error=\(DiagnosticLogger.errorCode(error))",
+                level: .warning
+            )
+            dataToWrite = payload
+        }
         try fileManager.createDirectory(
             at: localVaultDirectory,
             withIntermediateDirectories: true
         )
-        try payload.write(to: localVaultURL, options: .atomic)
+        try dataToWrite.write(to: localVaultURL, options: .atomic)
+        applyFileProtectionIfNeeded()
+    }
+
+    private func applyFileProtectionIfNeeded() {
 #if os(iOS)
         try? fileManager.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: localVaultURL.path
         )
 #endif
+    }
+
+    // MARK: - Failure handling
+
+    private func failedLoadResult(
+        error: Error,
+        readMilliseconds: Double,
+        decodeMilliseconds: Double,
+        totalStartedAt: TimeInterval
+    ) -> LocalVaultLoadResult {
+        logLoadFailure("本地存档读取或解码失败，已禁止空档案覆盖", error: error)
+        let attributes = try? fileManager.attributesOfItem(atPath: localVaultURL.path)
+        return loadResult(
+            vault: VaultData(),
+            secrets: [],
+            byteCount: (attributes?[.size] as? NSNumber)?.intValue ?? 0,
+            source: "存档读取失败（原文件已保留）",
+            canPersist: false,
+            readMilliseconds: readMilliseconds,
+            decodeMilliseconds: decodeMilliseconds,
+            totalStartedAt: totalStartedAt
+        )
     }
 
     private func logLoadFailure(_ message: String, error: Error) {
@@ -152,7 +298,6 @@ final class SecureStore {
     private func elapsedMilliseconds(since startedAt: TimeInterval) -> Double {
         (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
     }
-
 }
 
 private let persistenceLogger = Logger(

@@ -222,6 +222,37 @@ struct AppStoreFacadeTests {
         #expect(snapshot.items.contains { $0.kind == .stockHolding && $0.id == stock.id })
     }
 
+    @Test func hiddenModuleIsExcludedFromBackup() async throws {
+        // 产品契约：隐藏模块不参与加密备份（与 CloudKit 参与范围不同）。
+        let defaults = Self.makeDefaults()
+        let settings = ToolModuleSettings(defaults: defaults)
+        settings.setVisible(false, for: .myStocks)
+        var stock = StockHolding()
+        stock.symbol = "HIDDEN"
+        var bill = BillRecord()
+        bill.merchant = "可见账单"
+        let store = AppStore(
+            initialVault: VaultData(stocks: [stock], billRecords: [bill]),
+            moduleSettings: settings,
+            dependencies: Self.dependencies(
+                defaults: defaults,
+                persistence: RecordingVaultPersistence()
+            )
+        )
+
+        let document = try await store.makeBackupDocument(password: "test-password-123")
+        let payload = try await AppStoreBackupProcessor().restorePayload(
+            from: document.data,
+            password: "test-password-123",
+            enabledModules: ToolModuleCatalog.allModules
+        )
+
+        #expect(!payload.includedModules.contains(.myStocks))
+        #expect(payload.includedModules.contains(.bills))
+        #expect(payload.vault.stocks.isEmpty)
+        #expect(payload.vault.billRecords.map(\.merchant) == ["可见账单"])
+    }
+
     @Test func moduleLocalDataDeletionCommitsAfterUndoWindow() async throws {
         let defaults = Self.makeDefaults()
         let persistence = RecordingVaultPersistence()

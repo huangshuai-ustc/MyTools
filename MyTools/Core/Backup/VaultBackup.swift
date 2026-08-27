@@ -2,7 +2,6 @@ import Foundation
 import CryptoKit
 import SwiftUI
 import UniformTypeIdentifiers
-import CommonCrypto
 
 enum VaultBackupError: LocalizedError {
     case invalidPassword
@@ -144,27 +143,16 @@ enum VaultBackupCrypto {
     }
 
     private static func deriveKey(password: String, salt: Data) throws -> SymmetricKey {
-        let passwordData = Data(password.utf8)
-        var derived = Data(repeating: 0, count: keyLength)
-        let derivedLength = derived.count
-        let status = derived.withUnsafeMutableBytes { derivedBytes in
-            passwordData.withUnsafeBytes { passwordBytes in
-                salt.withUnsafeBytes { saltBytes in
-                    CCKeyDerivationPBKDF(
-                        CCPBKDFAlgorithm(kCCPBKDF2),
-                        passwordBytes.bindMemory(to: UInt8.self).baseAddress,
-                        passwordData.count,
-                        saltBytes.bindMemory(to: UInt8.self).baseAddress,
-                        salt.count,
-                        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                        rounds,
-                        derivedBytes.bindMemory(to: UInt8.self).baseAddress,
-                        derivedLength
-                    )
-                }
-            }
+        do {
+            let derived = try VaultCrypto.pbkdf2SHA256(
+                password: Data(password.utf8),
+                salt: salt,
+                rounds: rounds,
+                keyLength: keyLength
+            )
+            return SymmetricKey(data: derived)
+        } catch {
+            throw VaultBackupError.invalidFile
         }
-        guard status == kCCSuccess else { throw VaultBackupError.invalidFile }
-        return SymmetricKey(data: derived)
     }
 }

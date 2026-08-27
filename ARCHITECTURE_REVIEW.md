@@ -13,12 +13,12 @@ MyTools 是一个 SwiftUI 多平台、单 App Target 加单 Test Target 的本�
 
 | 优先级 | 发现 | 当前判断 |
 | --- | --- | --- |
-| P1 | 备份范围与首页显隐耦合 | `AppStore.makeBackupDocument()` 只把可见模块传给备份处理器；CloudKit 通常使用全部可编译且允许同步的模块，删除功能数据的撤回窗口除外。当前文档已按实际行为记录，产品若要求“隐藏仍备份”需要分离范围策略并补测试。 |
-| P2 | `AppStore` 责任面偏宽 | 约 1046 行，除组合/持久化/同步外，还包含模块数据删除撤回、附件引用遍历和清理策略。没有模块 CRUD，但跨模块策略仍集中在一个类型。 |
-| P2 | 应用偏好变更使用全局通知 | Finance、Stocks、Secrets、SportsLottery 页面/偏好写入后通过 `NotificationCenter` 通知 App 根触发同步，绕过了类型安全的 Store/Bridge 回调。 |
+| P1 | 备份范围与首页显隐耦合 | 已确认为产品契约（2026-08-27）：隐藏模块不参与加密备份，`AppStoreFacadeTests.hiddenModuleIsExcludedFromBackup` 锁定该行为；与 CloudKit 参与范围的差异已在 `AGENTS.md` 不可破坏规则中写明。 |
+| P2 | `AppStore` 责任面偏宽 | 约 1046 行，除组合/持久化/同步外，还包含模块数据删除撤回和清理策略；附件引用遍历已抽出为 `ModuleAttachmentReferenceIndex.swift`（`App/Composition/`）。删除/撤回状态机仍在 `AppStore`，本项部分完成。 |
+| P2 | 应用偏好变更使用全局通知 | 已处理：偏好变更改由 `AppPreferenceChangeBus` 汇聚，`ToolModuleSettings`/`StockAppearanceSettings` 等提供类型化回调，不再列为未解决项。 |
 | P2 | 单 Target 只能靠约定隔离 | 编译条件能裁剪模块，但不能阻止任意 Feature 访问另一个 Feature 的 internal 类型；当前依赖禁令依赖审查和测试。 |
 | P3 | 少数展示文件过大 | `SecretVaultView` 约 1318 行、`BankAccountViews` 约 1236 行、股票图表展示链约 1100 行。它们仍以单一用户流程为主，但已经是后续冲突和测试困难的主要位置。 |
-| P3 | `@unchecked Sendable` 和进程级单例较多 | `VaultData`、`AttachmentStore`、存储服务及多个协调器跨并发边界运行；目前有明确调用边界，但应继续用并发测试和集中构造限制风险。 |
+| P3 | `@unchecked Sendable` 和进程级单例较多 | `VaultData`、`AttachmentStore`、存储服务及多个协调器跨并发边界运行；目前有明确调用边界，`VaultPersistenceCoordinator` 的并发 `schedule` 已有回归测试（`SecureStoreEncryptionTests.concurrentScheduleFlushesWithoutErrorsAndPersistsEncryptedVault`），应继续用并发测试和集中构造限制风险。 |
 
 ## 工程规模与边界
 
@@ -102,7 +102,7 @@ App -> all modules (composition root only)
 
 ### 具体耦合风险
 
-1. **备份和首页显隐共用一条判断。** `AppStore.makeBackupDocument()` 使用 `moduleSettings.isVisible`，而 `makeCloudSyncSnapshot()` 使用 `ToolModuleCatalog.cloudSyncModules`（删除功能数据的撤回窗口会临时移除目标模块）。这使“页面隐藏”和“备份范围”发生耦合，当前文档已标记实际行为；产品语义若要分离，应引入独立的备份范围策略，而不是复用可见性。
+1. **备份和首页显隐共用一条判断。** `AppStore.makeBackupDocument()` 使用 `moduleSettings.isVisible`，而 `makeCloudSyncSnapshot()` 使用 `ToolModuleCatalog.cloudSyncModules`（删除功能数据的撤回窗口会临时移除目标模块）。该差异已确认为产品契约（隐藏不备份、隐藏仍同步），由 `AppStoreFacadeTests.hiddenModuleIsExcludedFromBackup` 锁定，不再需要分离范围策略。
 2. **偏好同步靠无类型通知。** `Notification.Name.syncedAppPreferenceDidChange` 是全局字符串事件，发送方不会声明具体偏好，接收方只能重新扫描整个偏好快照。建议以后让 `ToolModuleSettings`、排序设置和体彩偏好统一通过 `CloudSyncPreferencesBridge` 的变更回调汇聚。
 3. **单 Target 没有编译期防线。** 目录约束和 `#if MYTOOLS_FEATURE_*` 能控制产品变体，但 Feature internal 符号仍可被其他 Feature 访问。若团队规模或模块数量继续增长，应考虑 Swift Package/Framework；在此之前维持依赖审查脚本或测试。
 4. **设备级单例需要继续收口。** `DiagnosticLogger.shared`、`AppNotificationService.shared`、行情/体彩刷新协调器和部分缓存服务是合理的进程级对象，但业务 Store 不应直接创建或读取它们的内部状态。生产绑定应继续集中在 `LiveAppDependencies` 和 App 启动层。
@@ -144,3 +144,16 @@ App -> all modules (composition root only)
 ## 维护规则
 
 本文是当前架构判断，不是逐文件 API 索引。目录、文件职责和可复用能力以 `AGENTS.md` 为准，产品行为以 `README.md` 为准，源码和测试优先级最高。新增、移动或删除文件后，应先更新 `AGENTS.md`，再在本文件只记录会改变依赖方向、持久化边界或风险判断的架构变化。
+
+## 后续变更记录
+
+### 2026-08-27：P0 安全边界修复与 P1 备份契约确认
+
+- **本地 Vault 静态加密落地**：`SecureStore` 新增 AES-GCM 加密信封（`VaultCrypto`，格式 2.0），随机 256 位密钥由 `KeychainVaultEncryptionKey` 保存在 Keychain（`WhenUnlockedThisDeviceOnly`，仅本机、不可迁移）。旧版明文档案在首次读取后立即原地升级为加密格式；Keychain/加密原语不可用时降级为明文读写并记录诊断，保证不丢数据；解密失败、密钥缺失、格式不受支持时沿用"禁止空档案覆盖原文件"的失败保护（`canPersist=false`）。附件文件仍为明文，尚未加密。
+- **管理员密码摘要加盐**：`AuthManager` 改用 `AdminPasswordHash` 的加盐 PBKDF2-HMAC-SHA256（210,000 轮，恒定时间比较）；旧版无盐 SHA-256 摘要在验证成功后自动迁移。备份加密的 PBKDF2 派生改为复用 `VaultCrypto.pbkdf2SHA256`，消除第二套派生实现。
+- **备份范围契约确认**：隐藏模块不参与加密备份（保持原行为），作为产品契约由 `AppStoreFacadeTests.hiddenModuleIsExcludedFromBackup` 锁定，与 CloudKit 参与范围（隐藏仍同步）的区别在 `AGENTS.md` 不可破坏规则中明确。
+- **遗留风险不变**：附件静态加密、单 Target 隔离、`AppStore` 职责偏宽、偏好同步无类型事件等仍按上表优先级待处理；本地 Vault 加密后，`.mytools` 加密备份是 Keychain 密钥丢失时的唯一恢复路径，升级引导应在版本更新中提示用户先导出备份。
+
+### 2026-08-27：CI 决策与并发回归补充
+
+- **不配置 GitHub CI**：仓库未连接远端、当前不做远程 CI，因此不配置 GitHub Actions；本轮改动已由本地 `xcodebuild build-for-testing` 与 focused tests 覆盖验证。

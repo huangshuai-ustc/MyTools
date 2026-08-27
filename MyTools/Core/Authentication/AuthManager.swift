@@ -1,6 +1,5 @@
 import Foundation
 import LocalAuthentication
-import CryptoKit
 import Security
 
 enum AdminSessionDuration: String, CaseIterable, Identifiable {
@@ -175,8 +174,18 @@ final class AuthManager: ObservableObject {
     }
 
     func verify(password: String) -> Bool {
-        let hash = SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined()
-        return hash == defaults.string(forKey: passwordKey)
+        guard let stored = defaults.string(forKey: passwordKey) else { return false }
+        guard AdminPasswordHash.verify(password, stored: stored) else { return false }
+        if AdminPasswordHash.isLegacy(stored) {
+            // 旧版无盐 SHA-256 摘要验证成功后，立即升级为加盐 PBKDF2 格式。
+            savePasswordHash(password)
+            DiagnosticLogger.shared.log(
+                .authentication,
+                "管理员密码摘要已升级为加盐 PBKDF2 格式",
+                level: .info
+            )
+        }
+        return true
     }
 
     func changePassword(_ password: String, confirmation: String) -> Bool {
@@ -311,10 +320,7 @@ final class AuthManager: ObservableObject {
     }
 
     private func savePasswordHash(_ password: String) {
-        defaults.set(
-            SHA256.hash(data: Data(password.utf8)).map { String(format: "%02x", $0) }.joined(),
-            forKey: passwordKey
-        )
+        defaults.set(AdminPasswordHash.make(for: password), forKey: passwordKey)
     }
 
     private var keychainLookupQuery: [String: Any] {
