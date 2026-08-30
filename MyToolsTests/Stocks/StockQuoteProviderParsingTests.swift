@@ -112,6 +112,9 @@ struct StockQuoteProviderParsingTests {
         let fetchedAt = StockChartFixtures.date(2026, 8, 10)
         let data = try json([
             "data": [
+                "f6": 12_345_678,
+                "f8": 123,
+                "f116": 1_000_000_000,
                 "f162": "1547",
                 "f167": 715
             ]
@@ -128,6 +131,9 @@ struct StockQuoteProviderParsingTests {
 
         #expect(snapshot?.priceEarningsRatioTTM == 15.47)
         #expect(snapshot?.priceBookRatioMRQ == 7.15)
+        #expect(snapshot?.turnoverAmount == 12_345_678)
+        #expect(snapshot?.turnoverRate == 0.0123)
+        #expect(snapshot?.marketCapitalization == 1_000_000_000)
         #expect(snapshot?.source == "东方财富")
         #expect(snapshot?.asOfDate == fetchedAt)
         let request = await client.recordedRequests().first
@@ -146,6 +152,34 @@ struct StockQuoteProviderParsingTests {
                     timeSeries(
                         type: "trailingPbRatio",
                         values: [("2026-08-07", 4.25)]
+                    ),
+                    timeSeries(
+                        type: "trailingPegRatio",
+                        values: [("2026-08-07", 1.5)]
+                    ),
+                    timeSeries(
+                        type: "trailingPsRatio",
+                        values: [("2026-08-07", 6.0)]
+                    ),
+                    timeSeries(
+                        type: "trailingDilutedEPS",
+                        values: [("2026-08-07", 5.5)]
+                    ),
+                    timeSeries(
+                        type: "trailingMarketCap",
+                        values: [("2026-08-07", 1_000)]
+                    ),
+                    timeSeries(
+                        type: "trailingEnterpriseValue",
+                        values: [("2026-08-07", 1_200)]
+                    ),
+                    timeSeries(
+                        type: "trailingEBITDA",
+                        values: [("2026-08-07", 100)]
+                    ),
+                    timeSeries(
+                        type: "trailingOperatingCashFlow",
+                        values: [("2026-08-07", 80)]
                     ),
                     directTimeSeries(
                         type: "trailingDividendYield",
@@ -178,12 +212,19 @@ struct StockQuoteProviderParsingTests {
 
         #expect(snapshot?.priceEarningsRatioTTM == 24.5)
         #expect(snapshot?.priceBookRatioMRQ == 4.25)
+        #expect(snapshot?.priceEarningsGrowthRatio == 1.5)
+        #expect(snapshot?.priceSalesRatioTTM == 6)
+        #expect(snapshot?.earningsPerShareTTM == 5.5)
+        #expect(snapshot?.priceCashFlowRatioTTM == 12.5)
+        #expect(snapshot?.enterpriseValueToEBITDA == 12)
+        #expect(snapshot?.marketCapitalization == 1_000)
         #expect(snapshot?.dividendYield == 0.012)
         #expect(snapshot?.returnOnEquity == 0.2)
         #expect(snapshot?.netProfitMargin == 0.1)
         #expect(snapshot.map { abs($0.revenueGrowth! - 0.2) < 0.000_001 } == true)
         #expect(snapshot.map { abs($0.earningsGrowth! - 0.2) < 0.000_001 } == true)
-        #expect(snapshot?.availableMetricCount == 7)
+        #expect(snapshot?.availableMetricCount == 12)
+        #expect(snapshot?.displayMetricCount == 13)
         let request = await client.recordedRequests().first
         #expect(request?.url?.host == "query2.finance.yahoo.com")
         #expect(request?.url?.path.contains("fundamentals-timeseries") == true)

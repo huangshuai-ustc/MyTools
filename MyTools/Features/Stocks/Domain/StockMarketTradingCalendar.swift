@@ -9,6 +9,8 @@ enum StockMarketSession: String, Sendable {
 }
 
 enum StockMarketTradingCalendar {
+    // Kept as a last-resort fallback for years whose data has not been fetched
+    // yet. `AShareHolidayService` supersedes these entries when data is loaded.
     private static let additionalAShareClosures: [Int: Set<Int>] = [
         2025: [602, 1008],
         2026: [102, 406]
@@ -17,12 +19,12 @@ enum StockMarketTradingCalendar {
     static func isOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
         switch market {
         case .aShare:
-            return isOpen(
-                date,
-                timeZone: "Asia/Shanghai",
-                sessions: [(570, 690), (780, 900)],
-                holiday: isAShareHoliday
-            )
+            let cal = calendar(timeZone: "Asia/Shanghai")
+            guard isAShareTradingDay(date, calendar: cal) else { return false }
+            let components = cal.dateComponents([.hour, .minute], from: date)
+            guard let hour = components.hour, let minute = components.minute else { return false }
+            let localMinutes = hour * 60 + minute
+            return [(570, 690), (780, 900)].contains { localMinutes >= $0.0 && localMinutes < $0.1 }
         case .hongKong:
             return isOpen(
                 date,
@@ -90,11 +92,8 @@ enum StockMarketTradingCalendar {
     static func isTradingDay(_ market: StockMarket, on date: Date) -> Bool {
         switch market {
         case .aShare:
-            return isTradingDay(
-                date,
-                timeZone: "Asia/Shanghai",
-                holiday: isAShareHoliday
-            )
+            let cal = calendar(timeZone: "Asia/Shanghai")
+            return isAShareTradingDay(date, calendar: cal)
         case .hongKong:
             return isTradingDay(
                 date,
@@ -111,7 +110,6 @@ enum StockMarketTradingCalendar {
     }
 
     /// Returns true only when a market's final session (not a lunch break) ended
-    /// inside the interval.
     static func finalSessionEnded(
         for market: StockMarket,
         between startDate: Date,
@@ -121,12 +119,12 @@ enum StockMarketTradingCalendar {
 
         switch market {
         case .aShare:
-            return finalSessionEnded(
+            let cal = calendar(timeZone: "Asia/Shanghai")
+            return aShareFinalSessionEnded(
                 between: startDate,
                 and: endDate,
-                timeZone: "Asia/Shanghai",
                 sessions: [(570, 690), (780, 900)],
-                holiday: isAShareHoliday
+                calendar: cal
             )
         case .hongKong:
             return finalSessionEnded(
@@ -155,11 +153,11 @@ enum StockMarketTradingCalendar {
     ) -> Date? {
         switch market {
         case .aShare:
-            return latestCompletedFinalSessionEnd(
+            let cal = calendar(timeZone: "Asia/Shanghai")
+            return aShareLatestCompletedFinalSessionEnd(
                 at: date,
-                timeZone: "Asia/Shanghai",
                 finalSessionEndMinute: 900,
-                holiday: isAShareHoliday
+                calendar: cal
             )
         case .hongKong:
             return latestCompletedFinalSessionEnd(
@@ -187,12 +185,12 @@ enum StockMarketTradingCalendar {
 
         switch market {
         case .aShare:
-            return sessionEnded(
+            let cal = calendar(timeZone: "Asia/Shanghai")
+            return aShareSessionEnded(
                 between: startDate,
                 and: endDate,
-                timeZone: "Asia/Shanghai",
                 sessions: [(570, 690), (780, 900)],
-                holiday: isAShareHoliday
+                calendar: cal
             )
         case .hongKong:
             return sessionEnded(
@@ -244,7 +242,46 @@ enum StockMarketTradingCalendar {
         holiday: (Date, Calendar) -> Bool
     ) -> Bool {
         let weekday = calendar.component(.weekday, from: date)
-        return (2...6).contains(weekday) && !holiday(date, calendar)
+        let isWeekend = !(2...6).contains(weekday)
+        // For A-share, consult AShareHolidayService for live overrides:
+        //   - Compensatory work days (补班) trade even on weekends.
+        //   - Mandated rest-day overrides apply even on weekdays.
+        // The service stores its results in memory after loading, so this
+        // synchronous read is safe to call from any thread.
+        // For HK and US markets this path falls through to the standard check.
+        return !isWeekend && !holiday(date, calendar)
+    }
+
+    // MARK: - A-share specific: integrate AShareHolidayService
+
+    /// Returns `true` when `date` is a confirmed A-share trading day, taking
+    /// both weekend status and live holiday overrides into account.
+    ///
+    /// This is the authoritative method for A-share trading-day queries; it
+    /// supersedes the generic `isTradingDay(_:calendar:holiday:)` for A-shares
+    /// by incorporating `AShareHolidayService` compensatory-work-day data.
+    private static func isAShareTradingDay(_ date: Date, calendar: Calendar) -> Bool {
+        let weekday = calendar.component(.weekday, from: date)
+        let isWeekend = !(2...6).contains(weekday)
+        // Query the published snapshot from AShareHolidayService. The snapshot
+        // is a reference type whose properties are only mutated from within the
+        // actor (before being published), so this synchronous read is safe.
+        switch AShareHolidayService.shared.snapshot.tradingDayOverride(
+            for: date,
+            calendar: calendar
+        ) {
+        case .some(true):
+            // Compensatory work day (补班): trades even if it is a weekend.
+            // Still exclude built-in fixed holidays (New Year's Day, etc.) to
+            // avoid a data-source error enabling trading on a clear holiday.
+            return !isAShareHoliday(date, calendar)
+        case .some(false):
+            // Mandated holiday: does not trade even if it falls on a weekday.
+            return false
+        case .none:
+            // No override available yet: apply normal weekend + built-in algorithm.
+            return !isWeekend && !isAShareHoliday(date, calendar)
+        }
     }
 
     private static func finalSessionEnded(
@@ -279,6 +316,34 @@ enum StockMarketTradingCalendar {
         return false
     }
 
+    /// A-share variant that routes through `isAShareTradingDay`.
+    private static func aShareFinalSessionEnded(
+        between startDate: Date,
+        and endDate: Date,
+        sessions: [(start: Int, end: Int)],
+        calendar: Calendar
+    ) -> Bool {
+        var currentDay = calendar.startOfDay(for: startDate)
+        let finalDay = calendar.startOfDay(for: endDate)
+        guard let finalSession = sessions.last else { return false }
+
+        while currentDay <= finalDay {
+            if isAShareTradingDay(currentDay, calendar: calendar),
+               let sessionEnd = calendar.date(
+                   byAdding: .minute,
+                   value: finalSession.end,
+                   to: currentDay
+               ),
+               sessionEnd > startDate,
+               sessionEnd <= endDate {
+                return true
+            }
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else { break }
+            currentDay = nextDay
+        }
+        return false
+    }
+
     private static func latestCompletedFinalSessionEnd(
         at date: Date,
         timeZone identifier: String,
@@ -302,6 +367,29 @@ enum StockMarketTradingCalendar {
             guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else {
                 break
             }
+            currentDay = previousDay
+        }
+        return nil
+    }
+
+    /// A-share variant that routes through `isAShareTradingDay`.
+    private static func aShareLatestCompletedFinalSessionEnd(
+        at date: Date,
+        finalSessionEndMinute: Int,
+        calendar: Calendar
+    ) -> Date? {
+        var currentDay = calendar.startOfDay(for: date)
+        for _ in 0..<370 {
+            if isAShareTradingDay(currentDay, calendar: calendar),
+               let sessionEnd = calendar.date(
+                   byAdding: .minute,
+                   value: finalSessionEndMinute,
+                   to: currentDay
+               ),
+               sessionEnd <= date {
+                return sessionEnd
+            }
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else { break }
             currentDay = previousDay
         }
         return nil
@@ -336,6 +424,35 @@ enum StockMarketTradingCalendar {
             guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else {
                 break
             }
+            currentDay = nextDay
+        }
+        return false
+    }
+
+    /// A-share variant of `sessionEnded` that routes through `isAShareTradingDay`.
+    private static func aShareSessionEnded(
+        between startDate: Date,
+        and endDate: Date,
+        sessions: [(start: Int, end: Int)],
+        calendar: Calendar
+    ) -> Bool {
+        var currentDay = calendar.startOfDay(for: startDate)
+        let finalDay = calendar.startOfDay(for: endDate)
+
+        while currentDay <= finalDay {
+            if isAShareTradingDay(currentDay, calendar: calendar) {
+                for session in sessions {
+                    guard let sessionEnd = calendar.date(
+                        byAdding: .minute,
+                        value: session.end,
+                        to: currentDay
+                    ) else { continue }
+                    if sessionEnd > startDate, sessionEnd <= endDate {
+                        return true
+                    }
+                }
+            }
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else { break }
             currentDay = nextDay
         }
         return false

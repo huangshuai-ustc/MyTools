@@ -3,10 +3,24 @@ import CryptoKit
 import Security
 
 enum VaultEncryptionKeyError: LocalizedError {
+    case keychainReadFailed(OSStatus)
     case keychainWriteFailed(OSStatus)
+
+    var status: OSStatus {
+        switch self {
+        case .keychainReadFailed(let status), .keychainWriteFailed(let status):
+            return status
+        }
+    }
+
+    var isTemporarilyUnavailable: Bool {
+        status == errSecInteractionNotAllowed || status == errSecNotAvailable
+    }
 
     var errorDescription: String? {
         switch self {
+        case .keychainReadFailed(let status):
+            return "本地加密密钥暂时无法从系统安全存储读取（status=\(status)）。"
         case .keychainWriteFailed(let status):
             return "本地加密密钥写入系统安全存储失败（status=\(status)）。"
         }
@@ -42,15 +56,16 @@ struct KeychainVaultEncryptionKey: VaultEncryptionKeyProviding {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
-            if status != errSecItemNotFound {
-                DiagnosticLogger.shared.log(
-                    .persistence,
-                    "读取本地加密密钥失败 status=\(status)",
-                    level: .warning
-                )
-            }
+        if status == errSecItemNotFound {
             return nil
+        }
+        guard status == errSecSuccess, let data = result as? Data else {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "读取本地加密密钥失败 status=\(status)",
+                level: .warning
+            )
+            throw VaultEncryptionKeyError.keychainReadFailed(status)
         }
         return SymmetricKey(data: data)
     }
@@ -75,4 +90,9 @@ struct KeychainVaultEncryptionKey: VaultEncryptionKeyProviding {
             kSecAttrAccount as String: account,
         ]
     }
+}
+
+func isTemporaryVaultKeyAccessError(_ error: Error) -> Bool {
+    guard let keyError = error as? VaultEncryptionKeyError else { return false }
+    return keyError.isTemporarilyUnavailable
 }

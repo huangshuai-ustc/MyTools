@@ -139,13 +139,11 @@ final class BillsStore: ObservableObject {
     }
 
     private func normalizedText(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppTagSupport.trimmed(value)
     }
 
     private func normalizedOptional(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = normalizedText(value)
-        return normalized.isEmpty ? nil : normalized
+        AppTagSupport.trimmedNonEmpty(value)
     }
 
     private func normalizedTags(_ values: [String]) -> [String] {

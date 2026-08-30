@@ -46,6 +46,7 @@ struct StockWatchView: View {
     @State private var cachedSessionSnapshot: StockChartSnapshot?
     @State private var cachedSessionSummaryKey: SessionSummaryLoadKey?
     @State private var technicalScore: StockInvestmentScore?
+    @State private var fundamentalSnapshot: StockFundamentalSnapshot?
     @State private var selectedDate: Date?
     @State private var isRefreshing = false
     @State private var isTechnicalScoreRefreshing = false
@@ -128,12 +129,9 @@ struct StockWatchView: View {
         switch selectedRange {
         case .intraday:
             return session != .closed
-        case .fiveDays:
-            return session == .regular
-        case .dayK, .weekK, .monthK, .quarterK, .yearK:
-            // K-lines follow the same regular-session refresh cadence as the
-            // formal intraday trend. Extended-hours special handling belongs
-            // only to the intraday chart.
+        case .fiveDays, .dayK, .weekK, .monthK, .quarterK, .yearK:
+            // K-line/5-day bars only advance at the regular-session cadence;
+            // pre/post-market ticks belong to the intraday chart only.
             return session == .regular
         }
     }
@@ -266,6 +264,7 @@ struct StockWatchView: View {
         }
         .task(id: scoreLoadKey) {
             technicalScore = nil
+            fundamentalSnapshot = nil
             await loadTechnicalScore(forceRefresh: false)
         }
         .onChange(of: scenePhase) { _, phase in
@@ -338,7 +337,8 @@ struct StockWatchView: View {
                 Section("当期数据") {
                     StockCurrentPeriodOverview(
                         summary: summary,
-                        snapshot: summarySnapshot
+                        snapshot: summarySnapshot,
+                        fundamentals: fundamentalSnapshot
                     )
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 }
@@ -526,6 +526,7 @@ struct StockWatchView: View {
         snapshot = nil
         clearSessionSummary()
         technicalScore = nil
+        fundamentalSnapshot = nil
         selectedDate = nil
         visibleXDomain = nil
         errorMessage = nil
@@ -570,35 +571,28 @@ struct StockWatchView: View {
                 .foregroundStyle(sessionColor)
             }
 
-            if let snapshot, let latest = snapshot.latestPoint {
+            if let latestPrice = stock.latestPrice {
                 HStack(alignment: .bottom, spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(StockChartPresentation.priceText(
-                            latest.close,
-                            currencyCode: snapshot.currencyCode
+                            NSDecimalNumber(decimal: latestPrice).doubleValue,
+                            currencyCode: stock.market.currencyCode
                         ))
                             .appFont(.title2.weight(.semibold).monospacedDigit())
-                        if let performance = StockChartPresentation.rangePerformance(
-                            snapshot: snapshot,
-                            range: selectedRange,
-                            market: stock.market,
-                            visibleXDomain: visibleXDomain
-                        ) {
+                        if let performance = rangeHeaderPerformance(for: stock) {
                             HStack(spacing: 10) {
-                                Text("区间涨跌")
+                                Text(performance.title)
                                     .foregroundStyle(.secondary)
                                 Text(
                                     StockChartPresentation.signedPriceText(
                                         performance.change,
-                                        currencyCode: snapshot.currencyCode
+                                        currencyCode: stock.market.currencyCode
                                     )
                                 )
                                 Text(StockValueFormatter.signedPercent(Decimal(performance.percent)))
                             }
                             .appFont(.subheadline.weight(.medium).monospacedDigit())
-                            .foregroundStyle(
-                                valueColor(performance.change, market: stock.market)
-                            )
+                            .foregroundStyle(valueColor(performance.change, market: stock.market))
                         }
                     }
                     Spacer(minLength: 8)
@@ -616,6 +610,40 @@ struct StockWatchView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Prefers the chart's own performance contract: intraday is today's
+    /// change against previous close, while 5-day/K-line uses the visible
+    /// window's first bar. Falls back to the quote pipeline's `previousClose`
+    /// only while the selected chart snapshot hasn't loaded yet.
+    private func rangeHeaderPerformance(
+        for stock: StockHolding
+    ) -> (title: String, change: Double, percent: Double)? {
+        if let snapshot,
+           let performance = StockChartPresentation.rangePerformance(
+                snapshot: snapshot,
+                range: selectedRange,
+                market: stock.market,
+                visibleXDomain: visibleXDomain
+           ) {
+            return (
+                StockChartPresentation.headerPerformanceTitle(for: selectedRange),
+                performance.change,
+                performance.percent
+            )
+        }
+        guard let latestPrice = stock.latestPrice,
+              let previousClose = stock.previousClose,
+              previousClose != 0 else {
+            return nil
+        }
+        let change = latestPrice - previousClose
+        let percent = change / previousClose
+        return (
+            "今日涨跌",
+            NSDecimalNumber(decimal: change).doubleValue,
+            NSDecimalNumber(decimal: percent).doubleValue
+        )
     }
 
     private func valueColor(_ value: Double, market: StockMarket) -> Color {
@@ -976,6 +1004,7 @@ struct StockWatchView: View {
                 for: stock,
                 forceRefresh: true
             )
+            fundamentalSnapshot = fundamentals
             technicalScore = StockInvestmentScoreModel.calculate(
                 StockInvestmentScoreInput(
                     pricePoints: snapshot.indicatorPoints ?? snapshot.points,
@@ -1001,6 +1030,8 @@ struct StockWatchView: View {
             for: stock,
             forceRefresh: forceRefresh
         )
+        guard !Task.isCancelled, scoreLoadKey == requestedKey else { return }
+        fundamentalSnapshot = fundamentals
 
         let cached = forceRefresh
             ? nil
@@ -1112,6 +1143,7 @@ struct StockWatchView: View {
 private struct StockCurrentPeriodOverview: View {
     let summary: StockChartSessionSummary
     let snapshot: StockChartSnapshot
+    let fundamentals: StockFundamentalSnapshot?
 
     var body: some View {
         LazyVGrid(
@@ -1145,6 +1177,48 @@ private struct StockCurrentPeriodOverview: View {
                     value: StockChartPresentation.volumeText(volume)
                 )
             }
+            if let amount = fundamentals?.turnoverAmount ?? summary.turnoverAmount {
+                StockWatchMetricCell(
+                    title: fundamentals?.turnoverAmount == nil ? "成交额（估算）" : "成交额",
+                    value: moneyText(amount)
+                )
+            }
+            if let rate = turnoverRate {
+                StockWatchMetricCell(
+                    title: fundamentals?.turnoverRate == nil ? "换手率（估算）" : "换手率",
+                    value: percentText(rate)
+                )
+            }
+            if let value = fundamentals?.priceEarningsRatioTTM {
+                ratioMetric("PE（市盈率）", value)
+            }
+            if let value = fundamentals?.priceBookRatioMRQ {
+                ratioMetric("PB（市净率）", value)
+            }
+            if let value = fundamentals?.priceEarningsGrowthRatio {
+                ratioMetric("PEG", value)
+            }
+            if let value = fundamentals?.priceCashFlowRatioTTM {
+                ratioMetric("PCF（市现率）", value)
+            }
+            if let value = fundamentals?.priceSalesRatioTTM {
+                ratioMetric("PS（市销率）", value)
+            }
+            if let value = fundamentals?.enterpriseValueToEBITDA {
+                ratioMetric("EV / EBITDA", value)
+            }
+            if let value = fundamentals?.earningsPerShareTTM {
+                StockWatchMetricCell(
+                    title: "EPS（每股收益）",
+                    value: priceText(value)
+                )
+            }
+            if let value = fundamentals?.returnOnEquity {
+                StockWatchMetricCell(title: "ROE", value: percentText(value))
+            }
+            if let value = fundamentals?.dividendYield {
+                StockWatchMetricCell(title: "股息率", value: percentText(value))
+            }
             StockWatchMetricCell(
                 title: "数据日期",
                 value: AppDateFormatter.string(from: summary.date)
@@ -1154,6 +1228,33 @@ private struct StockCurrentPeriodOverview: View {
 
     private func priceText(_ value: Double) -> String {
         StockChartPresentation.priceText(value, currencyCode: snapshot.currencyCode)
+    }
+
+    private func moneyText(_ value: Double) -> String {
+        StockValueFormatter.money(Decimal(value), currencyCode: snapshot.currencyCode)
+    }
+
+    private func percentText(_ value: Double) -> String {
+        StockValueFormatter.allocationPercent(Decimal(value))
+    }
+
+    private func ratioMetric(_ title: String, _ value: Double) -> some View {
+        StockWatchMetricCell(
+            title: title,
+            value: StockChartPresentation.indicatorText(value)
+        )
+    }
+
+    private var turnoverRate: Double? {
+        if let providerRate = fundamentals?.turnoverRate, providerRate.isFinite {
+            return providerRate
+        }
+        guard let marketCapitalization = fundamentals?.marketCapitalization,
+              marketCapitalization > 0,
+              let turnoverAmount = summary.turnoverAmount,
+              turnoverAmount.isFinite else { return nil }
+        let rate = turnoverAmount / marketCapitalization
+        return rate.isFinite ? rate : nil
     }
 }
 
@@ -1270,6 +1371,21 @@ private struct StockInvestmentScoreDetailView: View {
                         if let value = fundamentals.priceBookRatioMRQ {
                             LabeledContent("市净率（MRQ）", value: ratioText(value))
                         }
+                        if let value = fundamentals.priceEarningsGrowthRatio {
+                            LabeledContent("PEG", value: ratioText(value))
+                        }
+                        if let value = fundamentals.priceCashFlowRatioTTM {
+                            LabeledContent("市现率（TTM）", value: ratioText(value))
+                        }
+                        if let value = fundamentals.priceSalesRatioTTM {
+                            LabeledContent("市销率（TTM）", value: ratioText(value))
+                        }
+                        if let value = fundamentals.enterpriseValueToEBITDA {
+                            LabeledContent("EV / EBITDA", value: ratioText(value))
+                        }
+                        if let value = fundamentals.earningsPerShareTTM {
+                            LabeledContent("每股收益（TTM）", value: ratioText(value))
+                        }
                         if let value = fundamentals.dividendYield {
                             LabeledContent("股息率", value: percentageText(value))
                         }
@@ -1305,7 +1421,7 @@ private struct StockInvestmentScoreDetailView: View {
                     )
                     LabeledContent(
                         "基本面覆盖",
-                        value: "\(score.fundamentalMetricCount) / 7 项"
+                        value: "\(score.fundamentalMetricCount) / 12 项"
                     )
                     if let fundamentalSource = score.fundamentalSource {
                         LabeledContent("基本面来源", value: fundamentalSource)
@@ -1320,7 +1436,7 @@ private struct StockInvestmentScoreDetailView: View {
                     Text("数据基础")
                 } footer: {
                     Text(
-                        "各项证据不会直接相加。模型综合技术时机、估值、盈利质量、成长和风险，并按数据可信度向50分收缩。估值阈值是跨市场的粗粒度参考，不替代行业比较；当前不包含行业、管理层和消息面。"
+                        "相关技术指标会先在趋势、动能、市场强弱和量价资金组内聚合，再进行一致性校验；模型同时综合估值、盈利质量、成长和风险，并按数据可信度向50分收缩。估值阈值是跨市场的粗粒度参考，不替代行业比较；当前不包含行业、管理层和消息面。"
                     )
                 }
             }

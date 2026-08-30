@@ -40,6 +40,53 @@ struct AppStoreFacadeTests {
         #expect(persistence.scheduleCount == 0)
     }
 
+    @Test func protectedDataDelayRetriesWithoutPublishingAnEmptyVault() async throws {
+        let defaults = Self.makeDefaults()
+        var loadedStock = StockHolding()
+        loadedStock.symbol = "RETRIED"
+        let delayed = LocalVaultLoadResult(
+            vault: VaultData(),
+            secrets: [],
+            byteCount: 256,
+            source: "等待设备解锁后重试",
+            canPersist: false,
+            readMilliseconds: 1,
+            decodeMilliseconds: 0,
+            totalMilliseconds: 1,
+            failure: .protectedDataUnavailable
+        )
+        let recovered = LocalVaultLoadResult(
+            vault: VaultData(stocks: [loadedStock]),
+            secrets: [],
+            byteCount: 256,
+            source: "Test recovered",
+            canPersist: true,
+            readMilliseconds: 1,
+            decodeMilliseconds: 1,
+            totalMilliseconds: 2
+        )
+        let loader = SequencedVaultInitialLoader(results: [delayed, recovered])
+        let persistence = RecordingVaultPersistence()
+        let store = AppStore(
+            dependencies: Self.dependencies(
+                defaults: defaults,
+                persistence: persistence,
+                initialLoader: loader
+            )
+        )
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while !store.isInitialDataLoaded, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(store.isInitialDataLoaded)
+        #expect(!store.isVaultLoadFailurePresented)
+        #expect(store.stockStore.stocks.map { $0.symbol } == ["RETRIED"])
+        #expect(loader.loadCount >= 2)
+    }
+
     @Test func enablingHealthModuleRunsSynchronizationSkippedAtLaunch() {
         let defaults = Self.makeDefaults()
         let settings = ToolModuleSettings(defaults: defaults)
@@ -369,6 +416,28 @@ private struct StaticVaultInitialLoader: VaultInitialLoading {
 
     func loadVaultWithMetrics() -> LocalVaultLoadResult {
         result
+    }
+}
+
+private final class SequencedVaultInitialLoader: VaultInitialLoading, @unchecked Sendable {
+    private let lock = NSLock()
+    private let results: [LocalVaultLoadResult]
+    private var index = 0
+
+    init(results: [LocalVaultLoadResult]) {
+        self.results = results
+    }
+
+    var loadCount: Int {
+        lock.withLock { index }
+    }
+
+    func loadVaultWithMetrics() -> LocalVaultLoadResult {
+        lock.withLock {
+            let result = results[min(index, results.count - 1)]
+            index += 1
+            return result
+        }
     }
 }
 

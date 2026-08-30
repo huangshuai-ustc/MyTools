@@ -64,7 +64,7 @@ struct BillsView: View {
     @State private var showingOCRImport = false
     @State private var showingFileImport = false
     @State private var selectedPage: BillsPage = .records
-    @State private var visibleRecordCount = BillsView.pageSize
+    @State private var pagination = AppListPagination(pageSize: BillsView.pageSize)
 
     private var visibleRecords: [BillRecord] {
         store.records.filter { record in
@@ -84,7 +84,7 @@ struct BillsView: View {
     }
 
     private var pagedRecords: [BillRecord] {
-        Array(visibleRecords.prefix(visibleRecordCount))
+        pagination.visibleItems(from: visibleRecords)
     }
 
     private var availableCategories: [BillCategory] {
@@ -198,21 +198,6 @@ struct BillsView: View {
                         }
                     }
                 }
-
-                if visibleRecordCount < visibleRecords.count {
-                    Section {
-                        Button {
-                            loadMoreRecords()
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Label("加载更多", systemImage: "arrow.down.circle")
-                                Spacer()
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
             }
         }
 #if os(iOS)
@@ -222,6 +207,7 @@ struct BillsView: View {
         .onChange(of: query) { _, _ in resetPagination() }
         .onChange(of: directionFilter) { _, _ in resetPagination() }
         .onChange(of: categoryFilter) { _, _ in resetPagination() }
+        .onChange(of: selectedTag) { _, _ in resetPagination() }
     }
 
     @ToolbarContentBuilder
@@ -271,17 +257,15 @@ struct BillsView: View {
     }
 
     private func resetPagination() {
-        visibleRecordCount = Self.pageSize
+        pagination.reset()
     }
 
     private func loadMoreIfNeeded(_ record: BillRecord) {
-        guard record.id == pagedRecords.last?.id else { return }
-        loadMoreRecords()
-    }
-
-    private func loadMoreRecords() {
-        guard visibleRecordCount < visibleRecords.count else { return }
-        visibleRecordCount = min(visibleRecordCount + Self.pageSize, visibleRecords.count)
+        pagination.loadMoreIfNeeded(
+            currentItemID: record.id,
+            lastVisibleItemID: pagedRecords.last?.id,
+            totalItemCount: visibleRecords.count
+        )
     }
 
     private func summaryValue(_ title: String, amount: Decimal, color: Color) -> some View {

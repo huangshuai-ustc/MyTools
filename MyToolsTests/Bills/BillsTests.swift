@@ -6,6 +6,31 @@ import Testing
 
 @MainActor
 struct BillsTests {
+    @Test func sharedListPaginationLoadsAndResetsByConfiguredPageSize() {
+        var pagination = AppListPagination(pageSize: 3)
+        let records = Array(0..<8)
+
+        #expect(pagination.visibleItems(from: records) == [0, 1, 2])
+        pagination.loadMoreIfNeeded(
+            currentItemID: 1,
+            lastVisibleItemID: 2,
+            totalItemCount: records.count
+        )
+        #expect(pagination.visibleItems(from: records) == [0, 1, 2])
+
+        pagination.loadMoreIfNeeded(
+            currentItemID: 2,
+            lastVisibleItemID: 2,
+            totalItemCount: records.count
+        )
+        #expect(pagination.visibleItems(from: records) == [0, 1, 2, 3, 4, 5])
+
+        pagination.loadMore(totalItemCount: records.count)
+        #expect(pagination.visibleItems(from: records) == records)
+        pagination.reset()
+        #expect(pagination.visibleItems(from: records) == [0, 1, 2])
+    }
+
     @Test func storeNormalizesManualRecordsAndSortsNewestFirst() throws {
         let earlierDate = Date(timeIntervalSince1970: 1_000)
         let laterDate = Date(timeIntervalSince1970: 2_000)

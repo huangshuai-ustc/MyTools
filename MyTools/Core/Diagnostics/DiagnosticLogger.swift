@@ -193,8 +193,8 @@ final class DiagnosticLogger: @unchecked Sendable {
         }
     }
 
-    /// Keep the rolling diagnostic log to the current day and the previous day.
-    /// The check is performed on log access so it also works after iOS suspension.
+    /// Keep the rolling diagnostic log to the trailing 7 days. The check is
+    /// performed on log access so it also works after iOS suspension.
     private func performDailyCleanupIfNeeded(now: Date) {
         let defaults = UserDefaults.standard
         let calendar = Calendar.autoupdatingCurrent
@@ -208,7 +208,7 @@ final class DiagnosticLogger: @unchecked Sendable {
         guard defaults.string(forKey: Self.lastCleanupDayKey) != dayToken else { return }
 
         let startOfToday = calendar.startOfDay(for: now)
-        guard let keepFrom = calendar.date(byAdding: .day, value: -1, to: startOfToday) else {
+        guard let keepFrom = calendar.date(byAdding: .day, value: -6, to: startOfToday) else {
             return
         }
 

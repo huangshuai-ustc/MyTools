@@ -17,6 +17,9 @@ protocol StockChartServing: Sendable {
     /// session. Derived K-lines and technical indicators are rebuilt from the
     /// refreshed minute/daily inputs rather than treating K-lines specially.
     func refreshAfterFinalSession(for stock: StockHolding) async throws
+
+    /// Removes in-memory and on-disk chart data for a single stock.
+    func clearCache(for stock: StockHolding) async
 }
 
 actor StockChartService: StockChartServing {
@@ -219,6 +222,14 @@ actor StockChartService: StockChartServing {
         cacheGeneration += 1
         lastRefreshSessionEnd.removeAll()
         diskStore.removeAll()
+    }
+
+    func clearCache(for stock: StockHolding) {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard !symbol.isEmpty else { return }
+        let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        lastRefreshSessionEnd = lastRefreshSessionEnd.filter { $0.key.market != stock.market || $0.key.symbol != symbol }
+        diskStore.remove(for: key)
     }
 
     private func fetchRemoteChart(

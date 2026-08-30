@@ -6,43 +6,97 @@ struct StockFundamentalSnapshot: Equatable, Sendable {
     let source: String
     let priceEarningsRatioTTM: Double?
     let priceBookRatioMRQ: Double?
+    let priceEarningsGrowthRatio: Double?
+    let priceCashFlowRatioTTM: Double?
+    let priceSalesRatioTTM: Double?
+    let enterpriseValueToEBITDA: Double?
+    let earningsPerShareTTM: Double?
     let dividendYield: Double?
     let returnOnEquity: Double?
     let netProfitMargin: Double?
     let revenueGrowth: Double?
     let earningsGrowth: Double?
+    let marketCapitalization: Double?
+    let turnoverAmount: Double?
+    let turnoverRate: Double?
 
     init(
         asOfDate: Date,
         source: String = "",
         priceEarningsRatioTTM: Double? = nil,
         priceBookRatioMRQ: Double? = nil,
+        priceEarningsGrowthRatio: Double? = nil,
+        priceCashFlowRatioTTM: Double? = nil,
+        priceSalesRatioTTM: Double? = nil,
+        enterpriseValueToEBITDA: Double? = nil,
+        earningsPerShareTTM: Double? = nil,
         dividendYield: Double? = nil,
         returnOnEquity: Double? = nil,
         netProfitMargin: Double? = nil,
         revenueGrowth: Double? = nil,
-        earningsGrowth: Double? = nil
+        earningsGrowth: Double? = nil,
+        marketCapitalization: Double? = nil,
+        turnoverAmount: Double? = nil,
+        turnoverRate: Double? = nil
     ) {
         self.asOfDate = asOfDate
         self.source = source
         self.priceEarningsRatioTTM = priceEarningsRatioTTM
         self.priceBookRatioMRQ = priceBookRatioMRQ
+        self.priceEarningsGrowthRatio = priceEarningsGrowthRatio
+        self.priceCashFlowRatioTTM = priceCashFlowRatioTTM
+        self.priceSalesRatioTTM = priceSalesRatioTTM
+        self.enterpriseValueToEBITDA = enterpriseValueToEBITDA
+        self.earningsPerShareTTM = earningsPerShareTTM
         self.dividendYield = dividendYield
         self.returnOnEquity = returnOnEquity
         self.netProfitMargin = netProfitMargin
         self.revenueGrowth = revenueGrowth
         self.earningsGrowth = earningsGrowth
+        self.marketCapitalization = marketCapitalization
+        self.turnoverAmount = turnoverAmount
+        self.turnoverRate = turnoverRate
     }
 
     var availableMetricCount: Int {
+        // Only count values that participate in the score. Market value and
+        // turnover remain presentation-only because their meaning depends too
+        // heavily on market, industry and share structure.
         [
             priceEarningsRatioTTM,
             priceBookRatioMRQ,
+            priceEarningsGrowthRatio,
+            priceCashFlowRatioTTM,
+            priceSalesRatioTTM,
+            enterpriseValueToEBITDA,
+            earningsPerShareTTM,
             dividendYield,
             returnOnEquity,
             netProfitMargin,
             revenueGrowth,
             earningsGrowth
+        ].compactMap { $0 }
+            .filter { $0.isFinite }
+            .count
+    }
+
+    var displayMetricCount: Int {
+        [
+            priceEarningsRatioTTM,
+            priceBookRatioMRQ,
+            priceEarningsGrowthRatio,
+            priceCashFlowRatioTTM,
+            priceSalesRatioTTM,
+            enterpriseValueToEBITDA,
+            earningsPerShareTTM,
+            dividendYield,
+            returnOnEquity,
+            netProfitMargin,
+            revenueGrowth,
+            earningsGrowth,
+            marketCapitalization,
+            turnoverAmount,
+            turnoverRate
         ].compactMap { $0 }
             .filter { $0.isFinite }
             .count
@@ -98,6 +152,7 @@ struct StockInvestmentScoreFactor: Identifiable, Equatable, Sendable {
     enum Kind: String, CaseIterable, Sendable {
         case trend
         case momentum
+        case oscillator
         case position
         case volume
         case candlestick
@@ -110,8 +165,9 @@ struct StockInvestmentScoreFactor: Identifiable, Equatable, Sendable {
             switch self {
             case .trend: return "趋势"
             case .momentum: return "动能"
+            case .oscillator: return "市场强弱"
             case .position: return "价格位置"
-            case .volume: return "量能确认"
+            case .volume: return "量价资金"
             case .candlestick: return "K 线触发"
             case .valuation: return "估值水平"
             case .quality: return "盈利质量"
@@ -146,11 +202,13 @@ struct StockInvestmentScoreFactor: Identifiable, Equatable, Sendable {
 
 /// Stable entry point for the investment-opportunity score shown by the app.
 ///
-/// V3 combines price timing, valuation, quality, growth and risk. Its constants
-/// are explicit so a future version can be backtested without touching the view
-/// or market-data layers.
+/// V4 combines grouped technical signals, valuation, quality, growth and risk.
+/// Correlated indicators are first condensed inside their own signal family so
+/// adding another oscillator cannot inflate the score through duplicate votes.
+/// Constants remain explicit so a future version can be backtested without
+/// touching the view or market-data layers.
 enum StockInvestmentScoreModel {
-    static let version = "3.0.0"
+    static let version = "4.0.0"
 
     private struct Evidence {
         let value: Double
@@ -184,12 +242,16 @@ enum StockInvestmentScoreModel {
             indicators: indicators,
             averageTrueRange: averageTrueRange
         )
+        let oscillator = oscillatorEvidence(
+            indicators: indicators,
+            momentumDirection: momentum.value
+        )
         let position = positionEvidence(
             points: points,
             indicators: indicators,
             averageTrueRange: averageTrueRange
         )
-        let volume = volumeEvidence(points: points)
+        let volume = volumeEvidence(points: points, indicators: indicators)
         let candlestick = candlestickEvidence(points: points)
         let valuation = valuationEvidence(fundamentals: input.fundamentals)
         let quality = qualityEvidence(fundamentals: input.fundamentals)
@@ -198,20 +260,32 @@ enum StockInvestmentScoreModel {
 
         let trendVolumeInteraction = directionalAgreement(trend.value, volume.value)
         let trendMomentumInteraction = directionalAgreement(trend.value, momentum.value)
+        let trendVolumeConflict = directionalConflict(trend.value, volume.value)
+        let trendMomentumConflict = directionalConflict(trend.value, momentum.value)
+        let technicalConsensus = consensusStrength([
+            trend.value,
+            momentum.value,
+            oscillator.value,
+            volume.value
+        ])
+        // Conflicting families should reduce conviction toward neutral instead
+        // of turning disagreement into an independent bearish penalty.
+        let consensusMultiplier = 0.72 + 0.28 * technicalConsensus
 
-        let technicalLatentScore = 0.95 * trend.value
-            + 0.65 * momentum.value
-            + 0.35 * position.value
+        let technicalLatentScore = 0.78 * trend.value
+            + 0.55 * momentum.value
+            + 0.42 * oscillator.value
+            + 0.30 * position.value
             + 0.45 * volume.value
             + 0.10 * candlestick.value
-            + 0.45 * trendVolumeInteraction
-            + 0.30 * trendMomentumInteraction
+            + 0.35 * trendVolumeInteraction
+            + 0.25 * trendMomentumInteraction
 
-        let technicalEvidence = tanh(technicalLatentScore / 2.0)
+        let technicalEvidence = tanh(technicalLatentScore * consensusMultiplier / 2.0)
         let combinedEvidence = clamp(
-            0.35 * technicalEvidence
-                + 0.25 * valuation.value
-                + 0.15 * quality.value
+            0.40 * technicalEvidence
+                + 0.22 * valuation.value
+                + 0.13 * quality.value
                 + 0.10 * growth.value
                 + 0.15 * risk.value,
             -1,
@@ -251,6 +325,7 @@ enum StockInvestmentScoreModel {
         let factors = [
             factor(.trend, trend),
             factor(.momentum, momentum),
+            factor(.oscillator, oscillator),
             factor(.position, position),
             factor(.volume, volume),
             factor(.candlestick, candlestick),
@@ -262,6 +337,9 @@ enum StockInvestmentScoreModel {
         let adjustments = adjustmentSummaries(
             trendVolumeInteraction: trendVolumeInteraction,
             trendMomentumInteraction: trendMomentumInteraction,
+            trendVolumeConflict: trendVolumeConflict,
+            trendMomentumConflict: trendMomentumConflict,
+            technicalConsensus: technicalConsensus,
             riskLevel: riskLevel,
             confidenceValue: confidenceValue
         )
@@ -293,13 +371,26 @@ enum StockInvestmentScoreModel {
         }
         var values: [(Double, Double)] = []
         if let pe = fundamentals.priceEarningsRatioTTM, pe.isFinite {
-            values.append((valuationPEEvidence(pe), 0.45))
+            values.append((valuationPEEvidence(pe), 0.24))
         }
         if let pb = fundamentals.priceBookRatioMRQ, pb.isFinite {
-            values.append((valuationPBEvidence(pb), 0.35))
+            values.append((valuationPBEvidence(pb), 0.18))
+        }
+        if let peg = fundamentals.priceEarningsGrowthRatio, peg.isFinite {
+            values.append((valuationPEGEvidence(peg), 0.15))
+        }
+        if let pcf = fundamentals.priceCashFlowRatioTTM, pcf.isFinite {
+            values.append((valuationPCFEvidence(pcf), 0.13))
+        }
+        if let ps = fundamentals.priceSalesRatioTTM, ps.isFinite {
+            values.append((valuationPSEvidence(ps), 0.10))
+        }
+        if let evToEBITDA = fundamentals.enterpriseValueToEBITDA,
+           evToEBITDA.isFinite {
+            values.append((valuationEVToEBITDAEvidence(evToEBITDA), 0.12))
         }
         if let dividendYield = fundamentals.dividendYield, dividendYield.isFinite {
-            values.append((dividendYieldEvidence(dividendYield), 0.20))
+            values.append((dividendYieldEvidence(dividendYield), 0.08))
         }
         guard !values.isEmpty else {
             return Evidence(value: 0, summary: "估值数据缺失，不参与方向判断")
@@ -312,11 +403,11 @@ enum StockInvestmentScoreModel {
         )
         let summary: String
         if value > 0.35 {
-            summary = "市盈率/市净率或股息率显示估值相对友好"
+            summary = "利润、现金流、销售或企业价值口径显示估值相对友好"
         } else if value < -0.35 {
-            summary = "估值偏高，当前价格已透支部分预期"
+            summary = "多项估值口径偏高，当前价格已透支部分预期"
         } else {
-            summary = "估值处于中性区间，缺乏明显安全边际"
+            summary = "各估值口径综合后接近中性，缺乏明显安全边际"
         }
         return Evidence(value: value, summary: summary)
     }
@@ -343,6 +434,50 @@ enum StockInvestmentScoreModel {
         }
     }
 
+    private static func valuationPEGEvidence(_ value: Double) -> Double {
+        guard value > 0 else { return -0.35 }
+        switch value {
+        case ..<0.5: return 0.45
+        case 0.5..<1.5: return 0.75 - abs(value - 1) * 0.45
+        case 1.5..<3: return 0.50 - (value - 1.5) / 1.5 * 0.80
+        case 3..<5: return -0.30 - (value - 3) / 2 * 0.40
+        default: return -0.80
+        }
+    }
+
+    private static func valuationPCFEvidence(_ value: Double) -> Double {
+        guard value > 0 else { return -0.35 }
+        switch value {
+        case ...8: return 0.70
+        case 8..<15: return 0.70 - (value - 8) / 7 * 0.35
+        case 15..<25: return 0.35 - (value - 15) / 10 * 0.75
+        case 25..<40: return -0.40 - (value - 25) / 15 * 0.35
+        default: return -0.85
+        }
+    }
+
+    private static func valuationPSEvidence(_ value: Double) -> Double {
+        guard value > 0 else { return -0.25 }
+        switch value {
+        case ...1: return 0.65
+        case 1..<3: return 0.65 - (value - 1) / 2 * 0.35
+        case 3..<7: return 0.30 - (value - 3) / 4 * 0.75
+        case 7..<12: return -0.45 - (value - 7) / 5 * 0.30
+        default: return -0.85
+        }
+    }
+
+    private static func valuationEVToEBITDAEvidence(_ value: Double) -> Double {
+        guard value > 0 else { return -0.30 }
+        switch value {
+        case ...6: return 0.70
+        case 6..<12: return 0.70 - (value - 6) / 6 * 0.40
+        case 12..<20: return 0.30 - (value - 12) / 8 * 0.75
+        case 20..<30: return -0.45 - (value - 20) / 10 * 0.30
+        default: return -0.85
+        }
+    }
+
     private static func dividendYieldEvidence(_ value: Double) -> Double {
         guard value > 0 else { return -0.10 }
         switch value {
@@ -362,10 +497,15 @@ enum StockInvestmentScoreModel {
         }
         var values: [(Double, Double)] = []
         if let roe = fundamentals.returnOnEquity, roe.isFinite {
-            values.append((qualityROEEvidence(roe), 0.65))
+            values.append((qualityROEEvidence(roe), 0.55))
         }
         if let margin = fundamentals.netProfitMargin, margin.isFinite {
             values.append((qualityMarginEvidence(margin), 0.35))
+        }
+        if let eps = fundamentals.earningsPerShareTTM, eps.isFinite {
+            // Absolute EPS is not comparable across currencies or share counts;
+            // only its sign is used as a weak profitability confirmation.
+            values.append((qualityEPSEvidence(eps), 0.10))
         }
         guard !values.isEmpty else {
             return Evidence(value: 0, summary: "盈利质量数据缺失，不参与方向判断")
@@ -406,6 +546,14 @@ enum StockInvestmentScoreModel {
         case 0.05..<0.15: return (value - 0.05) / 0.10 * 0.50
         case 0.15..<0.30: return 0.50 + (value - 0.15) / 0.15 * 0.30
         default: return 0.80
+        }
+    }
+
+    private static func qualityEPSEvidence(_ value: Double) -> Double {
+        switch value {
+        case ..<0: return -0.55
+        case 0: return -0.20
+        default: return 0.25
         }
     }
 
@@ -469,25 +617,57 @@ enum StockInvestmentScoreModel {
         let normalizedSlope = tanh(
             regression.slopeRatio / max(dailyVolatility * 0.30, 0.002)
         ) * (0.40 + 0.60 * regression.rSquared)
+        let dmi = dmiEvidence(latestIndicator)
+        let trix = trixEvidence(latestIndicator)
         let value = weightedAverage([
-            (priceVersusMA20, 0.35),
-            (ma20VersusMA60, 0.30),
-            (normalizedSlope, 0.35)
+            (priceVersusMA20, 0.24),
+            (ma20VersusMA60, 0.20),
+            (normalizedSlope, 0.24),
+            (dmi, 0.18),
+            (trix, 0.14)
         ])
 
         let summary: String
         if value > 0.45 {
-            summary = "价格、均线结构与20日斜率共同指向上行"
+            summary = "均线、DMI 与 TRIX 综合指向上行趋势"
         } else if value > 0.15 {
-            summary = "中短期趋势略偏上，但一致性仍有限"
+            summary = "趋势指标整体略偏上，但一致性仍有限"
         } else if value < -0.45 {
-            summary = "价格受均线压制，20日趋势明显向下"
+            summary = "均线、DMI 与 TRIX 综合显示下行趋势"
         } else if value < -0.15 {
-            summary = "趋势略偏弱，尚未形成可靠反转"
+            summary = "趋势指标整体略偏弱，尚未形成可靠反转"
         } else {
-            summary = "趋势接近横盘，方向证据不足"
+            summary = "多项趋势指标综合后接近横盘"
         }
         return Evidence(value: value, summary: summary)
+    }
+
+    private static func dmiEvidence(
+        _ indicator: StockTechnicalIndicatorPoint
+    ) -> Double? {
+        guard let positive = indicator.positiveDirectionalIndex,
+              let negative = indicator.negativeDirectionalIndex,
+              let adx = indicator.averageDirectionalIndex,
+              positive.isFinite,
+              negative.isFinite,
+              adx.isFinite else { return nil }
+        let total = positive + negative
+        guard total > 0 else { return 0 }
+        let direction = clamp((positive - negative) / total, -1, 1)
+        let strength = clamp((adx - 15) / 25, 0, 1)
+        return direction * strength
+    }
+
+    private static func trixEvidence(
+        _ indicator: StockTechnicalIndicatorPoint
+    ) -> Double? {
+        guard let trix = indicator.trix, trix.isFinite else { return nil }
+        let direction = tanh(trix / 0.45)
+        guard let signal = indicator.trixSignal, signal.isFinite else {
+            return direction
+        }
+        let crossover = tanh((trix - signal) / 0.18)
+        return clamp(0.65 * direction + 0.35 * crossover, -1, 1)
     }
 
     private static func momentumEvidence(
@@ -502,26 +682,111 @@ enum StockInvestmentScoreModel {
         let earlierIndex = max(0, indicators.count - 4)
         let histogramChange = latest.macdHistogram - indicators[earlierIndex].macdHistogram
         let acceleration = tanh(histogramChange / (0.30 * scale))
-        let rsiEvidence = latest.rsi14.map { rsiValue($0) } ?? 0
-        let value = clamp(
-            0.55 * macdPosition + 0.20 * acceleration + 0.25 * rsiEvidence,
-            -1,
-            1
-        )
+        let momentumDirection = latest.momentum.map {
+            tanh($0 / (4 * scale))
+        }
+        let momentumCrossover: Double? = {
+            guard let momentum = latest.momentum,
+                  let average = latest.momentumAverage else { return nil }
+            return tanh((momentum - average) / (1.5 * scale))
+        }()
+        let mtm = weightedAverageOptional([
+            (momentumDirection, 0.65),
+            (momentumCrossover, 0.35)
+        ])
+        let roc = latest.rateOfChange.map { tanh($0 / 8) }
+        let value = weightedAverage([
+            (macdPosition, 0.32),
+            (acceleration, 0.13),
+            (mtm, 0.30),
+            (roc, 0.25)
+        ])
 
         let summary: String
         if value > 0.45 {
-            summary = "MACD与RSI共同显示正向动能"
+            summary = "MACD、MTM 与 ROC 共同显示正向速度动能"
         } else if value > 0.15 {
-            summary = "动能正在改善，但强度尚不突出"
+            summary = "价格变动速度正在改善，但强度尚不突出"
         } else if value < -0.45 {
-            summary = "MACD与RSI显示负向动能仍强"
+            summary = "MACD、MTM 与 ROC 共同显示负向动能"
         } else if value < -0.15 {
-            summary = "动能略偏弱，反转信号尚不充分"
+            summary = "价格变动速度略偏弱，反转信号尚不充分"
         } else {
-            summary = "多空动能接近平衡"
+            summary = "速度类动能指标综合后接近平衡"
         }
         return Evidence(value: value, summary: summary)
+    }
+
+    private static func oscillatorEvidence(
+        indicators: [StockTechnicalIndicatorPoint],
+        momentumDirection: Double
+    ) -> Evidence {
+        guard let latest = indicators.last else {
+            return Evidence(value: 0, summary: "市场强弱数据不足，按中性处理")
+        }
+        let rsi = latest.rsi14.map { centeredOscillator($0, scale: 20) }
+        let kdj: Double? = {
+            guard let k = latest.stochasticK, let d = latest.stochasticD else {
+                return nil
+            }
+            let position = centeredOscillator(k, scale: 22)
+            let crossover = tanh((k - d) / 12)
+            return clamp(0.55 * position + 0.45 * crossover, -1, 1)
+        }()
+        let williams = latest.williamsR.map {
+            clamp(tanh(($0 + 50) / 24), -1, 1)
+        }
+        let cci = latest.commodityChannelIndex.map {
+            clamp(tanh($0 / 140), -1, 1)
+        }
+        let mfi = latest.moneyFlowIndex.map { centeredOscillator($0, scale: 22) }
+        let psy = latest.psychologicalLine.map { centeredOscillator($0, scale: 24) }
+        var value = weightedAverage([
+            (rsi, 0.22),
+            (kdj, 0.20),
+            (williams, 0.14),
+            (cci, 0.17),
+            (mfi, 0.16),
+            (psy, 0.11)
+        ])
+
+        let highCount = [
+            latest.rsi14.map { $0 >= 75 },
+            latest.stochasticK.map { $0 >= 80 },
+            latest.williamsR.map { $0 >= -20 },
+            latest.commodityChannelIndex.map { $0 >= 150 },
+            latest.moneyFlowIndex.map { $0 >= 80 },
+            latest.psychologicalLine.map { $0 >= 75 }
+        ].compactMap { $0 }.filter { $0 }.count
+        let lowCount = [
+            latest.rsi14.map { $0 <= 25 },
+            latest.stochasticK.map { $0 <= 20 },
+            latest.williamsR.map { $0 <= -80 },
+            latest.commodityChannelIndex.map { $0 <= -150 },
+            latest.moneyFlowIndex.map { $0 <= 20 },
+            latest.psychologicalLine.map { $0 <= 25 }
+        ].compactMap { $0 }.filter { $0 }.count
+
+        let summary: String
+        if highCount >= 4 {
+            value = min(value, momentumDirection < -0.15 ? 0 : 0.35)
+            summary = "多项强弱指标进入过热区，继续上行但追高风险增加"
+        } else if lowCount >= 4 {
+            if momentumDirection > 0.15 {
+                value = max(value + 0.25, 0.15)
+                summary = "多项指标超卖且速度动能回升，出现修复信号"
+            } else {
+                value = max(value, -0.35)
+                summary = "多项指标进入超卖区，但尚缺少动能反转确认"
+            }
+        } else if value > 0.35 {
+            summary = "RSI、KDJ、W%R、CCI、MFI 与 PSY 综合偏强"
+        } else if value < -0.35 {
+            summary = "多项市场强弱指标综合偏弱"
+        } else {
+            summary = "强弱与超买超卖指标综合后接近中性"
+        }
+        return Evidence(value: clamp(value, -1, 1), summary: summary)
     }
 
     private static func positionEvidence(
@@ -568,19 +833,57 @@ enum StockInvestmentScoreModel {
         return Evidence(value: value, summary: summary)
     }
 
-    private static func volumeEvidence(points: [StockChartPoint]) -> Evidence {
+    private static func volumeEvidence(
+        points: [StockChartPoint],
+        indicators: [StockTechnicalIndicatorPoint]
+    ) -> Evidence {
         let recent = Array(points.suffix(21))
-        guard recent.count >= 6 else {
-            return Evidence(value: 0, summary: "成交量数据不足，按中性处理")
+        let traditional = traditionalVolumeEvidence(recent)
+        let recentIndicators = Array(indicators.suffix(21))
+        let obv = seriesDirection(recentIndicators.compactMap(\.onBalanceVolume))
+        let accumulationDistribution = seriesDirection(
+            recentIndicators.compactMap(\.accumulationDistribution)
+        )
+        let chaikin = indicators.last?.chaikinMoneyFlow.map {
+            clamp(tanh($0 / 0.18), -1, 1)
         }
+        let flow = weightedAverageOptional([
+            (obv, 0.35),
+            (accumulationDistribution, 0.30),
+            (chaikin, 0.35)
+        ])
+        let value = weightedAverage([
+            (traditional, 0.45),
+            (flow, 0.55)
+        ])
+
+        let summary: String
+        if value > 0.4 {
+            summary = "成交量、OBV、A/D 与 Chaikin 共同显示资金流入"
+        } else if value > 0.12 {
+            summary = "量价与资金流略偏正向，但确认强度有限"
+        } else if value < -0.4 {
+            summary = "成交量与资金流指标共同显示卖压较强"
+        } else if value < -0.12 {
+            summary = "量价与资金流关系略偏负向"
+        } else if traditional == nil, flow == nil {
+            summary = "成交量与资金流数据不足，不参与方向判断"
+        } else {
+            summary = "量价与资金流指标没有形成明确方向"
+        }
+        return Evidence(value: value, summary: summary)
+    }
+
+    private static func traditionalVolumeEvidence(
+        _ recent: [StockChartPoint]
+    ) -> Double? {
+        guard recent.count >= 6 else { return nil }
         let volumes = recent.dropLast().compactMap(\.volume).filter { $0 > 0 }
         guard let averageVolume = average(volumes),
               let latest = recent.last,
               let latestVolume = latest.volume,
               latestVolume > 0,
-              averageVolume > 0 else {
-            return Evidence(value: 0, summary: "成交量覆盖不足，不参与方向判断")
-        }
+              averageVolume > 0 else { return nil }
 
         let directionalVolumes = recent.indices.dropFirst().dropLast().compactMap {
             index -> (Bool, Double)? in
@@ -600,7 +903,7 @@ enum StockInvestmentScoreModel {
         let dailyReturn = previousClose > 0 ? (latest.close - previousClose) / previousClose : 0
         let volumeRatio = latestVolume / averageVolume
         // The latest daily bar may still be in progress. Low volume is therefore
-        // inconclusive, while an already elevated volume can safely confirm direction.
+        // inconclusive, while elevated volume can safely confirm direction.
         let relativeVolume = max(tanh(log(max(volumeRatio, 0.05)) / 0.65), 0)
         let latestConfirmation: Double
         if dailyReturn > 0.001 {
@@ -610,21 +913,19 @@ enum StockInvestmentScoreModel {
         } else {
             latestConfirmation = -abs(relativeVolume) * 0.35
         }
-        let value = clamp(0.65 * balance + 0.35 * latestConfirmation, -1, 1)
+        return clamp(0.65 * balance + 0.35 * latestConfirmation, -1, 1)
+    }
 
-        let summary: String
-        if value > 0.4 {
-            summary = "上涨日量能占优，资金对价格方向形成确认"
-        } else if value > 0.12 {
-            summary = "量价关系略偏正向，但确认强度有限"
-        } else if value < -0.4 {
-            summary = "下跌日量能占优，卖压确认较强"
-        } else if value < -0.12 {
-            summary = "量价关系略偏负向"
-        } else {
-            summary = "成交量没有提供明确方向确认"
+    private static func seriesDirection(_ values: [Double]) -> Double? {
+        let values = values.filter(\.isFinite)
+        guard values.count >= 6, let first = values.first, let last = values.last else {
+            return nil
         }
-        return Evidence(value: value, summary: summary)
+        let travelled = zip(values.dropFirst(), values).reduce(0) {
+            $0 + abs($1.0 - $1.1)
+        }
+        guard travelled > 0 else { return 0 }
+        return clamp(tanh(1.6 * (last - first) / travelled), -1, 1)
     }
 
     private static func candlestickEvidence(points: [StockChartPoint]) -> Evidence {
@@ -781,6 +1082,9 @@ enum StockInvestmentScoreModel {
     private static func adjustmentSummaries(
         trendVolumeInteraction: Double,
         trendMomentumInteraction: Double,
+        trendVolumeConflict: Double,
+        trendMomentumConflict: Double,
+        technicalConsensus: Double,
         riskLevel: Double,
         confidenceValue: Double
     ) -> [String] {
@@ -788,12 +1092,21 @@ enum StockInvestmentScoreModel {
         if trendVolumeInteraction > 0.18 {
             summaries.append("趋势与量能形成正向共振")
         } else if trendVolumeInteraction < -0.18 {
-            summaries.append("趋势与量能冲突或共同确认弱势")
+            summaries.append("趋势与量能共同确认弱势")
+        } else if trendVolumeConflict > 0.18 {
+            summaries.append("趋势与量价资金方向冲突")
         }
         if trendMomentumInteraction > 0.18 {
             summaries.append("趋势与动能方向一致")
         } else if trendMomentumInteraction < -0.18 {
+            summaries.append("趋势与动能共同确认弱势")
+        } else if trendMomentumConflict > 0.18 {
             summaries.append("趋势与动能存在明显分歧")
+        }
+        if technicalConsensus < 0.45 {
+            summaries.append("技术指标组分歧较大，技术贡献已向中性收缩")
+        } else if technicalConsensus > 0.82 {
+            summaries.append("趋势、动能、强弱与资金流具有较高一致性")
         }
         if riskLevel > 0.45 {
             summaries.append("高波动或较深回撤压低了投资机会")
@@ -804,11 +1117,20 @@ enum StockInvestmentScoreModel {
         return summaries
     }
 
-    private static func rsiValue(_ rsi: Double) -> Double {
-        if rsi <= 65 {
-            return clamp(tanh((rsi - 50) / 18), -1, 1)
-        }
-        return clamp(1 - (rsi - 65) / 15 * 2, -1, 1)
+    private static func centeredOscillator(
+        _ value: Double,
+        scale: Double
+    ) -> Double {
+        clamp(tanh((value - 50) / scale), -1, 1)
+    }
+
+    private static func consensusStrength(_ values: [Double]) -> Double {
+        let active = values.filter { abs($0) >= 0.08 }
+        guard active.count >= 2 else { return 0.5 }
+        let averageMagnitude = active.map(abs).reduce(0, +) / Double(active.count)
+        guard averageMagnitude > 0 else { return 0.5 }
+        let net = abs(active.reduce(0, +) / Double(active.count))
+        return clamp(net / averageMagnitude, 0, 1)
     }
 
     private static func directionalAgreement(_ lhs: Double, _ rhs: Double) -> Double {
@@ -817,7 +1139,13 @@ enum StockInvestmentScoreModel {
         if lhs * rhs > 0 {
             return lhs > 0 ? magnitude : -magnitude
         }
-        return -0.45 * magnitude
+        return 0
+    }
+
+    private static func directionalConflict(_ lhs: Double, _ rhs: Double) -> Double {
+        let magnitude = min(abs(lhs), abs(rhs))
+        guard magnitude >= 0.10, lhs * rhs < 0 else { return 0 }
+        return magnitude
     }
 
     private static func confidence(
@@ -834,7 +1162,7 @@ enum StockInvestmentScoreModel {
         let volumeQuality = 0.82 + 0.18 * clamp(volumeCoverage, 0, 1)
         let ohlcQuality = 0.90 + 0.10 * clamp(ohlcCoverage, 0, 1)
         let fundamentalQuality = 0.65 + 0.35 * clamp(
-            Double(fundamentalMetricCount) / 7,
+            Double(fundamentalMetricCount) / 12,
             0,
             1
         )
@@ -918,6 +1246,19 @@ enum StockInvestmentScoreModel {
         }
         let weight = available.reduce(0) { $0 + $1.1 }
         guard weight > 0 else { return 0 }
+        return clamp(available.reduce(0) { $0 + $1.0 * $1.1 } / weight, -1, 1)
+    }
+
+    private static func weightedAverageOptional(
+        _ values: [(value: Double?, weight: Double)]
+    ) -> Double? {
+        let available = values.compactMap { item -> (Double, Double)? in
+            guard let value = item.value, value.isFinite else { return nil }
+            return (value, item.weight)
+        }
+        guard !available.isEmpty else { return nil }
+        let weight = available.reduce(0) { $0 + $1.1 }
+        guard weight > 0 else { return nil }
         return clamp(available.reduce(0) { $0 + $1.0 * $1.1 } / weight, -1, 1)
     }
 

@@ -11,6 +11,17 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
     case volume
     case macd
     case rsi
+    case kdj
+    case williamsR
+    case cci
+    case dmi
+    case momentum
+    case trix
+    case volumeFlow
+    case mfi
+    case chaikinMoneyFlow
+    case psychologicalLine
+    case rateOfChange
 
     var id: Self { self }
 
@@ -25,6 +36,17 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
         case .volume: return "成交量"
         case .macd: return "MACD"
         case .rsi: return "RSI"
+        case .kdj: return "KDJ"
+        case .williamsR: return "W%R"
+        case .cci: return "CCI"
+        case .dmi: return "DMI"
+        case .momentum: return "MTM"
+        case .trix: return "TRIX"
+        case .volumeFlow: return "OBV / A·D"
+        case .mfi: return "MFI"
+        case .chaikinMoneyFlow: return "Chaikin"
+        case .psychologicalLine: return "PSY"
+        case .rateOfChange: return "ROC"
         }
     }
 
@@ -32,7 +54,9 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .line, .candlestick, .movingAverage, .bollingerBands:
             return true
-        case .preMarket, .postMarket, .volume, .macd, .rsi:
+        case .preMarket, .postMarket, .volume, .macd, .rsi, .kdj,
+                .williamsR, .cci, .dmi, .momentum, .trix, .volumeFlow,
+                .mfi, .chaikinMoneyFlow, .psychologicalLine, .rateOfChange:
             return false
         }
     }
@@ -167,6 +191,21 @@ struct StockChartVisibleData {
 }
 
 struct StockChartPresentation {
+    /// Mode-independent chart work. Session filtering, indicator projection,
+    /// and transaction matching are intentionally prepared once so toggling
+    /// pre-market/regular/post-market layers only remaps their ordinal x
+    /// coordinates instead of recalculating the complete chart on the main
+    /// thread.
+    private struct PreparedData {
+        let regularPoints: [StockChartPoint]
+        let preMarketPoints: [StockChartPoint]
+        let postMarketPoints: [StockChartPoint]
+        let standalonePreMarketPoints: [StockChartPoint]
+        let standalonePostMarketPoints: [StockChartPoint]
+        let technicalPlotPoints: [StockTechnicalPlotPoint]
+        let transactionMarkers: [StockTransactionMarker]
+    }
+
     let snapshot: StockChartSnapshot
     let stock: StockHolding
     let range: StockChartRange
@@ -178,6 +217,11 @@ struct StockChartPresentation {
     let technicalPlotPoints: [StockTechnicalPlotPoint]
     let transactionMarkers: [StockTransactionMarker]
     let xDomain: ClosedRange<Double>
+    private let preparedData: PreparedData
+
+    static func headerPerformanceTitle(for range: StockChartRange) -> String {
+        range == .intraday ? "今日涨跌" : "区间涨跌"
+    }
     let yDomain: ClosedRange<Double>
 
     /// The most recent point in the currently displayed price series.
@@ -227,53 +271,60 @@ struct StockChartPresentation {
         range: StockChartRange,
         displayModes: Set<StockChartDisplayMode>
     ) {
+        let preparedData = Self.prepare(
+            snapshot: snapshot,
+            stock: stock,
+            range: range
+        )
+        self.init(
+            snapshot: snapshot,
+            stock: stock,
+            range: range,
+            displayModes: displayModes,
+            preparedData: preparedData
+        )
+    }
+
+    /// Returns the same cached chart data with a different visible layer
+    /// combination. This is the hot path used by the mode picker.
+    func updatingDisplayModes(
+        _ displayModes: Set<StockChartDisplayMode>
+    ) -> StockChartPresentation {
+        StockChartPresentation(
+            snapshot: snapshot,
+            stock: stock,
+            range: range,
+            displayModes: displayModes,
+            preparedData: preparedData
+        )
+    }
+
+    private init(
+        snapshot: StockChartSnapshot,
+        stock: StockHolding,
+        range: StockChartRange,
+        displayModes: Set<StockChartDisplayMode>,
+        preparedData: PreparedData
+    ) {
         self.snapshot = snapshot
         self.stock = stock
         self.range = range
         self.displayModes = displayModes
+        self.preparedData = preparedData
 
         let hasRegularPriceChart = displayModes.contains(.line)
-        // `indicatorPoints` is a warm-up series for technical indicators. It
-        // may contain older days and extended-hours bars, so it must never be
-        // drawn as the visible minute chart. `points` is the provider's
-        // already-scoped display series.
-        let chartPoints = snapshot.points.sorted { $0.date < $1.date }
-        let regularPoints: [StockChartPoint]
-        if range == .intraday {
-            let sessionPoints = StockChartSeriesProcessor.regularSessionPoints(
-                chartPoints,
-                market: stock.market
-            )
-            // An intraday line must never fall back to pre-market/post-market
-            // bars when the provider has no regular-session bars.
-            if let latestDate = sessionPoints.last?.date {
-                let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
-                let latestDay = calendar.startOfDay(for: latestDate)
-                regularPoints = sessionPoints.filter {
-                    calendar.isDate($0.date, inSameDayAs: latestDay)
-                }
-            } else {
-                regularPoints = []
-            }
-        } else {
-            regularPoints = chartPoints
-        }
-        let scopedPreMarketPoints = Self.scopedExtendedHoursPoints(
-            snapshot.preMarketPoints,
-            regularPoints: hasRegularPriceChart ? regularPoints : [],
-            market: stock.market
-        )
-        let scopedPostMarketPoints = Self.scopedExtendedHoursPoints(
-            snapshot.postMarketPoints,
-            regularPoints: hasRegularPriceChart ? regularPoints : [],
-            market: stock.market
-        )
+        let availablePreMarketPoints = hasRegularPriceChart
+            ? preparedData.preMarketPoints
+            : preparedData.standalonePreMarketPoints
+        let availablePostMarketPoints = hasRegularPriceChart
+            ? preparedData.postMarketPoints
+            : preparedData.standalonePostMarketPoints
         let preMarketCount = range == .intraday
             && displayModes.contains(.preMarket)
             && hasRegularPriceChart
-            ? scopedPreMarketPoints.count
+            ? availablePreMarketPoints.count
             : 0
-        let plotPoints = regularPoints.enumerated().map { index, point in
+        let plotPoints = preparedData.regularPoints.enumerated().map { index, point in
             StockChartPlotPoint(
                 point: point,
                 x: Self.xValue(
@@ -284,7 +335,7 @@ struct StockChartPresentation {
             )
         }
         self.plotPoints = plotPoints
-        preMarketPlotPoints = (displayModes.contains(.preMarket) ? scopedPreMarketPoints : [])
+        preMarketPlotPoints = (displayModes.contains(.preMarket) ? availablePreMarketPoints : [])
             .enumerated().map { index, point in
             StockChartPlotPoint(
                 point: point,
@@ -292,9 +343,9 @@ struct StockChartPresentation {
             )
         }
         let postMarketOffset = hasRegularPriceChart
-            ? preMarketCount + regularPoints.count
+            ? preMarketCount + preparedData.regularPoints.count
             : 0
-        postMarketPlotPoints = (displayModes.contains(.postMarket) ? scopedPostMarketPoints : [])
+        postMarketPlotPoints = (displayModes.contains(.postMarket) ? availablePostMarketPoints : [])
             .enumerated().map { index, point in
             StockChartPlotPoint(
                 point: point,
@@ -321,18 +372,20 @@ struct StockChartPresentation {
             combinedPricePoints += postMarketPlotPoints
         }
         allPricePlotPoints = combinedPricePoints.sorted { $0.x < $1.x }
-        technicalPlotPoints = Self.technicalPlotPoints(
-            for: plotPoints,
-            in: snapshot,
-            range: range,
-            market: stock.market
-        )
-        transactionMarkers = Self.transactionMarkers(
-            for: stock,
-            in: snapshot,
-            range: range,
-            plotPoints: plotPoints
-        )
+        technicalPlotPoints = preparedData.technicalPlotPoints.map {
+            StockTechnicalPlotPoint(indicator: $0.indicator, x: $0.x + Double(preMarketCount))
+        }
+        transactionMarkers = preparedData.transactionMarkers.map {
+            StockTransactionMarker(
+                id: $0.id,
+                date: $0.date,
+                plotX: $0.plotX + Double(preMarketCount),
+                plotPrice: $0.plotPrice,
+                type: $0.type,
+                quantity: $0.quantity,
+                unitPrice: $0.unitPrice
+            )
+        }
         xDomain = Self.xDomain(for: allPricePlotPoints)
         yDomain = Self.yDomain(
             snapshot: snapshot,
@@ -342,6 +395,79 @@ struct StockChartPresentation {
             plotPoints: plotPoints,
             preMarketPlotPoints: preMarketPlotPoints,
             postMarketPlotPoints: postMarketPlotPoints
+        )
+    }
+
+    private static func prepare(
+        snapshot: StockChartSnapshot,
+        stock: StockHolding,
+        range: StockChartRange
+    ) -> PreparedData {
+        // `indicatorPoints` is a warm-up series for technical indicators. It
+        // may contain older days and extended-hours bars, so it must never be
+        // drawn as the visible minute chart. `points` is the provider's
+        // already-scoped display series.
+        let chartPoints = snapshot.points.sorted { $0.date < $1.date }
+        let regularPoints: [StockChartPoint]
+        if range == .intraday {
+            let sessionPoints = StockChartSeriesProcessor.regularSessionPoints(
+                chartPoints,
+                market: stock.market
+            )
+            // An intraday line must never fall back to pre-market/post-market
+            // bars when the provider has no regular-session bars.
+            if let latestDate = sessionPoints.last?.date {
+                let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
+                let latestDay = calendar.startOfDay(for: latestDate)
+                regularPoints = sessionPoints.filter {
+                    calendar.isDate($0.date, inSameDayAs: latestDay)
+                }
+            } else {
+                regularPoints = []
+            }
+        } else {
+            regularPoints = chartPoints
+        }
+        let basePlotPoints = regularPoints.enumerated().map { index, point in
+            StockChartPlotPoint(
+                point: point,
+                x: Self.xValue(for: point, index: index, range: range)
+            )
+        }
+        return PreparedData(
+            regularPoints: regularPoints,
+            preMarketPoints: scopedExtendedHoursPoints(
+                snapshot.preMarketPoints,
+                regularPoints: regularPoints,
+                market: stock.market
+            ),
+            postMarketPoints: scopedExtendedHoursPoints(
+                snapshot.postMarketPoints,
+                regularPoints: regularPoints,
+                market: stock.market
+            ),
+            standalonePreMarketPoints: scopedExtendedHoursPoints(
+                snapshot.preMarketPoints,
+                regularPoints: [],
+                market: stock.market
+            ),
+            standalonePostMarketPoints: scopedExtendedHoursPoints(
+                snapshot.postMarketPoints,
+                regularPoints: [],
+                market: stock.market
+            ),
+            technicalPlotPoints: technicalPlotPoints(
+                for: basePlotPoints,
+                in: snapshot,
+                range: range,
+                market: stock.market
+            ),
+            transactionMarkers: transactionMarkers(
+                for: stock,
+                in: snapshot,
+                range: range,
+                plotPoints: basePlotPoints
+            )
         )
     }
 
@@ -667,6 +793,25 @@ struct StockChartPresentation {
                 return (dailyIndicatorPointCount ?? 0) >= 15
             }
             return technicalPointCount >= 15
+        case .kdj:
+            return technicalPointCount >= 9
+        case .williamsR, .cci, .mfi:
+            return technicalPointCount >= 14
+                && (mode != .mfi || snapshot.points.contains { ($0.volume ?? 0) > 0 })
+        case .dmi:
+            return technicalPointCount >= 28
+        case .momentum, .rateOfChange:
+            return technicalPointCount >= 11
+        case .trix:
+            return technicalPointCount >= 96
+        case .volumeFlow:
+            return technicalPointCount >= 2
+                && snapshot.points.contains { ($0.volume ?? 0) > 0 }
+        case .chaikinMoneyFlow:
+            return technicalPointCount >= 21
+                && snapshot.points.contains { ($0.volume ?? 0) > 0 }
+        case .psychologicalLine:
+            return technicalPointCount >= 13
         }
     }
 
@@ -757,17 +902,38 @@ struct StockChartPresentation {
         snapshot: StockChartSnapshot,
         market: StockMarket
     ) -> Double? {
-        // `points` is the regular-session series shown as the current chart
-        // data. Extended-hours bars can be newer in wall-clock time, but they
-        // must not move the reference day forward: before today's opening, the
-        // displayed session is still yesterday and its previous close is the
-        // close from the trading day before yesterday.
         guard let latest = snapshot.latestPoint else { return nil }
-        return closingPrice(
+        let dailyPreviousClose = snapshot.dailyIndicatorPoints.flatMap {
+            closingPrice(
+                beforeTradingDayContaining: latest.date,
+                in: $0,
+                market: market
+            )
+        }
+        let minutePreviousClose = closingPrice(
             beforeTradingDayContaining: latest.date,
             in: snapshot.indicatorPoints ?? snapshot.points,
             market: market
-        ) ?? snapshot.previousClose
+        )
+
+        // Daily bars and the provider quote contain the exchange's settled
+        // previous close. A minute feed can end at 15:59 or before the closing
+        // auction and therefore must only be a fallback (for example BRK.B
+        // reported 503.70 officially while its last minute bar was 503.87).
+        //
+        // Before the next regular session opens, however, `points` still shows
+        // the preceding trading day while a quote provider may already expose
+        // that day's close as the new session's reference. A newer pre-market
+        // day therefore keeps the historical close-before-visible-day rule.
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let latestRegularDay = calendar.startOfDay(for: latest.date)
+        let hasNewerPreMarketDay = snapshot.preMarketPoints.contains {
+            calendar.startOfDay(for: $0.date) > latestRegularDay
+        }
+        if hasNewerPreMarketDay {
+            return dailyPreviousClose ?? minutePreviousClose ?? snapshot.previousClose
+        }
+        return dailyPreviousClose ?? snapshot.previousClose ?? minutePreviousClose
     }
 
     static func candleWidth(pointCount: Int, isExpanded: Bool) -> CGFloat {
@@ -866,8 +1032,10 @@ struct StockChartPresentation {
             // Project the cached minute indicators onto visible bars. The raw
             // history remains available for cache misses and indicator warm-up
             // validation, but normal loads do not recalculate it here.
-            let minuteIndicators = snapshot.cachedMinuteTechnicalIndicators
-                ?? StockTechnicalIndicators.calculate(sourcePoints)
+            let minuteIndicators = usableCachedIndicators(
+                snapshot.cachedMinuteTechnicalIndicators,
+                sourcePointCount: sourcePoints.count
+            ) ?? StockTechnicalIndicators.calculate(sourcePoints)
             let minutePlotPoints = projectedTechnicalPlotPoints(
                 minuteIndicators,
                 onto: plotPoints
@@ -881,8 +1049,10 @@ struct StockChartPresentation {
             // Five-day price/overlay charts remain minute-based, but RSI keeps
             // the trading-day definition used everywhere except the intraday
             // chart. Project only the two RSI periods onto the minute points.
-            let dailyIndicators = snapshot.cachedDailyTechnicalIndicators
-                ?? StockTechnicalIndicators.calculate(dailyPoints.sorted { $0.date < $1.date })
+            let dailyIndicators = usableCachedIndicators(
+                snapshot.cachedDailyTechnicalIndicators,
+                sourcePointCount: dailyPoints.count
+            ) ?? StockTechnicalIndicators.calculate(dailyPoints.sorted { $0.date < $1.date })
             guard !dailyIndicators.isEmpty else { return minutePlotPoints }
             var dailyIndex = 0
             return minutePlotPoints.map { plotPoint in
@@ -910,14 +1080,32 @@ struct StockChartPresentation {
         // from daily to weekly/monthly/quarterly/yearly bars.
         let dailyPoints = (snapshot.dailyIndicatorPoints ?? sourcePoints)
             .sorted { $0.date < $1.date }
-        let dailyIndicators = snapshot.cachedDailyTechnicalIndicators
-            ?? StockTechnicalIndicators.calculate(dailyPoints)
+        let dailyIndicators = usableCachedIndicators(
+            snapshot.cachedDailyTechnicalIndicators,
+            sourcePointCount: dailyPoints.count
+        ) ?? StockTechnicalIndicators.calculate(dailyPoints)
         guard !dailyIndicators.isEmpty else { return [] }
         return projectedTechnicalPlotPoints(
             dailyIndicators,
             onto: plotPoints,
             replaceIndicatorDate: true
         )
+    }
+
+    /// Indicators persisted by versions before the advanced indicator set can
+    /// still decode, but their newly-added fields are nil. Recalculate from the
+    /// local price cache once instead of presenting empty charts.
+    private static func usableCachedIndicators(
+        _ indicators: [StockTechnicalIndicatorPoint]?,
+        sourcePointCount: Int
+    ) -> [StockTechnicalIndicatorPoint]? {
+        guard let indicators, !indicators.isEmpty else { return nil }
+        guard indicators.count == sourcePointCount else { return nil }
+        guard sourcePointCount < 9
+                || indicators.contains(where: { $0.stochasticK != nil }) else {
+            return nil
+        }
+        return indicators
     }
 
     private static func projectedTechnicalPlotPoints(
@@ -1262,7 +1450,11 @@ struct StockChartPresentation {
         preMarketPlotPoints: [StockChartPlotPoint],
         postMarketPlotPoints: [StockChartPlotPoint]
     ) -> ClosedRange<Double> {
-        if displayModes.contains(.rsi) { return 0...100 }
+        if !displayModes.isDisjoint(with: [.rsi, .kdj, .mfi, .psychologicalLine]) {
+            return 0...100
+        }
+        if displayModes.contains(.williamsR) { return -100...0 }
+        if displayModes.contains(.chaikinMoneyFlow) { return -1...1 }
         if displayModes.contains(.volume) {
             var volumePoints = plotPoints.map(\.point)
             if displayModes.contains(.preMarket) {
@@ -1286,6 +1478,44 @@ struct StockChartPresentation {
                 ]
             }
             return paddedDomain(values)
+        }
+        if displayModes.contains(.cci) {
+            return paddedDomain([-100, 100] + technicalPlotPoints.compactMap {
+                $0.indicator.commodityChannelIndex
+            })
+        }
+        if displayModes.contains(.dmi) {
+            let values = technicalPlotPoints.flatMap {
+                [
+                    $0.indicator.positiveDirectionalIndex,
+                    $0.indicator.negativeDirectionalIndex,
+                    $0.indicator.averageDirectionalIndex
+                ].compactMap { $0 }
+            }
+            return 0...max(100, values.max() ?? 0)
+        }
+        if displayModes.contains(.momentum) {
+            return paddedDomain([0] + technicalPlotPoints.flatMap {
+                [$0.indicator.momentum, $0.indicator.momentumAverage].compactMap { $0 }
+            })
+        }
+        if displayModes.contains(.trix) {
+            return paddedDomain([0] + technicalPlotPoints.flatMap {
+                [$0.indicator.trix, $0.indicator.trixSignal].compactMap { $0 }
+            })
+        }
+        if displayModes.contains(.volumeFlow) {
+            return paddedDomain([0] + technicalPlotPoints.flatMap {
+                [
+                    $0.indicator.onBalanceVolume,
+                    $0.indicator.accumulationDistribution
+                ].compactMap { $0 }
+            })
+        }
+        if displayModes.contains(.rateOfChange) {
+            return paddedDomain([0] + technicalPlotPoints.compactMap {
+                $0.indicator.rateOfChange
+            })
         }
 
         var values: [Double] = []

@@ -144,6 +144,7 @@
 		AO0000000000000000000006 /* BackupSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000006 /* BackupSettingsView.swift */; };
 		AO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */; };
 		AP0000000000000000000001 /* AppDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = BP0000000000000000000001 /* AppDateFormatting.swift */; };
+		AP0000000000000000000003 /* AppAlphabeticalSort.swift in Sources */ = {isa = PBXBuildFile; fileRef = BP0000000000000000000003 /* AppAlphabeticalSort.swift */; };
 		AP0000000000000000000002 /* MarkdownRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = BP0000000000000000000002 /* MarkdownRendering.swift */; };
 		AQ0000000000000000000001 /* ModuleStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BQ0000000000000000000001 /* ModuleStoreTests.swift */; };
 		AR0000000000000000000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = DR0000000000000000000001 /* InfoPlist.strings */; };
@@ -166,12 +167,14 @@
 		S10000000000000000000005 /* OCRCameraPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000005 /* OCRCameraPicker.swift */; };
 		S10000000000000000000006 /* OCRTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000006 /* OCRTestView.swift */; };
 		S10000000000000000000007 /* OCRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000007 /* OCRTests.swift */; };
+		S10000000000000000000008 /* AppAlphabeticalSortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = R10000000000000000000008 /* AppAlphabeticalSortTests.swift */; };
 		SV0000000000000000000001 /* SecureStoreEncryptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RV0000000000000000000001 /* SecureStoreEncryptionTests.swift */; };
 		SV0000000000000000000002 /* AdminPasswordHashTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = RV0000000000000000000002 /* AdminPasswordHashTests.swift */; };
 		SL30000000000000000000001 /* SportsLotteryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000001 /* SportsLotteryModels.swift */; };
 		SL30000000000000000000002 /* SportsLotteryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000002 /* SportsLotteryService.swift */; };
 		SL30000000000000000000003 /* SportsLotteryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000003 /* SportsLotteryView.swift */; };
 		SL30000000000000000000004 /* SportsLotteryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000004 /* SportsLotteryTests.swift */; };
+		SL30000000000000000000006 /* SportsLotteryPreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000006 /* SportsLotteryPreferencesStore.swift */; };
 		SL30000000000000000000005 /* SportsLotteryRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = SL20000000000000000000005 /* SportsLotteryRefreshCoordinator.swift */; };
 		U20000000000000000000001 /* FoodPlace.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000001 /* FoodPlace.swift */; };
 		U20000000000000000000002 /* FoodMapStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000002 /* FoodMapStore.swift */; };
@@ -208,6 +211,7 @@
 		Y2000000000000000000000D /* BillAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = Y1000000000000000000000D /* BillAnalysisView.swift */; };
 		YS0000000000000000000001 /* SecretsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZS0000000000000000000001 /* SecretsTests.swift */; };
 		AU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = BU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift */; };
+		AH0000000000000000000010 /* AShareHolidayService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BH0000000000000000000010 /* AShareHolidayService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -343,6 +347,7 @@
 		BG0000000000000000000007 /* LiveAppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAppDependencies.swift; sourceTree = "<group>"; };
 		BH0000000000000000000001 /* StockTrendColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTrendColor.swift; sourceTree = "<group>"; };
 		BH0000000000000000000002 /* ToolModuleDestination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModuleDestination.swift; sourceTree = "<group>"; };
+		BH0000000000000000000010 /* AShareHolidayService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AShareHolidayService.swift; sourceTree = "<group>"; };
 		BH0000000000000000000003 /* ExchangeRateRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateRepositoryTests.swift; sourceTree = "<group>"; };
 		BI0000000000000000000001 /* AttachmentEditSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentEditSession.swift; sourceTree = "<group>"; };
 		BI0000000000000000000002 /* MedicalRecordDraftValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordDraftValidator.swift; sourceTree = "<group>"; };
@@ -362,6 +367,7 @@
 		BO0000000000000000000006 /* BackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupSettingsView.swift; sourceTree = "<group>"; };
 		BO0000000000000000000007 /* BankOfChinaExchangeRatesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankOfChinaExchangeRatesView.swift; sourceTree = "<group>"; };
 		BP0000000000000000000001 /* AppDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDateFormatting.swift; sourceTree = "<group>"; };
+		BP0000000000000000000003 /* AppAlphabeticalSort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlphabeticalSort.swift; sourceTree = "<group>"; };
 		BP0000000000000000000002 /* MarkdownRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendering.swift; sourceTree = "<group>"; };
 		BQ0000000000000000000001 /* ModuleStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleStoreTests.swift; sourceTree = "<group>"; };
 		BR0000000000000000000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -388,12 +394,14 @@
 		R10000000000000000000005 /* OCRCameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRCameraPicker.swift; sourceTree = "<group>"; };
 		R10000000000000000000006 /* OCRTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTestView.swift; sourceTree = "<group>"; };
 		R10000000000000000000007 /* OCRTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTests.swift; sourceTree = "<group>"; };
+		R10000000000000000000008 /* AppAlphabeticalSortTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppAlphabeticalSortTests.swift; sourceTree = "<group>"; };
 		RV0000000000000000000001 /* SecureStoreEncryptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStoreEncryptionTests.swift; sourceTree = "<group>"; };
 		RV0000000000000000000002 /* AdminPasswordHashTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPasswordHashTests.swift; sourceTree = "<group>"; };
 		SL20000000000000000000001 /* SportsLotteryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryModels.swift; sourceTree = "<group>"; };
 		SL20000000000000000000002 /* SportsLotteryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryService.swift; sourceTree = "<group>"; };
 		SL20000000000000000000003 /* SportsLotteryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryView.swift; sourceTree = "<group>"; };
 		SL20000000000000000000004 /* SportsLotteryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryTests.swift; sourceTree = "<group>"; };
+		SL20000000000000000000006 /* SportsLotteryPreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryPreferencesStore.swift; sourceTree = "<group>"; };
 		SL20000000000000000000005 /* SportsLotteryRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SportsLotteryRefreshCoordinator.swift; sourceTree = "<group>"; };
 		TF1000000000000000000001 /* WhatToTest.zh-Hans.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "WhatToTest.zh-Hans.txt"; sourceTree = "<group>"; };
 		U10000000000000000000001 /* FoodPlace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlace.swift; sourceTree = "<group>"; };
@@ -878,6 +886,7 @@
 		E12000000000000000000003 /* Infrastructure */ = {
 			isa = PBXGroup;
 			children = (
+				BH0000000000000000000010 /* AShareHolidayService.swift */,
 				E12000000000000000000004 /* Quotes */,
 				E12000000000000000000005 /* Charts */,
 				E12000000000000000000007 /* Fundamentals */,
@@ -1022,6 +1031,7 @@
 		E16000000000000000000001 /* Formatting */ = {
 			isa = PBXGroup;
 			children = (
+				BP0000000000000000000003 /* AppAlphabeticalSort.swift */,
 				BP0000000000000000000001 /* AppDateFormatting.swift */,
 				B10000000000000000000008 /* DecimalTextParser.swift */,
 			);
@@ -1094,6 +1104,7 @@
 			isa = PBXGroup;
 			children = (
 				SL20000000000000000000005 /* SportsLotteryRefreshCoordinator.swift */,
+				SL20000000000000000000006 /* SportsLotteryPreferencesStore.swift */,
 			);
 			path = Application;
 			sourceTree = "<group>";
@@ -1113,6 +1124,7 @@
 		T10000000000000000000002 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				R10000000000000000000008 /* AppAlphabeticalSortTests.swift */,
 				R10000000000000000000007 /* OCRTests.swift */,
 				RV0000000000000000000001 /* SecureStoreEncryptionTests.swift */,
 				RV0000000000000000000002 /* AdminPasswordHashTests.swift */,
@@ -1457,6 +1469,7 @@
 				A10000000000000000000005 /* IMETextInput.swift in Sources */,
 				A10000000000000000000006 /* ProtectedContent.swift in Sources */,
 				A10000000000000000000007 /* ListViewModifiers.swift in Sources */,
+				AP0000000000000000000003 /* AppAlphabeticalSort.swift in Sources */,
 				AP0000000000000000000001 /* AppDateFormatting.swift in Sources */,
 				AP0000000000000000000002 /* MarkdownRendering.swift in Sources */,
 				A10000000000000000000008 /* DecimalTextParser.swift in Sources */,
@@ -1564,7 +1577,9 @@
 				SL30000000000000000000002 /* SportsLotteryService.swift in Sources */,
 				SL30000000000000000000003 /* SportsLotteryView.swift in Sources */,
 				SL30000000000000000000005 /* SportsLotteryRefreshCoordinator.swift in Sources */,
+				SL30000000000000000000006 /* SportsLotteryPreferencesStore.swift in Sources */,
 				AU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift in Sources */,
+				AH0000000000000000000010 /* AShareHolidayService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1572,6 +1587,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				S10000000000000000000008 /* AppAlphabeticalSortTests.swift in Sources */,
 				S10000000000000000000007 /* OCRTests.swift in Sources */,
 				SV0000000000000000000001 /* SecureStoreEncryptionTests.swift in Sources */,
 				SV0000000000000000000002 /* AdminPasswordHashTests.swift in Sources */,

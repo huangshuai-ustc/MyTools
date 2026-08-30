@@ -85,11 +85,25 @@ actor StockFundamentalService: StockFundamentalServing {
                 ?? supplement?.priceEarningsRatioTTM,
             priceBookRatioMRQ: primary?.priceBookRatioMRQ
                 ?? supplement?.priceBookRatioMRQ,
+            priceEarningsGrowthRatio: primary?.priceEarningsGrowthRatio
+                ?? supplement?.priceEarningsGrowthRatio,
+            priceCashFlowRatioTTM: primary?.priceCashFlowRatioTTM
+                ?? supplement?.priceCashFlowRatioTTM,
+            priceSalesRatioTTM: primary?.priceSalesRatioTTM
+                ?? supplement?.priceSalesRatioTTM,
+            enterpriseValueToEBITDA: primary?.enterpriseValueToEBITDA
+                ?? supplement?.enterpriseValueToEBITDA,
+            earningsPerShareTTM: primary?.earningsPerShareTTM
+                ?? supplement?.earningsPerShareTTM,
             dividendYield: primary?.dividendYield ?? supplement?.dividendYield,
             returnOnEquity: primary?.returnOnEquity ?? supplement?.returnOnEquity,
             netProfitMargin: primary?.netProfitMargin ?? supplement?.netProfitMargin,
             revenueGrowth: primary?.revenueGrowth ?? supplement?.revenueGrowth,
-            earningsGrowth: primary?.earningsGrowth ?? supplement?.earningsGrowth
+            earningsGrowth: primary?.earningsGrowth ?? supplement?.earningsGrowth,
+            marketCapitalization: primary?.marketCapitalization
+                ?? supplement?.marketCapitalization,
+            turnoverAmount: primary?.turnoverAmount ?? supplement?.turnoverAmount,
+            turnoverRate: primary?.turnoverRate ?? supplement?.turnoverRate
         )
     }
 }

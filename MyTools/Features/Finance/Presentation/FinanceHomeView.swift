@@ -4,17 +4,11 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
-    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
-    @AppStorage(AppStorageKey.accountSortOrder) private var sortOrderRawValue = AccountSortOrder.nameAscending.rawValue
     @State private var showsInactiveBanks = false
-
-    private var selectedSortOrder: AccountSortOrder {
-        AccountSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
-    }
 
     private var availableRegionFilters: [BankRegionFilter] {
         let regions = Set(store.accounts.map(\.region))
@@ -79,12 +73,8 @@ struct HomeView: View {
         .appNavigationTitle(ToolModule.personalFinance.title)
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
-        .onChange(of: sortOrderRawValue) { _, _ in
-            preferenceChangeBus.notifyChanged()
-        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AccountSortMenu(selection: $sortOrderRawValue)
                 AdminEditAccessButton()
                 if auth.isAdmin {
                     Button {
@@ -177,8 +167,7 @@ struct HomeView: View {
         }
 
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filteredAccounts = selectedSortOrder.sorted(
-            store.accounts
+        let filteredAccounts = store.accounts
                 .filter(regionFilter.includes)
                 .filter { account in
                     searchTerm.isEmpty
@@ -187,7 +176,14 @@ struct HomeView: View {
                             cardMatches($0, searchTerm: searchTerm)
                         }
                 }
-        )
+                .sorted { lhs, rhs in
+                    AppAlphabeticalSort.isOrderedBefore(
+                        accountDisplayName(lhs),
+                        accountDisplayName(rhs),
+                        lhsTieBreaker: lhs.id.uuidString,
+                        rhsTieBreaker: rhs.id.uuidString
+                    )
+                }
         let activeAccounts = filteredAccounts.filter {
             !isInactive($0, cards: cardsByAccountID[$0.id, default: []])
         }
@@ -221,7 +217,7 @@ struct HomeView: View {
     }
 
     private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
-        let bankMatches = [account.region.title, account.bankName, account.branchName, account.name, account.swift, account.iban]
+        let bankMatches = [account.region.title, account.bankName, account.branchName, account.swift, account.iban]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
         let subaccountMatches = account.foreignSubaccounts.contains { subaccount in
             [subaccount.typeTitle, subaccount.name, subaccount.accountNumber, subaccount.currencySummary]
@@ -255,6 +251,10 @@ struct HomeView: View {
 
     private func isInactive(_ account: BankAccount, cards: [BankCard]) -> Bool {
         account.isInactiveFinanceArchive(cards: cards)
+    }
+
+    private func accountDisplayName(_ account: BankAccount) -> String {
+        account.bankName.isEmpty ? "未命名银行" : account.bankName
     }
 }
 
@@ -426,68 +426,6 @@ struct CardStatusText: View {
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
     }
-}
-
-enum AccountSortOrder: String {
-    case nameAscending
-    case nameDescending
-
-    var direction: SortDirection {
-        switch self {
-        case .nameAscending: return .ascending
-        case .nameDescending: return .descending
-        }
-    }
-
-    func sorted(_ accounts: [BankAccount]) -> [BankAccount] {
-        switch self {
-        case .nameAscending:
-            return accounts.sorted(by: isNameAscending)
-        case .nameDescending:
-            return accounts.sorted {
-                let comparison = displayName($0).localizedStandardCompare(displayName($1))
-                return comparison == .orderedSame
-                    ? $0.id.uuidString > $1.id.uuidString
-                    : comparison == .orderedDescending
-            }
-        }
-    }
-
-    private func isNameAscending(_ lhs: BankAccount, _ rhs: BankAccount) -> Bool {
-        let comparison = displayName(lhs).localizedStandardCompare(displayName(rhs))
-        return comparison == .orderedSame
-            ? lhs.id.uuidString < rhs.id.uuidString
-            : comparison == .orderedAscending
-    }
-
-    private func displayName(_ account: BankAccount) -> String {
-        account.bankName.isEmpty ? account.name : account.bankName
-    }
-}
-
-struct AccountSortMenu: View {
-    @Binding var selection: String
-
-    private var selectedOrder: AccountSortOrder {
-        AccountSortOrder(rawValue: selection) ?? .nameAscending
-    }
-
-    var body: some View {
-        Menu {
-            Button {
-                selection = selectedOrder == .nameAscending
-                    ? AccountSortOrder.nameDescending.rawValue
-                    : AccountSortOrder.nameAscending.rawValue
-            } label: {
-                Text("名称  \(selectedOrder.direction.indicator)")
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .accessibilityLabel("账户排序：名称，\(selectedOrder.direction.title)")
-        .help("账户排序：名称，\(selectedOrder.direction.title)")
-    }
-
 }
 
 enum CardSortOrder: String {

@@ -149,7 +149,7 @@ App -> all modules (composition root only)
 
 ### 2026-08-27：P0 安全边界修复与 P1 备份契约确认
 
-- **本地 Vault 静态加密落地**：`SecureStore` 新增 AES-GCM 加密信封（`VaultCrypto`，格式 2.0），随机 256 位密钥由 `KeychainVaultEncryptionKey` 保存在 Keychain（`WhenUnlockedThisDeviceOnly`，仅本机、不可迁移）。旧版明文档案在首次读取后立即原地升级为加密格式；Keychain/加密原语不可用时降级为明文读写并记录诊断，保证不丢数据；解密失败、密钥缺失、格式不受支持时沿用"禁止空档案覆盖原文件"的失败保护（`canPersist=false`）。附件文件仍为明文，尚未加密。
+- **本地 Vault 静态加密落地**：`SecureStore` 新增 AES-GCM 加密信封（`VaultCrypto`，格式 2.0），随机 256 位密钥由 `KeychainVaultEncryptionKey` 保存在 Keychain（`WhenUnlockedThisDeviceOnly`，仅本机、不可迁移）。旧版明文档案在首次读取后立即原地升级为加密格式；Keychain 受保护数据临时不可用时保持启动加载并在设备解锁、场景激活及短暂退避后自动重试，写入队列保留最新快照且不允许降级明文；解密失败、密钥缺失、格式不受支持时沿用"禁止空档案覆盖原文件"的失败保护（`canPersist=false`）。附件文件仍为明文，尚未加密。
 - **管理员密码摘要加盐**：`AuthManager` 改用 `AdminPasswordHash` 的加盐 PBKDF2-HMAC-SHA256（210,000 轮，恒定时间比较）；旧版无盐 SHA-256 摘要在验证成功后自动迁移。备份加密的 PBKDF2 派生改为复用 `VaultCrypto.pbkdf2SHA256`，消除第二套派生实现。
 - **备份范围契约确认**：隐藏模块不参与加密备份（保持原行为），作为产品契约由 `AppStoreFacadeTests.hiddenModuleIsExcludedFromBackup` 锁定，与 CloudKit 参与范围（隐藏仍同步）的区别在 `AGENTS.md` 不可破坏规则中明确。
 - **遗留风险不变**：附件静态加密、单 Target 隔离、`AppStore` 职责偏宽、偏好同步无类型事件等仍按上表优先级待处理；本地 Vault 加密后，`.mytools` 加密备份是 Keychain 密钥丢失时的唯一恢复路径，升级引导应在版本更新中提示用户先导出备份。

@@ -19,6 +19,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     private let quoteService: any StockQuoteRefreshing
     private let alertNotifications: any AlertNotificationRouting
     private let refreshInvalidator: any StockRefreshInvalidating
+    private let chartService: any StockChartServing
     private let defaults: UserDefaults
     private weak var moduleSettings: ToolModuleSettings?
     private weak var mutationNotifier: (any VaultMutationNotifying)?
@@ -31,6 +32,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         quoteService: any StockQuoteRefreshing,
         alertNotifications: any AlertNotificationRouting,
         refreshInvalidator: any StockRefreshInvalidating,
+        chartService: any StockChartServing = StockChartService.shared,
         defaults: UserDefaults,
         moduleSettings: ToolModuleSettings? = nil,
         exchangeRateStore: ExchangeRateStore? = nil
@@ -41,6 +43,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         self.quoteService = quoteService
         self.alertNotifications = alertNotifications
         self.refreshInvalidator = refreshInvalidator
+        self.chartService = chartService
         self.defaults = defaults
         self.moduleSettings = moduleSettings
         self.exchangeRateStore = exchangeRateStore
@@ -111,6 +114,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         for alertIndex in priceAlerts.indices where priceAlerts[alertIndex].stockID == id {
             guard priceAlerts[alertIndex].isEnabled else { continue }
             priceAlerts[alertIndex].isEnabled = false
+            priceAlerts[alertIndex].disabledByArchive = true
             alertNotifications.clearState(for: priceAlerts[alertIndex].id)
         }
         quoteErrors[id] = nil
@@ -125,12 +129,22 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         guard let index = stocks.firstIndex(where: { $0.id == id }),
               let restored = StockPortfolioEditor.restoring(stocks[index]) else { return false }
         stocks[index] = restored
+        // Only re-enable alerts this store itself disabled when archiving.
+        // An alert the user had already turned off before archiving must
+        // stay off after restoring.
+        for alertIndex in priceAlerts.indices where priceAlerts[alertIndex].stockID == id {
+            guard priceAlerts[alertIndex].disabledByArchive else { continue }
+            priceAlerts[alertIndex].isEnabled = true
+            priceAlerts[alertIndex].disabledByArchive = false
+            alertNotifications.clearState(for: priceAlerts[alertIndex].id)
+        }
         didMutate()
         refreshInvalidator.refreshEligibilityChanged()
         return true
     }
 
     func deleteStocks(ids: Set<UUID>) {
+        let removed = stocks.filter { ids.contains($0.id) }
         let result = StockPortfolioEditor.deletingStocks(
             ids: ids,
             from: stocks,
@@ -142,6 +156,14 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         for id in ids {
             quoteErrors[id] = nil
             quoteSources[id] = nil
+        }
+        // Remove the cached chart data for every deleted stock so that stale
+        // series are not shown if the same symbol is re-added later.
+        let chartService = chartService
+        Task {
+            for stock in removed {
+                await chartService.clearCache(for: stock)
+            }
         }
         didMutate()
         refreshInvalidator.refreshEligibilityChanged()
@@ -311,25 +333,19 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             alerts: priceAlerts,
             stocks: stocks
         )
-        var triggeredIDs = Set<UUID>()
-        for alert in priceAlerts {
-            guard alert.isEnabled else {
-                _ = alertNotifications.shouldSend(for: alert.id, condition: false)
-                continue
-            }
+        let triggeredIDs = AppStoreAlertEvaluator.dispatchAlerts(
+            alerts: priceAlerts,
+            matchingIDs: matches,
+            isEnabled: \.isEnabled,
+            notifications: alertNotifications
+        ) { alert in
             guard let stockID = alert.stockID,
                   let stock = stocks.first(where: { $0.id == stockID }),
-                  let price = stock.latestPrice else { continue }
-            guard alertNotifications.shouldSend(
-                for: alert.id,
-                condition: matches.contains(alert.id)
-            ) else { continue }
-            alertNotifications.send(
+                  let price = stock.latestPrice else { return nil }
+            return (
                 title: "股票价格提醒",
-                body: "\(stock.displayName)（\(stock.symbol)）当前 \(StockValueFormatter.price(price, currencyCode: stock.market.currencyCode))，已\(alert.direction.title) \(StockValueFormatter.price(alert.threshold, currencyCode: stock.market.currencyCode))。",
-                ruleID: alert.id
+                body: "\(stock.displayName)（\(stock.symbol)）当前 \(StockValueFormatter.price(price, currencyCode: stock.market.currencyCode))，已\(alert.direction.title) \(StockValueFormatter.price(alert.threshold, currencyCode: stock.market.currencyCode))。"
             )
-            triggeredIDs.insert(alert.id)
         }
         disablePriceAlerts(ids: triggeredIDs)
     }

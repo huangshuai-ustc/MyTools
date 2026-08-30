@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 import OSLog
 
+enum LocalVaultLoadFailure: Equatable, Sendable {
+    case protectedDataUnavailable
+    case unrecoverable
+}
+
 struct LocalVaultLoadResult: @unchecked Sendable {
     let vault: VaultData
     let secrets: [SecretVaultValue]
@@ -11,6 +16,29 @@ struct LocalVaultLoadResult: @unchecked Sendable {
     let readMilliseconds: Double
     let decodeMilliseconds: Double
     let totalMilliseconds: Double
+    let failure: LocalVaultLoadFailure?
+
+    init(
+        vault: VaultData,
+        secrets: [SecretVaultValue],
+        byteCount: Int,
+        source: String,
+        canPersist: Bool,
+        readMilliseconds: Double,
+        decodeMilliseconds: Double,
+        totalMilliseconds: Double,
+        failure: LocalVaultLoadFailure? = nil
+    ) {
+        self.vault = vault
+        self.secrets = secrets
+        self.byteCount = byteCount
+        self.source = source
+        self.canPersist = canPersist
+        self.readMilliseconds = readMilliseconds
+        self.decodeMilliseconds = decodeMilliseconds
+        self.totalMilliseconds = totalMilliseconds
+        self.failure = failure
+    }
 }
 
 private struct LocalVaultDocument: Codable {
@@ -24,6 +52,7 @@ private struct LocalVaultDocument: Codable {
 }
 
 private enum VaultReadError: LocalizedError {
+    case keyTemporarilyUnavailable(OSStatus)
     case keyUnavailable
     case authenticationFailed
     case unsupportedVersion
@@ -31,6 +60,8 @@ private enum VaultReadError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .keyTemporarilyUnavailable:
+            return "设备受保护数据暂不可用，解锁后将自动重试"
         case .keyUnavailable:
             return "本地存档已加密但加密密钥不可用，原文件已保留"
         case .authenticationFailed:
@@ -133,7 +164,20 @@ final class SecureStore {
 
     private func decodeDocument(from data: Data) throws -> DecodedVaultDocument {
         if VaultCrypto.isEncryptedEnvelope(data) {
-            guard let key = try? keyProvider.loadKey() else {
+            let key: SymmetricKey
+            do {
+                guard let loadedKey = try keyProvider.loadKey() else {
+                    throw VaultReadError.keyUnavailable
+                }
+                key = loadedKey
+            } catch let error as VaultEncryptionKeyError where error.isTemporarilyUnavailable {
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "设备受保护数据暂不可用，等待解锁后重试 status=\(error.status)",
+                    level: .warning
+                )
+                throw VaultReadError.keyTemporarilyUnavailable(error.status)
+            } catch {
                 DiagnosticLogger.shared.log(
                     .persistence,
                     "本地存档已加密但加密密钥不可用，原文件已保留",
@@ -204,26 +248,13 @@ final class SecureStore {
     // MARK: - Write
 
     private func writeVaultFile(_ payload: Data) throws {
-        let dataToWrite: Data
-        do {
-            let key: SymmetricKey
-            if let existing = try keyProvider.loadKey() {
-                key = existing
-            } else {
-                key = try keyProvider.createAndStoreKey()
-            }
-            dataToWrite = try VaultCrypto.encrypt(payload, using: key)
-        } catch {
-            // Keychain 或加密原语不可用时降级为明文写入，保证数据不丢失；
-            // 下次保存会再次尝试加密。
-            persistenceLogger.error("本地存档加密不可用，暂以明文写入")
-            DiagnosticLogger.shared.log(
-                .persistence,
-                "本地存档加密不可用，暂以明文写入 error=\(DiagnosticLogger.errorCode(error))",
-                level: .warning
-            )
-            dataToWrite = payload
+        let key: SymmetricKey
+        if let existing = try keyProvider.loadKey() {
+            key = existing
+        } else {
+            key = try keyProvider.createAndStoreKey()
         }
+        let dataToWrite = try VaultCrypto.encrypt(payload, using: key)
         try fileManager.createDirectory(
             at: localVaultDirectory,
             withIntermediateDirectories: true
@@ -249,17 +280,38 @@ final class SecureStore {
         decodeMilliseconds: Double,
         totalStartedAt: TimeInterval
     ) -> LocalVaultLoadResult {
-        logLoadFailure("本地存档读取或解码失败，已禁止空档案覆盖", error: error)
+        let failure: LocalVaultLoadFailure
+        let source: String
+        if case .keyTemporarilyUnavailable = error as? VaultReadError {
+            failure = .protectedDataUnavailable
+            source = "等待设备解锁后重试"
+            logTemporaryLoadDelay(error)
+        } else {
+            failure = .unrecoverable
+            source = "存档读取失败（原文件已保留）"
+            logLoadFailure("本地存档读取或解码失败，已禁止空档案覆盖", error: error)
+        }
         let attributes = try? fileManager.attributesOfItem(atPath: localVaultURL.path)
         return loadResult(
             vault: VaultData(),
             secrets: [],
             byteCount: (attributes?[.size] as? NSNumber)?.intValue ?? 0,
-            source: "存档读取失败（原文件已保留）",
+            source: source,
             canPersist: false,
+            failure: failure,
             readMilliseconds: readMilliseconds,
             decodeMilliseconds: decodeMilliseconds,
             totalStartedAt: totalStartedAt
+        )
+    }
+
+    private func logTemporaryLoadDelay(_ error: Error) {
+        let code = DiagnosticLogger.errorCode(error)
+        persistenceLogger.info("Protected local vault data is temporarily unavailable: \(code, privacy: .public)")
+        DiagnosticLogger.shared.log(
+            .persistence,
+            "本地存档暂不可读，等待受保护数据可用后自动重试 error=\(code)",
+            level: .warning
         )
     }
 
@@ -279,6 +331,7 @@ final class SecureStore {
         byteCount: Int,
         source: String,
         canPersist: Bool,
+        failure: LocalVaultLoadFailure? = nil,
         readMilliseconds: Double,
         decodeMilliseconds: Double,
         totalStartedAt: TimeInterval
@@ -291,7 +344,8 @@ final class SecureStore {
             canPersist: canPersist,
             readMilliseconds: readMilliseconds,
             decodeMilliseconds: decodeMilliseconds,
-            totalMilliseconds: elapsedMilliseconds(since: totalStartedAt)
+            totalMilliseconds: elapsedMilliseconds(since: totalStartedAt),
+            failure: failure
         )
     }
 
@@ -321,9 +375,18 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     private var pendingWrite: PendingWrite?
     private var isWorkerScheduled = false
     private var lastErrorCode: String?
+    private let initialTemporaryRetryDelay: TimeInterval
+    private var temporaryRetryDelay: TimeInterval
+    private var didLogTemporaryKeyFailure = false
 
-    init(secureStore: SecureStore = SecureStore()) {
+    init(
+        secureStore: SecureStore = SecureStore(),
+        temporaryRetryDelay: TimeInterval = 1
+    ) {
         self.secureStore = secureStore
+        let normalizedRetryDelay = max(temporaryRetryDelay, 0.01)
+        initialTemporaryRetryDelay = normalizedRetryDelay
+        self.temporaryRetryDelay = normalizedRetryDelay
     }
 
     func schedule(_ vault: VaultData, secrets: [SecretVaultValue] = []) {
@@ -386,7 +449,32 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
                 lock.lock()
                 lastErrorCode = nil
                 lock.unlock()
+                temporaryRetryDelay = initialTemporaryRetryDelay
+                didLogTemporaryKeyFailure = false
             } catch {
+                if isTemporaryVaultKeyAccessError(error) {
+                    lock.lock()
+                    if pendingWrite == nil {
+                        pendingWrite = write
+                    }
+                    isWorkerScheduled = false
+                    lock.unlock()
+
+                    if !didLogTemporaryKeyFailure {
+                        didLogTemporaryKeyFailure = true
+                        DiagnosticLogger.shared.log(
+                            .persistence,
+                            "本地加密密钥暂不可用，待解锁后重试加密写入",
+                            level: .warning
+                        )
+                    }
+                    let delay = temporaryRetryDelay
+                    temporaryRetryDelay = min(temporaryRetryDelay * 2, 30)
+                    queue.asyncAfter(deadline: .now() + delay) { [self] in
+                        resumeWorkerIfNeeded()
+                    }
+                    return
+                }
                 let errorCode = DiagnosticLogger.errorCode(error)
                 lock.lock()
                 lastErrorCode = errorCode
@@ -401,5 +489,16 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    private func resumeWorkerIfNeeded() {
+        lock.lock()
+        guard pendingWrite != nil, !isWorkerScheduled else {
+            lock.unlock()
+            return
+        }
+        isWorkerScheduled = true
+        lock.unlock()
+        drainPendingWrites()
     }
 }

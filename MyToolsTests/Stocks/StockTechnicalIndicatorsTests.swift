@@ -22,6 +22,78 @@ struct StockTechnicalIndicatorsTests {
         #expect(try #require(indicators.last).macdLine > 0)
     }
 
+    @Test func advancedIndicatorsProduceExpectedTrendAndVolumeSignals() throws {
+        let indicators = StockTechnicalIndicators.calculate(
+            pricePoints(count: 120) { Double($0 + 1) }
+        )
+        let latest = try #require(indicators.last)
+
+        #expect(try #require(latest.stochasticK) > 90)
+        #expect(try #require(latest.stochasticD) > 90)
+        #expect(latest.stochasticJ != nil)
+        #expect(try #require(latest.williamsR) > -10)
+        #expect(try #require(latest.commodityChannelIndex) > 100)
+        #expect(try #require(latest.positiveDirectionalIndex) > 0)
+        #expect(try #require(latest.negativeDirectionalIndex) == 0)
+        #expect(try #require(latest.averageDirectionalIndex) > 90)
+        #expect(latest.momentum == 10)
+        #expect(latest.momentumAverage == 10)
+        #expect(try #require(latest.trix) > 0)
+        #expect(latest.trixSignal != nil)
+        #expect(try #require(latest.onBalanceVolume) > 0)
+        #expect(latest.accumulationDistribution != nil)
+        #expect(latest.moneyFlowIndex == 100)
+        #expect(latest.chaikinMoneyFlow != nil)
+        #expect(latest.psychologicalLine == 100)
+        let actualROC = try #require(latest.rateOfChange)
+        let expectedROC = (120.0 / 110.0 - 1) * 100
+        #expect(abs(actualROC - expectedROC) < 0.000_001)
+    }
+
+    @Test func volumeIndicatorsStayUnavailableWithoutVolume() throws {
+        let start = StockChartFixtures.date(2026, 1, 1)
+        let points = (0..<40).map { index in
+            let price = Double(index + 1)
+            return StockChartFixtures.point(
+                at: start.addingTimeInterval(TimeInterval(index * 86_400)),
+                open: price,
+                high: price + 1,
+                low: price - 1,
+                close: price,
+                volume: nil
+            )
+        }
+        let latest = try #require(StockTechnicalIndicators.calculate(points).last)
+
+        #expect(latest.onBalanceVolume == nil)
+        #expect(latest.accumulationDistribution == nil)
+        #expect(latest.moneyFlowIndex == nil)
+        #expect(latest.chaikinMoneyFlow == nil)
+        #expect(latest.rateOfChange != nil)
+    }
+
+    @Test func legacyCachedIndicatorDecodesWithNewFieldsUnset() throws {
+        let data = Data(#"""
+        {
+            "date": 0,
+            "macdLine": 1.5,
+            "macdSignal": 1.0,
+            "macdHistogram": 1.0,
+            "rsi14": 55
+        }
+        """#.utf8)
+
+        let decoded = try JSONDecoder().decode(
+            StockTechnicalIndicatorPoint.self,
+            from: data
+        )
+
+        #expect(decoded.macdLine == 1.5)
+        #expect(decoded.rsi14 == 55)
+        #expect(decoded.stochasticK == nil)
+        #expect(decoded.rateOfChange == nil)
+    }
+
     private func pricePoints(
         count: Int,
         close: (Int) -> Double

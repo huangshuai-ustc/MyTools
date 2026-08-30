@@ -34,7 +34,6 @@ enum CloudSyncStatus: Equatable, Sendable {
     case disabled
     case checkingAccount
     case syncing
-    case rebuildInProgress
     case synced(Date)
     case noAccount
     case restricted
@@ -48,7 +47,6 @@ enum CloudSyncStatus: Equatable, Sendable {
         case .disabled: return "已关闭"
         case .checkingAccount: return "正在检查 iCloud"
         case .syncing: return "正在同步"
-        case .rebuildInProgress: return "另一台设备正在重建 iCloud"
         case .synced: return "已同步"
         case .noAccount: return "未登录 iCloud"
         case .restricted: return "iCloud 访问受限"
@@ -61,7 +59,7 @@ enum CloudSyncStatus: Equatable, Sendable {
 
     var isBusy: Bool {
         switch self {
-        case .checkingAccount, .syncing, .rebuildInProgress: true
+        case .checkingAccount, .syncing: true
         default: false
         }
     }
@@ -75,7 +73,6 @@ final class CloudSyncCoordinator: ObservableObject {
     @Published private(set) var isEnabled: Bool
     @Published private(set) var status: CloudSyncStatus
     @Published private(set) var lastSuccessfulSyncAt: Date?
-    @Published private(set) var isRebuildingCloudData = false
 
     private enum DefaultsKey {
         static let enabled = "icloud-sync-enabled-v1"
@@ -93,7 +90,6 @@ final class CloudSyncCoordinator: ObservableObject {
     private var worker: CloudKitSyncWorker?
     private var operationTask: Task<Void, Never>?
     private var reconciliationTask: Task<Void, Never>?
-    private var rebuildRetryTask: Task<Void, Never>?
     private var activeOperationID: UUID?
     private var hasLoadedLocalData = false
 
@@ -155,8 +151,6 @@ final class CloudSyncCoordinator: ObservableObject {
             operationTask = nil
             reconciliationTask?.cancel()
             reconciliationTask = nil
-            rebuildRetryTask?.cancel()
-            rebuildRetryTask = nil
             activeOperationID = nil
             let previousWorker = worker
             worker = nil
@@ -181,78 +175,17 @@ final class CloudSyncCoordinator: ObservableObject {
         }
     }
 
-    func rebuildCloudData() {
-        guard canRebuildCloudData,
-              let currentWorker = prepareWorkerIfPossible() else { return }
-        reconciliationTask?.cancel()
-        reconciliationTask = nil
-
-        let operationID = UUID()
-        activeOperationID = operationID
-        isRebuildingCloudData = true
-        status = .syncing
-        operationTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                // Refuse to delete the remote zone unless the current local
-                // source of truth can be encoded successfully first.
-                _ = try await self.makeSnapshot()
-                let lease = try await currentWorker.deleteRemoteZoneForRebuild()
-                guard !Task.isCancelled, self.isEnabled else {
-                    self.finishCloudDataRebuild(operationID)
-                    return
-                }
-
-                self.worker = nil
-                guard let replacementWorker = self.prepareWorkerIfPossible(
-                    rebuildLease: lease
-                ) else {
-                    await currentWorker.abortRebuildLease(lease)
-                    throw CloudDataRebuildError.unableToRestart
-                }
-                guard await replacementWorker.start() else {
-                    await currentWorker.abortRebuildLease(lease)
-                    throw CloudDataRebuildError.unableToRestart
-                }
-                await replacementWorker.finishRebuildLease()
-            } catch {
-                guard !CloudSyncErrorFormatter.isCancellation(error) else {
-                    self.finishCloudDataRebuild(operationID)
-                    return
-                }
-                let message = (error as? LocalizedError)?.errorDescription
-                    ?? CloudSyncErrorFormatter.message(
-                        for: error,
-                        operation: "重建 iCloud 数据"
-                    )
-                self.receive(.error(
-                    message
-                ))
-            }
-            self.finishCloudDataRebuild(operationID)
-        }
-    }
-
     var errorDetail: String? {
         switch status {
         case .error(let message): message
         case .accountChanged: "为避免把本机资料上传到另一个账户，同步已自动关闭，请确认账户后重新开启。"
         case .cloudDataRemoved: "iCloud 中的\(AppMetadata.appName)同步数据已被移除。本机资料仍然保留；同步已自动关闭，确认后可以重新开启。"
-        case .rebuildInProgress: "另一台设备正在重建 iCloud 数据，当前设备会在重建完成后自动继续同步。"
         default: nil
         }
     }
 
     var canSynchronizeNow: Bool {
         isEnabled && hasLoadedLocalData && activeOperationID == nil && !status.isBusy
-    }
-
-    var canRebuildCloudData: Bool {
-        isEnabled
-            && hasLoadedLocalData
-            && activeOperationID == nil
-            && !status.isBusy
-            && !isRebuildingCloudData
     }
 
     private func startIfPossible() {
@@ -266,9 +199,7 @@ final class CloudSyncCoordinator: ObservableObject {
         }
     }
 
-    private func prepareWorkerIfPossible(
-        rebuildLease: CloudSyncRebuildLease? = nil
-    ) -> CloudKitSyncWorker? {
+    private func prepareWorkerIfPossible() -> CloudKitSyncWorker? {
         guard isSupported,
               isEnabled,
               hasLoadedLocalData,
@@ -279,7 +210,6 @@ final class CloudSyncCoordinator: ObservableObject {
             worker = CloudKitSyncWorker(
                 containerIdentifier: containerIdentifier,
                 attachmentStore: attachmentStore,
-                rebuildLease: rebuildLease,
                 statusHandler: { [weak self] status in
                     self?.receive(status)
                 },
@@ -319,11 +249,6 @@ final class CloudSyncCoordinator: ObservableObject {
         operationTask = nil
     }
 
-    private func finishCloudDataRebuild(_ operationID: UUID) {
-        isRebuildingCloudData = false
-        operationDidFinish(operationID)
-    }
-
     private func makeSnapshot() async throws -> CloudSyncSnapshot {
         guard let snapshotProvider else { return .empty }
         return try await snapshotProvider()
@@ -346,32 +271,10 @@ final class CloudSyncCoordinator: ObservableObject {
             operationTask = nil
             reconciliationTask?.cancel()
             reconciliationTask = nil
-            rebuildRetryTask?.cancel()
-            rebuildRetryTask = nil
             activeOperationID = nil
             let previousWorker = worker
             worker = nil
             Task { await previousWorker?.stop() }
-        } else if status == .rebuildInProgress {
-            scheduleRebuildRetry()
         }
-    }
-
-    private func scheduleRebuildRetry() {
-        guard isEnabled, rebuildRetryTask == nil else { return }
-        rebuildRetryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(15))
-            guard !Task.isCancelled, let self else { return }
-            self.rebuildRetryTask = nil
-            self.synchronizeNow()
-        }
-    }
-}
-
-private enum CloudDataRebuildError: LocalizedError {
-    case unableToRestart
-
-    var errorDescription: String? {
-        "云端数据区已清理，但同步服务暂时无法重新启动；本机资料仍然保留。"
     }
 }

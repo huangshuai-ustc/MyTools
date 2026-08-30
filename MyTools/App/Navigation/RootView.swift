@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct RootView: View {
     @EnvironmentObject private var auth: AuthManager
@@ -57,7 +60,17 @@ struct RootView: View {
 #endif
         .onAppear {
             auth.applicationDidBecomeActive()
+            retryInitialVaultLoadIfPossible()
         }
+#if os(iOS)
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.protectedDataDidBecomeAvailableNotification
+            )
+        ) { _ in
+            retryInitialVaultLoadIfPossible()
+        }
+#endif
         .onChange(of: scenePhase) { _, phase in
 #if MYTOOLS_FEATURE_STOCKS
             StockRefreshCoordinator.shared.update(scenePhase: phase)
@@ -75,8 +88,23 @@ struct RootView: View {
             } else if phase == .active {
                 DiagnosticLogger.shared.markBecameActive()
                 auth.applicationDidBecomeActive()
+                retryInitialVaultLoadIfPossible()
             }
         }
+    }
+
+    private func retryInitialVaultLoadIfPossible() {
+#if os(iOS)
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "设备受保护数据尚不可用，暂缓载入本地档案",
+                level: .warning
+            )
+            return
+        }
+#endif
+        store.retryInitialVaultLoadIfNeeded()
     }
 
     @ViewBuilder

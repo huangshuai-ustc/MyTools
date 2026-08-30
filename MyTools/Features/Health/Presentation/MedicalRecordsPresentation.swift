@@ -86,6 +86,10 @@ struct MedicalRecordsPresentation {
     }
 
     var yearGroups: [MedicalYearGroup] {
+        yearGroups(from: visitGroups)
+    }
+
+    func yearGroups(from visitGroups: [MedicalVisitGroup]) -> [MedicalYearGroup] {
         Dictionary(grouping: visitGroups) {
             calendar.component(.year, from: $0.originalVisit.date)
         }

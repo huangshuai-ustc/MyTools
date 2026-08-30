@@ -23,6 +23,8 @@ struct YahooStockChartProvider: StockChartProvider {
         let shortName: String?
         let chartPreviousClose: Double?
         let previousClose: Double?
+        let regularMarketPrice: Double?
+        let regularMarketTime: TimeInterval?
     }
 
     private struct Indicators: Decodable {
@@ -107,13 +109,23 @@ struct YahooStockChartProvider: StockChartProvider {
                 .sorted { $0.date < $1.date }
             : []
         let rawPostMarketPoints = stock.market == .unitedStates && range == .intraday
-            ? StockChartSeriesProcessor.postMarketSessionPoints(parsedPoints, market: .unitedStates)
+            ? yahooUnitedStatesPostMarketPoints(parsedPoints)
                 .sorted { $0.date < $1.date }
             : []
-        let regularPoints = stock.market == .unitedStates
+        var regularPoints = stock.market == .unitedStates
             && (range == .intraday || range == .fiveDays)
-            ? StockChartSeriesProcessor.regularUnitedStatesSessionPoints(parsedPoints)
+            ? yahooUnitedStatesRegularSessionPoints(parsedPoints)
             : parsedPoints
+        if stock.market == .unitedStates,
+           (range == .intraday || range == .fiveDays) {
+            regularPoints = applyingOfficialRegularMarketClose(
+                to: regularPoints,
+                price: result.meta.regularMarketPrice,
+                updatedAt: result.meta.regularMarketTime.map {
+                    Date(timeIntervalSince1970: $0)
+                }
+            )
+        }
         guard !regularPoints.isEmpty else { throw StockChartError.noData }
         let points: [StockChartPoint]
         let fetchedIndicatorPoints: [StockChartPoint]?
@@ -227,6 +239,66 @@ struct YahooStockChartProvider: StockChartProvider {
     private func value(in values: [Double?]?, at index: Int) -> Double? {
         guard let values, index < values.count else { return nil }
         return values[index]
+    }
+
+    /// Yahoo labels minute bars by their interval start. With extended-hours
+    /// data enabled, the 16:00 bar is therefore the first post-market minute,
+    /// not the final regular-session minute. Keep this provider-specific:
+    /// other chart sources can use different timestamp conventions.
+    private func yahooUnitedStatesRegularSessionPoints(
+        _ points: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        sessionPoints(points, minuteRange: 570..<960)
+    }
+
+    private func yahooUnitedStatesPostMarketPoints(
+        _ points: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        sessionPoints(points, minuteRange: 960..<1_201)
+    }
+
+    private func sessionPoints(
+        _ points: [StockChartPoint],
+        minuteRange: Range<Int>
+    ) -> [StockChartPoint] {
+        let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+        return points.filter { point in
+            let components = calendar.dateComponents([.hour, .minute], from: point.date)
+            guard let hour = components.hour, let minute = components.minute else {
+                return false
+            }
+            return minuteRange.contains(hour * 60 + minute)
+        }
+    }
+
+    /// The final 15:59 minute close can differ slightly from the exchange's
+    /// official close, especially when a closing auction settles after that
+    /// minute. Yahoo exposes the finalized value separately as
+    /// `regularMarketPrice`; apply it only to the matching regular-session day
+    /// and keep the original OHLC range valid.
+    private func applyingOfficialRegularMarketClose(
+        to points: [StockChartPoint],
+        price: Double?,
+        updatedAt: Date?
+    ) -> [StockChartPoint] {
+        guard let price, price > 0,
+              let updatedAt,
+              let latest = points.last else { return points }
+        let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
+        guard calendar.isDate(latest.date, inSameDayAs: updatedAt) else {
+            return points
+        }
+
+        var updatedPoints = points
+        updatedPoints[updatedPoints.count - 1] = StockChartPoint(
+            date: latest.date,
+            open: latest.open,
+            high: max(latest.high, price),
+            low: min(latest.low, price),
+            close: price,
+            volume: latest.volume
+        )
+        return updatedPoints
     }
 }
 

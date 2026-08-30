@@ -205,6 +205,20 @@ extension View {
 enum AppTagSupport {
     static let inputSeparator = "，"
 
+    /// Trims whitespace from a single text value. Use this instead of writing
+    /// `value.trimmingCharacters(in: .whitespacesAndNewlines)` directly inside
+    /// Store `normalized` methods so the trimming rule stays in one place.
+    static func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Trims whitespace; returns `nil` when the result is empty.
+    static func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
+    }
+
     /// Accept legacy separators while always writing the canonical Chinese comma format.
     static func parse(_ text: String) -> [String] {
         normalize(text.split(whereSeparator: { ",，、".contains($0) }).map(String.init))
@@ -467,6 +481,51 @@ struct TemplateFieldDropDelegate: DropDelegate {
     }
 }
 
+/// Shared incremental-loading state for record lists.
+///
+/// A feature owns one value and chooses its page size. The state owns the
+/// initial limit, reset behavior, last-row trigger, and upper-bound clamping,
+/// so feature views only decide how filtered records are grouped and drawn.
+struct AppListPagination {
+    let pageSize: Int
+    private(set) var visibleItemCount: Int
+
+    init(pageSize: Int) {
+        let normalizedPageSize = max(1, pageSize)
+        self.pageSize = normalizedPageSize
+        visibleItemCount = normalizedPageSize
+    }
+
+    func visibleItems<Element>(from items: [Element]) -> [Element] {
+        Array(items.prefix(visibleItemCount))
+    }
+
+    func canLoadMore(totalItemCount: Int) -> Bool {
+        visibleItemCount < totalItemCount
+    }
+
+    mutating func reset() {
+        visibleItemCount = pageSize
+    }
+
+    mutating func loadMore(totalItemCount: Int) {
+        guard canLoadMore(totalItemCount: totalItemCount) else { return }
+        visibleItemCount = min(
+            visibleItemCount + pageSize,
+            totalItemCount
+        )
+    }
+
+    mutating func loadMoreIfNeeded<ID: Hashable>(
+        currentItemID: ID,
+        lastVisibleItemID: ID?,
+        totalItemCount: Int
+    ) {
+        guard currentItemID == lastVisibleItemID else { return }
+        loadMore(totalItemCount: totalItemCount)
+    }
+}
+
 @MainActor
 enum AppListMetrics {
     /// 系统当前 body 文本样式的行高。iOS 原生跟随 Dynamic Type；macOS 没有系统级
@@ -483,9 +542,24 @@ enum AppListMetrics {
     /// 全局密度系数：小于 1 更紧凑，大于 1 更宽松。调整这一个值即可整体缩放所有行间距，
     /// 且不破坏“随字体自适应”的关系。具体数值由使用者自行微调。
     static let densityScale: CGFloat = 1.0
-    /// 每一行的最小高度
+    /// 标准单行内容的最低高度。保持略高于当前 body 字体本身，让统一组件的视觉密度
+    /// 接近裸 `LabeledContent`，同时为 TextField、Picker 和 DatePicker 提供相同基线。
     static func minimumRowHeight(fontScale: CGFloat?) -> CGFloat {
-        max(32, baseLineHeight(fontScale: fontScale) * 1.7 * densityScale)
+        let lineHeight = baseLineHeight(fontScale: fontScale)
+#if os(iOS)
+        let nativeContentFloor: CGFloat = 20
+#else
+        let nativeContentFloor: CGFloat = 17
+#endif
+        return max(nativeContentFloor, lineHeight * 1.05) * densityScale
+    }
+
+    /// `minimumRowHeight` 是标准单行内容本身的最低高度；SwiftUI 的 List/Form
+    /// 还会在内容外叠加系统上下边距。全局列表地板需要包含这部分空间，否则带有
+    /// 显式内容高度的输入/文本行会比裸 Picker、Badge 或按钮行更高。
+    static func listRowHeightFloor(fontScale: CGFloat?) -> CGFloat {
+        minimumRowHeight(fontScale: fontScale)
+            + baseLineHeight(fontScale: fontScale) * 0.7 * densityScale
     }
     /// 单元格内容上下留白
     static func rowVerticalInset(fontScale: CGFloat?) -> CGFloat {
@@ -506,7 +580,10 @@ private struct AppListSpacingModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         content
-            .environment(\.defaultMinListRowHeight, AppListMetrics.minimumRowHeight(fontScale: fontScale))
+            .environment(
+                \.defaultMinListRowHeight,
+                AppListMetrics.listRowHeightFloor(fontScale: fontScale)
+            )
 #if os(iOS)
             .listSectionSpacing(.compact)
             .listRowSpacing(0)

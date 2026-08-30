@@ -30,11 +30,30 @@ struct SportsLotteryTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        #expect(SportsLotteryLeaguePreferences.load(from: defaults) == SportsLotteryLeague.allCases)
+        #expect(
+            SportsLotteryLeaguePreferences.load(from: defaults)
+                == [.bundesliga, .ligue1, .championsLeague, .laLiga, .serieA, .premierLeague]
+        )
         SportsLotteryLeaguePreferences.save([.championsLeague], to: defaults)
         #expect(SportsLotteryLeaguePreferences.load(from: defaults) == [.championsLeague])
         SportsLotteryLeaguePreferences.save([], to: defaults)
         #expect(SportsLotteryLeaguePreferences.load(from: defaults).isEmpty)
+    }
+
+    @Test func leaguePreferencesUsePinyinDictionaryOrder() {
+        let suiteName = "SportsLotterySortingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        SportsLotteryLeaguePreferences.save(
+            [.premierLeague, .championsLeague, .bundesliga],
+            to: defaults
+        )
+
+        #expect(
+            SportsLotteryLeaguePreferences.load(from: defaults)
+                == [.bundesliga, .championsLeague, .premierLeague]
+        )
     }
 
     @Test func matchOrderPreferencesPersistPerLeague() {

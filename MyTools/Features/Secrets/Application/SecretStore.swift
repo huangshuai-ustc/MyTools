@@ -3,12 +3,12 @@ import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
-final class SecretStore: ObservableObject {
+final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentManaging {
     @Published private(set) var secretItems: [SecretItem]
     @Published private(set) var fieldTemplates: [SecretFieldTemplate]
     @Published private(set) var knownTags: [String]
 
-    private let attachmentStore: AttachmentStore
+    let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
     private var isRestoringBackup = false
 
@@ -101,7 +101,9 @@ final class SecretStore: ObservableObject {
         didMutate()
     }
 
-    func setBackupRestoreInProgress(_ isRestoring: Bool) {
+    // MARK: - BackupRestoreParticipant
+
+    func backupRestoreStateChanged(isRestoring: Bool) {
         isRestoringBackup = isRestoring
     }
 
@@ -183,20 +185,8 @@ final class SecretStore: ObservableObject {
         )
     }
 
-    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
-        attachmentStore.delete(attachment)
-    }
-
-    func renameAttachment(
-        _ attachment: FileAttachment,
-        to fileName: String
-    ) throws -> FileAttachment {
-        try attachmentStore.rename(attachment, to: fileName)
-    }
-
-    func attachmentURL(for attachment: FileAttachment) -> URL {
-        attachmentStore.url(for: attachment)
-    }
+    // deleteUncommittedAttachment, renameAttachment, attachmentURL
+    // are provided by the AttachmentManaging protocol extension.
 
     private func didMutate() {
         mutationNotifier?.moduleStoreDidMutate()

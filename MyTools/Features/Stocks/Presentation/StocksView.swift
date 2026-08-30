@@ -41,126 +41,6 @@ private enum StockMarketFilter: Hashable, Identifiable {
     }
 }
 
-private enum StockSortCriterion: String, CaseIterable, Identifiable {
-    case name
-    case firstPurchase
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .name: return "名称"
-        case .firstPurchase: return "首购日期"
-        }
-    }
-}
-
-private enum StockSortDirection: String {
-    case ascending
-    case descending
-
-    var indicator: String {
-        switch self {
-        case .ascending: return "↑"
-        case .descending: return "↓"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .ascending: return "顺序"
-        case .descending: return "倒序"
-        }
-    }
-
-    mutating func toggle() {
-        self = self == .ascending ? .descending : .ascending
-    }
-}
-
-private struct StockSorter {
-    let criterion: StockSortCriterion
-    let direction: StockSortDirection
-
-    func sorted(_ stocks: [StockHolding]) -> [StockHolding] {
-        stocks.sorted { lhs, rhs in
-            switch criterion {
-            case .name:
-                return isOrderedBefore(nameComparison(lhs, rhs))
-            case .firstPurchase:
-                switch (lhs.firstPurchasedAt, rhs.firstPurchasedAt) {
-                case let (left?, right?) where left != right:
-                    return direction == .ascending ? left < right : left > right
-                case (_?, nil):
-                    return true
-                case (nil, _?):
-                    return false
-                default:
-                    return isOrderedBefore(nameComparison(lhs, rhs))
-                }
-            }
-        }
-    }
-
-    private func nameComparison(_ lhs: StockHolding, _ rhs: StockHolding) -> ComparisonResult {
-        let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
-        return comparison == .orderedSame
-            ? lhs.symbol.localizedStandardCompare(rhs.symbol)
-            : comparison
-    }
-
-    private func isOrderedBefore(_ comparison: ComparisonResult) -> Bool {
-        switch direction {
-        case .ascending: return comparison == .orderedAscending
-        case .descending: return comparison == .orderedDescending
-        }
-    }
-}
-
-private struct StockSortMenu: View {
-    @Binding var criterionRawValue: String
-    @Binding var directionRawValue: String
-
-    private var selectedCriterion: StockSortCriterion {
-        StockSortCriterion(rawValue: criterionRawValue) ?? .name
-    }
-
-    private var selectedDirection: StockSortDirection {
-        StockSortDirection(rawValue: directionRawValue) ?? .ascending
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(StockSortCriterion.allCases) { criterion in
-                Button {
-                    select(criterion)
-                } label: {
-                    if selectedCriterion == criterion {
-                        Text("\(criterion.title)  \(selectedDirection.indicator)")
-                    } else {
-                        Text(criterion.title)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .accessibilityLabel("股票排序：\(selectedCriterion.title)，\(selectedDirection.title)")
-        .help("股票排序：\(selectedCriterion.title)，\(selectedDirection.title)")
-    }
-
-    private func select(_ criterion: StockSortCriterion) {
-        if selectedCriterion == criterion {
-            var direction = selectedDirection
-            direction.toggle()
-            directionRawValue = direction.rawValue
-        } else {
-            criterionRawValue = criterion.rawValue
-            directionRawValue = StockSortDirection.ascending.rawValue
-        }
-    }
-}
-
 struct StocksView: View {
     private struct WatchRoute: Hashable {
         let stockID: UUID
@@ -169,7 +49,6 @@ struct StocksView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @EnvironmentObject private var auth: AuthManager
-    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var didAutoSelectMarket = false
@@ -178,15 +57,6 @@ struct StocksView: View {
     @State private var editingStock: StockHolding?
     @State private var watchRoute: WatchRoute?
     @State private var showsArchivedStocks = false
-    @AppStorage(AppStorageKey.stockSortCriterion) private var sortCriterionRawValue = StockSortCriterion.name.rawValue
-    @AppStorage(AppStorageKey.stockSortDirection) private var sortDirectionRawValue = StockSortDirection.ascending.rawValue
-
-    private var stockSorter: StockSorter {
-        StockSorter(
-            criterion: StockSortCriterion(rawValue: sortCriterionRawValue) ?? .name,
-            direction: StockSortDirection(rawValue: sortDirectionRawValue) ?? .ascending
-        )
-    }
 
     private var configuredStocks: [StockHolding] {
         store.stocks.filter(\.hasConfiguredSymbol)
@@ -218,17 +88,17 @@ struct StocksView: View {
     }
 
     private var displayedStocks: [StockHolding] {
-        stockSorter.sorted(searchFilteredStocks.filter { $0.currentShares > 0 })
+        alphabeticallySorted(searchFilteredStocks.filter { $0.currentShares > 0 })
     }
 
     private var noPositionStocks: [StockHolding] {
-        stockSorter.sorted(searchFilteredStocks.filter {
+        alphabeticallySorted(searchFilteredStocks.filter {
             $0.currentShares <= 0 && !$0.isArchived
         })
     }
 
     private var archivedStocks: [StockHolding] {
-        stockSorter.sorted(searchFilteredStocks.filter(\.isArchived))
+        alphabeticallySorted(searchFilteredStocks.filter(\.isArchived))
     }
 
     private var summaryMarkets: [StockMarket] {
@@ -359,12 +229,6 @@ struct StocksView: View {
             }
         }
         .appNavigationTitle(ToolModule.myStocks.title)
-        .onChange(of: sortCriterionRawValue) { _, _ in
-            preferenceChangeBus.notifyChanged()
-        }
-        .onChange(of: sortDirectionRawValue) { _, _ in
-            preferenceChangeBus.notifyChanged()
-        }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索股票名称或代码")
         .refreshable {
@@ -375,10 +239,6 @@ struct StocksView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                StockSortMenu(
-                    criterionRawValue: $sortCriterionRawValue,
-                    directionRawValue: $sortDirectionRawValue
-                )
                 Button {
                     showsArchivedStocks.toggle()
                 } label: {
@@ -448,6 +308,17 @@ struct StocksView: View {
             enteringRefreshTask?.cancel()
             enteringRefreshTask = nil
             didRefreshOnCurrentAppearance = false
+        }
+    }
+
+    private func alphabeticallySorted(_ stocks: [StockHolding]) -> [StockHolding] {
+        stocks.sorted { lhs, rhs in
+            AppAlphabeticalSort.isOrderedBefore(
+                lhs.displayName,
+                rhs.displayName,
+                lhsTieBreaker: "\(lhs.symbol)|\(lhs.id.uuidString)",
+                rhsTieBreaker: "\(rhs.symbol)|\(rhs.id.uuidString)"
+            )
         }
     }
 
@@ -839,6 +710,7 @@ private struct StockSummaryMetricsHeader: View {
 }
 
 private struct StockRow: View {
+    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     @Environment(\.appFontScale) private var fontScale
     let stock: StockHolding
     let costShare: Decimal?
@@ -920,7 +792,7 @@ private struct StockRow: View {
 
     private var changePercentColor: Color {
         guard let value = stock.changePercent else { return .secondary }
-        return fixedProfitColor(value)
+        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
     }
 
     private var marketValueText: String {
@@ -945,7 +817,7 @@ private struct StockRow: View {
 
     private var profitLossColor: Color {
         guard stock.currentShares > 0, let value = stock.holdingProfitLoss else { return .secondary }
-        return fixedProfitColor(value)
+        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
     }
 
     private var profitRateText: String {
@@ -954,13 +826,7 @@ private struct StockRow: View {
 
     private var profitRateColor: Color {
         guard let value = stock.holdingProfitRate else { return .secondary }
-        return fixedProfitColor(value)
-    }
-
-    private func fixedProfitColor(_ value: Decimal) -> Color {
-        if value > 0 { return .red }
-        if value < 0 { return .green }
-        return .secondary
+        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
     }
 }
 

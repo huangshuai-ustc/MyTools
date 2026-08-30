@@ -10,7 +10,14 @@ struct FoodPlacesMapView: View {
     private var places: [FoodPlace] {
         store.places
             .filter { $0.coordinate?.isValid == true }
-            .sorted { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
+            .sorted { lhs, rhs in
+                AppAlphabeticalSort.isOrderedBefore(
+                    lhs.displayTitle,
+                    rhs.displayTitle,
+                    lhsTieBreaker: lhs.id.uuidString,
+                    rhsTieBreaker: rhs.id.uuidString
+                )
+            }
     }
 
     private var selectedPlace: FoodPlace? {

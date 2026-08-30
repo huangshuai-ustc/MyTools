@@ -16,31 +16,29 @@ enum BankRegion: String, Codable, CaseIterable, Identifiable {
 }
 
 enum DomesticAccountType: String, CaseIterable, Identifiable {
+    case savings
+    case investment
+    case foreignCurrency
     case personalPension
     case socialSecurity
-    case housingProvidentFund
-    case foreignCurrency
-    case savings
-    case checking
     case other
 
     var id: Self { self }
 
     var title: String {
         switch self {
+        case .savings: return "储蓄账户"
+        case .investment: return "投资账户"
+        case .foreignCurrency: return "外汇账户"
         case .personalPension: return "个人养老金账户"
         case .socialSecurity: return "社保账户"
-        case .housingProvidentFund: return "公积金账户"
-        case .foreignCurrency: return "外汇账户"
-        case .savings: return "储蓄账户"
-        case .checking: return "支票账户"
         case .other: return "其他账户"
         }
     }
 
     static func selection(for storedValue: String) -> Self {
         let value = storedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return .personalPension }
+        guard !value.isEmpty else { return .savings }
         return allCases.first { $0 != .other && $0.title == value } ?? .other
     }
 }
@@ -51,6 +49,8 @@ enum ForeignAccountType: String, Codable, CaseIterable, Identifiable {
     case fixedDeposit
     case foreignCurrency
     case securities
+    case checking
+    case smart
     case other
 
     var id: Self { self }
@@ -59,9 +59,11 @@ enum ForeignAccountType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .savings: return "储蓄账户"
         case .current: return "往来账户"
-        case .fixedDeposit: return "定期存款账户"
+        case .fixedDeposit: return "定存账户"
         case .foreignCurrency: return "外汇账户"
         case .securities: return "投资账户"
+        case .checking: return "支票账户"
+        case .smart: return "智能账户"
         case .other: return "其他账户"
         }
     }
@@ -342,7 +344,6 @@ struct BankAccount: Identifiable, Codable, Equatable {
     private var onlineBank: Bool?
     var branchLocation: BankBranchLocation?
     var openedAt = Date()
-    var name = ""
     var swift = ""
     var iban = ""
     var boundPhoneNumber = ""
@@ -385,9 +386,7 @@ extension BankAccount {
     }
 
     func isInactiveFinanceArchive(cards: [BankCard]) -> Bool {
-        let hasNormalDebitCard = cards.contains {
-            $0.kind == .debit && $0.status == .normal
-        }
+        let hasActiveCard = cards.contains { $0.status != .closed }
         let hasActiveSubaccount: Bool
         switch region {
         case .domestic:
@@ -395,10 +394,10 @@ extension BankAccount {
         case .overseas:
             hasActiveSubaccount = foreignSubaccounts.contains { $0.status == .normal }
         }
-        let hasHistoricalDebitCard = cards.contains { $0.kind == .debit }
-        return !hasNormalDebitCard
+        let hasHistoricalCard = !cards.isEmpty
+        return !hasActiveCard
             && !hasActiveSubaccount
-            && (hasHistoricalDebitCard || status != .normal)
+            && (hasHistoricalCard || status != .normal)
     }
 }
 

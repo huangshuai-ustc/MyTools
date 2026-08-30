@@ -35,7 +35,7 @@ struct StockChartCanvas: View {
     @State private var hasUserAdjustedVisibleXDomain = false
     @State private var cachedPresentation: StockChartPresentation
 
-    private struct PresentationInputKey: Equatable {
+    private struct PresentationDataInputKey: Equatable {
         let snapshotFetchedAt: Date
         let snapshotQuoteUpdatedAt: Date
         let snapshotPointCount: Int
@@ -52,7 +52,6 @@ struct StockChartCanvas: View {
         let stockQuoteName: String
         let transactions: [StockTransaction]
         let range: StockChartRange
-        let displayModes: Set<StockChartDisplayMode>
     }
 
     init(
@@ -83,8 +82,8 @@ struct StockChartCanvas: View {
         )
     }
 
-    private var presentationInputKey: PresentationInputKey {
-        PresentationInputKey(
+    private var presentationDataInputKey: PresentationDataInputKey {
+        PresentationDataInputKey(
             snapshotFetchedAt: snapshot.fetchedAt,
             snapshotQuoteUpdatedAt: snapshot.quoteUpdatedAt,
             snapshotPointCount: snapshot.points.count,
@@ -100,8 +99,7 @@ struct StockChartCanvas: View {
             stockName: stock.name,
             stockQuoteName: stock.quoteName,
             transactions: stock.transactions,
-            range: range,
-            displayModes: displayModes
+            range: range
         )
     }
 
@@ -130,7 +128,7 @@ struct StockChartCanvas: View {
         .onAppear {
             synchronizeVisibleXDomain(using: cachedPresentation)
         }
-        .onChange(of: presentationInputKey) { _, _ in
+        .onChange(of: presentationDataInputKey) { _, _ in
             let presentation = StockChartPresentation(
                 snapshot: snapshot,
                 stock: stock,
@@ -144,6 +142,18 @@ struct StockChartCanvas: View {
             if visibleXDomain == nil {
                 hasUserAdjustedVisibleXDomain = false
             } else if !hasUserAdjustedVisibleXDomain {
+                visibleXDomain = nil
+            }
+            cachedPresentation = presentation
+            synchronizeVisibleXDomain(using: presentation)
+        }
+        .onChange(of: displayModes) { _, modes in
+            let presentation = cachedPresentation.updatingDisplayModes(modes)
+            // Session-layer composition changes the ordinal x offsets. Keep a
+            // user-created K-line viewport, but rebuild the automatic minute
+            // viewport so adding pre/post-market data does not hide the end of
+            // the regular session behind the old coordinate range.
+            if !hasUserAdjustedVisibleXDomain {
                 visibleXDomain = nil
             }
             cachedPresentation = presentation
@@ -420,6 +430,72 @@ struct StockChartCanvas: View {
                 }
             }
 
+            if displayModes.contains(.kdj) {
+                indicatorRule(80, label: "超买参考", dashed: true)
+                indicatorRule(20, label: "超卖参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.stochasticK, label: "K", color: .purple)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.stochasticD, label: "D", color: .teal)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.stochasticJ, label: "J", color: .orange)
+            }
+
+            if displayModes.contains(.williamsR) {
+                indicatorRule(-20, label: "超买参考", dashed: true)
+                indicatorRule(-80, label: "超卖参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.williamsR, label: "W%R", color: .purple)
+            }
+
+            if displayModes.contains(.cci) {
+                indicatorRule(100, label: "强势参考", dashed: true)
+                indicatorRule(-100, label: "弱势参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.commodityChannelIndex, label: "CCI", color: .purple)
+            }
+
+            if displayModes.contains(.dmi) {
+                indicatorRule(25, label: "趋势参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.positiveDirectionalIndex, label: "+DI", color: .green)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.negativeDirectionalIndex, label: "-DI", color: .red)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.averageDirectionalIndex, label: "ADX", color: .purple)
+            }
+
+            if displayModes.contains(.momentum) {
+                indicatorRule(0, label: "零轴")
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.momentum, label: "MTM", color: .purple)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.momentumAverage, label: "MTMMA", color: .teal)
+            }
+
+            if displayModes.contains(.trix) {
+                indicatorRule(0, label: "零轴")
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.trix, label: "TRIX", color: .purple)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.trixSignal, label: "MATRIX", color: .teal)
+            }
+
+            if displayModes.contains(.volumeFlow) {
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.onBalanceVolume, label: "OBV", color: .purple)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.accumulationDistribution, label: "A/D", color: .teal)
+            }
+
+            if displayModes.contains(.mfi) {
+                indicatorRule(80, label: "超买参考", dashed: true)
+                indicatorRule(20, label: "超卖参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.moneyFlowIndex, label: "MFI", color: .purple)
+            }
+
+            if displayModes.contains(.chaikinMoneyFlow) {
+                indicatorRule(0, label: "零轴")
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.chaikinMoneyFlow, label: "CMF", color: .purple)
+            }
+
+            if displayModes.contains(.psychologicalLine) {
+                indicatorRule(75, label: "乐观参考", dashed: true)
+                indicatorRule(25, label: "谨慎参考", dashed: true)
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.psychologicalLine, label: "PSY", color: .purple)
+            }
+
+            if displayModes.contains(.rateOfChange) {
+                indicatorRule(0, label: "零轴")
+                indicatorLine(visibleTechnicalPlotPoints, keyPath: \.rateOfChange, label: "ROC", color: .purple)
+            }
+
             if presentation.hasPreMarketChart, !presentation.preMarketPlotPoints.isEmpty {
                 ForEach(visiblePreMarketPlotPoints) { plotPoint in
                     LineMark(
@@ -500,6 +576,7 @@ struct StockChartCanvas: View {
                     .foregroundStyle(Color.primary)
                     .symbolSize(36)
                 }
+                advancedIndicatorSelectionMarks(selectedTechnicalPlotPoint)
                 if displayModes.contains(.rsi),
                    let rsi30 = selectedTechnicalPlotPoint.indicator.rsi30 {
                     PointMark(
@@ -558,6 +635,24 @@ struct StockChartCanvas: View {
         .chartYAxis {
             if displayModes.contains(.rsi) {
                 AxisMarks(position: .leading, values: [0, 30, 50, 70, 100]) {
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            } else if !displayModes.isDisjoint(with: [.kdj, .mfi]) {
+                AxisMarks(position: .leading, values: [0, 20, 50, 80, 100]) {
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            } else if displayModes.contains(.psychologicalLine) {
+                AxisMarks(position: .leading, values: [0, 25, 50, 75, 100]) {
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel()
+                }
+            } else if displayModes.contains(.williamsR) {
+                AxisMarks(position: .leading, values: [-100, -80, -50, -20, 0]) {
                     AxisGridLine()
                     AxisTick()
                     AxisValueLabel()
@@ -701,6 +796,79 @@ struct StockChartCanvas: View {
         .accessibilityLabel(
             "\(stock.displayName)\(range.title)\(presentation.displayModesTitle)图"
         )
+    }
+
+    @ChartContentBuilder
+    private func indicatorRule(
+        _ value: Double,
+        label: String,
+        dashed: Bool = false
+    ) -> some ChartContent {
+        RuleMark(y: .value(label, value))
+            .foregroundStyle(Color.secondary.opacity(0.45))
+            .lineStyle(StrokeStyle(
+                lineWidth: StockChartVisualStyle.referenceLineWidth,
+                dash: dashed ? [4, 3] : []
+            ))
+    }
+
+    @ChartContentBuilder
+    private func indicatorLine(
+        _ points: [StockTechnicalPlotPoint],
+        keyPath: KeyPath<StockTechnicalIndicatorPoint, Double?>,
+        label: String,
+        color: Color
+    ) -> some ChartContent {
+        ForEach(points) { plotPoint in
+            if let value = plotPoint.indicator[keyPath: keyPath] {
+                LineMark(
+                    x: .value("时间", plotPoint.x),
+                    y: .value(label, value),
+                    series: .value("指标", label)
+                )
+                .foregroundStyle(color)
+                .lineStyle(StockChartVisualStyle.dataLine)
+                .interpolationMethod(.linear)
+            }
+        }
+    }
+
+    @ChartContentBuilder
+    private func advancedIndicatorSelectionMarks(
+        _ plotPoint: StockTechnicalPlotPoint
+    ) -> some ChartContent {
+        if let value = primaryAdvancedIndicatorValue(plotPoint.indicator) {
+            PointMark(
+                x: .value("所选时间", plotPoint.x),
+                y: .value("所选指标", value)
+            )
+            .foregroundStyle(Color.primary)
+            .symbolSize(36)
+        }
+    }
+
+    private func primaryAdvancedIndicatorValue(
+        _ indicator: StockTechnicalIndicatorPoint
+    ) -> Double? {
+        if displayModes.contains(.kdj) { return indicator.stochasticK }
+        if displayModes.contains(.williamsR) { return indicator.williamsR }
+        if displayModes.contains(.cci) { return indicator.commodityChannelIndex }
+        if displayModes.contains(.dmi) {
+            return indicator.averageDirectionalIndex
+                ?? indicator.positiveDirectionalIndex
+        }
+        if displayModes.contains(.momentum) { return indicator.momentum }
+        if displayModes.contains(.trix) { return indicator.trix }
+        if displayModes.contains(.volumeFlow) { return indicator.onBalanceVolume }
+        if displayModes.contains(.mfi) { return indicator.moneyFlowIndex }
+        if displayModes.contains(.chaikinMoneyFlow) {
+            return indicator.chaikinMoneyFlow
+        }
+        if displayModes.contains(.psychologicalLine) {
+            return indicator.psychologicalLine
+        }
+        if displayModes.contains(.rateOfChange) { return indicator.rateOfChange }
+        return nil
     }
 
     private func selectPoint(
@@ -892,6 +1060,10 @@ struct StockChartCanvas: View {
                     }
                 }
             }
+
+            if let indicator {
+                advancedIndicatorSummary(indicator)
+            }
         }
         .appFont(.caption2.monospacedDigit())
     }
@@ -934,6 +1106,90 @@ struct StockChartCanvas: View {
             Text("下 \(StockChartPresentation.plainPriceText(value))")
                 .foregroundStyle(.cyan)
         }
+    }
+
+    @ViewBuilder
+    private func advancedIndicatorSummary(
+        _ indicator: StockTechnicalIndicatorPoint
+    ) -> some View {
+        if displayModes.contains(.kdj) {
+            summaryRow {
+                indicatorSummaryText("K", indicator.stochasticK, color: .purple)
+                indicatorSummaryText("D", indicator.stochasticD, color: .teal)
+                indicatorSummaryText("J", indicator.stochasticJ, color: .orange)
+            }
+        }
+        if displayModes.contains(.williamsR) {
+            singleIndicatorSummary("W%R", indicator.williamsR, color: .purple)
+        }
+        if displayModes.contains(.cci) {
+            singleIndicatorSummary("CCI", indicator.commodityChannelIndex, color: .purple)
+        }
+        if displayModes.contains(.dmi) {
+            summaryRow {
+                indicatorSummaryText("+DI", indicator.positiveDirectionalIndex, color: .green)
+                indicatorSummaryText("-DI", indicator.negativeDirectionalIndex, color: .red)
+                indicatorSummaryText("ADX", indicator.averageDirectionalIndex, color: .purple)
+            }
+        }
+        if displayModes.contains(.momentum) {
+            summaryRow {
+                indicatorSummaryText("MTM", indicator.momentum, color: .purple)
+                indicatorSummaryText("MTMMA", indicator.momentumAverage, color: .teal)
+            }
+        }
+        if displayModes.contains(.trix) {
+            summaryRow {
+                indicatorSummaryText("TRIX", indicator.trix, color: .purple)
+                indicatorSummaryText("MATRIX", indicator.trixSignal, color: .teal)
+            }
+        }
+        if displayModes.contains(.volumeFlow) {
+            summaryRow {
+                volumeIndicatorSummaryText("OBV", indicator.onBalanceVolume, color: .purple)
+                volumeIndicatorSummaryText("A/D", indicator.accumulationDistribution, color: .teal)
+            }
+        }
+        if displayModes.contains(.mfi) {
+            singleIndicatorSummary("MFI", indicator.moneyFlowIndex, color: .purple)
+        }
+        if displayModes.contains(.chaikinMoneyFlow) {
+            singleIndicatorSummary("CMF", indicator.chaikinMoneyFlow, color: .purple)
+        }
+        if displayModes.contains(.psychologicalLine) {
+            singleIndicatorSummary("PSY", indicator.psychologicalLine, color: .purple)
+        }
+        if displayModes.contains(.rateOfChange) {
+            singleIndicatorSummary("ROC", indicator.rateOfChange, color: .purple)
+        }
+    }
+
+    private func singleIndicatorSummary(
+        _ title: String,
+        _ value: Double?,
+        color: Color
+    ) -> some View {
+        summaryRow {
+            indicatorSummaryText(title, value, color: color)
+        }
+    }
+
+    private func indicatorSummaryText(
+        _ title: String,
+        _ value: Double?,
+        color: Color
+    ) -> some View {
+        Text("\(title) \(value.map(StockChartPresentation.indicatorText) ?? "--")")
+            .foregroundStyle(color)
+    }
+
+    private func volumeIndicatorSummaryText(
+        _ title: String,
+        _ value: Double?,
+        color: Color
+    ) -> some View {
+        Text("\(title) \(value.map(StockChartPresentation.volumeText) ?? "--")")
+            .foregroundStyle(color)
     }
 
     private func summaryRow<Content: View>(
@@ -1080,8 +1336,51 @@ struct StockChartCanvas: View {
                     Text("RSI30").foregroundStyle(.orange)
                 }
             }
+
+            advancedIndicatorPlaceholder()
         }
         .appFont(.caption2.monospacedDigit())
+    }
+
+    @ViewBuilder
+    private func advancedIndicatorPlaceholder() -> some View {
+        if displayModes.contains(.kdj) {
+            indicatorPlaceholderRow([("K", .purple), ("D", .teal), ("J", .orange)])
+        }
+        if displayModes.contains(.williamsR) { indicatorPlaceholderRow([("W%R", .purple)]) }
+        if displayModes.contains(.cci) { indicatorPlaceholderRow([("CCI", .purple)]) }
+        if displayModes.contains(.dmi) {
+            indicatorPlaceholderRow([("+DI", .green), ("-DI", .red), ("ADX", .purple)])
+        }
+        if displayModes.contains(.momentum) {
+            indicatorPlaceholderRow([("MTM", .purple), ("MTMMA", .teal)])
+        }
+        if displayModes.contains(.trix) {
+            indicatorPlaceholderRow([("TRIX", .purple), ("MATRIX", .teal)])
+        }
+        if displayModes.contains(.volumeFlow) {
+            indicatorPlaceholderRow([("OBV", .purple), ("A/D", .teal)])
+        }
+        if displayModes.contains(.mfi) { indicatorPlaceholderRow([("MFI", .purple)]) }
+        if displayModes.contains(.chaikinMoneyFlow) {
+            indicatorPlaceholderRow([("CMF", .purple)])
+        }
+        if displayModes.contains(.psychologicalLine) {
+            indicatorPlaceholderRow([("PSY", .purple)])
+        }
+        if displayModes.contains(.rateOfChange) {
+            indicatorPlaceholderRow([("ROC", .purple)])
+        }
+    }
+
+    private func indicatorPlaceholderRow(
+        _ items: [(String, Color)]
+    ) -> some View {
+        summaryRow {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                Text(item.0).foregroundStyle(item.1)
+            }
+        }
     }
 
     private func lineColor() -> Color {
@@ -1121,10 +1420,14 @@ struct StockChartCanvas: View {
     }
 
     private func yAxisLabelText(_ value: Double) -> String {
-        if displayModes.contains(.volume) {
+        if !displayModes.isDisjoint(with: [.volume, .volumeFlow]) {
             return StockChartPresentation.volumeText(value)
         }
-        if displayModes.contains(.macd) {
+        if !displayModes.isDisjoint(with: [
+            .macd, .rsi, .kdj, .williamsR, .cci, .dmi, .momentum,
+            .trix, .mfi, .chaikinMoneyFlow, .psychologicalLine,
+            .rateOfChange
+        ]) {
             return StockChartPresentation.indicatorText(value)
         }
         return StockChartPresentation.plainPriceText(value)

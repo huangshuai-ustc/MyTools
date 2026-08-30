@@ -103,23 +103,17 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
             alerts: rateAlerts,
             rates: rates
         )
-        var triggeredAlertIDs = Set<UUID>()
-        for alert in rateAlerts {
-            guard alert.isEnabled else {
-                _ = alertNotifications.shouldSend(for: alert.id, condition: false)
-                continue
-            }
-            guard let value = alert.convertedValue(using: rates) else { continue }
-            guard alertNotifications.shouldSend(
-                for: alert.id,
-                condition: matchingAlertIDs.contains(alert.id)
-            ) else { continue }
-            alertNotifications.send(
+        let triggeredAlertIDs = AppStoreAlertEvaluator.dispatchAlerts(
+            alerts: rateAlerts,
+            matchingIDs: matchingAlertIDs,
+            isEnabled: \.isEnabled,
+            notifications: alertNotifications
+        ) { alert in
+            guard let value = alert.convertedValue(using: rates) else { return nil }
+            return (
                 title: "换汇价格提醒",
-                body: "\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) 约合 \(CurrencyExchangeValueFormatter.amount(value, currency: .cny))，已\(alert.direction.title) \(CurrencyExchangeValueFormatter.amount(alert.threshold, currency: .cny))。",
-                ruleID: alert.id
+                body: "\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) 约合 \(CurrencyExchangeValueFormatter.amount(value, currency: .cny))，已\(alert.direction.title) \(CurrencyExchangeValueFormatter.amount(alert.threshold, currency: .cny))。"
             )
-            triggeredAlertIDs.insert(alert.id)
         }
         disableRateAlerts(ids: triggeredAlertIDs)
     }

@@ -47,6 +47,9 @@ struct ToolBoxApp: App {
             store: store.stockStore,
             moduleSettings: moduleSettings
         )
+        // Pre-warm the A-share holiday calendar so that trading-day queries
+        // during the current session reflect the official closure/补班 schedule.
+        Task { await AShareHolidayService.shared.refreshIfNeeded() }
 #endif
     }
 

@@ -120,34 +120,35 @@ enum StockChartSeriesProcessor {
         market: StockMarket,
         at now: Date = Date()
     ) -> (visible: [StockChartPoint], indicators: [StockChartPoint]) {
-        // Preserve the provider's actual minute cadence. Only sub-minute
-        // input is normalized to one-minute OHLCV; 3/5/15-minute bars remain
-        // separate bars with their original timestamps.
         let resampledSeries = minuteNormalizedPoints(rawPoints, market: market)
         let sourceSeries = range == .fiveDays
             ? regularSessionPoints(resampledSeries, market: market)
             : resampledSeries
-        let completeSeries = pointsThroughLatestTradingDay(
-            sourceSeries,
-            market: market,
-            at: now
-        )
 
         let visible: [StockChartPoint]
         if range == .intraday {
+            // Intraday: keep only today's session.
+            let completeSeries = pointsThroughLatestTradingDay(
+                sourceSeries,
+                market: market,
+                at: now
+            )
             visible = regularSessionPoints(
                 pointsOnLatestTradingDay(completeSeries, market: market, at: now),
                 market: market
             )
         } else {
+            // Five-day: take whatever trading-day bars the provider returned,
+            // up to 5 days.  No additional truncation — include all bars on
+            // any recognised trading day, even zero-volume flat ones.
             visible = pointsOnLatestTradingDays(
-                completeSeries,
+                sourceSeries,
                 count: 5,
                 market: market,
                 at: now
             )
         }
-        return (visible, completeSeries)
+        return (visible, resampledSeries)
     }
 
     static func normalizedSnapshot(
@@ -208,6 +209,17 @@ enum StockChartSeriesProcessor {
         )
     }
 
+    /// Merges two point series by minute/day bucket, with `incoming` normally
+    /// taking precedence over `existing` for a shared bucket. The one
+    /// exception is the trading day's final regular-session bucket once it
+    /// has already been captured: a later fetch can return a same-bucket
+    /// point with a narrower OHLC range (e.g. a retry that raced the
+    /// closing-auction settlement and only saw a partial continuous-trading
+    /// print), which would silently regress the recorded close. Once a
+    /// bucket at/after the market's close is on record, only replace it with
+    /// an incoming point that is at least as complete (same or wider
+    /// high/low spread), so a worse late response can't downgrade an
+    /// already-finalized close.
     static func mergedPoints(
         _ existing: [StockChartPoint],
         with incoming: [StockChartPoint],
@@ -220,9 +232,39 @@ enum StockChartSeriesProcessor {
             pointsByBucket[seriesBucket(for: point.date, kind: kind, calendar: calendar)] = point
         }
         for point in incoming {
-            pointsByBucket[seriesBucket(for: point.date, kind: kind, calendar: calendar)] = point
+            let bucket = seriesBucket(for: point.date, kind: kind, calendar: calendar)
+            if let currentPoint = pointsByBucket[bucket],
+               kind == .intraday,
+               isFinalRegularSessionBucket(bucket, market: market, calendar: calendar),
+               !isAtLeastAsComplete(point, as: currentPoint) {
+                continue
+            }
+            pointsByBucket[bucket] = point
         }
         return pointsByBucket.values.sorted { $0.date < $1.date }
+    }
+
+    private static func isFinalRegularSessionBucket(
+        _ bucket: Date,
+        market: StockMarket,
+        calendar: Calendar
+    ) -> Bool {
+        let components = calendar.dateComponents([.hour, .minute], from: bucket)
+        guard let hour = components.hour, let minute = components.minute else { return false }
+        let localMinutes = hour * 60 + minute
+        let expectedClose: Int
+        switch market {
+        case .aShare: expectedClose = 900
+        case .hongKong, .unitedStates: expectedClose = 960
+        }
+        return localMinutes >= expectedClose - 1
+    }
+
+    private static func isAtLeastAsComplete(
+        _ candidate: StockChartPoint,
+        as recorded: StockChartPoint
+    ) -> Bool {
+        candidate.high >= recorded.high && candidate.low <= recorded.low
     }
 
     static func regularUnitedStatesSessionPoints(
@@ -301,12 +343,20 @@ enum StockChartSeriesProcessor {
             return nil
         }
         let volumes = sessionPoints.compactMap(\.volume)
+        let turnoverAmounts = sessionPoints.compactMap { point -> Double? in
+            guard let volume = point.volume, volume.isFinite,
+                  point.close.isFinite else { return nil }
+            return volume * point.close
+        }
         return StockChartSessionSummary(
             open: first.open,
             high: sessionPoints.map(\.high).max() ?? first.high,
             low: sessionPoints.map(\.low).min() ?? first.low,
             close: last.close,
             volume: volumes.isEmpty ? nil : volumes.reduce(0, +),
+            turnoverAmount: turnoverAmounts.isEmpty
+                ? nil
+                : turnoverAmounts.reduce(0, +),
             date: last.date
         )
     }
@@ -397,7 +447,12 @@ enum StockChartSeriesProcessor {
 
         let calendar = marketCalendar(market)
         let tradingDays = Set(points.map { calendar.startOfDay(for: $0.date) })
-        return tradingDays.count == 5
+        // Require at least 4 of the 5 requested trading days so a single
+        // provider response that only returned a couple of days (short by
+        // more than one session) still triggers a retry/fallback instead of
+        // being accepted as "good enough". A newly listed stock or a short
+        // post-holiday week can still legitimately fall short by one day.
+        return (4...5).contains(tradingDays.count)
     }
 
     static func weeklyPoints(
@@ -442,6 +497,10 @@ enum StockChartSeriesProcessor {
         at now: Date = Date()
     ) -> [StockChartPoint] {
         let calendar = marketCalendar(market)
+        // Collect up to `count` distinct calendar days that are recognised as
+        // trading days and for which we actually have data.  No further evidence
+        // check is applied: any bar present on a trading day is kept, even if
+        // it has zero volume and a flat price (valid for illiquid A-share stocks).
         let days = points.reversed().reduce(into: [Date]()) { result, point in
             let day = calendar.startOfDay(for: point.date)
             guard result.count < count,
@@ -449,12 +508,6 @@ enum StockChartSeriesProcessor {
                   StockMarketTradingCalendar.isTradingDay(market, on: day) else {
                 return
             }
-            let dayPoints = points.filter { calendar.isDate($0.date, inSameDayAs: day) }
-            guard hasTradingEvidence(
-                in: dayPoints,
-                isCurrentOpenDay: calendar.isDate(day, inSameDayAs: now)
-                    && StockMarketTradingCalendar.isOpen(market, at: now)
-            ) else { return }
             result.append(day)
         }
         let retainedDays = Set(days)
@@ -489,29 +542,11 @@ enum StockChartSeriesProcessor {
                   StockMarketTradingCalendar.isTradingDay(market, on: day) else {
                 continue
             }
-            let dayPoints = points.filter { calendar.isDate($0.date, inSameDayAs: day) }
-            let isCurrentOpenDay = calendar.isDate(day, inSameDayAs: now)
-                && StockMarketTradingCalendar.isOpen(market, at: now)
-            if hasTradingEvidence(in: dayPoints, isCurrentOpenDay: isCurrentOpenDay) {
-                return day
-            }
+            // Any bar present on a recognised trading day is sufficient —
+            // even zero-volume flat bars from illiquid stocks are real data.
+            return day
         }
         return nil
-    }
-
-    private static func hasTradingEvidence(
-        in points: [StockChartPoint],
-        isCurrentOpenDay: Bool
-    ) -> Bool {
-        guard !points.isEmpty else { return false }
-        if isCurrentOpenDay { return true }
-        return points.contains { point in
-            (point.volume ?? 0) > 0
-                || point.high > point.low
-                || point.open != point.close
-                || point.high != point.open
-                || point.low != point.open
-        }
     }
 
     static func historicalStartDate(

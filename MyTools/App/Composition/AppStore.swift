@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import OSLog
+#if os(iOS)
+import UIKit
+#endif
 
 private let startupLogger = Logger(
     subsystem: AppMetadata.bundleIdentifier,
@@ -61,8 +64,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private let moduleSettings: ToolModuleSettings
     private let moduleLifecycleRegistry: ModuleLifecycleRegistry
     private let moduleDataCleanupRegistry: ModuleDataCleanupRegistry
+    private let backupRestoreRegistry: BackupRestoreRegistry
     private let cloudSyncPreferences: CloudSyncPreferencesBridge
     private let defaults: UserDefaults
+    private let initialLoader: any VaultInitialLoading
     private let moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing
     private var isRestoringBackup = false
     private var isApplyingCloudChanges = false
@@ -72,6 +77,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private var retainedSecrets: [SecretVaultValue]
     private var pendingModuleDeletionSnapshot: ModuleLocalDataDeletionSnapshot?
     private var pendingModuleDeletionTask: Task<Void, Never>?
+    private var initialVaultLoadTask: Task<Void, Never>?
 
     init(
         initialVault: VaultData? = nil,
@@ -85,11 +91,13 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             ?? StockAppearanceSettings(defaults: dependencies.defaults)
         self.moduleSettings = moduleSettings
         defaults = dependencies.defaults
+        initialLoader = dependencies.initialLoader
         moduleLocalDataCacheCleaner = dependencies.moduleLocalDataCacheCleaner
         retainedVault = initialVault ?? VaultData()
         retainedSecrets = secretItems
         moduleLifecycleRegistry = ModuleLifecycleRegistry()
         moduleDataCleanupRegistry = ModuleDataCleanupRegistry()
+        backupRestoreRegistry = BackupRestoreRegistry()
         cloudSyncPreferences = CloudSyncPreferencesBridge(
             defaults: dependencies.defaults,
             moduleSettings: moduleSettings,
@@ -204,6 +212,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_DOCUMENTS
         moduleDataCleanupRegistry.register(documentsStore)
 #endif
+#if MYTOOLS_FEATURE_SECRETS
+        backupRestoreRegistry.register(secretStore)
+#endif
 #if MYTOOLS_FEATURE_STOCKS
         stockStore.attach(mutationNotifier: self)
 #endif
@@ -258,17 +269,71 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         }
 
         let defaults = SendableUserDefaults(value: dependencies.defaults)
-        let initialLoader = dependencies.initialLoader
         Task { [weak self] in
-            let cachedRatesTask = Task.detached(priority: .utility) {
+            let snapshot = await Task.detached(priority: .utility) {
                 ExchangeRateRepository.loadCachedSnapshot(defaults: defaults.value)
-            }
-            let snapshot = await Task.detached(priority: .userInitiated) {
-                initialLoader.loadVaultWithMetrics()
             }.value
             guard let self else { return }
-            self.applyInitialSnapshot(snapshot)
-            self.applyExchangeRateSnapshot(await cachedRatesTask.value)
+            self.applyExchangeRateSnapshot(snapshot)
+        }
+        startInitialVaultLoad()
+    }
+
+    /// Retries a startup load that was deferred because iOS protected data was unavailable.
+    /// Calls are idempotent so scene activation and protected-data notifications can both use it.
+    func retryInitialVaultLoadIfNeeded() {
+        guard !isInitialDataLoaded, initialVaultLoadTask == nil else { return }
+        DiagnosticLogger.shared.log(
+            .persistence,
+            "受保护数据已可访问，重新尝试载入本地档案"
+        )
+        startInitialVaultLoad()
+    }
+
+    private func startInitialVaultLoad() {
+        guard !isInitialDataLoaded, initialVaultLoadTask == nil else { return }
+#if os(iOS)
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            DiagnosticLogger.shared.log(
+                .persistence,
+                "启动时受保护数据尚不可用，等待设备解锁后载入本地档案",
+                level: .warning
+            )
+            return
+        }
+#endif
+        let loader = initialLoader
+        initialVaultLoadTask = Task { [weak self] in
+            let retryDelays: [Duration] = [
+                .milliseconds(250),
+                .milliseconds(750),
+                .seconds(2),
+                .seconds(4),
+            ]
+
+            for attempt in 0...retryDelays.count {
+                let snapshot = await Task.detached(priority: .userInitiated) {
+                    loader.loadVaultWithMetrics()
+                }.value
+                guard let self else { return }
+
+                if snapshot.failure != .protectedDataUnavailable {
+                    self.initialVaultLoadTask = nil
+                    self.applyInitialSnapshot(snapshot)
+                    return
+                }
+
+                guard attempt < retryDelays.count else {
+                    self.initialVaultLoadTask = nil
+                    DiagnosticLogger.shared.log(
+                        .persistence,
+                        "本地档案仍在等待设备解锁；App 激活或受保护数据可用时将继续重试",
+                        level: .warning
+                    )
+                    return
+                }
+                try? await Task.sleep(for: retryDelays[attempt])
+            }
         }
     }
 
@@ -380,13 +445,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     func restoreBackup(from data: Data, password: String) async throws {
         isRestoringBackup = true
-#if MYTOOLS_FEATURE_SECRETS
-        secretStore.setBackupRestoreInProgress(true)
-#endif
+        backupRestoreRegistry.notifyStarted()
         defer {
-#if MYTOOLS_FEATURE_SECRETS
-            secretStore.setBackupRestoreInProgress(false)
-#endif
+            backupRestoreRegistry.notifyFinished()
             isRestoringBackup = false
         }
         let restoredPayload: VaultBackupPayload

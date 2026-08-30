@@ -3,14 +3,14 @@ import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
-final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, ModuleDataCleanupParticipant {
+final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, ModuleDataCleanupParticipant, AttachmentManaging {
     static let notificationIdentifierPrefix = "credential-expiry-"
 
     @Published private(set) var documents: [CredentialDocument]
     @Published private(set) var fieldTemplates: [CredentialFieldTemplate]
     @Published private(set) var knownTags: [String]
 
-    private let attachmentStore: AttachmentStore
+    let attachmentStore: AttachmentStore
     private let notificationScheduler: any LocalNotificationScheduling
     private weak var moduleSettings: ToolModuleSettings?
     private weak var mutationNotifier: (any VaultMutationNotifying)?
@@ -228,24 +228,8 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         )
     }
 
-    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
-        attachmentStore.delete(attachment)
-    }
-
-    func renameAttachment(_ attachment: FileAttachment, to fileName: String) throws -> FileAttachment {
-        try attachmentStore.rename(attachment, to: fileName)
-    }
-
-    func restoreAttachmentLocation(
-        _ attachment: FileAttachment,
-        to original: FileAttachment
-    ) throws {
-        try attachmentStore.restoreLocation(of: attachment, to: original)
-    }
-
-    func attachmentURL(for attachment: FileAttachment) -> URL {
-        attachmentStore.url(for: attachment)
-    }
+    // deleteUncommittedAttachment, renameAttachment, restoreAttachmentLocation, attachmentURL
+    // are provided by the AttachmentManaging protocol extension.
 
     func attachmentData(for attachment: FileAttachment) throws -> Data {
         try attachmentStore.data(for: attachment)
@@ -341,27 +325,8 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         }
     }
 
-    private func appendFinding(
-        to findings: inout [RedundantDataFinding],
-        ruleID: String,
-        title: String,
-        detail: String,
-        recordCount: Int,
-        fieldCount: Int
-    ) {
-        guard fieldCount > 0 else { return }
-        findings.append(RedundantDataFinding(
-            ruleID: ruleID,
-            module: .documents,
-            title: title,
-            detail: detail,
-            affectedRecordCount: recordCount,
-            affectedFieldCount: fieldCount
-        ))
-    }
-
     private func normalizedText(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppTagSupport.trimmed(value)
     }
 
     private func normalizedTags(_ tags: [String]) -> [String] {

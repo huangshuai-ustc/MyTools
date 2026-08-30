@@ -3,12 +3,12 @@ import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
-final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDataCleanupParticipant {
+final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDataCleanupParticipant, AttachmentManaging {
     @Published private(set) var medicalRecords: [MedicalRecord]
     @Published private(set) var hospitalProfiles: [HospitalProfile]
     @Published private(set) var knownTags: [String]
 
-    private let attachmentStore: AttachmentStore
+    let attachmentStore: AttachmentStore
     private weak var moduleSettings: ToolModuleSettings?
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
@@ -266,27 +266,8 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         )
     }
 
-    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
-        attachmentStore.delete(attachment)
-    }
-
-    func renameAttachment(
-        _ attachment: FileAttachment,
-        to fileName: String
-    ) throws -> FileAttachment {
-        try attachmentStore.rename(attachment, to: fileName)
-    }
-
-    func restoreAttachmentLocation(
-        _ attachment: FileAttachment,
-        to original: FileAttachment
-    ) throws {
-        try attachmentStore.restoreLocation(of: attachment, to: original)
-    }
-
-    func attachmentURL(for attachment: FileAttachment) -> URL {
-        attachmentStore.url(for: attachment)
-    }
+    // deleteUncommittedAttachment, renameAttachment, restoreAttachmentLocation, attachmentURL
+    // are provided by the AttachmentManaging protocol extension.
 
     private var isModuleVisible: Bool {
         moduleSettings?.isVisible(.healthRecords) ?? true
@@ -296,25 +277,6 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         (record.hospitalLevel == .unspecified ? 0 : 1)
             + (record.hospitalGrade == .unspecified ? 0 : 1)
             + (record.hospitalCategory == .unspecified ? 0 : 1)
-    }
-
-    private func appendFinding(
-        to findings: inout [RedundantDataFinding],
-        ruleID: String,
-        title: String,
-        detail: String,
-        recordCount: Int,
-        fieldCount: Int
-    ) {
-        guard fieldCount > 0 else { return }
-        findings.append(RedundantDataFinding(
-            ruleID: ruleID,
-            module: .healthRecords,
-            title: title,
-            detail: detail,
-            affectedRecordCount: recordCount,
-            affectedFieldCount: fieldCount
-        ))
     }
 
     private func didMutate() {

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 import Testing
 @testable import MyTools
 
@@ -22,6 +23,38 @@ private struct MissingVaultEncryptionKey: VaultEncryptionKeyProviding {
 private struct ThrowingVaultEncryptionKey: VaultEncryptionKeyProviding {
     func loadKey() throws -> SymmetricKey? { throw VaultCryptoError.keyDerivationFailed }
     func createAndStoreKey() throws -> SymmetricKey { throw VaultCryptoError.keyDerivationFailed }
+}
+
+private struct TemporarilyUnavailableVaultEncryptionKey: VaultEncryptionKeyProviding {
+    func loadKey() throws -> SymmetricKey? {
+        throw VaultEncryptionKeyError.keychainReadFailed(errSecInteractionNotAllowed)
+    }
+
+    func createAndStoreKey() throws -> SymmetricKey {
+        throw VaultEncryptionKeyError.keychainWriteFailed(errSecInteractionNotAllowed)
+    }
+}
+
+private final class RecoveringVaultEncryptionKey: VaultEncryptionKeyProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private let key = SymmetricKey(data: Data(repeating: 9, count: 32))
+    private var remainingFailures: Int
+
+    init(failureCount: Int) {
+        remainingFailures = failureCount
+    }
+
+    func loadKey() throws -> SymmetricKey? {
+        try lock.withLock {
+            if remainingFailures > 0 {
+                remainingFailures -= 1
+                throw VaultEncryptionKeyError.keychainReadFailed(errSecInteractionNotAllowed)
+            }
+            return key
+        }
+    }
+
+    func createAndStoreKey() throws -> SymmetricKey { key }
 }
 
 private struct PlainVaultFixture: Codable {
@@ -138,7 +171,49 @@ struct SecureStoreEncryptionTests {
         #expect(VaultCrypto.isEncryptedEnvelope(try Data(contentsOf: vaultURL)))
     }
 
-    @Test func plaintextVaultWithoutUsableKeyStillLoadsAndSavesPlaintext() throws {
+    @Test func temporarilyUnavailableKeyDefersEncryptedLoadAndPreservesFile() throws {
+        let (savingStore, vaultURL, directory) = makeStore(
+            keyProvider: FixedVaultEncryptionKey()
+        )
+        try savingStore.saveVault(sampleVault(marker: "受保护数据测试"))
+        let original = try Data(contentsOf: vaultURL)
+
+        let unavailableStore = SecureStore(
+            applicationSupportDirectory: directory,
+            keyProvider: TemporarilyUnavailableVaultEncryptionKey()
+        )
+        let result = unavailableStore.loadVaultWithMetrics()
+
+        #expect(!result.canPersist)
+        #expect(result.failure == .protectedDataUnavailable)
+        #expect(try Data(contentsOf: vaultURL) == original)
+    }
+
+    @Test func unavailableKeyNeverDowngradesEncryptedVaultToPlaintext() throws {
+        let (savingStore, vaultURL, directory) = makeStore(
+            keyProvider: FixedVaultEncryptionKey()
+        )
+        try savingStore.saveVault(sampleVault(marker: "原始加密内容"))
+        let original = try Data(contentsOf: vaultURL)
+
+        let unavailableStore = SecureStore(
+            applicationSupportDirectory: directory,
+            keyProvider: TemporarilyUnavailableVaultEncryptionKey()
+        )
+        var didThrow = false
+        do {
+            try unavailableStore.saveVault(sampleVault(marker: "不应明文写入"))
+        } catch {
+            didThrow = true
+            #expect(isTemporaryVaultKeyAccessError(error))
+        }
+
+        #expect(didThrow)
+        #expect(try Data(contentsOf: vaultURL) == original)
+        #expect(VaultCrypto.isEncryptedEnvelope(try Data(contentsOf: vaultURL)))
+    }
+
+    @Test func plaintextVaultWithoutUsableKeyLoadsButRefusesUnencryptedSave() throws {
         let (store, vaultURL, _) = makeStore(keyProvider: ThrowingVaultEncryptionKey())
         let marker = "明文降级测试"
         let fixture = PlainVaultFixture(vault: sampleVault(marker: marker), secrets: [])
@@ -153,14 +228,12 @@ struct SecureStoreEncryptionTests {
         #expect(loadResult.source.contains("未加密"))
         #expect(loadResult.vault.billRecords.first?.merchant == marker)
 
-        try store.saveVault(sampleVault(marker: "明文降级保存"))
-        let raw = try Data(contentsOf: vaultURL)
-        #expect(!VaultCrypto.isEncryptedEnvelope(raw))
-        #expect(String(data: raw, encoding: .utf8)?.contains("明文降级保存") == true)
-
-        let reloaded = store.loadVaultWithMetrics()
-        #expect(reloaded.canPersist)
-        #expect(reloaded.vault.billRecords.first?.merchant == "明文降级保存")
+        #expect(throws: VaultCryptoError.self) {
+            try store.saveVault(sampleVault(marker: "不应明文保存"))
+        }
+        let preserved = try Data(contentsOf: vaultURL)
+        #expect(String(data: preserved, encoding: .utf8)?.contains(marker) == true)
+        #expect(String(data: preserved, encoding: .utf8)?.contains("不应明文保存") != true)
     }
 
     @Test func corruptedPlaintextVaultFailsClosed() throws {
@@ -192,6 +265,25 @@ struct SecureStoreEncryptionTests {
         let result = store.loadVaultWithMetrics()
         #expect(result.canPersist)
         #expect(!result.vault.billRecords.isEmpty)
+        #expect(VaultCrypto.isEncryptedEnvelope(try Data(contentsOf: vaultURL)))
+    }
+
+    @Test func persistenceCoordinatorRetriesTemporaryKeychainFailure() async throws {
+        let keyProvider = RecoveringVaultEncryptionKey(failureCount: 1)
+        let (store, vaultURL, _) = makeStore(keyProvider: keyProvider)
+        let coordinator = VaultPersistenceCoordinator(
+            secureStore: store,
+            temporaryRetryDelay: 0.01
+        )
+
+        coordinator.schedule(sampleVault(marker: "自动重试写入"))
+        try await Task.sleep(for: .milliseconds(100))
+
+        let flushError = await coordinator.flush()
+        #expect(flushError == nil)
+        let result = store.loadVaultWithMetrics()
+        #expect(result.canPersist)
+        #expect(result.vault.billRecords.first?.merchant == "自动重试写入")
         #expect(VaultCrypto.isEncryptedEnvelope(try Data(contentsOf: vaultURL)))
     }
 }

@@ -26,10 +26,16 @@ struct EastmoneyStockFundamentalProvider: StockFundamentalProviding {
     private struct Payload: Decodable {
         let priceEarningsRatio: FlexibleNumber?
         let priceBookRatio: FlexibleNumber?
+        let turnoverAmount: FlexibleNumber?
+        let turnoverRate: FlexibleNumber?
+        let marketCapitalization: FlexibleNumber?
 
         private enum CodingKeys: String, CodingKey {
             case priceEarningsRatio = "f162"
             case priceBookRatio = "f167"
+            case turnoverAmount = "f6"
+            case turnoverRate = "f8"
+            case marketCapitalization = "f116"
         }
     }
 
@@ -74,7 +80,7 @@ struct EastmoneyStockFundamentalProvider: StockFundamentalProviding {
         )
         components?.queryItems = [
             URLQueryItem(name: "secid", value: identifier),
-            URLQueryItem(name: "fields", value: "f162,f167")
+            URLQueryItem(name: "fields", value: "f6,f8,f116,f162,f167")
         ]
         guard let url = components?.url else { return nil }
         let request = StockQuoteProviderSupport.request(
@@ -93,15 +99,29 @@ struct EastmoneyStockFundamentalProvider: StockFundamentalProviding {
             asOfDate: now(),
             source: "东方财富",
             priceEarningsRatioTTM: ratio(payload.priceEarningsRatio?.value),
-            priceBookRatioMRQ: ratio(payload.priceBookRatio?.value)
+            priceBookRatioMRQ: ratio(payload.priceBookRatio?.value),
+            marketCapitalization: positiveValue(payload.marketCapitalization?.value),
+            turnoverAmount: positiveValue(payload.turnoverAmount?.value),
+            turnoverRate: percentage(payload.turnoverRate?.value)
         )
-        return snapshot.availableMetricCount > 0 ? snapshot : nil
+        return snapshot.displayMetricCount > 0 ? snapshot : nil
     }
 
     private func ratio(_ value: Double?) -> Double? {
         guard let value, value.isFinite, value > 0 else { return nil }
         // Eastmoney's f162/f167 ratio fields are encoded as hundredths.
         return value / 100
+    }
+
+    private func positiveValue(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    private func percentage(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value >= 0 else { return nil }
+        // Eastmoney f8 is a percentage encoded in hundredths (1.23% = 123).
+        return value / 10_000
     }
 }
 
@@ -232,7 +252,14 @@ struct YahooStockFundamentalProvider: StockFundamentalProviding {
                 value: [
                     "trailingPeRatio",
                     "trailingPbRatio",
+                    "trailingPegRatio",
+                    "trailingPsRatio",
                     "trailingDividendYield",
+                    "trailingDilutedEPS",
+                    "trailingMarketCap",
+                    "trailingEnterpriseValue",
+                    "trailingEBITDA",
+                    "trailingOperatingCashFlow",
                     "annualTotalRevenue",
                     "annualNetIncome",
                     "annualStockholdersEquity"
@@ -265,14 +292,28 @@ struct YahooStockFundamentalProvider: StockFundamentalProviding {
 
         let trailingPE = latestMetric("trailingPeRatio", in: results)
         let trailingPB = latestMetric("trailingPbRatio", in: results)
+        let trailingPEG = latestMetric("trailingPegRatio", in: results)
+        let trailingPS = latestMetric("trailingPsRatio", in: results)
         let dividendYield = latestMetric("trailingDividendYield", in: results)
+        let earningsPerShare = latestMetric("trailingDilutedEPS", in: results)
+        let marketCapitalization = latestMetric("trailingMarketCap", in: results)
+        let enterpriseValue = latestMetric("trailingEnterpriseValue", in: results)
+        let ebitda = latestMetric("trailingEBITDA", in: results)
+        let operatingCashFlow = latestMetric("trailingOperatingCashFlow", in: results)
         let revenue = annualMetrics("annualTotalRevenue", in: results)
         let netIncome = annualMetrics("annualNetIncome", in: results)
         let equity = latestMetric("annualStockholdersEquity", in: results)
         let asOfDate = [
             trailingPE?.date,
             trailingPB?.date,
+            trailingPEG?.date,
+            trailingPS?.date,
             dividendYield?.date,
+            earningsPerShare?.date,
+            marketCapitalization?.date,
+            enterpriseValue?.date,
+            ebitda?.date,
+            operatingCashFlow?.date,
             revenue.last?.date,
             netIncome.last?.date,
             equity?.date
@@ -282,6 +323,17 @@ struct YahooStockFundamentalProvider: StockFundamentalProviding {
             source: "Yahoo Finance",
             priceEarningsRatioTTM: positiveValue(trailingPE?.value),
             priceBookRatioMRQ: positiveValue(trailingPB?.value),
+            priceEarningsGrowthRatio: positiveValue(trailingPEG?.value),
+            priceCashFlowRatioTTM: ratio(
+                numerator: marketCapitalization?.value,
+                denominator: operatingCashFlow?.value
+            ),
+            priceSalesRatioTTM: positiveValue(trailingPS?.value),
+            enterpriseValueToEBITDA: ratio(
+                numerator: enterpriseValue?.value,
+                denominator: ebitda?.value
+            ),
+            earningsPerShareTTM: finiteValue(earningsPerShare?.value),
             dividendYield: positiveValue(dividendYield?.value),
             returnOnEquity: ratio(
                 numerator: latestValue(netIncome),
@@ -292,9 +344,10 @@ struct YahooStockFundamentalProvider: StockFundamentalProviding {
                 denominator: latestValue(revenue)
             ),
             revenueGrowth: growth(revenue),
-            earningsGrowth: growth(netIncome)
+            earningsGrowth: growth(netIncome),
+            marketCapitalization: positiveValue(marketCapitalization?.value)
         )
-        return snapshot.availableMetricCount > 0 ? snapshot : nil
+        return snapshot.displayMetricCount > 0 ? snapshot : nil
     }
 
     private func latestMetric(
@@ -326,6 +379,11 @@ struct YahooStockFundamentalProvider: StockFundamentalProviding {
 
     private func positiveValue(_ value: Double?) -> Double? {
         guard let value, value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    private func finiteValue(_ value: Double?) -> Double? {
+        guard let value, value.isFinite else { return nil }
         return value
     }
 

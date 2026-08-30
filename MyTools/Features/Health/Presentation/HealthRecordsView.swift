@@ -2,12 +2,14 @@
 import SwiftUI
 
 struct HealthRecordsView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var store: HealthStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var selectedTag = ""
     @State private var selectedYear: Int?
     @State private var editingRecord: MedicalRecord?
+    @State private var pagination = AppListPagination(pageSize: HealthRecordsView.pageSize)
 
     private var presentation: MedicalRecordsPresentation {
         MedicalRecordsPresentation(
@@ -28,6 +30,8 @@ struct HealthRecordsView: View {
     var body: some View {
         let presentation = presentation
         let visitGroups = presentation.visitGroups
+        let pagedVisitGroups = pagination.visibleItems(from: visitGroups)
+        let yearGroups = presentation.yearGroups(from: pagedVisitGroups)
         List {
             Section("健康总览") {
                 Picker("统计范围", selection: $selectedYear) {
@@ -76,7 +80,7 @@ struct HealthRecordsView: View {
                 }
             }
 
-            ForEach(presentation.yearGroups) { group in
+            ForEach(yearGroups) { group in
                 Section {
                     ForEach(group.visitGroups) { visitGroup in
                         recordLink(
@@ -86,15 +90,26 @@ struct HealthRecordsView: View {
                             relatedPharmacyPurchaseCount: visitGroup.pharmacyPurchases.count,
                             displayedTotalCost: visitGroup.costSummary.totalCost
                         )
+                        .onAppear {
+                            pagination.loadMoreIfNeeded(
+                                currentItemID: visitGroup.id,
+                                lastVisibleItemID: pagedVisitGroups.last?.id,
+                                totalItemCount: visitGroups.count
+                            )
+                        }
                     }
                 } header: {
                     Text(verbatim: "\(group.year) 年")
                 }
             }
+
         }
         .appNavigationTitle("健康档案")
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索机构、药房、诊断、费用项目或标签")
+        .onChange(of: query) { _, _ in pagination.reset() }
+        .onChange(of: selectedTag) { _, _ in pagination.reset() }
+        .onChange(of: selectedYear) { _, _ in pagination.reset() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 AdminEditAccessButton()

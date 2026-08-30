@@ -140,6 +140,97 @@ struct StockChartProviderParsingTests {
         #expect(snapshot.points.last?.volume == 200)
     }
 
+    @Test func yahooProviderKeepsFourPMBarInPostMarketAndUsesOfficialClose() async throws {
+        let timeZone = "America/New_York"
+        let regularStart = StockChartFixtures.date(
+            2026,
+            8,
+            28,
+            hour: 15,
+            minute: 58,
+            timeZone: timeZone
+        )
+        let regularEnd = StockChartFixtures.date(
+            2026,
+            8,
+            28,
+            hour: 15,
+            minute: 59,
+            timeZone: timeZone
+        )
+        let postMarketStart = StockChartFixtures.date(
+            2026,
+            8,
+            28,
+            hour: 16,
+            timeZone: timeZone
+        )
+        let postMarketNext = StockChartFixtures.date(
+            2026,
+            8,
+            28,
+            hour: 16,
+            minute: 1,
+            timeZone: timeZone
+        )
+        let officialCloseTime = postMarketStart.addingTimeInterval(36)
+        let payload: [String: Any] = [
+            "chart": [
+                "result": [[
+                    "meta": [
+                        "currency": "USD",
+                        "symbol": "BABA",
+                        "longName": "Alibaba Group Holding Limited",
+                        "chartPreviousClose": 116.31,
+                        "regularMarketPrice": 118.90,
+                        "regularMarketTime": officialCloseTime.timeIntervalSince1970
+                    ],
+                    "timestamp": [
+                        regularStart,
+                        regularEnd,
+                        postMarketStart,
+                        postMarketNext
+                    ].map(\.timeIntervalSince1970),
+                    "indicators": [
+                        "quote": [[
+                            "open": [118.70, 118.73, 118.89, 118.64],
+                            "high": [118.82, 118.89, 118.89, 118.66],
+                            "low": [118.69, 118.71, 118.01, 118.62],
+                            "close": [118.80, 118.89, 118.64, 118.63],
+                            "volume": [100_000, 236_798, 3_163, 0]
+                        ]]
+                    ]
+                ]]
+            ]
+        ]
+        let provider = YahooStockChartProvider(
+            httpClient: StubStockChartHTTPClient(responseData: try json(payload))
+        )
+
+        let snapshot = try await provider.fetchChart(for: StockChartRequest(
+            stock: StockHolding(
+                market: .unitedStates,
+                symbol: "BABA",
+                name: "阿里巴巴"
+            ),
+            symbol: "BABA",
+            range: .intraday
+        ))
+
+        #expect(snapshot.points.map(\.date) == [regularStart, regularEnd])
+        #expect(snapshot.points.last?.close == 118.90)
+        #expect(snapshot.points.last?.high == 118.90)
+        #expect(snapshot.postMarketPoints.map(\.date) == [postMarketStart, postMarketNext])
+        #expect(snapshot.postMarketPoints.first?.close == 118.64)
+        #expect(
+            StockChartSeriesProcessor.currentSessionSummary(
+                from: snapshot.points,
+                market: .unitedStates,
+                at: postMarketNext
+            )?.close == 118.90
+        )
+    }
+
     @Test func eastmoneyProviderParsesKlineRowsAndFlexiblePreviousClose() async throws {
         let lines: [String] = (1...20).map { day in
             let dayText = day < 10 ? "0\(day)" : "\(day)"

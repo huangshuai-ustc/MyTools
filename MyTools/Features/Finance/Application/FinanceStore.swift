@@ -3,13 +3,13 @@ import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
-final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
+final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, AttachmentManaging {
     @Published private(set) var accounts: [BankAccount]
     @Published private(set) var cards: [BankCard]
     @Published private(set) var domesticLoginFieldTemplates: [BankLoginFieldTemplate]
     @Published private(set) var overseasLoginFieldTemplates: [BankLoginFieldTemplate]
 
-    private let attachmentStore: AttachmentStore
+    let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
     var cleanupModule: ToolModule { .personalFinance }
@@ -33,11 +33,15 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
     }
 
     var currentCardCount: Int {
-        VaultData(accounts: accounts, cards: cards).currentCardCount
+        cards.lazy.filter { $0.status != .closed }.count
     }
 
     var currentBankCount: Int {
-        VaultData(accounts: accounts, cards: cards).currentBankCount
+        let cardsByAccountID = Dictionary(grouping: cards) { $0.accountID }
+        return accounts.lazy.filter { account in
+            let linkedCards = cardsByAccountID[account.id] ?? []
+            return !account.isInactiveFinanceArchive(cards: linkedCards)
+        }.count
     }
 
     func attach(mutationNotifier: any VaultMutationNotifying) {
@@ -207,20 +211,8 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
         return attachment
     }
 
-    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
-        attachmentStore.delete(attachment)
-    }
-
-    func renameAttachment(
-        _ attachment: FileAttachment,
-        to fileName: String
-    ) throws -> FileAttachment {
-        try attachmentStore.rename(attachment, to: fileName)
-    }
-
-    func attachmentURL(for attachment: FileAttachment) -> URL {
-        attachmentStore.url(for: attachment)
-    }
+    // deleteUncommittedAttachment, renameAttachment, attachmentURL
+    // are provided by the AttachmentManaging protocol extension.
 
     private func didMutate() {
         mutationNotifier?.moduleStoreDidMutate()
@@ -249,24 +241,6 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant {
         ].filter { !$0.isEmpty }.count
     }
 
-    private func appendFinding(
-        to findings: inout [RedundantDataFinding],
-        ruleID: String,
-        title: String,
-        detail: String,
-        recordCount: Int,
-        fieldCount: Int
-    ) {
-        guard fieldCount > 0 else { return }
-        findings.append(RedundantDataFinding(
-            ruleID: ruleID,
-            module: .personalFinance,
-            title: title,
-            detail: detail,
-            affectedRecordCount: recordCount,
-            affectedFieldCount: fieldCount
-        ))
-    }
 }
 
 #endif

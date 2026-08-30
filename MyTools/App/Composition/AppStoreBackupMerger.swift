@@ -20,7 +20,24 @@ enum AppStoreBackupMerger {
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         if modules.contains(.myStocks) {
-            merged.stocks = mergeByID(local: localVault.stocks, imported: imported.vault.stocks)
+            // Sanitize incoming stock holdings before merging: reject any holding
+            // whose transaction sequence would produce a negative position so that
+            // malformed backup data cannot corrupt the local portfolio or place a
+            // stock into an indeterminate listState.
+            let rejectedStockIDs = imported.vault.stocks
+                .filter { !$0.hasValidTransactionOrder }
+                .map(\.id)
+            if !rejectedStockIDs.isEmpty {
+                DiagnosticLogger.shared.log(
+                    .backup,
+                    "备份导入拒绝了 \(rejectedStockIDs.count) 条非法持仓记录（交易顺序会导致负持仓）：\(rejectedStockIDs.map(\.uuidString).joined(separator: ","))",
+                    level: .warning
+                )
+            }
+            let validImportedStocks = imported.vault.stocks.filter {
+                $0.hasValidTransactionOrder
+            }
+            merged.stocks = mergeByID(local: localVault.stocks, imported: validImportedStocks)
             merged.stockPriceAlerts = mergeByID(
                 local: localVault.stockPriceAlerts,
                 imported: imported.vault.stockPriceAlerts

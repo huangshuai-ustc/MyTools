@@ -18,11 +18,13 @@ struct StockInvestmentScoreModelTests {
             StockInvestmentScoreInput(pricePoints: points)
         ))
 
-        #expect(score.modelVersion == "3.0.0")
+        #expect(score.modelVersion == "4.0.0")
         #expect((0...100).contains(score.value))
         #expect((0...100).contains(score.unadjustedValue))
         #expect(score.sampleCount == 120)
-        #expect(score.factors.count == 9)
+        #expect(score.factors.count == 10)
+        #expect(score.factors.map(\.kind).contains(.oscillator))
+        #expect(Set(score.factors.map(\.kind)).count == score.factors.count)
     }
 
     @Test func fundamentalsChangeInvestmentOpportunityAndConfidence() throws {
@@ -81,6 +83,63 @@ struct StockInvestmentScoreModelTests {
         ))
 
         #expect(rising.value > falling.value)
+    }
+
+    @Test func missingVolumeKeepsCapitalFlowNeutralWithoutBlockingScore() throws {
+        let start = StockChartFixtures.date(2025, 1, 1)
+        let points = (0..<120).map { index in
+            let close = 100 + Double(index) * 0.2
+            return StockChartFixtures.point(
+                at: start.addingTimeInterval(TimeInterval(index * 86_400)),
+                open: close - 0.1,
+                high: close + 0.5,
+                low: close - 0.5,
+                close: close,
+                volume: nil
+            )
+        }
+
+        let score = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(pricePoints: points)
+        ))
+        let capitalFlow = try #require(score.factors.first { $0.kind == .volume })
+
+        #expect(capitalFlow.evidence == 0)
+        #expect(capitalFlow.summary.contains("不足"))
+    }
+
+    @Test func addedValuationMetricsContributeWithoutLegacyRatios() throws {
+        let points = pricePoints(count: 150, direction: 0.1)
+        let favorable = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(
+                pricePoints: points,
+                fundamentals: StockFundamentalSnapshot(
+                    asOfDate: points.last!.date,
+                    priceEarningsGrowthRatio: 1,
+                    priceCashFlowRatioTTM: 8,
+                    priceSalesRatioTTM: 1.5,
+                    enterpriseValueToEBITDA: 8,
+                    earningsPerShareTTM: 2
+                )
+            )
+        ))
+        let unfavorable = try #require(StockInvestmentScoreModel.calculate(
+            StockInvestmentScoreInput(
+                pricePoints: points,
+                fundamentals: StockFundamentalSnapshot(
+                    asOfDate: points.last!.date,
+                    priceEarningsGrowthRatio: 4,
+                    priceCashFlowRatioTTM: 45,
+                    priceSalesRatioTTM: 15,
+                    enterpriseValueToEBITDA: 35,
+                    earningsPerShareTTM: -2
+                )
+            )
+        ))
+
+        #expect(favorable.value > unfavorable.value)
+        #expect(favorable.fundamentalMetricCount == 5)
+        #expect(unfavorable.fundamentalMetricCount == 5)
     }
 
     @Test func candlestickFactorDistinguishesBullishAndBearishEngulfing() throws {

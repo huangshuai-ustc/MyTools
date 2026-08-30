@@ -157,18 +157,18 @@ struct AccountDetailView: View {
 
         List {
             Section("账户概览") {
-                LabeledContent("银行类型") {
+                AppLabeledContentRow("银行类型") {
                     BankRegionBadge(region: account.region)
                         .copyableText(account.region.title)
                 }
                 DetailValueRow(title: "银行", value: account.bankName)
                 if account.isOnlineBank {
-                    LabeledContent(account.region == .domestic ? "开户网点" : "分行/网点") {
-                        Label("网络银行", systemImage: "network")
-                            .foregroundStyle(.secondary)
-                    }
+                    DetailValueRow(
+                        title: account.region == .domestic ? "开户网点" : "分行/网点",
+                        value: "网络银行"
+                    )
                 } else {
-                    LabeledContent(account.region == .domestic ? "开户网点" : "分行/网点") {
+                    AppLabeledContentRow(account.region == .domestic ? "开户网点" : "分行/网点") {
                         if auth.isAdmin {
                             Button {
                                 editingBranchLocation = account
@@ -192,11 +192,8 @@ struct AccountDetailView: View {
                         }
                     }
                 }
-                if !account.name.isEmpty {
-                    DetailValueRow(title: "备注名称", value: account.name)
-                }
-                LabeledContent("状态") { AccountStatusText(status: account.status) }
-                LabeledContent("档案统计") {
+                AppLabeledContentRow("状态") { AccountStatusText(status: account.status) }
+                AppLabeledContentRow("档案统计") {
                     Text(accountSummary(account, cards: allCards))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
@@ -693,9 +690,6 @@ struct AccountEditorView: View {
                         )
                     }
                 }
-            }
-            LabeledContent("备注名称：") {
-                IMESafeTextField(prompt: "可选", text: $draft.account.name, alignment: .trailing)
             }
             if !draft.account.isOnlineBank {
                 Text(draft.account.region == .domestic

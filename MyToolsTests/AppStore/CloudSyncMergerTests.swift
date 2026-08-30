@@ -6,7 +6,7 @@ import Testing
 struct CloudSyncMergerTests {
     @Test func snapshotContainsOnlyEnabledModuleEntities() throws {
         var account = BankAccount()
-        account.name = "Account"
+        account.bankName = "Account"
         var stock = StockHolding()
         stock.symbol = "TEST"
         var record = MedicalRecord()
@@ -165,7 +165,7 @@ struct CloudSyncMergerTests {
 
     @Test func preferencesDoNotMutateVaultEntities() throws {
         var account = BankAccount()
-        account.name = "Retained"
+        account.bankName = "Retained"
 
         let result = try CloudSyncMerger.apply(
             [
@@ -218,7 +218,7 @@ struct CloudSyncMergerTests {
         #expect(!repeatedUpgrade)
     }
 
-    @Test func remoteRebuildResetsOnlyCloudSyncState() {
+    @Test func accountChangeResetsOnlyCloudSyncState() {
         let id = UUID()
         let key = CloudSyncItem.key(kind: .billRecord, id: id)
         var document = CloudSyncStoredDocument(
@@ -238,16 +238,12 @@ struct CloudSyncMergerTests {
             accountRecordName: "old-account"
         )
 
-        document.resetForRemoteRebuild(
-            accountRecordName: "current-account",
-            rebuildGeneration: 7
-        )
+        document.resetForAccountChange(accountRecordName: "current-account")
 
         #expect(document.entries.isEmpty)
         #expect(document.engineState == nil)
         #expect(document.deviceID == "local-device")
         #expect(document.accountRecordName == "current-account")
-        #expect(document.rebuildGeneration == 7)
         #expect(
             document.reconciliationVersion
                 == CloudSyncStoredDocument.currentReconciliationVersion
@@ -389,11 +385,11 @@ struct CloudSyncMergerTests {
 
     @Test func remoteRecordUpdatesOnlyItsMatchingEntity() throws {
         var account = BankAccount()
-        account.name = "Before"
+        account.bankName = "Before"
         var otherAccount = BankAccount()
-        otherAccount.name = "Other"
+        otherAccount.bankName = "Other"
         var remoteAccount = account
-        remoteAccount.name = "After"
+        remoteAccount.bankName = "After"
 
         let payload = try CloudSyncCoding.encoder().encode(remoteAccount)
         let result = try CloudSyncMerger.apply(
@@ -402,7 +398,7 @@ struct CloudSyncMergerTests {
             secrets: []
         )
 
-        #expect(result.vault.accounts.map(\.name) == ["After", "Other"])
+        #expect(result.vault.accounts.map(\.bankName) == ["After", "Other"])
     }
 
     @Test func remoteDeletionRemovesOnlyTheMatchingRecord() throws {

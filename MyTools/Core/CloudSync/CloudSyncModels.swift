@@ -108,12 +108,6 @@ struct CloudSyncSnapshot: Sendable {
     static let empty = CloudSyncSnapshot(items: [])
 }
 
-struct CloudSyncRebuildLease: Sendable, Equatable {
-    let generation: Int64
-    let ownerDeviceID: String
-    let lockedUntil: Date
-}
-
 enum CloudSyncChange: Sendable {
     case upsert(kind: CloudSyncEntityKind, id: UUID, payload: Data)
     case delete(kind: CloudSyncEntityKind, id: UUID)
@@ -549,6 +543,16 @@ enum CloudSyncMerger {
                 case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS
                     var incoming = try decoder.decode(StockHolding.self, from: payload)
+                    // Reject incoming holdings that would produce a negative position.
+                    // A malformed CloudKit record must not overwrite a valid local entry.
+                    guard incoming.hasValidTransactionOrder else {
+                        DiagnosticLogger.shared.log(
+                            .backup,
+                            "CloudKit 同步拒绝了非法持仓记录（交易顺序会导致负持仓）：\(incoming.id.uuidString)",
+                            level: .warning
+                        )
+                        break
+                    }
                     if let local = vault.stocks.first(where: { $0.id == incoming.id }) {
                         incoming.latestPrice = local.latestPrice
                         incoming.previousClose = local.previousClose

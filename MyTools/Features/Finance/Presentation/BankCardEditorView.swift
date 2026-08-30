@@ -125,7 +125,7 @@ struct CardEditorView: View {
                     }
                 }
                 Section {
-                    Text("归属账户：\(account.name.isEmpty ? "未命名账户" : account.name)")
+                    Text("归属银行：\(account.bankName.isEmpty ? "未命名银行" : account.bankName)")
                         .appFont(.footnote).foregroundStyle(.secondary)
                 }
             }

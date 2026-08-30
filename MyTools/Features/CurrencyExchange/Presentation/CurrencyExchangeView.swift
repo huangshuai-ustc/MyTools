@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct CurrencyExchangeView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var store: CurrencyExchangeStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @EnvironmentObject private var auth: AuthManager
@@ -11,6 +12,7 @@ struct CurrencyExchangeView: View {
     @State private var primaryCurrencyFilter: CurrencyCode?
     @State private var pairedCurrencyFilter: CurrencyCode?
     @State private var query = ""
+    @State private var pagination = AppListPagination(pageSize: CurrencyExchangeView.pageSize)
 
     private var allRecords: [CurrencyExchangeRecord] {
         // 默认按换汇日期降序排列，最近日期显示在最前面。
@@ -59,7 +61,7 @@ struct CurrencyExchangeView: View {
     }
 
     private var recordGroups: [CurrencyExchangeMonthGroup] {
-        let grouped = Dictionary(grouping: records) { record in
+        let grouped = Dictionary(grouping: pagedRecords) { record in
             CurrencyExchangeMonthGroup.calendar.date(
                 from: CurrencyExchangeMonthGroup.calendar.dateComponents([.year, .month], from: record.exchangedAt)
             ) ?? record.exchangedAt
@@ -67,6 +69,10 @@ struct CurrencyExchangeView: View {
         return grouped
             .map { CurrencyExchangeMonthGroup(month: $0.key, records: $0.value) }
             .sorted { $0.month > $1.month }
+    }
+
+    private var pagedRecords: [CurrencyExchangeRecord] {
+        pagination.visibleItems(from: records)
     }
 
     var body: some View {
@@ -132,6 +138,7 @@ struct CurrencyExchangeView: View {
                     if auth.isAdmin {
                         ForEach(group.records) { record in
                             recordButton(record)
+                                .onAppear { loadMoreIfNeeded(record) }
                         }
                     } else {
                         ForEach(group.records) { record in
@@ -140,6 +147,7 @@ struct CurrencyExchangeView: View {
                                 buyingRates: exchangeRateStore.renminbiBuyingRates
                             )
                             .appListRowStyle()
+                            .onAppear { loadMoreIfNeeded(record) }
                         }
                     }
                 }
@@ -234,6 +242,11 @@ struct CurrencyExchangeView: View {
                 self.pairedCurrencyFilter = nil
             }
         }
+        .onChange(of: query) { _, _ in pagination.reset() }
+        .onChange(of: selectedYear) { _, _ in pagination.reset() }
+        .onChange(of: primaryCurrencyFilter) { _, _ in pagination.reset() }
+        .onChange(of: pairedCurrencyFilter) { _, _ in pagination.reset() }
+        .onChange(of: recordFilter) { _, _ in pagination.reset() }
     }
 
     private var currencyCountText: String {
@@ -260,6 +273,14 @@ struct CurrencyExchangeView: View {
         }
         return (record.soldCurrency == primaryCurrencyFilter && record.boughtCurrency == pairedCurrencyFilter)
             || (record.soldCurrency == pairedCurrencyFilter && record.boughtCurrency == primaryCurrencyFilter)
+    }
+
+    private func loadMoreIfNeeded(_ record: CurrencyExchangeRecord) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: record.id,
+            lastVisibleItemID: pagedRecords.last?.id,
+            totalItemCount: records.count
+        )
     }
 
     private var exchangeOverviewMetrics: some View {

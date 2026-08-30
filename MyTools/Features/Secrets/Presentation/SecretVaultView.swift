@@ -90,6 +90,7 @@ private final class SecretEditorDraft: ObservableObject {
 }
 
 struct SecretVaultView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
@@ -105,6 +106,7 @@ struct SecretVaultView: View {
     @State private var showingPasswordImportPage = false
     @State private var importResult: String?
     @State private var showingImportResult = false
+    @State private var pagination = AppListPagination(pageSize: SecretVaultView.pageSize)
     @AppStorage(AppStorageKey.secretSortOrder) private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
 
     private var selectedSortOrder: SecretSortOrder {
@@ -128,6 +130,10 @@ struct SecretVaultView: View {
                     || item.fields.contains { $0.label.localizedCaseInsensitiveContains(term) }
             }
         return selectedSortOrder.sorted(filteredItems)
+    }
+
+    private var pagedItems: [SecretItem] {
+        pagination.visibleItems(from: visibleItems)
     }
 
     private var availableTags: [String] {
@@ -156,7 +162,7 @@ struct SecretVaultView: View {
                         systemImage: store.secretItems.isEmpty ? "lock.shield" : "magnifyingglass"
                     )
                 }
-                ForEach(visibleItems) { item in
+                ForEach(pagedItems) { item in
                     NavigationLink {
                         SecretDetailView(itemID: item.id, isUnlocked: $isUnlocked)
                     } label: {
@@ -166,12 +172,14 @@ struct SecretVaultView: View {
                     .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
                         store.deleteSecrets(ids: [item.id])
                     }
+                    .onAppear { loadMoreIfNeeded(item) }
                 }
             }
         }
         .appNavigationTitle(ToolModule.secrets.title)
         .onChange(of: sortOrderRawValue) { _, _ in
             preferenceChangeBus.notifyChanged()
+            pagination.reset()
         }
         .iOSLabeledBackButton("工具")
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
@@ -256,6 +264,17 @@ struct SecretVaultView: View {
                 selectedTag = ""
             }
         }
+        .onChange(of: query) { _, _ in pagination.reset() }
+        .onChange(of: categoryFilter) { _, _ in pagination.reset() }
+        .onChange(of: selectedTag) { _, _ in pagination.reset() }
+    }
+
+    private func loadMoreIfNeeded(_ item: SecretItem) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: item.id,
+            lastVisibleItemID: pagedItems.last?.id,
+            totalItemCount: visibleItems.count
+        )
     }
 
 }

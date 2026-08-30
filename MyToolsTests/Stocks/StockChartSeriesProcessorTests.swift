@@ -251,6 +251,8 @@ struct StockChartSeriesProcessorTests {
         #expect(summary?.low == 89)
         #expect(summary?.close == 90.8)
         #expect(summary?.volume == 400)
+        let expectedTurnoverAmount = 96.5 * 100 + 90 * 250 + 90.8 * 50
+        #expect(summary?.turnoverAmount == expectedTurnoverAmount)
     }
 
     @Test func currentSessionSummaryIgnoresDailyBarsAndAggregatesMinuteBars() {
@@ -290,6 +292,8 @@ struct StockChartSeriesProcessorTests {
         #expect(summary?.low == firstMinute.low)
         #expect(summary?.close == lastMinute.close)
         #expect(summary?.volume == 350)
+        let expectedTurnoverAmount = 0.962 * 100 + 0.975 * 250
+        #expect(summary?.turnoverAmount == expectedTurnoverAmount)
         #expect(summary?.date == lastMinute.date)
     }
 
@@ -461,6 +465,82 @@ struct StockChartSeriesProcessorTests {
         #expect(merged == [replacement])
     }
 
+    @Test func incomingFinalCloseBucketCannotRegressToNarrowerRange() {
+        // A-share close is 15:00 (900 minutes). The recorded close already
+        // reflects the full closing-auction high/low spread; a later retry
+        // that only captured a partial continuous-trading print (narrower
+        // high/low) must not overwrite it.
+        let closeMinute = StockChartFixtures.date(2026, 8, 3, hour: 15, minute: 0)
+        let finalized = StockChartFixtures.point(
+            at: closeMinute,
+            high: 12,
+            low: 9,
+            close: 11
+        )
+        let staleRetry = StockChartFixtures.point(
+            at: closeMinute.addingTimeInterval(10),
+            high: 10.5,
+            low: 10,
+            close: 10.2
+        )
+
+        let merged = StockChartSeriesProcessor.mergedPoints(
+            [finalized],
+            with: [staleRetry],
+            kind: .intraday,
+            market: .aShare
+        )
+
+        #expect(merged == [finalized])
+    }
+
+    @Test func incomingFinalCloseBucketReplacesWhenAtLeastAsComplete() {
+        let closeMinute = StockChartFixtures.date(2026, 8, 3, hour: 15, minute: 0)
+        let firstPass = StockChartFixtures.point(
+            at: closeMinute,
+            high: 10.5,
+            low: 10,
+            close: 10.2
+        )
+        let fullAuctionResult = StockChartFixtures.point(
+            at: closeMinute.addingTimeInterval(10),
+            high: 12,
+            low: 9,
+            close: 11
+        )
+
+        let merged = StockChartSeriesProcessor.mergedPoints(
+            [firstPass],
+            with: [fullAuctionResult],
+            kind: .intraday,
+            market: .aShare
+        )
+
+        #expect(merged == [fullAuctionResult])
+    }
+
+    @Test func incomingNonFinalBucketStillReplacesUnconditionally() {
+        // Only the day's final regular-session bucket gets the completeness
+        // guard; every earlier minute keeps the simple "incoming wins" rule.
+        let minute = StockChartFixtures.date(2026, 8, 3, hour: 10, minute: 0)
+        let existing = StockChartFixtures.point(at: minute, high: 12, low: 9, close: 11)
+        let narrowerRetry = StockChartFixtures.point(
+            at: minute.addingTimeInterval(5),
+            high: 10.5,
+            low: 10,
+            close: 10.2
+        )
+
+        let merged = StockChartSeriesProcessor.mergedPoints(
+            [existing],
+            with: [narrowerRetry],
+            kind: .intraday,
+            market: .aShare
+        )
+
+        #expect(merged == [narrowerRetry])
+    }
+
     @Test func preparedIntradayChartKeepsOneMinuteBarsSeparate() {
         let firstDate = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
         let points = [
@@ -516,6 +596,60 @@ struct StockChartSeriesProcessorTests {
         #expect(prepared.visible.first?.low == 9)
         #expect(prepared.visible.first?.close == 12)
         #expect(prepared.visible.first?.volume == 300)
+    }
+
+    @Test func aShareIntradayFirstAndLastVisiblePointsAreOpenAndClose() {
+        let open = StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30)
+        let midMorning = StockChartFixtures.date(2026, 8, 7, hour: 10, minute: 15)
+        let close = StockChartFixtures.date(2026, 8, 7, hour: 15, minute: 0)
+        let points = [
+            StockChartFixtures.point(at: open, open: 100, close: 100.5),
+            StockChartFixtures.point(at: midMorning, open: 101, close: 102),
+            StockChartFixtures.point(at: close, open: 103, close: 104.5)
+        ]
+
+        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
+            points,
+            range: .intraday,
+            market: .aShare,
+            at: StockChartFixtures.date(2026, 8, 7, hour: 16)
+        )
+
+        #expect(prepared.visible.first?.date == open)
+        #expect(prepared.visible.first?.open == 100)
+        #expect(prepared.visible.last?.date == close)
+        #expect(prepared.visible.last?.close == 104.5)
+    }
+
+    @Test func unitedStatesIntradayFirstAndLastVisiblePointsAreOpenAndClose() {
+        let open = StockChartFixtures.date(
+            2026, 8, 7, hour: 9, minute: 30, timeZone: "America/New_York"
+        )
+        let midday = StockChartFixtures.date(
+            2026, 8, 7, hour: 12, minute: 0, timeZone: "America/New_York"
+        )
+        let close = StockChartFixtures.date(
+            2026, 8, 7, hour: 16, minute: 0, timeZone: "America/New_York"
+        )
+        let points = [
+            StockChartFixtures.point(at: open, open: 200, close: 200.5),
+            StockChartFixtures.point(at: midday, open: 201, close: 202),
+            StockChartFixtures.point(at: close, open: 203, close: 204.5)
+        ]
+
+        let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
+            points,
+            range: .intraday,
+            market: .unitedStates,
+            at: StockChartFixtures.date(
+                2026, 8, 7, hour: 17, timeZone: "America/New_York"
+            )
+        )
+
+        #expect(prepared.visible.first?.date == open)
+        #expect(prepared.visible.first?.open == 200)
+        #expect(prepared.visible.last?.date == close)
+        #expect(prepared.visible.last?.close == 204.5)
     }
 
     @Test func weeklyAggregationUsesFirstOpenLastCloseAndSummedVolume() {

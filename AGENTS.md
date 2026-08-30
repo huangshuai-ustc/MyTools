@@ -1,6 +1,6 @@
 # MyTools 能力目录与开发准则
 
-更新日期：2026-08-26
+更新日期：2026-08-30
 
 本文件是 MyTools 的项目级开发准则和可复用能力索引。`README.md` 说明产品行为，源码和测试定义真实契约，本文件负责回答两个问题：项目已经具备什么能力，以及开发新功能时应该先复用什么。
 
@@ -202,6 +202,7 @@
 | --- | --- |
 | `MyTools/Core/Diagnostics/DiagnosticLogger.swift` | 分级分类日志、异步缓冲、两日保留、导出、清除和稳定错误码。 |
 | `MyTools/Core/Formatting/AppDateFormatting.swift` | 跨页面统一日期与日期时间显示。 |
+| `MyTools/Core/Formatting/AppAlphabeticalSort.swift` | 跨模块名称字典序：汉字转无声调拼音后与拉丁字母放入同一排序空间，并提供稳定次级键。 |
 | `MyTools/Core/Formatting/DecimalTextParser.swift` | Decimal 与四则运算表达式的统一解析和错误处理。 |
 | `MyTools/Core/Notifications/AppNotificationService.swift` | 通知权限、前台展示、即时去重和按前缀整体替换预约通知。 |
 | `MyTools/Core/Notifications/NotificationRule.swift` | 股票价格与汇率提醒的方向、阈值和持久化模型。 |
@@ -220,7 +221,7 @@
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyTools/Core/Persistence/SecureStore.swift` | 本地 Vault 载入/原子写入、AES-GCM 静态加密与旧明文档案原地升级、失败保护和串行合并保存协调器。 |
+| `MyTools/Core/Persistence/SecureStore.swift` | 本地 Vault 载入/原子写入、AES-GCM 静态加密与旧明文档案原地升级、Keychain/受保护数据暂不可用时的延迟重试、禁止明文降级、失败保护和串行合并保存协调器。 |
 | `MyTools/Core/Persistence/VaultCrypto.swift` | 本地 Vault 加密信封（格式 2.0）加解密、格式判断、PBKDF2-HMAC-SHA256 派生和系统安全随机字节；派生原语同时供备份加密和管理员密码摘要复用。 |
 | `MyTools/Core/Persistence/VaultEncryptionKey.swift` | Vault 加密密钥提供者协议和 Keychain 生产实现；密钥 `WhenUnlockedThisDeviceOnly`，仅本机、不可迁移。 |
 | `MyTools/Core/Persistence/VaultData.swift` | 所有已编译模块数据和五个用户标签库的 Codable 聚合根，以及未编译模块不透明 JSON 保留。 |
@@ -231,9 +232,9 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Core/UI/IMETextInput.swift` | 中文组合输入安全的单行/多行字段和保存前 marked text 提交。 |
-| `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、模板字段显隐/改名滑动动作和拖动代理、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、跨平台语义字体 `AppFontSpec`/`.appFont()`、可缩放导航标题 `.appNavigationTitle()`、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
+| `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度与包含系统内边距的统一单行高度地板、按功能配置页大小的 `AppListPagination` 增量列表状态（首屏/触底/上限/重置）、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、模板字段显隐/改名滑动动作和拖动代理、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、跨平台语义字体 `AppFontSpec`/`.appFont()`、可缩放导航标题 `.appNavigationTitle()`、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
 | `MyTools/Core/UI/MarkdownRendering.swift` | Markdown 渲染、容错回退、常用上标归一化和可复制值行。 |
-| `MyTools/Core/UI/FormRowComponents.swift` | 详情页/编辑页/新增页统一"标签+值"行：`DetailValueRow`（展示态，trailing 单行截断+复制+`.protected(...)` 敏感遮罩+`.link(...)` 超链接，leading 多行用于地址/备注类）、`FieldEditorRow`（编辑态标签+单行输入框）、`DateFieldRow`（编辑态标签+日期选择器）、`PickerFieldRow`（编辑态标签+原生 `Picker`，修正原生 Picker/Toggle 行不遵循 `defaultMinListRowHeight` 导致的行高不一致）、`NumericFieldRow`（编辑态标签+数值/算式输入框，可选算式预览）；除 `FieldEditorRow` 外均固定 `.frame(minHeight: AppListMetrics.minimumRowHeight)`，四类值行统一处理文本、日期、超链接和选择器，焦点绑定由调用处自行附加。 |
+| `MyTools/Core/UI/FormRowComponents.swift` | 详情页/编辑页/新增页统一单行：底层 `AppLabeledContentRow` 承载标签与任意尾部内容并固定内容高度；`DetailValueRow` 提供展示态单行截断、复制、敏感遮罩和链接，leading 模式保留地址/备注多行；`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` 分别承载文本、日期、选择和数值输入，全部复用同一底层行。 |
 
 ### `MyTools/Features/Bills/`：收支账单
 
@@ -261,7 +262,7 @@
 | `MyTools/Features/SportsLottery/Domain/SportsLotteryModels.swift` | 可扩展赛事值对象、默认五大联赛与欧冠、用户赛事偏好、按赛事保存的比赛展示顺序、比赛和五类竞彩足球开奖结果。 |
 | `MyTools/Features/SportsLottery/Infrastructure/SportsLotteryService.swift` | 中国体育彩票赛果批量接口（按 `leagueId` 分页）、赛事名称目录匹配、单场固定奖金和比赛头信息补齐；独立 Application Support 快照、首次 30 天初始化及最近 3 天与未完整场次增量刷新；不进入 Vault、备份或 CloudKit。 |
 | `MyTools/Features/SportsLottery/Application/SportsLotteryRefreshCoordinator.swift` | 北京时间 10:00/22:00 前台定时检查、激活补刷和 iOS `BGAppRefreshTask` 预约；后台实际执行时间由系统决定。 |
-| `MyTools/Features/SportsLottery/Presentation/SportsLotteryView.swift` | 可增删赛事列表、添加赛事 sheet、比赛默认时间/场次倒序与长按自定义顺序、进入赛事页单次强制刷新、开奖结果展示、刷新和暂无数据状态。 |
+| `MyTools/Features/SportsLottery/Presentation/SportsLotteryView.swift` | 可增删赛事列表、添加赛事 sheet、赛事与比赛结果的 30 条增量展示、比赛默认时间/场次倒序与长按自定义顺序、进入赛事页单次强制刷新、开奖结果展示、刷新和暂无数据状态。 |
 
 ### `MyTools/Features/CurrencyExchange/`：换汇记录
 
@@ -273,7 +274,7 @@
 | `MyTools/Features/CurrencyExchange/Domain/CurrencyExchange.swift` | 双报价口径、换汇记录、理论金额和人民币损益计算。 |
 | `MyTools/Features/CurrencyExchange/Presentation/BankOfChinaExchangeRatesView.swift` | 中国银行牌价列表和双向币种换算器。 |
 | `MyTools/Features/CurrencyExchange/Presentation/CurrencyExchangeEditorView.swift` | 换汇记录字段输入、金额表达式解析和校验保存。 |
-| `MyTools/Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | 换汇概览、筛选搜索、月份分组、列表和 CRUD 入口。 |
+| `MyTools/Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | 换汇概览、筛选搜索、月份分组、30 条增量列表和 CRUD 入口。 |
 
 ### `MyTools/Features/Documents/`：证照记录
 
@@ -288,7 +289,7 @@
 | `MyTools/Features/Documents/Presentation/CredentialEditorView.swift` | 新增/编辑证照、类型-持有人显示规则、字段紧凑编辑、字段显隐/改名/删除/排序、模板字段、签发日期、有效期、附件和 OCR 入口。 |
 | `MyTools/Features/Documents/Presentation/CredentialOCRView.swift` | 图片/PDF/相机区域识别、候选勾选确认和表单回填。 |
 | `MyTools/Features/Documents/Presentation/CredentialPresentationSupport.swift` | 证照附件编辑、预览和共享等展示辅助组件；附件重命名分开编辑文件名和扩展名。 |
-| `MyTools/Features/Documents/Presentation/DocumentsView.swift` | 证照聚合列表、类型/有效期/版本状态/标签筛选和搜索。 |
+| `MyTools/Features/Documents/Presentation/DocumentsView.swift` | 证照 30 条增量聚合列表、类型/有效期/版本状态/标签筛选和搜索，以及持有人默认遮罩和临时认证揭示。 |
 
 ### `MyTools/Features/Finance/`：金融账户
 
@@ -297,7 +298,7 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Features/Finance/Application/FinanceStore.swift` | 银行、子账户、银行卡 CRUD，境内/境外登录字段模板，账单附件生命周期和冗余字段清理。 |
-| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、分行坐标、境内外子账户、登录字段模板、银行卡、账单及状态/卡组织领域模型。 |
+| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、分行坐标、境内/境外差异化子账户类型与自定义类型、登录字段模板、银行卡、账单及状态/卡组织领域模型。 |
 | `MyTools/Features/Finance/Presentation/BankAccountViews.swift` | 银行详情与银行档案新增/编辑、分行地图选点/导航、登录字段左右滑操作和模板编辑，包括境内外扩展资料。 |
 | `MyTools/Features/Finance/Presentation/BankCardDetailView.swift` | 银行卡敏感详情、账单附件和相关操作。 |
 | `MyTools/Features/Finance/Presentation/BankCardEditorView.swift` | 借记卡/信用卡编辑和信用卡账单附件编辑。 |
@@ -317,7 +318,7 @@
 | `MyTools/Core/Location/MapLocationSearchService.swift` | 美食地图、银行网点及后续地图功能共用的 `MapLocationPickerView`、MapKit 搜索服务和候选行；统一定位权限、地图展示、请求取消、国际地址兜底、反向地理编码、手动点选、保存/取消、整行点击和蓝色选中标记。 |
 | `MyTools/Features/FoodMap/Presentation/FoodLocationPickerView.swift` | Core 公共地图选点组件的美食业务适配器，只负责把统一选点结果转换为地点名称、详细地址和中国行政区。 |
 | `MyTools/Features/FoodMap/Presentation/FoodMapPresentationSupport.swift` | 地图卡片、导航菜单、来源链接和照片缩略图等共享组件。 |
-| `MyTools/Features/FoodMap/Presentation/FoodMapView.swift` | 美食列表、状态/标签筛选、搜索和总地图入口。 |
+| `MyTools/Features/FoodMap/Presentation/FoodMapView.swift` | 美食 30 条增量列表、状态/标签筛选、搜索和总地图入口。 |
 | `MyTools/Features/FoodMap/Presentation/FoodPlaceDetailView.swift` | 地点详情、图片、来源、地图与导航操作。 |
 | `MyTools/Features/FoodMap/Presentation/FoodPlaceEditorView.swift` | 地点字段、图片、行政区和地图位置编辑。 |
 | `MyTools/Features/FoodMap/Presentation/FoodPlacesMapView.swift` | 所有已定位地点的总地图、标记选择和详情跳转。 |
@@ -332,7 +333,7 @@
 | `MyTools/Features/Health/Application/HealthStore.swift` | 医疗记录/机构 CRUD、附件、生命周期、冗余字段清理和健康标签库。 |
 | `MyTools/Features/Health/Domain/HealthRecord.swift` | 就诊类型、机构、费用、体检和医疗记录领域模型及汇总值。 |
 | `MyTools/Features/Health/Domain/MedicalRecordDraftValidator.swift` | 医疗草稿规范化、费用分配、关联关系和保存校验。 |
-| `MyTools/Features/Health/Presentation/HealthRecordsView.swift` | 健康首页、年度概览、搜索/标签/年份筛选和记录入口。 |
+| `MyTools/Features/Health/Presentation/HealthRecordsView.swift` | 健康首页、年度概览、搜索/标签/年份筛选和 30 条增量记录入口。 |
 | `MyTools/Features/Health/Presentation/HospitalDirectoryView.swift` | 医院、药房和体检机构资料库的搜索与编辑。 |
 | `MyTools/Features/Health/Presentation/MedicalRecordDetailView.swift` | 就诊/体检详情、关联记录、费用项和附件展示。 |
 | `MyTools/Features/Health/Presentation/MedicalRecordEditorView.swift` | 五类医疗记录、体检轮次、费用项和附件的统一编辑器。 |
@@ -348,7 +349,7 @@
 | `MyTools/Features/Secrets/Application/SecretStore.swift` | 保密条目 CRUD、附件生命周期、标签规范化/标签库、分类模板字段生成、普通模式有效显隐解析和备份恢复状态。 |
 | `MyTools/Features/Secrets/Domain/Secret.swift` | 六类模板、个人/工作用途、自定义字段、内容遮罩、标签、备注和附件实体；登录模板包含 URL。 |
 | `MyTools/Features/Secrets/Domain/ApplePasswordImport.swift` | Apple 密码 CSV 的 UTF-8/引号/换行解析、字段映射、导入预览和重复数据校验。 |
-| `MyTools/Features/Secrets/Presentation/SecretVaultView.swift` | 列表筛选、个人/工作用途标签、Apple 密码 CSV 导入、独立查看认证、字段模板长按拖动排序、普通模式按模板显隐、切换分类重建模板字段、字段紧凑编辑、字段及模板右滑显隐/改名、详情、编辑和附件交互；模板滑动动作复用 Core UI。 |
+| `MyTools/Features/Secrets/Presentation/SecretVaultView.swift` | 30 条增量列表与筛选、个人/工作用途标签、Apple 密码 CSV 导入、独立查看认证、字段模板长按拖动排序、普通模式按模板显隐、切换分类重建模板字段、字段紧凑编辑、字段及模板右滑显隐/改名、详情、编辑和附件交互；模板滑动动作复用 Core UI。 |
 
 ### `MyTools/Features/Stocks/Domain/`：股票领域与确定性计算
 
@@ -360,7 +361,7 @@
 | `MyTools/Features/Stocks/Domain/StockMarketTradingCalendar.swift` | A/港/美股交易日、节假日、交易时段和最终时段判断。 |
 | `MyTools/Features/Stocks/Domain/StockPortfolioAnalytics.swift` | 市场组合汇总、持仓成本、市值、盈亏、资产分配和按持仓成本计算的股票占比快照。 |
 | `MyTools/Features/Stocks/Domain/StockQuoteModels.swift` | 实时报价值对象、券商本地化简称元数据和行情错误。 |
-| `MyTools/Features/Stocks/Domain/StockTechnicalAnalysis.swift` | MA、布林带、MACD、RSI 等技术指标计算。 |
+| `MyTools/Features/Stocks/Domain/StockTechnicalAnalysis.swift` | MA、布林带、MACD、RSI、KDJ、W%R、CCI、DMI、MTM、TRIX、OBV、MFI、A/D、Chaikin、PSY、ROC 技术指标计算。 |
 | `MyTools/Features/Stocks/Domain/StockValueFormatter.swift` | 股票金额、价格、比率和汇率的统一文本格式。 |
 
 ### `MyTools/Features/Stocks/Application/`：股票用例与状态
@@ -382,7 +383,7 @@
 | --- | --- |
 | `MyTools/Features/Stocks/Infrastructure/Charts/EastmoneyStockChartProvider.swift` | 东方财富 A/港股图表请求与响应解析。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/NasdaqStockChartProvider.swift` | Nasdaq 美股分时和历史图表请求与解析。 |
-| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartDiskStore.swift` | 盘中分钟和日线 OHLCV 原始序列、5 日/周/月/季/年派生序列及分钟/日线技术指标缓存；派生缓存由原始数据变化时重建。 |
+| `MyTools/Features/Stocks/Infrastructure/Charts/StockChartDiskStore.swift` | 盘中分钟和日线 OHLCV 原始序列、5 日/周/月/季/年派生序列及分钟/日线技术指标缓存；派生缓存由原始数据变化时重建，指标算法使用独立版本从本地 OHLCV 一次性迁移并写回，只有原始时段语义变化才提升文件版本使旧缓存失效。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/StockChartModels.swift` | 市场标准七档图表周期、OHLCV 点、可见序列与独立日线技术参考序列的快照和错误模型。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/StockChartProvider.swift` | 图表 Provider/HTTP Client 协议、生产 URLSession 实现和 Provider 容器。 |
 | `MyTools/Features/Stocks/Infrastructure/Charts/TencentStockChartProvider.swift` | 腾讯 A/港/美股分时及 K 线图表请求与解析。 |
@@ -408,7 +409,7 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Features/Stocks/Presentation/StockChartCanvas.swift` | Swift Charts 盘中/K 线/指标/成交量绘制、单击/拖动选点、长按拖动平移、缩放手势和横轴布局。 |
-| `MyTools/Features/Stocks/Presentation/StockChartPresentation.swift` | 图表模式、选中点和技术图层的展示模型构建。 |
+| `MyTools/Features/Stocks/Presentation/StockChartPresentation.swift` | 图表模式、选中点和技术图层的展示模型构建；模式无关的行情筛选、指标投影和交易标记先准备一次，盘前/盘中/盘后拼接切换只重排坐标。 |
 | `MyTools/Features/Stocks/Presentation/StockDetailView.swift` | 股票详情、交易/分红时间线、编辑和看盘入口。 |
 | `MyTools/Features/Stocks/Presentation/StockDividendEditorView.swift` | 分红数量、每股分红、税费和备注编辑。 |
 | `MyTools/Features/Stocks/Presentation/StockEditorView.swift` | 股票基础资料、紧凑候选搜索（正式名称右侧代码标签、券商中文简称/交易所信息）、默认首次买入与“仅看盘”新增方式编辑。 |
@@ -464,17 +465,18 @@
 | --- | --- |
 | `MyToolsTests/Bills/BillsTests.swift` | 账单规范化、分析、OCR、交换协议、微信/支付宝导入、备份和 CloudKit。 |
 | `MyToolsTests/Core/OCRTests.swift` | OCR 区域坐标、阅读顺序、图片/PDF 加载和渲染。 |
+| `MyToolsTests/Core/AppAlphabeticalSortTests.swift` | 中英文混排、拼音首字母、大小写和数字自然顺序。 |
 | `MyToolsTests/Documents/DocumentsTests.swift` | 证照模板、签发/有效期、OCR、版本、附件、通知、备份和 CloudKit。 |
 | `MyToolsTests/FoodMap/FoodMapTests.swift` | 美食规范化、附件、行政区、导航、清理、备份和 CloudKit。 |
 | `MyToolsTests/Health/MedicalRecordEditingTests.swift` | 医疗草稿、费用分配、关联关系和附件编辑会话。 |
 | `MyToolsTests/Health/MedicalRecordsPresentationTests.swift` | 健康搜索、年份/事件分组、统计和关联计数。 |
-| `MyToolsTests/Stores/ModuleStoreTests.swift` | 金融、秘密、换汇、健康等 Store 及生命周期/清理隔离。 |
+| `MyToolsTests/Stores/ModuleStoreTests.swift` | 金融、秘密、换汇、健康等 Store 及生命周期/清理隔离，包括信用卡银行的启用状态判定。 |
 
 ### `MyToolsTests/Stocks/`：股票测试
 
 | 文件 | 职责与定位用途 |
 | --- | --- |
-| `MyToolsTests/Stocks/StockChartDiskStoreTests.swift` | 图表磁盘存储、范围元数据和当前序列合并。 |
+| `MyToolsTests/Stocks/StockChartDiskStoreTests.swift` | 图表磁盘存储、范围元数据、当前序列合并，以及旧指标缓存从本地 OHLCV 重建并持久化的迁移。 |
 | `MyToolsTests/Stocks/StockChartPresentationTests.swift` | 图表展示点、交易标记、选择和坐标数据。 |
 | `MyToolsTests/Stocks/StockChartProviderParsingTests.swift` | 腾讯、东方财富、Yahoo、Nasdaq 图表响应解析。 |
 | `MyToolsTests/Stocks/StockChartSeriesProcessorTests.swift` | 范围裁剪、合并、采样、休市过滤和最近交易日回退。 |
@@ -485,7 +487,7 @@
 | `MyToolsTests/Stocks/StockQuoteProviderParsingTests.swift` | 各实时报价与基本面 Provider 的响应解析。 |
 | `MyToolsTests/Stocks/StockQuoteRefreshReducerTests.swift` | 报价刷新合并与是否发生变更判定。 |
 | `MyToolsTests/Stocks/StockQuoteServiceTests.swift` | 行情批量优先、市场路由、多源回退和调用次序。 |
-| `MyToolsTests/Stocks/StockTechnicalIndicatorsTests.swift` | MA、布林带、MACD、RSI 指标计算。 |
+| `MyToolsTests/Stocks/StockTechnicalIndicatorsTests.swift` | 价格、趋势、动能和量价技术指标计算及旧缓存兼容。 |
 
 ### `MyToolsTests/TestSupport/`：股票测试替身与样本
 
@@ -500,7 +502,7 @@
 
 | 模块 | 已实现能力 | 主要入口 | 数据与状态 |
 | --- | --- | --- | --- |
-| 金融账户 | 境内外银行、网络银行无网点标记、支行地图链接/导航、子账户（含支票账户）、借记卡、信用卡、账单 PDF、登录字段模板与左右滑管理、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
+| 金融账户 | 境内外银行、网络银行无网点标记、支行地图链接/导航、境内/境外差异化子账户预设与其他账户自定义类型、借记卡、信用卡、账单 PDF、登录字段模板与左右滑管理、筛选搜索排序、敏感字段验证和复制 | `Features/Finance/Presentation/FinanceHomeView.swift` | `FinanceStore`、`BankCard.swift` |
 | 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、按当前持仓/看盘/历史股票分区、清仓历史保留与存档恢复、按中文/英文/代码模糊搜索股票（按市场与交易所过滤、同代码多源合并、美股原生正式名称/券商中文简称/规范代码回填、正式名称右侧代码标签和紧凑候选行、中文名称完整/后缀/前缀/包含匹配、普通股优先于相近 ETF、主板交易所优先于 OTC、数据源相关排序和热门代码稳定兜底、证券类型标识和无结果提示）、实时行情、市场标准七档图表周期（分时/5日分钟线固定近期窗口，日K/周K/月K/季K/年K默认仅盘中并可平移缩放，内部切换保持用户图层选择，底层由原始序列重新计算，新上市股票按实际可用 K 线柱绘制）、区间切换加载蒙版与进度状态、分时与5日均线/布林/MACD使用跨交易日分钟历史预热后仅投影可见柱，分时分钟级/其他范围交易日级 RSI14/RSI30、按交易价格和可见盘中定位交易标记、仅美股提供连续盘前/盘后图表模式，A 股和港股竞价阶段不绘制为扩展时段曲线、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift`、`StockQuoteProvider.swift` |
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
@@ -558,7 +560,7 @@
 | 能力与检索词 | 可复用实现 | 已提供行为 |
 | --- | --- | --- |
 | 全业务持久化聚合 | `VaultData` in `Core/Persistence/VaultData.swift` | 八模块实体、提醒和健康/美食/证照字段模板/账单/保密资料标签库的 Codable 聚合根；未编译模块保留为不透明 JSON |
-| 本地 Vault 读写 | `SecureStore` in `Core/Persistence/SecureStore.swift` | `Application Support/MyTools/local-vault.json`、原子替换、AES-GCM 静态加密（格式 2.0，密钥在 Keychain 仅本机）、旧明文档案首次读取后原地升级、文件保护、读取失败时阻止覆盖原文件；Keychain 不可用时降级明文读写并在下次保存重试；读写与并发保护测试见 `MyToolsTests/Core/SecureStoreEncryptionTests.swift` |
+| 本地 Vault 读写 | `SecureStore` in `Core/Persistence/SecureStore.swift` | `Application Support/MyTools/local-vault.json`、原子替换、AES-GCM 静态加密（格式 2.0，密钥在 Keychain 仅本机）、旧明文档案首次读取后原地升级、文件保护、读取失败时阻止覆盖原文件；`errSecInteractionNotAllowed` 等受保护数据临时不可用状态会等待设备解锁/场景激活并退避重试，写入保留最新待写快照且绝不降级明文；读写、启动恢复与并发保护测试见 `MyToolsTests/Core/SecureStoreEncryptionTests.swift`、`MyToolsTests/AppStore/AppStoreFacadeTests.swift` |
 | 合并和串行保存 | `VaultPersistenceCoordinator` | 合并高频变更、后台串行写入、立即保存和 `flush()`；并发 `schedule` 保护测试见 `MyToolsTests/Core/SecureStoreEncryptionTests.swift` |
 | 加密备份格式 | `VaultBackupDocument`、`VaultBackupPayload`、`VaultBackupCrypto` in `Core/Backup/VaultBackup.swift` | `.mytools`、PBKDF2-HMAC-SHA256、AES-GCM、格式 1.0、模块集合 |
 | 备份裁剪与附件装配 | `AppStoreBackupProcessor` in `App/Composition/AppStoreBackupProcessor.swift` | 按已编译且可见模块导出/导入、嵌入和恢复附件数据；隐藏模块不会进入当前备份 |
@@ -615,7 +617,7 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | --- | --- | --- |
 | 本地通知 | `AppNotificationService`、`LocalNotificationScheduling`、`ScheduledLocalNotification` in `Core/Notifications/AppNotificationService.swift` | 权限状态、请求权限、打开系统设置、前台展示、即时提醒去重，以及按标识前缀整体替换预约通知 |
 | 价格提醒模型 | `PriceAlertDirection`、`StockPriceAlert`、`CurrencyRateAlert` in `Core/Notifications/NotificationRule.swift` | 高于/低于阈值、启用状态、股票和汇率提醒 |
-| 诊断日志 | `DiagnosticLogger` in `Core/Diagnostics/DiagnosticLogger.swift` | 分类/级别、异步缓冲、按日期保留今天与昨天、导出、清除、flush 和稳定错误码 |
+| 诊断日志 | `DiagnosticLogger` in `Core/Diagnostics/DiagnosticLogger.swift` | 分类/级别、异步缓冲、按日期滚动保留最近 7 天、导出、清除、flush 和稳定错误码 |
 | App 外观与字号 | `AppAppearanceMode`、`AppFontSize`、`ToolModuleSettings`、`AppFontSpec`、`.appFont()`、`.appNavigationTitle()` | 系统/明/暗外观、iOS/iPadOS 原生 Dynamic Type、macOS 全局语义字体倍率、随字号增长的列表行和不重复的常规字重导航标题、模块顺序和显隐；展示代码使用 `.appFont()`/`.appNavigationTitle()`，不得新增会绕过 macOS 字号设置的显式 `.font()` 或 `.navigationTitle()` |
 | 股票涨跌颜色 | `StockAppearanceSettings` in `Features/Stocks/Application/StockAppearanceSettings.swift` | 按 A/港/美市场保存颜色偏好并同步设置变更 |
 
@@ -630,10 +632,10 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | 数字和表达式解析 | `DecimalTextParser` in `Core/Formatting/DecimalTextParser.swift` | Decimal、可选值及 `+ - * / × ÷`、括号表达式，不要自行写金额字符串解析器 |
 | 日期格式化 | `AppDateFormatting` helpers in `Core/Formatting/AppDateFormatting.swift` | 跨页面统一日期显示 |
 | Markdown 展示 | `MarkdownText`、`MarkdownRenderer`、`MarkdownValueRow` in `Core/UI/MarkdownRendering.swift` | Swift Markdown、容错回退、常见 `$...^...$` 上标归一化和可复制值 |
-| 列表和弹窗规范 | `AppListMetrics`（`minimumRowHeight(fontScale:)`/`rowVerticalInset(fontScale:)`/`recordContentSpacing(fontScale:)` 均按当前系统 body 字体行高 × `densityScale` 计算，随 Dynamic Type/辅助功能字号自适应，且可用 `AppListMetrics.densityScale` 统一微调全局密度）、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 统一列表密度、红色“删除”与模板字段显隐/改名右滑动作的颜色/全滑策略、iPhone/iPad/macOS Sheet 和宽屏可读宽度；列表不得直接声明 `.swipeActions`；新调用点需要从 `@Environment(\.appFontScale)` 读取 `fontScale` 后传给这些函数 |
+| 列表和弹窗规范 | `AppListMetrics`（`minimumRowHeight(fontScale:)` 定义接近裸 `LabeledContent` 的紧凑单行内容高度，`listRowHeightFloor(fontScale:)` 加入系统上下边距后作为全局 List/Form 整行地板；`rowVerticalInset(fontScale:)`/`recordContentSpacing(fontScale:)` 用于记录卡片，均随字体缩放）、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 单行文本、输入、日期、Picker、Badge 和按钮具有统一且接近系统原生的紧凑行高，多行内容按需增高；同时统一列表密度、滑动动作、iPhone/iPad/macOS Sheet 和宽屏可读宽度 |
 | 隐藏项开关和排序方向 | `HiddenItemsVisibilityButton`、`SortDirection` | 统一显示/隐藏按钮与升降序语义 |
 | 页面诊断 | `.diagnosticScreen(...)` | 自动记录页面进入和离开 |
-| 详情页/编辑页/新增页统一行 | `DetailValueRow`、`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` in `Core/UI/FormRowComponents.swift` | 展示态标签+值行（单行截断防止行高不一致、`.protected(...)` 敏感遮罩、`.link(...)` 可点击超链接，或 leading 多行用于地址/备注）；编辑态标签+单行输入框/日期选择器/原生 Picker/数值算式输入框四类行，全部固定 `AppListMetrics.minimumRowHeight(fontScale:)`（原生 `Picker`/`Toggle` 不可靠遵循 `defaultMinListRowHeight`，必须用 `PickerFieldRow` 包裹才能和其它行同高）；新增证照/保密资料/金融/健康/美食/账单/换汇/股票的"标签+值"或"标签+单行输入框/日期/选择器"行必须复用这五个组件，不得再手搓 `LabeledContent`/裸 `Picker`/`DatePicker` 组合；仅 `.pickerStyle(.segmented)` 全宽选择器或独立成段的选择器可以保留裸 `Picker`（视觉上不会与相邻标签行对比出高度差）。这五个组件内部都会读取 `@Environment(\.appFontScale)` 传给 `AppListMetrics`，调用方无需关心 |
+| 详情页/编辑页/新增页统一行 | `AppLabeledContentRow`、`DetailValueRow`、`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` in `Core/UI/FormRowComponents.swift` | Badge、状态、菜单或自定义按钮等任意单行尾部内容使用 `AppLabeledContentRow`；普通值、敏感值和链接使用 `DetailValueRow`；文本、日期、Picker、数值输入使用对应编辑组件。所有组件共享同一内容高度，新页面不得再手搓混排的裸 `LabeledContent`/Picker/DatePicker；地址、备注、算式预览和记录卡片等真实多行内容可以自适应增高 |
 
 所有可能输入中文或其他组合输入法文本的持久化字段都必须直接使用 `IMESafeTextField` 或 `IMESafeMultilineTextField`，保存动作同时调用 `commitPendingTextInput`。只调用提交函数不能替代安全输入控件；普通 SwiftUI `TextField`、`TextEditor` 仅用于不持久化的搜索或明确不接受组合输入的数值字段。
 
@@ -656,8 +658,8 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | Stocks | 交易日和交易时段 | `StockMarketTradingCalendar.swift` |
 | Stocks | 报价 Provider 编排、批量优先和多源回退 | `StockQuoteService.swift`、`Infrastructure/Quotes` |
 | Stocks | 图表缓存、范围增量合并、采样、多源回退；只为美股保留连续盘前/盘后曲线，A 股和港股竞价阶段不作为扩展时段图表；休市占位点过滤并回退最近有效交易日；看盘页当期数据统一由当前或最近有效交易日的分钟分时汇总，长周期行情图复用独立分时快照；所有长周期图层支持单击选最近行情柱、普通拖动连续选点、长按拖动平移时间窗口与双指缩放 | `StockChartService.swift`、`StockChartSeriesProcessor.swift`、`Infrastructure/Charts` |
-| Stocks | MA、布林带、MACD、RSI 等指标 | `StockTechnicalAnalysis.swift` |
-| Stocks | 版本化投资机会评分：技术时机、PE/PB/股息率、ROE/净利率、收入/盈利增长、波动回撤，缺失数据按覆盖度向中性收缩 | `StockInvestmentScoreModel.swift` |
+| Stocks | MA、布林带、MACD、RSI、KDJ、W%R、CCI、DMI、MTM、TRIX、OBV、MFI、A/D、Chaikin、PSY、ROC；相关多线指标在同一图层叠加，量价指标缺少成交量时不伪造结果 | `StockTechnicalAnalysis.swift` |
+| Stocks | V4 版本化投资机会评分：均线/DMI/TRIX 趋势组、MACD/MTM/ROC 动能组、RSI/KDJ/W%R/CCI/MFI/PSY 强弱组、布林位置、成交量/OBV/A·D/Chaikin 资金组与 K 线先组内降相关，再校验技术一致性；基本面覆盖 PE/PB/PEG/PCF/PS/EV/EBITDA/EPS/股息率、ROE/净利率、收入/盈利增长，并以波动回撤和数据覆盖度向中性收缩 | `StockInvestmentScoreModel.swift` |
 | Stocks | 基本面 Provider 编排与 24 小时内存缓存；A/港股合并东方财富与 Yahoo，美股使用 Yahoo，手动刷新绕过缓存 | `StockFundamentalService.swift`、`Infrastructure/Fundamentals/StockFundamentalProvider.swift` |
 | Stocks | 图表坐标、交易标记、选点和展示降采样 | `Presentation/StockChartPresentation.swift` |
 | CurrencyExchange | 换汇记录、汇率提醒与损益展示状态 | `Features/CurrencyExchange/Application/CurrencyExchangeStore.swift`、`Domain/CurrencyExchange.swift` |
@@ -719,6 +721,6 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 - 管理员密码使用加盐 PBKDF2-HMAC-SHA256（210,000 轮）摘要保存，旧无盐 SHA-256 摘要验证成功后自动迁移；不要在新模块另建密码体系。
 - OCR 的设置测试页是临时入口，OCR 本身是可复用 Core 服务；临时页面被移除时不得删除 Core OCR 能力。
 - 股票公开行情和图表可能延迟或不可用；已有 Provider 回退与缓存，不要在页面内直接请求第三方接口。
-- 股票公开基本面数据可能延迟、缺失或口径不同；评分必须展示来源与覆盖度，缺失值不得按 0 伪造，基本面快照不进入 Vault、备份或 CloudKit。
+- 股票公开基本面数据可能延迟、缺失或口径不同；评分必须展示来源与覆盖度，缺失值不得按 0 伪造，基本面快照不进入 Vault、备份或 CloudKit。看盘“当期数据”可展示 PE、PB、PEG、PCF、PS、EV/EBITDA、EPS、ROE、股息率、成交额和换手率；接口未直接提供成交额或换手率时只能在具备分钟成交量和市值的前提下显示明确标注的估算值。
 - 股票行情图只在活跃交易时段自动刷新对应序列：美股盘前只刷新盘前分时，盘中刷新盘中和 K 线，盘后只刷新盘后分时，A 股/港股只在正式交易时段刷新盘中和 K 线；分时每 30 秒、5 日和 K 线正式交易时段每 60 秒轮询；各市场正式交易时段结束后按交易日去重执行一次完整行情收口，刷新分时、5 日分钟和日线基础序列，重新计算全部技术指标并派生周/月/季/年 K 线，失败后每 5 分钟允许重试。手动刷新忽略交易时段并强制请求所选市场；分时和 5 日显示粒度为 `max(1 分钟, 行情源实际间隔)`，不人为补造缺失分钟；当期数据独立使用分钟分时快照，不随 K 线范围请求。
 - 当前仍是单 App Target，编译标记会从产物中移除 Feature 实现，但没有独立 Swift Package 提供模块级 import 访问控制；Feature 间依赖禁令仍需由代码审查和回归构建持续执行。

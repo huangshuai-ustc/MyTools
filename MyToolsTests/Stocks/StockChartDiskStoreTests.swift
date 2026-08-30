@@ -46,7 +46,93 @@ struct StockChartDiskStoreTests {
         #expect(rendered.indicatorPoints?.count == 80)
         #expect(rendered.dailyIndicatorPoints?.count == 80)
         #expect(rendered.cachedDailyTechnicalIndicators?.count == 80)
+        #expect(
+            reloaded.technicalIndicatorCacheVersion
+                == StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+        )
         #expect(FileManager.default.fileExists(atPath: reader.persistentStoreURL(for: key).path))
+    }
+
+    @Test func legacyTechnicalIndicatorsAreRebuiltFromLocalOHLCVAndPersistedOnce() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let points = varyingSamplePoints(count: 100)
+        let metadata = StockChartStoredRangeMetadata(
+            symbol: key.symbol,
+            name: "VOO",
+            currencyCode: "USD",
+            previousClose: 99,
+            quoteUpdatedAt: points.last!.date,
+            fetchedAt: points.last!.date,
+            source: "Legacy Cache",
+            supportsCandlesticks: true,
+            indicatorPointCount: nil,
+            dailyIndicatorPointCount: points.count
+        )
+        let legacyIndicators = points.map {
+            StockTechnicalIndicatorPoint(
+                date: $0.date,
+                movingAverage5: nil,
+                movingAverage20: nil,
+                movingAverage60: nil,
+                bollingerMiddle: nil,
+                bollingerUpper: nil,
+                bollingerLower: nil,
+                macdLine: 0,
+                macdSignal: 0,
+                macdHistogram: 0,
+                rsi14: nil,
+                rsi30: nil
+            )
+        }
+        let legacyStore = StockChartPersistedStore(
+            version: StockChartPersistedStore.currentVersion,
+            market: key.market,
+            symbol: key.symbol,
+            series: [StockChartSeriesKind.daily.rawValue: points],
+            technicalIndicators: ["daily": legacyIndicators],
+            technicalIndicatorCacheVersion: nil,
+            rangeMetadata: [StockChartRange.dayK.rawValue: metadata]
+        )
+        var store = makeStore(directories)
+        let url = store.persistentStoreURL(for: key)
+        try FileManager.default.createDirectory(
+            at: directories.persistent,
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(legacyStore).write(to: url, options: .atomic)
+
+        let loaded = store.load(for: key)
+        let migrated = try #require(loaded)
+        let daily = try #require(migrated.technicalIndicators["daily"])
+        #expect(
+            migrated.technicalIndicatorCacheVersion
+                == StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+        )
+        #expect(daily.count == points.count)
+        #expect(daily.last?.stochasticK != nil)
+        #expect(daily.last?.williamsR != nil)
+        #expect(daily.last?.commodityChannelIndex != nil)
+        #expect(daily.last?.averageDirectionalIndex != nil)
+        #expect(daily.last?.momentum != nil)
+        #expect(daily.last?.trix != nil)
+        #expect(daily.last?.onBalanceVolume != nil)
+        #expect(daily.last?.moneyFlowIndex != nil)
+        #expect(daily.last?.accumulationDistribution != nil)
+        #expect(daily.last?.chaikinMoneyFlow != nil)
+        #expect(daily.last?.psychologicalLine != nil)
+        #expect(daily.last?.rateOfChange != nil)
+
+        let persisted = try JSONDecoder().decode(
+            StockChartPersistedStore.self,
+            from: Data(contentsOf: url)
+        )
+        #expect(
+            persisted.technicalIndicatorCacheVersion
+                == StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+        )
+        #expect(persisted.technicalIndicators["daily"]?.last?.trix != nil)
     }
 
     @Test func unsupportedPersistentStoreVersionIsIgnored() throws {
@@ -379,6 +465,21 @@ struct StockChartDiskStoreTests {
             StockChartFixtures.point(
                 at: start.addingTimeInterval(TimeInterval(index * 86_400)),
                 close: 100 + Double(index)
+            )
+        }
+    }
+
+    private func varyingSamplePoints(count: Int) -> [StockChartPoint] {
+        let start = StockChartFixtures.date(2026, 1, 1)
+        return (0..<count).map { index in
+            let close = 100 + Double(index) * 0.2 + sin(Double(index) / 3)
+            return StockChartFixtures.point(
+                at: start.addingTimeInterval(TimeInterval(index * 86_400)),
+                open: close - 0.3,
+                high: close + 1,
+                low: close - 1,
+                close: close,
+                volume: 1_000 + Double(index * 10)
             )
         }
     }

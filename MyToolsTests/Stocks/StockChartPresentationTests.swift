@@ -3,6 +3,14 @@ import Testing
 @testable import MyTools
 
 struct StockChartPresentationTests {
+    @Test func headerPerformanceTitleUsesTodayOnlyForIntraday() {
+        #expect(StockChartPresentation.headerPerformanceTitle(for: .intraday) == "今日涨跌")
+
+        for range in StockChartRange.allCases where range != .intraday {
+            #expect(StockChartPresentation.headerPerformanceTitle(for: range) == "区间涨跌")
+        }
+    }
+
     @Test func displayModeCompatibilityKeepsOnlyComposablePriceLayers() {
         #expect(StockChartDisplayMode.line.isCompatible(with: .movingAverage))
         #expect(StockChartDisplayMode.candlestick.isCompatible(with: .bollingerBands))
@@ -318,6 +326,12 @@ struct StockChartPresentationTests {
         #expect(combined.plotPoints.map(\.x) == [1, 2])
         #expect(combined.plotPoints.first?.point.date == regular.first?.date)
         #expect(combined.xDomain == 0...2)
+
+        let recomposed = regularOnly.updatingDisplayModes([.preMarket, .line])
+        #expect(recomposed.preMarketPlotPoints.map(\.x) == combined.preMarketPlotPoints.map(\.x))
+        #expect(recomposed.plotPoints.map(\.x) == combined.plotPoints.map(\.x))
+        #expect(recomposed.technicalPlotPoints.map(\.x) == combined.technicalPlotPoints.map(\.x))
+        #expect(recomposed.xDomain == combined.xDomain)
     }
 
     @Test func visibleDataIsSharedByChartLayersAndYAxis() {
@@ -633,7 +647,7 @@ struct StockChartPresentationTests {
         #expect(volume.yDomain.upperBound == 21_600)
     }
 
-    @Test func intradayPerformanceUsesPreviousTradingDayFromHistory() {
+    @Test func intradayPerformanceFallsBackToPreviousTradingDayFromMinuteHistory() {
         let previousFriday = point(
             day: 31,
             month: 7,
@@ -659,13 +673,65 @@ struct StockChartPresentationTests {
         let snapshot = makeSnapshot(
             points: mondayPoints,
             indicatorPoints: [previousFriday] + mondayPoints,
-            previousClose: 40
+            previousClose: nil
         )
 
         let performance = StockChartPresentation.rangePerformance(
             snapshot: snapshot,
             range: .intraday,
             market: .unitedStates
+        )
+
+        #expect(performance?.change == 10)
+        #expect(performance?.percent == 0.1)
+    }
+
+    @Test func intradayPerformancePrefersSettledPreviousCloseOverLastMinutePrint() {
+        let previousMinuteClose = point(
+            day: 27,
+            hour: 15,
+            minute: 59,
+            close: 503.87,
+            timeZone: "America/New_York"
+        )
+        let currentClose = point(
+            day: 28,
+            hour: 15,
+            minute: 59,
+            close: 505,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [currentClose],
+            indicatorPoints: [previousMinuteClose, currentClose],
+            previousClose: 503.70
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .unitedStates
+        )
+
+        #expect(abs((performance?.change ?? 0) - 1.30) < 0.000_001)
+        #expect(abs((performance?.percent ?? 0) - (1.30 / 503.70)) < 0.000_001)
+    }
+
+    @Test func intradayPerformancePrefersCanonicalDailyCloseOverQuoteFallback() {
+        let previousMinuteClose = point(day: 6, hour: 14, close: 99)
+        let previousDailyClose = point(day: 6, close: 100)
+        let currentClose = point(day: 7, hour: 15, close: 110)
+        let snapshot = makeSnapshot(
+            points: [currentClose],
+            indicatorPoints: [previousMinuteClose, currentClose],
+            dailyIndicatorPoints: [previousDailyClose],
+            previousClose: 98
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .aShare
         )
 
         #expect(performance?.change == 10)

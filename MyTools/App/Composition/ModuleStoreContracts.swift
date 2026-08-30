@@ -32,6 +32,39 @@ final class ModuleLifecycleRegistry {
     }
 }
 
+// MARK: - Backup restore coordination
+
+/// A module Store that needs to suppress internal mutations while a backup
+/// restore is in progress adopts this protocol. `AppStore` broadcasts the
+/// backup-restore lifecycle to all registered participants rather than calling
+/// a module-specific method, so future modules do not require changes in
+/// `AppStore.restoreBackup`.
+@MainActor
+protocol BackupRestoreParticipant: AnyObject {
+    /// Called with `true` immediately before the backup payload is applied and
+    /// with `false` in the `defer` block after the restore completes or throws.
+    func backupRestoreStateChanged(isRestoring: Bool)
+}
+
+@MainActor
+final class BackupRestoreRegistry {
+    private var participants: [any BackupRestoreParticipant] = []
+
+    func register(_ participant: any BackupRestoreParticipant) {
+        participants.append(participant)
+    }
+
+    func notifyStarted() {
+        participants.forEach { $0.backupRestoreStateChanged(isRestoring: true) }
+    }
+
+    func notifyFinished() {
+        participants.forEach { $0.backupRestoreStateChanged(isRestoring: false) }
+    }
+}
+
+// MARK: - Redundant data cleanup
+
 struct RedundantDataFinding: Identifiable, Equatable, Sendable {
     let ruleID: String
     let module: ToolModule
@@ -60,6 +93,31 @@ protocol ModuleDataCleanupParticipant: AnyObject {
     var cleanupModule: ToolModule { get }
     func scanRedundantData() -> [RedundantDataFinding]
     func cleanupRedundantData()
+}
+
+@MainActor
+extension ModuleDataCleanupParticipant {
+    /// Convenience builder: appends a `RedundantDataFinding` only when
+    /// `fieldCount > 0`, removing the guard boilerplate from every Store's
+    /// `scanRedundantData` implementation.
+    func appendFinding(
+        to findings: inout [RedundantDataFinding],
+        ruleID: String,
+        title: String,
+        detail: String,
+        recordCount: Int,
+        fieldCount: Int
+    ) {
+        guard fieldCount > 0 else { return }
+        findings.append(RedundantDataFinding(
+            ruleID: ruleID,
+            module: cleanupModule,
+            title: title,
+            detail: detail,
+            affectedRecordCount: recordCount,
+            affectedFieldCount: fieldCount
+        ))
+    }
 }
 
 @MainActor

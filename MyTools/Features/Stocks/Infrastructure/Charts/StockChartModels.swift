@@ -106,6 +106,7 @@ struct StockChartSessionSummary: Equatable, Sendable {
     let low: Double
     let close: Double
     let volume: Double?
+    let turnoverAmount: Double?
     let date: Date
 }
 

@@ -5,6 +5,45 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ModuleStoreTests {
+    @Test func financeSubaccountTypesMatchTheirBankRegion() {
+        #expect(DomesticAccountType.allCases.map(\.title) == [
+            "储蓄账户",
+            "投资账户",
+            "外汇账户",
+            "个人养老金账户",
+            "社保账户",
+            "其他账户"
+        ])
+        #expect(ForeignAccountType.allCases.map(\.title) == [
+            "储蓄账户",
+            "往来账户",
+            "定存账户",
+            "外汇账户",
+            "投资账户",
+            "支票账户",
+            "智能账户",
+            "其他账户"
+        ])
+    }
+
+    @Test func removedDomesticPresetRemainsEditableAsACustomType() {
+        #expect(DomesticAccountType.selection(for: "公积金账户") == .other)
+        #expect(DomesticAccountType.selection(for: "支票账户") == .other)
+        #expect(DomesticAccountType.selection(for: "") == .savings)
+    }
+
+    @Test func bankWithOnlyAnOpenCreditCardIsNotInactive() {
+        let account = BankAccount()
+        var creditCard = BankCard()
+        creditCard.kind = .credit
+        creditCard.status = .normal
+
+        #expect(!account.isInactiveFinanceArchive(cards: [creditCard]))
+
+        creditCard.status = .closed
+        #expect(account.isInactiveFinanceArchive(cards: [creditCard]))
+    }
+
     @Test func moduleCatalogCoversEveryTopLevelModule() {
         #expect(ToolModuleCatalog.allModules == CompiledToolModules.set)
         #expect(Set(CompiledToolModules.ordered) == CompiledToolModules.set)
@@ -187,13 +226,13 @@ struct ModuleStoreTests {
         var edited = original
         edited.title = "Changed"
 
-        store.setBackupRestoreInProgress(true)
+        store.backupRestoreStateChanged(isRestoring: true)
         store.upsertSecret(edited)
         store.deleteSecrets(ids: [original.id])
 
         #expect(store.secretItems.map(\.title) == ["Original"])
 
-        store.setBackupRestoreInProgress(false)
+        store.backupRestoreStateChanged(isRestoring: false)
         store.upsertSecret(edited)
 
         #expect(store.secretItems.map(\.title) == ["Changed"])

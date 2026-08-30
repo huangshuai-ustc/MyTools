@@ -13,6 +13,57 @@ struct CloudSyncStoredEntry: Codable, Sendable {
     var isDeleted: Bool
     var payload: Data?
     var systemFields: Data?
+    /// Set when the last upload attempt for this record failed for a reason
+    /// that `CloudKitSyncWorker` does not already retry automatically
+    /// (`.serverRecordChanged`/`.unknownItem`/`.zoneNotFound` re-queue
+    /// themselves; every other error only used to log and stop). Reconcile
+    /// re-queues any entry carrying this flag even when its digest matches
+    /// the last attempt, since an unchanged digest only means "the content
+    /// didn't change" — not "the previous upload succeeded".
+    var needsRetry: Bool = false
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, id, module, digest, modifiedAt, deviceID, isDeleted, payload
+        case systemFields, needsRetry
+    }
+
+    init(
+        kind: CloudSyncEntityKind,
+        id: UUID,
+        module: ToolModule? = nil,
+        digest: Data? = nil,
+        modifiedAt: Date,
+        deviceID: String,
+        isDeleted: Bool,
+        payload: Data? = nil,
+        systemFields: Data? = nil,
+        needsRetry: Bool = false
+    ) {
+        self.kind = kind
+        self.id = id
+        self.module = module
+        self.digest = digest
+        self.modifiedAt = modifiedAt
+        self.deviceID = deviceID
+        self.isDeleted = isDeleted
+        self.payload = payload
+        self.systemFields = systemFields
+        self.needsRetry = needsRetry
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(CloudSyncEntityKind.self, forKey: .kind)
+        id = try container.decode(UUID.self, forKey: .id)
+        module = try container.decodeIfPresent(ToolModule.self, forKey: .module)
+        digest = try container.decodeIfPresent(Data.self, forKey: .digest)
+        modifiedAt = try container.decode(Date.self, forKey: .modifiedAt)
+        deviceID = try container.decode(String.self, forKey: .deviceID)
+        isDeleted = try container.decode(Bool.self, forKey: .isDeleted)
+        payload = try container.decodeIfPresent(Data.self, forKey: .payload)
+        systemFields = try container.decodeIfPresent(Data.self, forKey: .systemFields)
+        needsRetry = try container.decodeIfPresent(Bool.self, forKey: .needsRetry) ?? false
+    }
 }
 
 struct CloudSyncStoredDocument: Codable, Sendable {
@@ -23,22 +74,19 @@ struct CloudSyncStoredDocument: Codable, Sendable {
     var deviceID: String
     var accountRecordName: String?
     var reconciliationVersion: Int?
-    var rebuildGeneration: Int64?
 
     init(
         engineState: CKSyncEngine.State.Serialization? = nil,
         entries: [String: CloudSyncStoredEntry] = [:],
         deviceID: String = UUID().uuidString.lowercased(),
         accountRecordName: String? = nil,
-        reconciliationVersion: Int? = Self.currentReconciliationVersion,
-        rebuildGeneration: Int64? = 0
+        reconciliationVersion: Int? = Self.currentReconciliationVersion
     ) {
         self.engineState = engineState
         self.entries = entries
         self.deviceID = deviceID
         self.accountRecordName = accountRecordName
         self.reconciliationVersion = reconciliationVersion
-        self.rebuildGeneration = rebuildGeneration
     }
 
     mutating func prepareForCurrentReconciliationVersion() -> Bool {
@@ -51,17 +99,11 @@ struct CloudSyncStoredDocument: Codable, Sendable {
         return true
     }
 
-    mutating func resetForRemoteRebuild(
-        accountRecordName: String?,
-        rebuildGeneration: Int64? = nil
-    ) {
+    mutating func resetForAccountChange(accountRecordName: String?) {
         engineState = nil
         entries = [:]
         self.accountRecordName = accountRecordName
         reconciliationVersion = Self.currentReconciliationVersion
-        if let rebuildGeneration {
-            self.rebuildGeneration = rebuildGeneration
-        }
     }
 
     /// CloudKit system fields are only needed while a record is being retried.

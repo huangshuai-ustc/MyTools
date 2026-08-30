@@ -1,8 +1,27 @@
 import SwiftUI
 
+/// 标准单行“标签 + 任意尾部内容”容器。文本、日期、Picker、Badge、菜单和按钮等
+/// 单行内容都以同一个内容高度为基准；真正的多行地址、备注和记录卡片不使用它。
+struct AppLabeledContentRow<Content: View>: View {
+    @Environment(\.appFontScale) private var fontScale
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        LabeledContent(title) {
+            content()
+        }
+        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+    }
+}
+
 /// 详情页"标签+值"行：trailing 模式固定单行（长文本截断，可复制），leading 模式允许多行（地址/备注类）。
 struct DetailValueRow: View {
-    @Environment(\.appFontScale) private var fontScale
     let title: String
     let value: String
     var alignment: TextAlignment = .trailing
@@ -22,11 +41,10 @@ struct DetailValueRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            LabeledContent(title) {
+            AppLabeledContentRow(title) {
                 valueText
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
     }
 
@@ -46,17 +64,15 @@ struct DetailValueRow: View {
     }
 
     /// 敏感值遮罩变体：`isRevealed` 为假时展示 `concealedValue`，且不允许复制未揭示的内容。
-    /// `fontScale` 由调用处的 `@Environment(\.appFontScale)` 传入（静态函数无法直接持有 `@Environment`）。
     static func protected(
         _ title: String,
         value: String,
         concealedValue: String = "••••••",
         isRevealed: Bool,
         monospaced: Bool = false,
-        truncationMode: Text.TruncationMode = .tail,
-        fontScale: CGFloat? = nil
+        truncationMode: Text.TruncationMode = .tail
     ) -> some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             Text(value.isEmpty ? "未填写" : (isRevealed ? value : concealedValue))
                 .fontDesign(monospaced && isRevealed ? .monospaced : .default)
                 .lineLimit(1)
@@ -65,17 +81,14 @@ struct DetailValueRow: View {
                 .copyableText(isRevealed && !value.isEmpty ? value : nil)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 
     /// 详情页超链接值行：可点击打开、长按复制，行高与其它 `DetailValueRow` 一致。`resolveURL` 用于把原始字符串解析为可跳转链接
     /// （不同模块的补全规则可能不同，例如是否允许缺省协议）；解析失败或值为空时退回普通文本展示。
-    /// `fontScale` 由调用处的 `@Environment(\.appFontScale)` 传入（静态函数无法直接持有 `@Environment`）。
     static func link(
         _ title: String,
         urlString: String,
         emptyValue: String = "未填写",
-        fontScale: CGFloat? = nil,
         resolveURL: (String) -> URL? = { string in
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, let url = URL(string: trimmed), url.scheme != nil else { return nil }
@@ -85,7 +98,7 @@ struct DetailValueRow: View {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         return Group {
             if let url = resolveURL(trimmed) {
-                LabeledContent(title) {
+                AppLabeledContentRow(title) {
                     Link(destination: url) {
                         Text(trimmed)
                             .lineLimit(1)
@@ -95,7 +108,6 @@ struct DetailValueRow: View {
                     .copyableText(trimmed)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
             } else {
                 DetailValueRow(title: title, value: trimmed, emptyValue: emptyValue)
             }
@@ -105,7 +117,6 @@ struct DetailValueRow: View {
 
 /// 编辑页"标签+单行输入框"行，固定最小行高，保证与其它行同高。
 struct FieldEditorRow: View {
-    @Environment(\.appFontScale) private var fontScale
     let title: String
     let prompt: String
     @Binding var text: String
@@ -114,28 +125,25 @@ struct FieldEditorRow: View {
     var maxFieldWidth: CGFloat = 260
 
     var body: some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             IMESafeTextField(prompt: prompt, text: $text, alignment: alignment, mode: mode)
                 .frame(maxWidth: maxFieldWidth)
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 }
 
 /// 编辑页"标签+日期选择器"行，固定最小行高，与 `FieldEditorRow`/`PickerFieldRow` 同高。
 struct DateFieldRow: View {
-    @Environment(\.appFontScale) private var fontScale
     let title: String
     @Binding var date: Date
     var displayedComponents: DatePicker.Components = .date
 
     var body: some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             DatePicker("", selection: $date, displayedComponents: displayedComponents)
                 .labelsHidden()
                 .datePickerStyle(.compact)
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 }
 
@@ -144,25 +152,22 @@ struct DateFieldRow: View {
 /// 行比显式 `.frame(minHeight:)` 的行矮。仅用于同 Section 内与文本/数值/日期行混排、需要像素级同高的场景；
 /// 独立成段或 `.segmented` 样式的全宽选择器不受此问题影响，无需包裹。
 struct PickerFieldRow<Selection: Hashable, Content: View>: View {
-    @Environment(\.appFontScale) private var fontScale
     let title: String
     @Binding var selection: Selection
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             Picker("", selection: $selection) {
                 content()
             }
             .labelsHidden()
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 }
 
 /// 编辑页"标签+数值/算式输入框"行；可选算式支持与计算结果预览（预览文案由调用处的 `previewFormatter` 提供，避免 Core 依赖具体模块的货币格式化规则）。焦点绑定由调用处自行附加。
 struct NumericFieldRow: View {
-    @Environment(\.appFontScale) private var fontScale
     let title: String
     let prompt: String
     @Binding var text: String
@@ -171,7 +176,7 @@ struct NumericFieldRow: View {
     var previewFormatter: ((Decimal) -> String)?
 
     var body: some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             VStack(alignment: .trailing, spacing: 2) {
                 TextField(prompt, text: $text)
                     .multilineTextAlignment(.trailing)
@@ -189,7 +194,5 @@ struct NumericFieldRow: View {
             }
             .frame(maxWidth: maxFieldWidth)
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 }
-

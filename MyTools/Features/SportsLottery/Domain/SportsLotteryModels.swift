@@ -44,65 +44,6 @@ struct SportsLotteryLeague: Codable, Equatable, Hashable, Identifiable, Sendable
     }
 }
 
-enum SportsLotteryLeaguePreferences {
-    static let key = AppStorageKey.sportsLotteryLeagues
-
-    static func load(from defaults: UserDefaults = .standard) -> [SportsLotteryLeague] {
-        guard let data = defaults.data(forKey: key),
-              let leagues = try? JSONDecoder().decode([SportsLotteryLeague].self, from: data) else {
-            return SportsLotteryLeague.allCases
-        }
-        return unique(leagues)
-    }
-
-    static func save(_ leagues: [SportsLotteryLeague], to defaults: UserDefaults = .standard) {
-        let value = unique(leagues)
-        guard let data = try? JSONEncoder().encode(value) else { return }
-        defaults.set(data, forKey: key)
-        Task { @MainActor in
-            AppPreferenceChangeBus.shared.notifyChanged()
-        }
-    }
-
-    private static func unique(_ leagues: [SportsLotteryLeague]) -> [SportsLotteryLeague] {
-        var seen = Set<Int>()
-        return leagues.filter { seen.insert($0.leagueID).inserted }
-    }
-}
-
-enum SportsLotteryMatchOrderPreferences {
-    static let key = AppStorageKey.sportsLotteryMatchOrder
-
-    static func load(
-        for leagueID: Int,
-        from defaults: UserDefaults = .standard
-    ) -> [Int] {
-        guard let data = defaults.data(forKey: key),
-              let orders = try? JSONDecoder().decode([String: [Int]].self, from: data) else {
-            return []
-        }
-        return orders[String(leagueID), default: []]
-    }
-
-    static func save(
-        _ order: [Int],
-        for leagueID: Int,
-        to defaults: UserDefaults = .standard
-    ) {
-        var orders: [String: [Int]] = [:]
-        if let data = defaults.data(forKey: key),
-           let existing = try? JSONDecoder().decode([String: [Int]].self, from: data) {
-            orders = existing
-        }
-        orders[String(leagueID)] = order
-        guard let data = try? JSONEncoder().encode(orders) else { return }
-        defaults.set(data, forKey: key)
-        Task { @MainActor in
-            AppPreferenceChangeBus.shared.notifyChanged()
-        }
-    }
-}
-
 enum SportsLotteryOutcomeCode: String, CaseIterable, Codable, Identifiable, Sendable {
     case had = "HAD"
     case hhad = "HHAD"

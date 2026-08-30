@@ -86,6 +86,7 @@ private struct CredentialDocumentGroup: Identifiable {
 }
 
 struct DocumentsView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var store: DocumentsStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
@@ -97,6 +98,7 @@ struct DocumentsView: View {
     @State private var isUnlocked = false
     @State private var showingSensitiveAccess = false
     @State private var editingDocument: CredentialDocument?
+    @State private var pagination = AppListPagination(pageSize: DocumentsView.pageSize)
 
     private var canAccess: Bool { auth.isAdmin || isUnlocked }
 
@@ -126,11 +128,17 @@ struct DocumentsView: View {
             )
         }
             .sorted { lhs, rhs in
-                CredentialDocument.versionDisplayPrecedes(
-                    lhs.representative,
-                    rhs.representative
+                AppAlphabeticalSort.isOrderedBefore(
+                    lhs.representative.displayTitle,
+                    rhs.representative.displayTitle,
+                    lhsTieBreaker: lhs.id.uuidString,
+                    rhsTieBreaker: rhs.id.uuidString
                 )
             }
+    }
+
+    private var pagedGroups: [CredentialDocumentGroup] {
+        pagination.visibleItems(from: visibleGroups)
     }
 
     var body: some View {
@@ -172,8 +180,9 @@ struct DocumentsView: View {
                         systemImage: store.documents.isEmpty ? "person.text.rectangle" : "magnifyingglass"
                     )
                 }
-                ForEach(visibleGroups) { group in
+                ForEach(pagedGroups) { group in
                     documentLink(group)
+                        .onAppear { loadMoreIfNeeded(group) }
                 }
             }
         }
@@ -225,6 +234,11 @@ struct DocumentsView: View {
                 selectedTag = ""
             }
         }
+        .onChange(of: query) { _, _ in pagination.reset() }
+        .onChange(of: typeFilter) { _, _ in pagination.reset() }
+        .onChange(of: statusFilter) { _, _ in pagination.reset() }
+        .onChange(of: versionStatusFilter) { _, _ in pagination.reset() }
+        .onChange(of: selectedTag) { _, _ in pagination.reset() }
     }
 
     private func documentLink(_ group: CredentialDocumentGroup) -> some View {
@@ -233,7 +247,8 @@ struct DocumentsView: View {
         } label: {
             CredentialDocumentRow(
                 document: group.representative,
-                versionCount: group.versionCount
+                versionCount: group.versionCount,
+                isHolderRevealed: canAccess
             )
         }
         .appListRowStyle()
@@ -242,11 +257,27 @@ struct DocumentsView: View {
         }
     }
 
+    private func loadMoreIfNeeded(_ group: CredentialDocumentGroup) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: group.id,
+            lastVisibleItemID: pagedGroups.last?.id,
+            totalItemCount: visibleGroups.count
+        )
+    }
+
 }
 
 private struct CredentialDocumentRow: View {
     let document: CredentialDocument
     let versionCount: Int
+    let isHolderRevealed: Bool
+
+    private var protectedDisplayTitle: String {
+        let type = document.typeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let holder = document.holderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !holder.isEmpty else { return type }
+        return "\(type)-\(isHolderRevealed ? holder : "••••••")"
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -256,7 +287,7 @@ private struct CredentialDocumentRow: View {
                 .frame(width: 42, height: 42)
                 .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 5) {
-                Text(document.listDisplayTitle)
+                Text(protectedDisplayTitle)
                     .appFont(.headline)
                     .lineLimit(1)
                 HStack(spacing: 8) {
@@ -277,7 +308,7 @@ private struct CredentialDocumentRow: View {
                 AppTagCapsules(tags: document.tags, limit: 3)
             }
             Spacer(minLength: 4)
-            Image(systemName: "lock.fill")
+            Image(systemName: isHolderRevealed ? "lock.open.fill" : "lock.fill")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
         }

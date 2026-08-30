@@ -188,3 +188,50 @@ final class AttachmentStore: @unchecked Sendable {
         contentType.conforms(to: .pdf) ? .scan : .other
     }
 }
+
+// MARK: - AttachmentManaging
+
+/// A protocol that module Stores can adopt to get standard attachment
+/// delegation methods via a default-implementation extension, instead of
+/// each Store hand-writing the same one-line pass-throughs to `AttachmentStore`.
+///
+/// Conforming types must expose `attachmentStore: AttachmentStore`.
+/// Methods that require domain-specific content-type validation (e.g.
+/// `importCreditCardStatement`, `importPhoto`) remain on the concrete Store
+/// because those rules belong to the module.  The protocol provides only the
+/// universal, content-agnostic operations.
+@MainActor
+protocol AttachmentManaging: AnyObject {
+    var attachmentStore: AttachmentStore { get }
+}
+
+@MainActor
+extension AttachmentManaging {
+    /// Deletes an attachment that was added during the current edit session but
+    /// the user cancelled — the attachment was never associated with a record.
+    func deleteUncommittedAttachment(_ attachment: FileAttachment) {
+        attachmentStore.delete(attachment)
+    }
+
+    /// Renames the display name of an attachment without moving the file on disk.
+    func renameAttachment(
+        _ attachment: FileAttachment,
+        to fileName: String
+    ) throws -> FileAttachment {
+        try attachmentStore.rename(attachment, to: fileName)
+    }
+
+    /// Returns the on-disk URL for an attachment (read-only access or Quick Look).
+    func attachmentURL(for attachment: FileAttachment) -> URL {
+        attachmentStore.url(for: attachment)
+    }
+
+    /// Restores the on-disk location of an attachment to its original path
+    /// after a rollback (used by `AttachmentEditSession`).
+    func restoreAttachmentLocation(
+        _ attachment: FileAttachment,
+        to original: FileAttachment
+    ) throws {
+        try attachmentStore.restoreLocation(of: attachment, to: original)
+    }
+}

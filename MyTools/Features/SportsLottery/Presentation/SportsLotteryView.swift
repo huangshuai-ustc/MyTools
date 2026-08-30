@@ -36,11 +36,13 @@ private final class SportsLotteryViewModel: ObservableObject {
 }
 
 struct SportsLotteryView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var auth: AuthManager
     private let service: any SportsLotteryProviding
     private let defaults: UserDefaults
     @State private var leagues: [SportsLotteryLeague]
     @State private var showingAddLeague = false
+    @State private var pagination = AppListPagination(pageSize: SportsLotteryView.pageSize)
 
     init(
         service: any SportsLotteryProviding = SportsLotteryService.shared,
@@ -49,6 +51,10 @@ struct SportsLotteryView: View {
         self.service = service
         self.defaults = defaults
         _leagues = State(initialValue: SportsLotteryLeaguePreferences.load(from: defaults))
+    }
+
+    private var displayedLeagues: [SportsLotteryLeague] {
+        pagination.visibleItems(from: leagues)
     }
 
     var body: some View {
@@ -76,7 +82,7 @@ struct SportsLotteryView: View {
                     existingLeagueIDs: Set(leagues.map(\.leagueID)),
                     service: service
                 ) { league in
-                    leagues.append(league)
+                    leagues = SportsLotteryLeaguePreferences.sorted(leagues + [league])
                     persistLeagues()
                 }
             }
@@ -97,7 +103,7 @@ struct SportsLotteryView: View {
                 ContentUnavailableView("暂无赛事", systemImage: "soccerball")
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(leagues) { league in
+                ForEach(displayedLeagues) { league in
                     NavigationLink {
                         SportsLotteryLeagueView(
                             league: league,
@@ -121,6 +127,7 @@ struct SportsLotteryView: View {
                         delete(league)
                     }
                     .appListRowStyle()
+                    .onAppear { loadMoreLeaguesIfNeeded(league) }
                 }
             }
 
@@ -145,8 +152,9 @@ struct SportsLotteryView: View {
                         alignment: .leading,
                         spacing: 16
                     ) {
-                        ForEach(leagues) { league in
+                        ForEach(displayedLeagues) { league in
                             desktopLeagueCard(league)
+                                .onAppear { loadMoreLeaguesIfNeeded(league) }
                         }
                     }
                 }
@@ -225,6 +233,14 @@ struct SportsLotteryView: View {
     private func persistLeagues() {
         SportsLotteryLeaguePreferences.save(leagues, to: defaults)
     }
+
+    private func loadMoreLeaguesIfNeeded(_ league: SportsLotteryLeague) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: league.id,
+            lastVisibleItemID: displayedLeagues.last?.id,
+            totalItemCount: leagues.count
+        )
+    }
 }
 
 private struct SportsLotteryAddLeagueView: View {
@@ -301,12 +317,14 @@ private struct SportsLotteryAddLeagueView: View {
 }
 
 private struct SportsLotteryLeagueView: View {
+    private static let pageSize = 30
     let league: SportsLotteryLeague
     let defaults: UserDefaults
     @StateObject private var model: SportsLotteryViewModel
     @State private var orderedMatchIDs: [Int]
     @State private var draggedMatchID: Int?
     @State private var didRefreshOnEntry = false
+    @State private var pagination = AppListPagination(pageSize: SportsLotteryLeagueView.pageSize)
 
     init(
         league: SportsLotteryLeague,
@@ -337,6 +355,10 @@ private struct SportsLotteryLeagueView: View {
         return newMatches + savedMatches
     }
 
+    private var pagedMatches: [SportsLotteryMatch] {
+        pagination.visibleItems(from: displayedMatches)
+    }
+
     var body: some View {
         leagueContent
             .appNavigationTitle(league.title)
@@ -361,6 +383,9 @@ private struct SportsLotteryLeagueView: View {
                 await model.load(forceRefresh: true)
             }
             .refreshable { await model.load(forceRefresh: true) }
+            .onChange(of: matches.map(\.id)) { _, _ in
+                pagination.reset()
+            }
             .alert("加载失败", isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }
@@ -396,7 +421,7 @@ private struct SportsLotteryLeagueView: View {
             } else if matches.isEmpty {
                 ContentUnavailableView("暂无数据", systemImage: "soccerball")
             } else {
-                ForEach(displayedMatches) { match in
+                ForEach(pagedMatches) { match in
                     SportsLotteryMatchRow(match: match)
                         .appListRowStyle()
                         .onDrag {
@@ -411,6 +436,7 @@ private struct SportsLotteryLeagueView: View {
                                 move: moveMatch
                             )
                         )
+                        .onAppear { loadMoreMatchesIfNeeded(match) }
                 }
                 Section {
                     if let fetchedAt = model.snapshot?.fetchedAt {
@@ -434,6 +460,14 @@ private struct SportsLotteryLeagueView: View {
             order,
             for: league.leagueID,
             to: defaults
+        )
+    }
+
+    private func loadMoreMatchesIfNeeded(_ match: SportsLotteryMatch) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: match.id,
+            lastVisibleItemID: pagedMatches.last?.id,
+            totalItemCount: displayedMatches.count
         )
     }
 }

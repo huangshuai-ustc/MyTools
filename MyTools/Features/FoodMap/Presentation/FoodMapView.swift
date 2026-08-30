@@ -21,12 +21,14 @@ private enum FoodStatusFilter: Hashable {
 }
 
 struct FoodMapView: View {
+    private static let pageSize = 30
     @EnvironmentObject private var store: FoodMapStore
     @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var statusFilter: FoodStatusFilter = .all
     @State private var selectedTag = ""
     @State private var editingPlace: FoodPlace?
+    @State private var pagination = AppListPagination(pageSize: FoodMapView.pageSize)
 
     private var locatedPlaceCount: Int {
         store.places.lazy.filter { $0.coordinate?.isValid == true }.count
@@ -34,7 +36,7 @@ struct FoodMapView: View {
 
     private var availableTags: [String] {
         AppTagSupport.normalize(store.places.flatMap(\.tags))
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .sorted { AppAlphabeticalSort.isOrderedBefore($0, $1) }
     }
 
     private var visiblePlaces: [FoodPlace] {
@@ -43,9 +45,17 @@ struct FoodMapView: View {
             .filter { selectedTag.isEmpty || $0.tags.contains(selectedTag) }
             .filter { $0.matches(query) }
             .sorted { lhs, rhs in
-                if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
-                return lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
+                AppAlphabeticalSort.isOrderedBefore(
+                    lhs.displayTitle,
+                    rhs.displayTitle,
+                    lhsTieBreaker: lhs.id.uuidString,
+                    rhsTieBreaker: rhs.id.uuidString
+                )
             }
+    }
+
+    private var pagedPlaces: [FoodPlace] {
+        pagination.visibleItems(from: visiblePlaces)
     }
 
     var body: some View {
@@ -88,8 +98,9 @@ struct FoodMapView: View {
                     )
                 }
 
-                ForEach(visiblePlaces) { place in
+                ForEach(pagedPlaces) { place in
                     placeLink(place)
+                        .onAppear { loadMoreIfNeeded(place) }
                 }
             }
         }
@@ -102,14 +113,6 @@ struct FoodMapView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                NavigationLink {
-                    FoodPlacesMapView()
-                } label: {
-                    Image(systemName: "map")
-                }
-                .accessibilityLabel("查看全部美食地点")
-                .help("查看全部美食地点")
-
                 AdminEditAccessButton()
 
                 if auth.isAdmin {
@@ -132,6 +135,9 @@ struct FoodMapView: View {
                 selectedTag = ""
             }
         }
+        .onChange(of: query) { _, _ in pagination.reset() }
+        .onChange(of: statusFilter) { _, _ in pagination.reset() }
+        .onChange(of: selectedTag) { _, _ in pagination.reset() }
     }
 
     private func placeLink(_ place: FoodPlace) -> some View {
@@ -144,6 +150,14 @@ struct FoodMapView: View {
         .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
             store.delete(ids: [place.id])
         }
+    }
+
+    private func loadMoreIfNeeded(_ place: FoodPlace) {
+        pagination.loadMoreIfNeeded(
+            currentItemID: place.id,
+            lastVisibleItemID: pagedPlaces.last?.id,
+            totalItemCount: visiblePlaces.count
+        )
     }
 
 }

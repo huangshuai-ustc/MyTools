@@ -128,7 +128,14 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
 }
 
 struct StockChartPersistedStore: Codable, Sendable {
-    static let currentVersion = 5
+    // Version 6 invalidates minute caches created before Yahoo's 16:00
+    // extended-hours boundary was corrected. Those files can contain a
+    // post-market print in the regular-session series and must be rebuilt.
+    static let currentVersion = 6
+    // Keep this separate from the file schema version. Adding a technical
+    // indicator does not invalidate the raw OHLCV cache: an older file can be
+    // upgraded locally once, then written back with the current indicator set.
+    static let currentTechnicalIndicatorCacheVersion = 1
 
     let version: Int
     let market: StockMarket
@@ -136,6 +143,7 @@ struct StockChartPersistedStore: Codable, Sendable {
     var series: [String: [StockChartPoint]]
     var derivedSeries: [String: [StockChartPoint]] = [:]
     var technicalIndicators: [String: [StockTechnicalIndicatorPoint]] = [:]
+    var technicalIndicatorCacheVersion: Int? = currentTechnicalIndicatorCacheVersion
     var rangeMetadata: [String: StockChartStoredRangeMetadata]
 }
 
@@ -166,16 +174,19 @@ struct StockChartDiskStore {
     }
 
     mutating func load(for key: StockChartStoreKey) -> StockChartPersistedStore? {
-        if let stored = memoryStores[key],
+        if var stored = memoryStores[key],
            stored.version == StockChartPersistedStore.currentVersion,
            stored.market == key.market,
            stored.symbol == key.symbol {
+            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
+                save(stored, for: key)
+            }
             return stored
         }
         memoryStores[key] = nil
         let url = persistentStoreURL(for: key)
         if let data = try? Data(contentsOf: url) {
-            guard let stored = try? JSONDecoder().decode(
+            guard var stored = try? JSONDecoder().decode(
                 StockChartPersistedStore.self,
                 from: data
             ),
@@ -186,6 +197,10 @@ struct StockChartDiskStore {
                 // corrupt cache file behind after the schema changes.
                 try? fileManager.removeItem(at: url)
                 return nil
+            }
+            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
+                save(stored, for: key)
+                return stored
             }
             memoryStores[key] = stored
             return stored
@@ -259,6 +274,21 @@ struct StockChartDiskStore {
             DiagnosticLogger.shared.log(
                 .stockQuote,
                 "离线行情缓存清理失败：\(error.localizedDescription)",
+                level: .warning
+            )
+        }
+    }
+
+    mutating func remove(for key: StockChartStoreKey) {
+        memoryStores.removeValue(forKey: key)
+        let url = persistentStoreURL(for: key)
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            DiagnosticLogger.shared.log(
+                .stockQuote,
+                "离线行情缓存删除失败（\(key.symbol)）：\(error.localizedDescription)",
                 level: .warning
             )
         }
@@ -352,6 +382,9 @@ struct StockChartDiskStore {
         range: StockChartRange,
         into store: inout StockChartPersistedStore
     ) {
+        // `merging` is also used directly by tests and import-like callers,
+        // so do not rely on every store having passed through `load` first.
+        refreshTechnicalIndicatorCachesIfNeeded(in: &store)
         let kind = StockChartSeriesProcessor.seriesKind(for: range)
         let incomingPoints: [StockChartPoint]
         if range.isKLineRange {
@@ -426,6 +459,40 @@ struct StockChartDiskStore {
             )
         store.technicalIndicators[StockChartTechnicalCacheKind.daily.rawValue] =
             StockTechnicalIndicators.calculate(dailyPoints)
+    }
+
+    /// Rebuilds advanced indicator fields from the canonical local OHLCV
+    /// series. Returning `true` lets `load` persist the migration exactly once.
+    @discardableResult
+    private func refreshTechnicalIndicatorCachesIfNeeded(
+        in store: inout StockChartPersistedStore
+    ) -> Bool {
+        let rawMinutePoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
+        let minutePoints = StockChartSeriesProcessor.regularSessionPoints(
+            rawMinutePoints,
+            market: store.market
+        ).sorted { $0.date < $1.date }
+        let dailyPoints = (store.series[StockChartSeriesKind.daily.rawValue] ?? [])
+            .sorted { $0.date < $1.date }
+        let cachedMinuteCount = store.technicalIndicators[
+            StockChartTechnicalCacheKind.minute.rawValue
+        ]?.count ?? 0
+        let cachedDailyCount = store.technicalIndicators[
+            StockChartTechnicalCacheKind.daily.rawValue
+        ]?.count ?? 0
+        let needsRefresh = store.technicalIndicatorCacheVersion
+                != StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+            || cachedMinuteCount != minutePoints.count
+            || cachedDailyCount != dailyPoints.count
+        guard needsRefresh else { return false }
+
+        store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
+            StockTechnicalIndicators.calculate(minutePoints)
+        store.technicalIndicators[StockChartTechnicalCacheKind.daily.rawValue] =
+            StockTechnicalIndicators.calculate(dailyPoints)
+        store.technicalIndicatorCacheVersion =
+            StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+        return true
     }
 
     private func fileName(for identifier: String) -> String {

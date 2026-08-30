@@ -341,14 +341,23 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
                 cost += transaction.grossAmount + transaction.fees
             case .sell:
                 guard shares > 0 else { continue }
+                // `hasValidTransactionOrder` prevents selling more than the
+                // running share count, so soldShares == transaction.quantity in
+                // all valid portfolios. The min() here is a defensive fallback;
+                // it intentionally truncates rather than producing negative cost
+                // so that subsequent buys produce a correct average cost basis.
                 let soldShares = min(transaction.quantity, shares)
                 let averageCost = cost / shares
                 let soldCost = averageCost * soldShares
+                // Fees are apportioned to the sold fraction so that a partial
+                // sell does not over-attribute the entire fee to realized P&L.
                 let feeRatio = soldShares / transaction.quantity
                 let soldProceeds = soldShares * transaction.unitPrice - transaction.fees * feeRatio
                 realized += soldProceeds - soldCost
                 shares -= soldShares
                 cost -= soldCost
+                // Guard against floating-point-style drift: if the position
+                // is exactly zero, reset cost to avoid a tiny residual.
                 if shares == 0 { cost = 0 }
             }
         }

@@ -12,9 +12,9 @@ struct AppStoreBackupMergerTests {
 
         var localAccount = BankAccount()
         localAccount.id = accountID
-        localAccount.name = "Local account"
+        localAccount.bankName = "Local account"
         var importedAccount = localAccount
-        importedAccount.name = "Imported account"
+        importedAccount.bankName = "Imported account"
 
         var localStock = StockHolding()
         localStock.id = stockID
@@ -122,7 +122,7 @@ struct AppStoreBackupMergerTests {
         var importedHealth = localHealth
         importedHealth.hospital = "Imported"
         var importedAccount = BankAccount()
-        importedAccount.name = "Imported account"
+        importedAccount.bankName = "Imported account"
 
         let merged = AppStoreBackupMerger.merge(
             localVault: VaultData(medicalRecords: [localHealth]),

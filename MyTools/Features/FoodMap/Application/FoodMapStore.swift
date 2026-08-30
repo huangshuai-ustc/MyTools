@@ -3,11 +3,11 @@ import Foundation
 import UniformTypeIdentifiers
 
 @MainActor
-final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
+final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, AttachmentManaging {
     @Published private(set) var places: [FoodPlace]
     @Published private(set) var knownTags: [String]
 
-    private let attachmentStore: AttachmentStore
+    let attachmentStore: AttachmentStore
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
     var cleanupModule: ToolModule { .foodMap }
@@ -123,20 +123,24 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant {
         )
     }
 
+    // deleteUncommittedAttachment (= deleteUncommittedPhoto), restoreAttachmentLocation,
+    // attachmentURL are provided by the AttachmentManaging protocol extension.
+    // Convenience aliases that keep existing call sites working:
+
     func deleteUncommittedPhoto(_ photo: FileAttachment) {
-        attachmentStore.delete(photo)
+        deleteUncommittedAttachment(photo)
     }
 
     func restorePhotoLocation(_ photo: FileAttachment, to original: FileAttachment) throws {
-        try attachmentStore.restoreLocation(of: photo, to: original)
+        try restoreAttachmentLocation(photo, to: original)
     }
 
     func photoURL(for photo: FileAttachment) -> URL {
-        attachmentStore.url(for: photo)
+        attachmentURL(for: photo)
     }
 
     private func normalizedText(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
+        AppTagSupport.trimmed(value)
     }
 
     private func normalizedTags(_ tags: [String]) -> [String] {
