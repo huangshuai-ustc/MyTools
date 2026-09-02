@@ -106,7 +106,7 @@ struct StorageDataView: View {
                         Label("没有发现不适用的字段值", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else if let redundantDataReport {
-                        LabeledContent("可清理字段") {
+                        AppLabeledContentRow("可清理字段") {
                             Text("\(redundantDataReport.affectedFieldCount) 个")
                         }
                         ForEach(redundantDataReport.findings) { finding in

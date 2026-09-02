@@ -105,7 +105,7 @@ private struct AdminSessionSettingsView: View {
     var body: some View {
         List {
             Section {
-                Picker("认证有效期", selection: durationBinding) {
+                PickerFieldRow(title: "认证有效期", selection: durationBinding) {
                     ForEach(AdminSessionDuration.allCases) { duration in
                         Text(duration.title).tag(duration)
                     }
@@ -123,7 +123,7 @@ private struct AdminSessionSettingsView: View {
                         }
                         .onDisappear(perform: commitCustomMinutes)
                 }
-                Toggle("进入后台锁定", isOn: lockOnBackgroundBinding)
+                ToggleFieldRow(title: "进入后台锁定", isOn: lockOnBackgroundBinding)
             } header: {
                 Text("管理员会话")
             } footer: {

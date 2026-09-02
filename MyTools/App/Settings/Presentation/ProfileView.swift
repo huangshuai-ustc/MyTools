@@ -72,7 +72,7 @@ struct ProfileView: View {
                     }
                 }
                 Section("关于") {
-                    LabeledContent("版本", value: AppMetadata.versionDescription)
+                    DetailValueRow(title: "版本", value: AppMetadata.versionDescription)
                 }
             }
             .appNavigationTitle("我的")

@@ -5,16 +5,28 @@ import AppKit
 #endif
 
 struct CardDetailView: View {
-    let card: BankCard
+    private let initialCard: BankCard
     @EnvironmentObject private var store: FinanceStore
     @EnvironmentObject private var auth: AuthManager
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var sensitiveInformationRevealed = false
     @State private var showingSensitiveAccess = false
+    @State private var editingCard: BankCard?
     @State private var previewAttachment: FileAttachment?
     @State private var showingAttachmentError = false
     @State private var attachmentError = ""
+
+    init(card: BankCard) {
+        initialCard = card
+    }
+
+    private var card: BankCard {
+        store.cards.first { $0.id == initialCard.id } ?? initialCard
+    }
+
+    private var account: BankAccount? {
+        store.accounts.first { $0.id == card.accountID }
+    }
 
     private var canShowSensitiveInformation: Bool {
         auth.isAdmin || sensitiveInformationRevealed
@@ -23,51 +35,42 @@ struct CardDetailView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    DetailValueRow(title: "卡片名称", value: card.cardType)
-                    DetailValueRow(title: "卡片类型", value: card.kind.title)
-                    DetailValueRow.protected(
-                        "卡号",
-                        value: card.cardNumber,
-                        concealedValue: maskedCardNumber,
-                        isRevealed: canShowSensitiveInformation,
-                        monospaced: true
-                    )
-                    DetailValueRow.protected(
-                        "CVV",
-                        value: card.cvv,
-                        concealedValue: "•••",
-                        isRevealed: canShowSensitiveInformation,
-                        monospaced: true
-                    )
-                    LabeledContent("有效期") {
-                        Text(canShowSensitiveInformation ? expiryText : "已隐藏")
-                            .fontDesign(canShowSensitiveInformation ? .monospaced : .default)
-                            .copyableText(canShowSensitiveInformation ? expiryText : nil)
-                    }
-                    LabeledContent("发卡组织") {
-                        if card.networks.isEmpty {
-                            Text("未选择").foregroundStyle(.secondary)
-                        } else {
-                            CardNetworkTags(networks: card.networks)
-                        }
-                    }
-                    DetailValueRow(
-                        title: "开卡时间",
-                        value: AppDateFormatter.string(from: card.openedAt)
-                    )
-                    LabeledContent("状态") {
-                        CardStatusText(status: card.status)
-                            .copyableText(card.status.title)
-                    }
-                    DetailValueRow(
-                        title: "币种",
-                        value: card.currencySummary,
-                        emptyValue: "未选择"
-                    )
-                    DetailValueRow(title: "持卡人", value: card.holderName)
+                Section("银行卡档案") {
+                    cardArchiveCard
+                }
 
-                    if !auth.isAdmin, hasSensitiveInformation {
+                Section("主卡号") {
+                    credentialCard(
+                        name: card.cardType.isEmpty ? "主卡" : card.cardType,
+                        networks: card.networks,
+                        cardNumber: card.cardNumber,
+                        cvv: card.cvv,
+                        expiryDate: card.expiryDate,
+                        currencies: card.currencies,
+                        holderName: card.holderName,
+                        status: card.status,
+                        isPrimary: true
+                    )
+                }
+
+                ForEach(card.additionalCredentials) { credential in
+                    Section("其他卡号") {
+                        credentialCard(
+                            name: credential.displayName,
+                            networks: credential.networks,
+                            cardNumber: credential.cardNumber,
+                            cvv: credential.cvv,
+                            expiryDate: credential.expiryDate,
+                            currencies: credential.currencies,
+                            holderName: credential.holderName,
+                            status: credential.status,
+                            isPrimary: false
+                        )
+                    }
+                }
+
+                if !auth.isAdmin, hasSensitiveInformation {
+                    Section {
                         Button {
                             if sensitiveInformationRevealed {
                                 sensitiveInformationRevealed = false
@@ -80,12 +83,10 @@ struct CardDetailView: View {
                                 systemImage: sensitiveInformationRevealed ? "lock" : "faceid"
                             )
                         }
-                    }
-                } header: {
-                    Text("卡片信息")
-                } footer: {
-                    if !canShowSensitiveInformation, hasSensitiveInformation {
-                        Text("完整卡号、CVV 和有效期仅在当前详情页验证身份后显示，验证不会进入管理员编辑模式。")
+                    } footer: {
+                        if !canShowSensitiveInformation {
+                            Text("完整卡号、CVV 和有效期仅在当前详情页验证身份后显示，验证不会进入管理员编辑模式。")
+                        }
                     }
                 }
 
@@ -109,14 +110,29 @@ struct CardDetailView: View {
                 }
 
             }
-            .appNavigationTitle("银行卡详情")
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    AdminEditAccessButton()
+                    if auth.isAdmin {
+                        Button {
+                            editingCard = card
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .accessibilityLabel("编辑银行卡")
+                        .help("编辑银行卡")
+                    }
+                }
+            }
+            .sheet(item: $editingCard) { cardToEdit in
+                if let account = store.accounts.first(where: { $0.id == cardToEdit.accountID }) {
+                    CardEditorView(card: cardToEdit, account: account) { updated in
+                        store.replaceAccount(
+                            account,
+                            cards: store.cards(for: account).map { $0.id == updated.id ? updated : $0 }
+                        )
+                    }
+                    .iOSLargeSheet()
                 }
             }
             .sheet(isPresented: $showingSensitiveAccess) {
@@ -147,36 +163,231 @@ struct CardDetailView: View {
     }
 
     private var hasSensitiveInformation: Bool {
-        !card.cardNumber.isEmpty || !card.cvv.isEmpty || !card.statements.isEmpty
+        !card.cardNumber.isEmpty
+            || !card.cvv.isEmpty
+            || card.additionalCredentials.contains {
+                !$0.cardNumber.isEmpty
+            }
+            || !card.statements.isEmpty
     }
 
     private var sortedStatements: [CreditCardStatement] {
         card.statements.sorted { $0.statementDate > $1.statementDate }
     }
 
-    private var maskedCardNumber: String {
-        guard !card.cardNumber.isEmpty else { return "未填写" }
-        return "•••• " + String(card.cardNumber.suffix(4))
+    private var cardArchiveCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(
+                columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("卡片类型")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    BankCardKindBadge(kind: card.kind)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                credentialFact(
+                    title: "开卡时间",
+                    value: AppDateFormatter.string(from: card.openedAt),
+                    copyValue: AppDateFormatter.string(from: card.openedAt)
+                )
+            }
+            if account?.region == .domestic {
+                openingBranchFact
+            }
+        }
+        .padding(.vertical, 6)
     }
 
-    private var expiryText: String {
-        let components = Calendar(identifier: .gregorian).dateComponents(
-            [.year, .month, .day],
-            from: card.expiryDate
-        )
-        if card.expiryPrecision == .yearMonth {
-            return String(
-                format: "%02d/%02d",
-                components.month ?? 0,
-                (components.year ?? 0) % 100
+    private var openingBranchFact: some View {
+        let branch = resolvedOpeningBranch
+        return VStack(alignment: .leading, spacing: 3) {
+            Text("开卡网点")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+            if account?.isOnlineBank == true {
+                Text("网络银行")
+            } else {
+                Menu {
+                    ForEach(BankNavigationApplication.allCases) { application in
+                        Button {
+                            BankBranchNavigationService.open(
+                                application,
+                                branchName: branch.name,
+                                location: branch.location
+                            )
+                        } label: {
+                            Label(application.title, systemImage: application.systemImage)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: branch.location?.isValid == true
+                              ? "mappin.and.ellipse"
+                              : "exclamationmark.triangle.fill")
+                            .foregroundStyle(branch.location?.isValid == true ? .blue : .yellow)
+                        Text(branch.name.isEmpty ? "未填写" : branch.name)
+                            .foregroundStyle(.blue)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .menuStyle(.borderlessButton)
+                .copyableText(branch.name)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var resolvedOpeningBranch: BankBranchReference {
+        guard let account else {
+            return BankBranchReference(
+                name: card.branchName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                location: card.branchLocation
             )
         }
-        return String(
-            format: "%02d/%02d/%04d",
-            components.month ?? 0,
-            components.day ?? 0,
-            components.year ?? 0
+        return card.resolvedOpeningBranch(for: account)
+    }
+
+    private func expiryText(date: Date) -> String {
+        let components = Calendar(identifier: .gregorian).dateComponents(
+            [.year, .month],
+            from: date
         )
+        return String(
+            format: "%02d/%02d",
+            components.month ?? 0,
+            (components.year ?? 0) % 100
+        )
+    }
+
+    private func credentialCard(
+        name: String,
+        networks: Set<CardNetwork>,
+        cardNumber: String,
+        cvv: String,
+        expiryDate: Date,
+        currencies: Set<CurrencyCode>,
+        holderName: String,
+        status: CardStatus,
+        isPrimary: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(name)
+                    .appFont(.headline)
+                    .lineLimit(2)
+                if isPrimary {
+                    Text("主卡")
+                        .appFont(.caption2.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.12), in: Capsule())
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 5) {
+                    Image(systemName: "circle.fill")
+                        .appFont(.caption2)
+                        .foregroundStyle(statusColor(status))
+                    Text(status.title)
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(statusColor(status))
+                }
+            }
+
+            if networks.isEmpty {
+                Text("未选择发卡组织")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                CardNetworkTags(networks: networks)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("卡号")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                Text(cardNumberDisplay(cardNumber))
+                    .appFont(.title3.weight(.semibold))
+                    .fontDesign(.monospaced)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .copyableText(canShowSensitiveInformation && !cardNumber.isEmpty ? cardNumber : nil)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                credentialFact(
+                    title: "CVV",
+                    value: canShowSensitiveInformation ? (cvv.isEmpty ? "未填写" : cvv) : "•••",
+                    copyValue: canShowSensitiveInformation && !cvv.isEmpty ? cvv : nil,
+                    monospaced: true
+                )
+                credentialFact(
+                    title: "有效期",
+                    value: canShowSensitiveInformation ? expiryText(date: expiryDate) : "已隐藏",
+                    copyValue: canShowSensitiveInformation ? expiryText(date: expiryDate) : nil,
+                    monospaced: canShowSensitiveInformation
+                )
+            }
+
+            credentialFact(
+                title: "持卡人",
+                value: holderName.isEmpty ? "未填写" : holderName,
+                copyValue: holderName.isEmpty ? nil : holderName
+            )
+            credentialFact(
+                title: "币种",
+                value: currencyText(currencies),
+                copyValue: currencies.isEmpty ? nil : currencyText(currencies)
+            )
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func credentialFact(
+        title: String,
+        value: String,
+        copyValue: String?,
+        monospaced: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .appFont(.subheadline)
+                .fontDesign(monospaced ? .monospaced : .default)
+                .fixedSize(horizontal: false, vertical: true)
+                .copyableText(copyValue)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cardNumberDisplay(_ cardNumber: String) -> String {
+        guard !cardNumber.isEmpty else { return "未填写" }
+        return canShowSensitiveInformation ? cardNumber : "•••• •••• •••• \(cardNumber.suffix(4))"
+    }
+
+    private func currencyText(_ currencies: Set<CurrencyCode>) -> String {
+        guard !currencies.isEmpty else { return "未选择" }
+        return CurrencyCode.displayOrdered(currencies).map(\.rawValue).joined(separator: " · ")
+    }
+
+    private func statusColor(_ status: CardStatus) -> Color {
+        switch status {
+        case .normal: .green
+        case .abnormal: .orange
+        case .closed: .red
+        }
     }
 
     private func open(_ statement: CreditCardStatement) {
@@ -196,6 +407,24 @@ struct CardDetailView: View {
 #elseif os(macOS)
         NSWorkspace.shared.open(url)
 #endif
+    }
+}
+
+private struct BankCardKindBadge: View {
+    let kind: BankCardKind
+
+    private var color: Color {
+        kind == .debit ? .blue : .purple
+    }
+
+    var body: some View {
+        Text(kind.title)
+            .appFont(.caption.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.14), in: Capsule())
+            .copyableText(kind.title)
     }
 }
 

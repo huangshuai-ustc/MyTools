@@ -206,7 +206,7 @@ struct MedicalRecordRow: View {
             }
             .lineLimit(2)
         } else if record.isPhysicalExam {
-            MarkdownText(recordSummary)
+            MarkdownText(recordSummary, preservesLineBreaks: true)
                 .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)

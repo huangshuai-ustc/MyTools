@@ -15,15 +15,18 @@ struct DiagnosticsView: View {
         List {
             Section("日志文件") {
                 if let overview {
-                    LabeledContent("大小", value: ByteCountFormatter.string(
-                        fromByteCount: overview.byteCount,
-                        countStyle: .file
-                    ))
+                    DetailValueRow(
+                        title: "大小",
+                        value: ByteCountFormatter.string(
+                            fromByteCount: overview.byteCount,
+                            countStyle: .file
+                        )
+                    )
                     if let createdAt = overview.createdAt {
-                        LabeledContent("开始记录", value: AppDateFormatter.string(from: createdAt))
+                        DetailValueRow(title: "开始记录", value: AppDateFormatter.string(from: createdAt))
                     }
                     if let modifiedAt = overview.modifiedAt {
-                        LabeledContent("最近写入", value: AppDateFormatter.string(from: modifiedAt))
+                        DetailValueRow(title: "最近写入", value: AppDateFormatter.string(from: modifiedAt))
                     }
                 }
 

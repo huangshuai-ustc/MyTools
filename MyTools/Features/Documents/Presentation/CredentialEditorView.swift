@@ -207,7 +207,7 @@ struct CredentialEditorView: View {
 
     private var validitySection: some View {
         Section("有效期") {
-            Picker("期限", selection: $draft.validity.kind) {
+            PickerFieldRow(title: "期限", selection: $draft.validity.kind) {
                 if draft.validity.kind == .unspecified {
                     Text("请选择期限（必填）")
                         .tag(CredentialValidityKind.unspecified)
@@ -217,13 +217,12 @@ struct CredentialEditorView: View {
                     Text(kind == .dateRange ? "固定期限（已有记录）" : kind.title).tag(kind)
                 }
             }
-            .pickerStyle(.menu)
             .onChange(of: draft.validity.kind) { _, kind in
                 validityKindDidChange(kind)
             }
             if draft.validity.kind.durationYears != nil {
                 if let endDate = draft.expirationDate() {
-                    LabeledContent("自动计算到期日", value: AppDateFormatter.string(from: endDate))
+                    DetailValueRow(title: "自动计算到期日", value: AppDateFormatter.string(from: endDate))
                     Text(CredentialValidityKind.endDateRule(for: draft.type).title)
                         .appFont(.footnote)
                         .foregroundStyle(.secondary)
@@ -233,16 +232,16 @@ struct CredentialEditorView: View {
                         .foregroundStyle(.secondary)
                 }
             } else if draft.validity.kind == .dateRange {
-                LabeledContent("有效期起始", value: issuedDateText)
+                DetailValueRow(title: "有效期起始", value: issuedDateText)
                 expirationDatePicker
             } else if draft.validity.kind == .permanent {
-                LabeledContent("生效日期", value: issuedDateText)
+                DetailValueRow(title: "生效日期", value: issuedDateText)
             }
 
             if draft.expirationDate() != nil {
-                Toggle("到期提醒", isOn: $draft.expiryReminder.isEnabled)
+                ToggleFieldRow(title: "到期提醒", isOn: $draft.expiryReminder.isEnabled)
                 if draft.expiryReminder.isEnabled {
-                    Picker("提醒时间", selection: $draft.expiryReminder.daysBefore) {
+                    PickerFieldRow(title: "提醒时间", selection: $draft.expiryReminder.daysBefore) {
                         ForEach(CredentialExpiryReminder.dayOptions, id: \.self) { days in
                             Text(days == 0 ? "到期当天" : "提前 \(days) 天").tag(days)
                         }
@@ -265,13 +264,12 @@ struct CredentialEditorView: View {
     }
 
     private var expirationDatePicker: some View {
-        DatePicker(
-            "到期日期",
-            selection: Binding(
+        DateFieldRow(
+            title: "到期日期",
+            date: Binding(
                 get: { draft.validity.endDate ?? Date() },
                 set: { draft.validity.endDate = $0 }
-            ),
-            displayedComponents: .date
+            )
         )
     }
 
@@ -396,7 +394,7 @@ struct CredentialEditorView: View {
     }
 
     private func requiredDateRow(_ title: String, date: Binding<Date?>) -> some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             DatePicker(
                 "",
                 selection: Binding(
@@ -407,8 +405,8 @@ struct CredentialEditorView: View {
             )
             .labelsHidden()
             .datePickerStyle(.compact)
+            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
     }
 
     private func fieldBinding(for id: UUID, fallback: CredentialField) -> Binding<CredentialField> {
@@ -437,6 +435,7 @@ struct CredentialEditorView: View {
                 .labelsHidden()
                 .datePickerStyle(.compact)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
             case .text, .url:
                 if field.wrappedValue.isMultiline {
                     IMESafeMultilineTextField(
@@ -456,6 +455,7 @@ struct CredentialEditorView: View {
             }
         }
         .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
+        .appListRowStyle()
         .onChange(of: field.wrappedValue.value) { _, value in
             guard field.wrappedValue.inputType != .date else { return }
             field.wrappedValue.kind = value.contains(where: { $0.isNewline }) ? .multiline : .text

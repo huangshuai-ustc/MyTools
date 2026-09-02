@@ -5,18 +5,36 @@ import SwiftUI
 struct AppLabeledContentRow<Content: View>: View {
     @Environment(\.appFontScale) private var fontScale
     let title: String
+    let systemImage: String?
     @ViewBuilder let content: () -> Content
 
-    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        _ title: String,
+        systemImage: String? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.title = title
+        self.systemImage = systemImage
         self.content = content
     }
 
     var body: some View {
-        LabeledContent(title) {
+        HStack(spacing: 8) {
+            if let systemImage {
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(title)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
             content()
         }
         .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+        // Do not leave row insets to each native control. Picker/DatePicker/Toggle
+        // otherwise ask Form for slightly different vertical padding even when
+        // their visible content has the same height.
+        .appListRowStyle()
     }
 }
 
@@ -34,10 +52,10 @@ struct DetailValueRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .appFont(.body)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.secondary)
                 valueText
                     .appFont(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
@@ -134,6 +152,7 @@ struct FieldEditorRow: View {
 
 /// 编辑页"标签+日期选择器"行，固定最小行高，与 `FieldEditorRow`/`PickerFieldRow` 同高。
 struct DateFieldRow: View {
+    @Environment(\.appFontScale) private var fontScale
     let title: String
     @Binding var date: Date
     var displayedComponents: DatePicker.Components = .date
@@ -143,6 +162,7 @@ struct DateFieldRow: View {
             DatePicker("", selection: $date, displayedComponents: displayedComponents)
                 .labelsHidden()
                 .datePickerStyle(.compact)
+                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
     }
 }
@@ -152,6 +172,7 @@ struct DateFieldRow: View {
 /// 行比显式 `.frame(minHeight:)` 的行矮。仅用于同 Section 内与文本/数值/日期行混排、需要像素级同高的场景；
 /// 独立成段或 `.segmented` 样式的全宽选择器不受此问题影响，无需包裹。
 struct PickerFieldRow<Selection: Hashable, Content: View>: View {
+    @Environment(\.appFontScale) private var fontScale
     let title: String
     @Binding var selection: Selection
     @ViewBuilder let content: () -> Content
@@ -162,6 +183,23 @@ struct PickerFieldRow<Selection: Hashable, Content: View>: View {
                 content()
             }
             .labelsHidden()
+            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+        }
+    }
+}
+
+/// 编辑页“标签 + 开关”行。隐藏原生 Toggle 标签，避免 Toggle 自己的整行高度
+/// 与 Form 的统一行高叠加。
+struct ToggleFieldRow: View {
+    @Environment(\.appFontScale) private var fontScale
+    let title: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        AppLabeledContentRow(title) {
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
     }
 }

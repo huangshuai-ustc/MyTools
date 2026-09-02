@@ -109,6 +109,36 @@ enum StockMarketTradingCalendar {
         }
     }
 
+    /// Returns the market-local start of the trading day immediately before
+    /// `date`. Weekend and market holidays are skipped, but a missing quote or
+    /// chart bar is not: callers can therefore detect a gap instead of silently
+    /// treating an older close as the previous session's close.
+    static func previousTradingDay(
+        for market: StockMarket,
+        before date: Date
+    ) -> Date? {
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let containingDay = calendar.startOfDay(for: date)
+        guard var currentDay = calendar.date(
+            byAdding: .day,
+            value: -1,
+            to: containingDay
+        ) else { return nil }
+
+        for _ in 0..<370 {
+            if isTradingDay(market, on: currentDay) {
+                return calendar.startOfDay(for: currentDay)
+            }
+            guard let previousDay = calendar.date(
+                byAdding: .day,
+                value: -1,
+                to: currentDay
+            ) else { break }
+            currentDay = previousDay
+        }
+        return nil
+    }
+
     /// Returns true only when a market's final session (not a lunch break) ended
     static func finalSessionEnded(
         for market: StockMarket,

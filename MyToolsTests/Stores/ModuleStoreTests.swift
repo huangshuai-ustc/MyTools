@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import Testing
 import UniformTypeIdentifiers
@@ -42,6 +43,133 @@ struct ModuleStoreTests {
 
         creditCard.status = .closed
         #expect(account.isInactiveFinanceArchive(cards: [creditCard]))
+    }
+
+    @Test func bankCardOpeningBranchRoundTripsAndLegacyDataDefaultsToEmpty() throws {
+        var card = BankCard()
+        card.branchName = "中关村支行"
+        card.branchLocation = BankBranchLocation(latitude: 39.98, longitude: 116.31)
+        card.additionalCredentials = [BankCardCredential(
+            name: "Visa 卡面",
+            cardNumber: "4111111111111111",
+            networks: [.visa],
+            cvv: "123",
+            currencies: [.usd],
+            holderName: "HUANG SHUAI",
+            status: .abnormal
+        )]
+
+        let encoded = try JSONEncoder().encode(card)
+        let decoded = try JSONDecoder().decode(BankCard.self, from: encoded)
+        #expect(decoded.branchName == "中关村支行")
+        #expect(decoded.branchLocation == BankBranchLocation(latitude: 39.98, longitude: 116.31))
+        #expect(decoded.additionalCredentials.count == 1)
+        #expect(decoded.additionalCredentials.first?.name == "Visa 卡面")
+        #expect(decoded.additionalCredentials.first?.cardNumber == "4111111111111111")
+        #expect(decoded.additionalCredentials.first?.networks == [.visa])
+        #expect(decoded.additionalCredentials.first?.cvv == "123")
+        #expect(decoded.additionalCredentials.first?.currencies == [.usd])
+        #expect(decoded.additionalCredentials.first?.holderName == "HUANG SHUAI")
+        #expect(decoded.additionalCredentials.first?.status == .abnormal)
+
+        var legacyObject = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyObject.removeValue(forKey: "branchName")
+        legacyObject.removeValue(forKey: "branchLocation")
+        legacyObject.removeValue(forKey: "additionalCardCredentials")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        let legacyCard = try JSONDecoder().decode(BankCard.self, from: legacyData)
+        #expect(legacyCard.branchName == nil)
+        #expect(legacyCard.branchLocation == nil)
+        #expect(legacyCard.additionalCredentials.isEmpty)
+
+        let legacyCredential = try JSONDecoder().decode(
+            BankCardCredential.self,
+            from: Data("{\"name\":\"银联卡号\",\"cardNumber\":\"6222000000000000\"}".utf8)
+        )
+        #expect(legacyCredential.name == "银联卡号")
+        #expect(legacyCredential.cardNumber == "6222000000000000")
+        #expect(legacyCredential.networks.isEmpty)
+        #expect(legacyCredential.currencies.isEmpty)
+        #expect(legacyCredential.status == .normal)
+    }
+
+    @Test func domesticCardWithoutAnOpeningBranchDefaultsToItsAccountBranch() {
+        var account = BankAccount()
+        account.region = .domestic
+        account.branchName = "北京银行（中关村软件园支行）"
+        account.branchLocation = BankBranchLocation(latitude: 40.052, longitude: 116.298)
+
+        var card = BankCard()
+        #expect(card.resolvedOpeningBranch(for: account) == BankBranchReference(
+            name: "北京银行（中关村软件园支行）",
+            location: BankBranchLocation(latitude: 40.052, longitude: 116.298)
+        ))
+
+        card.applyDefaultOpeningBranch(from: account)
+        #expect(card.branchName == "北京银行（中关村软件园支行）")
+        #expect(card.branchLocation == BankBranchLocation(latitude: 40.052, longitude: 116.298))
+
+        card.branchName = "北京银行（永丰支行）"
+        card.branchLocation = nil
+        #expect(card.resolvedOpeningBranch(for: account) == BankBranchReference(
+            name: "北京银行（永丰支行）",
+            location: nil
+        ))
+
+        account.isOnlineBank = true
+        #expect(card.resolvedOpeningBranch(for: account) == BankBranchReference(
+            name: "网络银行",
+            location: nil
+        ))
+        card.applyDefaultOpeningBranch(from: account)
+        #expect(card.branchName == nil)
+        #expect(card.branchLocation == nil)
+
+        account.isOnlineBank = false
+        account.region = .overseas
+        card.branchName = nil
+        #expect(!card.resolvedOpeningBranch(for: account).hasValue)
+    }
+
+    @Test func bankBranchMapSelectionKeepsTheMapItemNameAndIgnoresMarkerPlaceholder() {
+        let coordinate = CLLocationCoordinate2D(latitude: 40.052, longitude: 116.298)
+        let mapSelection = MapLocationSelection(
+            name: "北京银行（中关村软件园支行）",
+            address: "北京市海淀区西北旺东路",
+            coordinate: coordinate,
+            administrativeContext: "北京市 海淀区"
+        )
+        let branch = BankBranchSelection(
+            mapSelection: mapSelection,
+            markerFallback: "开卡网点"
+        )
+
+        #expect(branch.name == "北京银行（中关村软件园支行）")
+        #expect(branch.location == BankBranchLocation(latitude: 40.052, longitude: 116.298))
+
+        let manualPin = BankBranchSelection(
+            mapSelection: MapLocationSelection(
+                name: "开卡网点",
+                address: "",
+                coordinate: coordinate,
+                administrativeContext: ""
+            ),
+            markerFallback: "开卡网点"
+        )
+        #expect(manualPin.name.isEmpty)
+
+        let overseasBranch = BankBranchSelection(
+            mapSelection: MapLocationSelection(
+                name: "Bank of China (Hong Kong) Central District Branch",
+                address: "1 Garden Road, Central, Hong Kong",
+                coordinate: CLLocationCoordinate2D(latitude: 22.278, longitude: 114.164),
+                administrativeContext: "Hong Kong Central"
+            ),
+            markerFallback: "分行/网点"
+        )
+        #expect(overseasBranch.name == "Bank of China (Hong Kong) Central District Branch")
     }
 
     @Test func moduleCatalogCoversEveryTopLevelModule() {
@@ -203,7 +331,12 @@ struct ModuleStoreTests {
     @Test func financeLoginTemplatesAreRegionSpecificAndPersistent() throws {
         let domestic = BankLoginFieldTemplate(name: "境内网银网址")
         let overseas = BankLoginFieldTemplate(name: "海外安全问题", isSensitive: true)
+        var legacyAccount = BankAccount()
+        legacyAccount.boundPhoneNumber = "13800138000"
+        legacyAccount.loginAccount = "legacy-user"
+        legacyAccount.loginPassword = "legacy-password"
         let store = FinanceStore(
+            accounts: [legacyAccount],
             domesticLoginFieldTemplates: [domestic],
             overseasLoginFieldTemplates: [overseas],
             attachmentStore: AttachmentStore()
@@ -213,8 +346,24 @@ struct ModuleStoreTests {
         #expect(store.makeLoginFields(for: .overseas).map(\.name) == ["海外安全问题"])
         #expect(store.makeLoginFields(for: .overseas).first?.isSensitive == true)
 
-        store.deleteLoginFieldTemplate(domestic, for: .domestic)
-        #expect(store.loginFieldTemplates(for: .domestic).isEmpty)
+        let migratedAccount = try #require(store.accounts.first)
+        #expect(migratedAccount.boundPhoneNumber.isEmpty)
+        #expect(migratedAccount.loginAccount.isEmpty)
+        #expect(migratedAccount.loginPassword.isEmpty)
+        #expect(migratedAccount.additionalLoginFields.contains {
+            $0.name == "绑定手机号" && $0.value == "13800138000" && !$0.isSensitive
+        })
+        #expect(migratedAccount.additionalLoginFields.contains {
+            $0.name == "登录账号" && $0.value == "legacy-user" && !$0.isSensitive
+        })
+        #expect(migratedAccount.additionalLoginFields.contains {
+            $0.name == "登录密码" && $0.value == "legacy-password" && $0.isSensitive
+        })
+
+        var editedTemplate = domestic
+        editedTemplate.isSensitive = true
+        store.upsertLoginFieldTemplate(editedTemplate, for: .domestic)
+        #expect(store.accounts.first?.additionalLoginFields.first { $0.name == "登录账号" }?.isSensitive == false)
     }
 
     @Test func secretStoreRejectsMutationsWhileBackupRestoreIsInProgress() {

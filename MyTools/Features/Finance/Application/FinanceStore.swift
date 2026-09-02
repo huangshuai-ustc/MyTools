@@ -21,7 +21,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         overseasLoginFieldTemplates: [BankLoginFieldTemplate] = [],
         attachmentStore: AttachmentStore
     ) {
-        self.accounts = accounts
+        self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
         self.domesticLoginFieldTemplates = Self.normalizedTemplates(
             domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
@@ -49,7 +49,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
     }
 
     func replace(accounts: [BankAccount], cards: [BankCard]) {
-        self.accounts = accounts
+        self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
     }
 
@@ -59,7 +59,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         domesticLoginFieldTemplates: [BankLoginFieldTemplate],
         overseasLoginFieldTemplates: [BankLoginFieldTemplate]
     ) {
-        self.accounts = accounts
+        self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
         self.domesticLoginFieldTemplates = Self.normalizedTemplates(
             domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
@@ -74,7 +74,8 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
     }
 
     func makeLoginFields(for region: BankRegion) -> [AdditionalLoginField] {
-        loginFieldTemplates(for: region).map { $0.makeField() }
+        loginFieldTemplates(for: region)
+            .map { $0.makeField() }
     }
 
     func upsertLoginFieldTemplate(_ template: BankLoginFieldTemplate, for region: BankRegion) {
@@ -92,12 +93,6 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             domesticLoginFieldTemplates = templates
         } else {
             overseasLoginFieldTemplates = templates
-        }
-        for accountIndex in accounts.indices where accounts[accountIndex].region == region {
-            for fieldIndex in accounts[accountIndex].additionalLoginFields.indices {
-                guard accounts[accountIndex].additionalLoginFields[fieldIndex].name == value.name else { continue }
-                accounts[accountIndex].additionalLoginFields[fieldIndex].isSensitive = value.isSensitive
-            }
         }
         didMutate()
     }
@@ -139,6 +134,22 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             fieldCount: domesticRecords.reduce(0) { $0 + overseasOnlyFieldCount(in: $1) }
         )
 
+        let overseasAccountIDs = Set(accounts.filter { $0.region == .overseas }.map(\.id))
+        let overseasCardBranchRecords = cards.filter {
+            guard let accountID = $0.accountID, overseasAccountIDs.contains(accountID) else { return false }
+            return $0.branchName?.isEmpty == false || $0.branchLocation != nil
+        }
+        appendFinding(
+            to: &findings,
+            ruleID: "overseas-card-opening-branch",
+            title: "境外银行卡的独立开卡网点",
+            detail: "只有境内银行卡使用卡片级开卡网点；境外银行使用账户级分行信息。",
+            recordCount: overseasCardBranchRecords.count,
+            fieldCount: overseasCardBranchRecords.reduce(0) {
+                $0 + ($1.branchName?.isEmpty == false ? 1 : 0) + ($1.branchLocation == nil ? 0 : 1)
+            }
+        )
+
         return findings
     }
 
@@ -159,9 +170,17 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             accounts[accountIndex].remittanceBankAddress = ""
             accounts[accountIndex].remittanceInstructions = ""
         }
+        let overseasAccountIDs = Set(accounts.filter { $0.region == .overseas }.map(\.id))
+        for cardIndex in cards.indices {
+            guard let accountID = cards[cardIndex].accountID,
+                  overseasAccountIDs.contains(accountID) else { continue }
+            cards[cardIndex].branchName = nil
+            cards[cardIndex].branchLocation = nil
+        }
     }
 
     func replaceAccount(_ account: BankAccount, cards updatedCards: [BankCard]) {
+        let account = Self.convertingStoredLoginFields(account)
         let previousCards = cards.filter { $0.accountID == account.id }
         let retainedAttachmentIDs = Set(
             updatedCards.flatMap(\.statements).compactMap { $0.attachment?.id }
@@ -220,10 +239,60 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
 
     private static func normalizedTemplates(_ templates: [BankLoginFieldTemplate]) -> [BankLoginFieldTemplate] {
         var seen = Set<String>()
-        return templates.filter { template in
-            let name = template.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return false }
-            return seen.insert(name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)).inserted
+        return templates.compactMap { source in
+            var template = source
+            template.name = template.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !template.name.isEmpty else { return nil }
+            let comparisonName = template.name.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+            guard seen.insert(comparisonName).inserted else { return nil }
+            return template
+        }
+    }
+
+    /// Converts values stored by the former dedicated login properties into independent
+    /// account fields. Templates are intentionally not consulted: they only seed new accounts.
+    private static func convertingStoredLoginFields(_ source: BankAccount) -> BankAccount {
+        var account = source
+        convertStoredLoginField(
+            name: "绑定手机号",
+            value: account.boundPhoneNumber,
+            isSensitive: false,
+            into: &account.additionalLoginFields
+        )
+        convertStoredLoginField(
+            name: "登录账号",
+            value: account.loginAccount,
+            isSensitive: false,
+            into: &account.additionalLoginFields
+        )
+        convertStoredLoginField(
+            name: "登录密码",
+            value: account.loginPassword,
+            isSensitive: true,
+            into: &account.additionalLoginFields
+        )
+        account.boundPhoneNumber = ""
+        account.loginAccount = ""
+        account.loginPassword = ""
+        return account
+    }
+
+    private static func convertStoredLoginField(
+        name: String,
+        value: String,
+        isSensitive: Bool,
+        into fields: inout [AdditionalLoginField]
+    ) {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        if let index = fields.firstIndex(where: { $0.name == name && ($0.value.isEmpty || $0.value == value) }) {
+            fields[index].value = value
+            fields[index].isSensitive = fields[index].isSensitive || isSensitive
+        } else {
+            fields.append(AdditionalLoginField(name: name, value: value, isSensitive: isSensitive))
         }
     }
 

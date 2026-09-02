@@ -118,16 +118,16 @@ struct OCRTestView: View {
     @ViewBuilder
     private func documentSection(_ document: OCRDocument) -> some View {
         Section("文档") {
-            LabeledContent("文件") {
+            AppLabeledContentRow("文件") {
                 Text(document.fileName)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            LabeledContent("类型") {
+            AppLabeledContentRow("类型") {
                 Text(document.kind == .pdf ? "PDF" : "图片")
             }
             if document.pageCount > 1 {
-                Picker("页面", selection: $pageIndex) {
+                PickerFieldRow(title: "页面", selection: $pageIndex) {
                     ForEach(0..<document.pageCount, id: \.self) { index in
                         Text("第 \(index + 1) 页").tag(index)
                     }
@@ -154,7 +154,7 @@ struct OCRTestView: View {
     private var recognitionSettingsSection: some View {
         Section("识别设置") {
             ForEach(OCRLanguage.builtIn) { language in
-                Toggle(language.displayName, isOn: languageBinding(for: language))
+                ToggleFieldRow(title: language.displayName, isOn: languageBinding(for: language))
             }
             Picker("识别质量", selection: $recognitionLevel) {
                 ForEach(OCRRecognitionLevel.allCases) { level in

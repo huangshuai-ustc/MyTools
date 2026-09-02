@@ -5,8 +5,316 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct FoodMapTests {
+    @Test func manuallyCreatedFoodPlaceHasNoDefaultSource() {
+        let place = FoodPlace()
+
+        #expect(place.sourceTitle.isEmpty)
+        #expect(place.sourceURL.isEmpty)
+        #expect(place.shopURL.isEmpty)
+    }
+
+    @Test func compactMetricsUseOnlyCurrencySymbolAndValue() {
+        #expect(FoodPlaceValueFormatter.compactPrice(92, currency: .cny) == "¥92")
+        #expect(FoodPlaceValueFormatter.compactPrice(25.5, currency: .usd) == "$25.5")
+    }
+
+    @Test func dianpingSingleShopShareTextParsesImportFields() throws {
+        let text = """
+        【花潮料理艺食馆(福州泰禾广场店)】
+        ★★★★☆ 4.6
+        ¥410/人
+        东二环泰禾广场 日式自助
+        连江北路泰禾广场西区22号楼6楼607
+        https://m.dianping.com/shopinfo/k9uGtL4B82xcPDxk?msource=Appshare2021\\&utm_source=shop_share
+        """
+
+        let candidate = try #require(DianpingImportParser.parseSharedText(text).first)
+
+        #expect(candidate.name == "花潮料理艺食馆(福州泰禾广场店)")
+        #expect(candidate.rating == 4.6)
+        #expect(candidate.pricePerPerson == 410)
+        #expect(candidate.businessArea == "东二环泰禾广场")
+        #expect(candidate.category == "日式自助")
+        #expect(candidate.address == "连江北路泰禾广场西区22号楼6楼607")
+        #expect(candidate.sourceURL == "https://m.dianping.com/shopinfo/k9uGtL4B82xcPDxk")
+        #expect(candidate.shopURL == "https://m.dianping.com/shopinfo/k9uGtL4B82xcPDxk")
+        #expect(candidate.id == "k9uGtL4B82xcPDxk")
+    }
+
+    @Test func dianpingCollectionPageItemsParseAndDeduplicateShops() throws {
+        let item = DianpingWebPageItem(
+            text: """
+            很久以前羊肉串(西北旺万象汇店)
+            4.9
+            1201条
+            ¥92/人
+            烤串
+            西北旺
+            北京
+            有大桌
+            """,
+            imageURL: "https://img.meituan.net/example.jpg",
+            shopURL: "https://m.dianping.com/shopinfo/example-shop?utm_source=collection"
+        )
+
+        let candidates = DianpingImportParser.parseWebItems(
+            [item, item],
+            sourceURL: "https://h5.dianping.com/app/commonplatform-collection-static/collectionlist.html?shareid=example"
+        )
+        let candidate = try #require(candidates.first)
+
+        #expect(candidates.count == 1)
+        #expect(candidate.name == "很久以前羊肉串(西北旺万象汇店)")
+        #expect(candidate.rating == 4.9)
+        #expect(candidate.reviewCount == 1201)
+        #expect(candidate.pricePerPerson == 92)
+        #expect(candidate.category == "烤串")
+        #expect(candidate.businessArea == "西北旺")
+        #expect(candidate.address == "西北旺")
+        #expect(candidate.city == "北京")
+        #expect(candidate.imageURL == "https://img.meituan.net/example.jpg")
+        #expect(candidate.sourceURL == "https://h5.dianping.com/app/commonplatform-collection-static/collectionlist.html?shareid=example")
+        #expect(candidate.shopURL == "https://m.dianping.com/shopinfo/example-shop")
+    }
+
+    @Test func dianpingCollectionCandidatesSharingOneURLAreNotTreatedAsTheSameShop() {
+        let collectionURL = "https://h5.dianping.com/app/commonplatform-collection-static/collectionlist.html?shareid=example"
+        let first = DianpingImportCandidate(
+            name: "第一家店",
+            city: "福州",
+            sourceURL: collectionURL
+        )
+        let second = DianpingImportCandidate(
+            name: "第二家店",
+            city: "南京",
+            sourceURL: collectionURL
+        )
+        let storedFirst = FoodPlace(
+            shopName: first.name,
+            sourceTitle: "大众点评",
+            sourceURL: collectionURL
+        )
+
+        #expect(first.matchesExisting(storedFirst))
+        #expect(!second.matchesExisting(storedFirst))
+    }
+
+    @Test func dianpingAppShareShopURLKeepsStableShopIdentifier() throws {
+        let text = """
+        【示例餐厅】
+        https://m.dianping.com/appshare/shop/k9uGtL4B82xcPDxk?utm_source=sharecollectionlist
+        """
+
+        let candidate = try #require(DianpingImportParser.parseSharedText(text).first)
+
+        #expect(candidate.id == "k9uGtL4B82xcPDxk")
+        #expect(candidate.shopURL == "https://m.dianping.com/appshare/shop/k9uGtL4B82xcPDxk")
+    }
+
+    @Test func sourceRefreshAdapterPrefersInformationSourceAndFallsBackToShopURL() {
+        let adapter = DianpingFoodPlaceSourceAdapter()
+        let collectionURL = "https://h5.dianping.com/app/commonplatform-collection-static/collectionlist.html?schemaid=example"
+        let shopURL = "https://m.dianping.com/appshare/shop/example"
+        let collectionPlace = FoodPlace(
+            shopName: "收藏店铺",
+            sourceURL: collectionURL,
+            shopURL: shopURL
+        )
+
+        #expect(adapter.refreshURL(for: collectionPlace) == collectionURL)
+        #expect(adapter.fallbackRefreshURL(for: collectionPlace) == shopURL)
+        let singleShopSourceURL = "https://m.dianping.com/shopinfo/example"
+        let singleShopPlace = FoodPlace(
+            shopName: "单店分享",
+            sourceURL: singleShopSourceURL,
+            shopURL: ""
+        )
+        #expect(adapter.refreshURL(for: singleShopPlace) == singleShopSourceURL)
+        #expect(adapter.fallbackRefreshURL(for: singleShopPlace) == nil)
+        #expect(adapter.refreshURL(for: FoodPlace(
+            shopName: "手工记录",
+            shopURL: "https://m.dianping.com/appshare/shop/example"
+        )) == "https://m.dianping.com/appshare/shop/example")
+    }
+
+    @Test func sourceRefreshUpdatesRemoteFieldsAndPreservesPersonalFields() {
+        let visitedAt = Date(timeIntervalSince1970: 10_000)
+        let place = FoodPlace(
+            shopName: "旧店名",
+            recommendedFood: "用户推荐菜",
+            address: "完整街道地址 88 号",
+            coordinate: FoodCoordinate(latitude: 39.9, longitude: 116.4),
+            status: .tried,
+            visitedAt: visitedAt,
+            sourceTitle: "大众点评",
+            sourceURL: "https://h5.dianping.com/app/commonplatform-collection-static/collectionlist.html?schemaid=example",
+            shopURL: "https://m.dianping.com/appshare/shop/example",
+            rating: 4.0,
+            reviewCount: 100,
+            averagePrice: 50,
+            specialty: "旧分类",
+            tags: ["约会"],
+            note: "保留备注"
+        )
+        let candidate = DianpingImportCandidate(
+            name: "新店名",
+            rating: 4.8,
+            reviewCount: 1234,
+            pricePerPerson: 92,
+            businessArea: "商圈",
+            category: "新分类",
+            address: "商圈",
+            city: "北京",
+            sourceURL: place.sourceURL,
+            shopURL: place.shopURL
+        )
+
+        let refreshed = FoodPlaceSourceRefreshMerge.merging(candidate, into: place)
+
+        #expect(refreshed.shopName == "新店名")
+        #expect(refreshed.rating == 4.8)
+        #expect(refreshed.reviewCount == 1234)
+        #expect(refreshed.averagePrice == 92)
+        #expect(refreshed.specialty == "新分类")
+        #expect(refreshed.address == "完整街道地址 88 号")
+        #expect(refreshed.coordinate == place.coordinate)
+        #expect(refreshed.recommendedFood == "用户推荐菜")
+        #expect(refreshed.status == .tried)
+        #expect(refreshed.visitedAt == visitedAt)
+        #expect(refreshed.tags == ["约会"])
+        #expect(refreshed.note == "保留备注")
+    }
+
+    @Test func dianpingSingleShopCandidatesDeduplicateByShopIdentifier() {
+        let candidate = DianpingImportCandidate(
+            name: "新名称",
+            sourceURL: "https://h5.dianping.com/share/example",
+            shopURL: "https://m.dianping.com/shopinfo/shop-123?utm_source=share"
+        )
+        let existing = FoodPlace(
+            shopName: "旧名称",
+            sourceTitle: "大众点评",
+            sourceURL: "https://h5.dianping.com/share/older",
+            shopURL: "https://m.dianping.com/shopinfo/shop-123"
+        )
+
+        #expect(candidate.matchesExisting(existing))
+    }
+
+    @Test func sourceRefreshMatchesShopAcrossFullWidthPunctuationAndRicherLocalAddress() {
+        let candidate = DianpingImportCandidate(
+            name: "很久以前羊肉串(西北旺万象汇店)",
+            address: "西北旺",
+            city: "北京",
+            sourceURL: "https://h5.dianping.com/collection/example",
+            shopURL: "https://m.dianping.com/appshare/shop/k3zrztytMiDhzPo0"
+        )
+        let existing = FoodPlace(
+            shopName: "很久以前羊肉串（西北旺万象汇店）",
+            administrativeLocation: ChinaAdministrativeLocation(
+                province: "北京市",
+                city: "北京",
+                district: "海淀区"
+            ),
+            address: "永丰路西北旺万象汇六层",
+            sourceTitle: "大众点评",
+            sourceURL: "https://h5.dianping.com/collection/example"
+        )
+
+        #expect(candidate.matchesExisting(existing))
+        let refreshed = FoodPlaceSourceRefreshMerge.merging(candidate, into: existing)
+        #expect(refreshed.shopURL == "https://m.dianping.com/appshare/shop/k3zrztytMiDhzPo0")
+    }
+
+    @Test func sourceRefreshFallsBackToNameWhenLegacyShopIdentifierIsWrong() {
+        let candidate = DianpingImportCandidate(
+            name: "很久以前羊肉串(西北旺万象汇店)",
+            city: "北京",
+            sourceURL: "https://h5.dianping.com/collection/example",
+            shopURL: "https://m.dianping.com/appshare/shop/k3zrztytMiDhzPo0"
+        )
+        let existing = FoodPlace(
+            shopName: "很久以前羊肉串（西北旺万象汇店）",
+            administrativeLocation: ChinaAdministrativeLocation(province: "北京市", city: "北京"),
+            sourceTitle: "大众点评",
+            sourceURL: "https://h5.dianping.com/collection/example",
+            shopURL: "https://m.dianping.com/shopinfo/legacy-wrong-id"
+        )
+
+        #expect(candidate.matchesExisting(existing))
+    }
+
+    @Test func structuredCollectionStatisticsDoNotShiftLocationFields() throws {
+        let item = DianpingWebPageItem(
+            text: "很久以前羊肉串(西北旺万象汇店)\n4.9\n1202条\n¥92/人\n烤串\n西北旺\n北京",
+            imageURL: "",
+            shopURL: "https://m.dianping.com/appshare/shop/k3zrztytMiDhzPo0"
+        )
+
+        let candidate = try #require(DianpingImportParser.parseWebItems(
+            [item],
+            sourceURL: "https://h5.dianping.com/collection/example"
+        ).first)
+        #expect(candidate.rating == 4.9)
+        #expect(candidate.reviewCount == 1202)
+        #expect(candidate.pricePerPerson == 92)
+        #expect(candidate.category == "烤串")
+        #expect(candidate.businessArea == "西北旺")
+        #expect(candidate.city == "北京")
+    }
+
     @Test func foodStatusesOnlyExposeTriedAndWantToTry() {
         #expect(FoodPlaceStatus.allCases == [.tried, .wantToTry])
+    }
+
+    @Test func legacyFoodNamesMigrateToShopAndRecommendedFood() throws {
+        let namedShop = try JSONDecoder().decode(
+            FoodPlace.self,
+            from: Data("{\"foodName\":\"烤鸭\",\"shopName\":\"示例烤鸭店\"}".utf8)
+        )
+        #expect(namedShop.shopName == "示例烤鸭店")
+        #expect(namedShop.recommendedFood == "烤鸭")
+
+        let legacyTitleOnly = try JSONDecoder().decode(
+            FoodPlace.self,
+            from: Data("{\"foodName\":\"只有旧标题\"}".utf8)
+        )
+        #expect(legacyTitleOnly.shopName == "只有旧标题")
+        #expect(legacyTitleOnly.recommendedFood.isEmpty)
+    }
+
+    @Test func redesignedFoodFieldsRoundTrip() throws {
+        let place = FoodPlace(
+            shopName: "很久以前羊肉串（西北旺万象汇店）",
+            recommendedFood: "羊肉串",
+            address: "西北旺",
+            sourceTitle: "大众点评",
+            sourceURL: "https://h5.dianping.com/collection/example",
+            shopURL: "https://m.dianping.com/shopinfo/example",
+            rating: 4.9,
+            reviewCount: 1201,
+            averagePrice: 92,
+            averagePriceCurrency: .cny,
+            specialty: "烤串"
+        )
+
+        let decoded = try JSONDecoder().decode(
+            FoodPlace.self,
+            from: JSONEncoder().encode(place)
+        )
+
+        #expect(decoded == place)
+        #expect(decoded.displayTitle == place.shopName)
+    }
+
+    @Test func legacyDianpingSourceURLMigratesToIndependentShopURL() throws {
+        let place = try JSONDecoder().decode(
+            FoodPlace.self,
+            from: Data("{\"shopName\":\"旧记录\",\"sourceTitle\":\"大众点评\",\"sourceURL\":\"https://m.dianping.com/shopinfo/legacy-shop?utm_source=old\"}".utf8)
+        )
+
+        #expect(place.sourceURL.contains("utm_source=old"))
+        #expect(place.shopURL == "https://m.dianping.com/shopinfo/legacy-shop")
     }
 
     @Test func storeNormalizesValuesAndOwnsPhotoLifecycle() throws {
@@ -31,7 +339,7 @@ struct FoodMapTests {
         )
         let createdAt = Date(timeIntervalSince1970: 1_000)
         let original = FoodPlace(
-            foodName: "Original",
+            shopName: "Original",
             status: .tried,
             visitedAt: Date(),
             photos: [retainedPhoto, removedPhoto],
@@ -39,8 +347,8 @@ struct FoodMapTests {
         )
         let store = FoodMapStore(places: [original], attachmentStore: attachmentStore)
         var edited = original
-        edited.foodName = "  小笼包  "
         edited.shopName = "  示例店  "
+        edited.recommendedFood = "  小笼包  "
         edited.administrativeLocation = ChinaAdministrativeLocation(
             province: " 广东省 ",
             city: " 深圳市 ",
@@ -49,6 +357,8 @@ struct FoodMapTests {
         edited.address = "  示例路 1 号  "
         edited.sourceTitle = "  朋友推荐  "
         edited.sourceURL = "  https://example.com/food  "
+        edited.shopURL = "  https://example.com/shop  "
+        edited.specialty = "  江南点心  "
         edited.note = "  下次再来  "
         edited.tags = [" 沪菜 ", "沪菜", " 朋友推荐 ", "  "]
         edited.status = .wantToTry
@@ -58,8 +368,8 @@ struct FoodMapTests {
         store.upsert(edited)
 
         let stored = try #require(store.places.first)
-        #expect(stored.foodName == "小笼包")
         #expect(stored.shopName == "示例店")
+        #expect(stored.recommendedFood == "小笼包")
         #expect(stored.administrativeLocation == ChinaAdministrativeLocation(
             province: "广东省",
             city: "深圳市",
@@ -69,6 +379,8 @@ struct FoodMapTests {
         #expect(stored.address == "示例路 1 号")
         #expect(stored.sourceTitle == "朋友推荐")
         #expect(stored.sourceURL == "https://example.com/food")
+        #expect(stored.shopURL == "https://example.com/shop")
+        #expect(stored.specialty == "江南点心")
         #expect(stored.note == "下次再来")
         #expect(stored.tags == ["沪菜", "朋友推荐"])
         #expect(stored.visitedAt == nil)
@@ -87,8 +399,8 @@ struct FoodMapTests {
         let date = Date(timeIntervalSince1970: 1_000)
         let store = FoodMapStore(
             places: [
-                FoodPlace(foodName: "想吃", status: .wantToTry, visitedAt: date),
-                FoodPlace(foodName: "吃过", status: .tried, visitedAt: date)
+                FoodPlace(shopName: "想吃", status: .wantToTry, visitedAt: date),
+                FoodPlace(shopName: "吃过", status: .tried, visitedAt: date)
             ],
             attachmentStore: AttachmentStore()
         )
@@ -158,7 +470,7 @@ struct FoodMapTests {
         defer { attachmentStore.delete(photo) }
 
         let place = FoodPlace(
-            foodName: "生煎",
+            shopName: "生煎",
             coordinate: FoodCoordinate(latitude: 31.2304, longitude: 121.4737),
             photos: [photo]
         )
@@ -207,7 +519,7 @@ struct FoodMapTests {
         )
         var photoWithBackupData = photo
         photoWithBackupData.backupData = Data([1, 2, 3])
-        let place = FoodPlace(foodName: "云端美食", photos: [photoWithBackupData])
+        let place = FoodPlace(shopName: "云端美食", photos: [photoWithBackupData])
 
         let snapshot = try CloudSyncSnapshotBuilder.make(
             vault: VaultData(foodPlaces: [place]),
@@ -240,9 +552,9 @@ struct FoodMapTests {
     }
 
     @Test func cloudChangesForDisabledFoodMapAreIgnored() throws {
-        let local = FoodPlace(foodName: "本地")
+        let local = FoodPlace(shopName: "本地")
         var remote = local
-        remote.foodName = "远端"
+        remote.shopName = "远端"
         let payload = try CloudSyncCoding.encoder().encode(remote)
 
         let result = try CloudSyncMerger.apply(
@@ -257,8 +569,8 @@ struct FoodMapTests {
 
     @Test func navigationURLsContainDestinationAndRejectMissingCoordinates() throws {
         let place = FoodPlace(
-            foodName: "烤鸭",
             shopName: "示例烤鸭店",
+            recommendedFood: "烤鸭",
             coordinate: FoodCoordinate(latitude: 39.9042, longitude: 116.4074)
         )
 

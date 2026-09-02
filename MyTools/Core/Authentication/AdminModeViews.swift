@@ -43,7 +43,7 @@ private struct AdminModeIcon: View {
     let isActive: Bool
 
     var body: some View {
-        Image(systemName: isActive ? "pencil.circle.fill" : "pencil.circle")
+        Image(systemName: isActive ? "lock.open.fill" : "lock.fill")
             .foregroundStyle(isActive ? Color.green : Color.primary)
     }
 }

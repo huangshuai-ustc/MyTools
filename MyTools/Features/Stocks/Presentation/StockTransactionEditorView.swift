@@ -23,7 +23,6 @@ struct StockTransactionEditorView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: StockTransactionEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
@@ -53,10 +52,8 @@ struct StockTransactionEditorView: View {
                 }
 
                 Section {
-                    LabeledContent("当前持仓", value: "\(StockValueFormatter.quantity(stock.currentShares)) 股")
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
-                    LabeledContent("结算币种", value: stock.market.currencyCode)
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    DetailValueRow(title: "当前持仓", value: "\(StockValueFormatter.quantity(stock.currentShares)) 股")
+                    DetailValueRow(title: "结算币种", value: stock.market.currencyCode)
                 }
             }
             .appNavigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")

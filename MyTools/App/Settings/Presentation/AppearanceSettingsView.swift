@@ -16,7 +16,7 @@ struct AppearanceSettingsView: View {
             }
 
             Section("文字大小") {
-                Toggle("使用系统文字大小", isOn: systemFontSizeBinding)
+                ToggleFieldRow(title: "使用系统文字大小", isOn: systemFontSizeBinding)
 
                 Slider(
                     value: fontSizeIndexBinding,
@@ -98,7 +98,7 @@ struct StockAppearanceSettingsView: View {
     }
 
     private func schemePicker(title: String, market: StockMarket) -> some View {
-        Picker(title, selection: schemeBinding(for: market)) {
+        PickerFieldRow(title: title, selection: schemeBinding(for: market)) {
             ForEach(StockRiseFallColorScheme.allCases) { scheme in
                 Text(scheme.title).tag(scheme)
             }

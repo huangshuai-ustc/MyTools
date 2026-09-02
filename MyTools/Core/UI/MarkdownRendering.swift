@@ -3,21 +3,29 @@ import SwiftUI
 
 struct MarkdownText: View {
     let markdown: String
+    let preservesLineBreaks: Bool
 
-    init(_ markdown: String) {
+    init(_ markdown: String, preservesLineBreaks: Bool = false) {
         self.markdown = markdown
+        self.preservesLineBreaks = preservesLineBreaks
     }
 
     var body: some View {
-        Text(MarkdownRenderer.attributedString(from: markdown))
+        Text(MarkdownRenderer.attributedString(
+            from: markdown,
+            preservesLineBreaks: preservesLineBreaks
+        ))
     }
 }
 
 enum MarkdownRenderer {
-    static func attributedString(from markdown: String) -> AttributedString {
+    static func attributedString(
+        from markdown: String,
+        preservesLineBreaks: Bool = false
+    ) -> AttributedString {
         let normalized = normalizeInlineMath(in: markdown)
         let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .full,
+            interpretedSyntax: preservesLineBreaks ? .inlineOnlyPreservingWhitespace : .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
         return (try? AttributedString(markdown: normalized, options: options))
@@ -108,7 +116,7 @@ struct MarkdownValueRow: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            LabeledContent(title) {
+            AppLabeledContentRow(title) {
                 valueView
             }
         }
@@ -119,13 +127,17 @@ struct MarkdownValueRow: View {
         if markdown.isEmpty {
             Text(emptyValue)
                 .foregroundStyle(.secondary)
+        } else if alignment == .leading {
+            MarkdownText(markdown, preservesLineBreaks: true)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .copyableText(markdown)
         } else {
             MarkdownText(markdown)
-                .multilineTextAlignment(alignment)
-                .frame(
-                    maxWidth: .infinity,
-                    alignment: alignment == .leading ? .leading : .trailing
-                )
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
                 .copyableText(markdown)
         }
     }

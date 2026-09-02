@@ -39,8 +39,6 @@ enum AppStorageKey {
     static let appearanceMode = "app-appearance-mode-v1"
     static let fontSize = "app-font-size-v2"
     static let accountSortOrder = "account-sort-order-v2"
-    static let cardSortOrder = "card-sort-order-v1"
-    static let cardCategoryFilter = "card-category-filter-v1"
     static let stockSortCriterion = "stock-sort-criterion-v2"
     static let stockSortDirection = "stock-sort-direction-v2"
     static let secretSortOrder = "secret-sort-order-v1"

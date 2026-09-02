@@ -6,8 +6,8 @@ struct BankOfChinaExchangeRateStatus: View {
 
     var body: some View {
         if let updatedAt = exchangeRateStore.updatedAt {
-            LabeledContent(
-                "中国银行牌价时间",
+            DetailValueRow(
+                title: "中国银行牌价时间",
                 value: AppDateFormatter.dateTimeString(from: updatedAt)
             )
         }

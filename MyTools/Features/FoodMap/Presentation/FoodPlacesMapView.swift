@@ -4,8 +4,10 @@ import SwiftUI
 
 struct FoodPlacesMapView: View {
     @EnvironmentObject private var store: FoodMapStore
+    @StateObject private var locationManager = MapLocationPermissionManager()
     @State private var selectedPlaceID: UUID?
     @State private var position: MapCameraPosition = .automatic
+    @State private var hasCenteredOnUser = false
 
     private var places: [FoodPlace] {
         store.places
@@ -26,6 +28,19 @@ struct FoodPlacesMapView: View {
 
     var body: some View {
         Map(position: $position) {
+            if let coordinate = locationManager.coordinate {
+                Annotation("当前位置", coordinate: coordinate) {
+                    Image(systemName: "location.fill")
+                        .appFont(.caption.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(.blue, in: Circle())
+                        .overlay(Circle().stroke(.white, lineWidth: 3))
+                        .shadow(radius: 2, y: 1)
+                        .accessibilityLabel("当前位置")
+                }
+            }
+
             ForEach(places) { place in
                 if let coordinate = place.coordinate {
                     Annotation(
@@ -35,11 +50,18 @@ struct FoodPlacesMapView: View {
                         Button {
                             selectedPlaceID = place.id
                         } label: {
-                            Image(systemName: "fork.knife.circle.fill")
-                                .appFont(.title)
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(place.status.tint, Color.white)
-                                .shadow(radius: 2, y: 1)
+                            if let photo = place.photos.first {
+                                FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 42)
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(place.status.tint, lineWidth: 3))
+                                    .shadow(radius: 2, y: 1)
+                            } else {
+                                Image(systemName: "fork.knife.circle.fill")
+                                    .appFont(.title)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(place.status.tint, Color.white)
+                                    .shadow(radius: 2, y: 1)
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(place.displayTitle)，\(place.locationSummary)")
@@ -48,11 +70,11 @@ struct FoodPlacesMapView: View {
             }
         }
         .overlay {
-            if places.isEmpty {
+            if places.isEmpty, locationManager.coordinate == nil {
                 ContentUnavailableView(
                     "暂无地图定位",
                     systemImage: "map",
-                    description: Text("为美食记录选择地图位置后会显示在这里。")
+                    description: Text("允许定位或为美食记录选择地图位置后会显示在这里。")
                 )
                 .background(.background.opacity(0.9))
             }
@@ -68,7 +90,16 @@ struct FoodPlacesMapView: View {
         .navigationBarTitleDisplayMode(.inline)
 #endif
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    centerOnUserLocation()
+                } label: {
+                    Image(systemName: "location.fill")
+                }
+                .disabled(locationManager.coordinate == nil)
+                .accessibilityLabel("回到当前位置")
+                .help("回到当前位置")
+
                 Button {
                     fitAllPlaces()
                 } label: {
@@ -79,7 +110,15 @@ struct FoodPlacesMapView: View {
                 .help("显示全部地点")
             }
         }
-        .onAppear(perform: fitAllPlaces)
+        .task {
+            fitAllPlaces()
+            locationManager.requestPermission()
+        }
+        .onChange(of: locationManager.coordinate?.latitude) { _, _ in
+            guard !hasCenteredOnUser else { return }
+            centerOnUserLocation()
+            hasCenteredOnUser = true
+        }
         .onChange(of: places.map(\.id)) { _, _ in
             if let selectedPlaceID, !places.contains(where: { $0.id == selectedPlaceID }) {
                 self.selectedPlaceID = nil
@@ -120,7 +159,13 @@ struct FoodPlacesMapView: View {
     }
 
     private func fitAllPlaces() {
-        let coordinates = places.compactMap(\.coordinate)
+        var coordinates = places.compactMap(\.coordinate)
+        if let userCoordinate = locationManager.coordinate {
+            coordinates.append(FoodCoordinate(
+                latitude: userCoordinate.latitude,
+                longitude: userCoordinate.longitude
+            ))
+        }
         guard let first = coordinates.first else {
             position = .automatic
             return
@@ -139,6 +184,14 @@ struct FoodPlacesMapView: View {
                 longitude: (minimumLongitude + maximumLongitude) / 2
             ),
             span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
+        ))
+    }
+
+    private func centerOnUserLocation() {
+        guard let coordinate = locationManager.coordinate else { return }
+        position = .region(MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
         ))
     }
 }

@@ -333,6 +333,36 @@ struct StockQuoteProviderParsingTests {
         #expect(quote?.updatedAt == Date(timeIntervalSince1970: 1_786_120_200))
     }
 
+    @Test func yahooPrefersCurrentPreviousCloseOverChartRangeReference() async throws {
+        let data = try json([
+            "chart": [
+                "result": [[
+                    "meta": [
+                        "symbol": "NVDA",
+                        "longName": "NVIDIA Corporation",
+                        "regularMarketPrice": 219.93,
+                        "chartPreviousClose": 208.48,
+                        "previousClose": 217.55,
+                        "regularMarketTime": 1_788_195_518
+                    ]
+                ]]
+            ]
+        ])
+        let provider = YahooStockQuoteProvider(
+            httpClient: StubStockQuoteHTTPClient(responseData: data)
+        )
+
+        let quote = await provider.fetchQuote(
+            for: makeStock(market: .unitedStates, symbol: "NVDA")
+        )
+
+        #expect(quote?.previousClose == Decimal(string: "217.55"))
+        let changePercent = try #require(quote?.changePercent)
+        #expect(abs(
+            NSDecimalNumber(decimal: changePercent).doubleValue - (2.38 / 217.55)
+        ) < 0.000_001)
+    }
+
     @Test func officialShanghaiProviderParsesSnapshotArray() async throws {
         let data = try json([
             "snap": ["Example SSE", 105, 100, 5, 20260807, 103045]

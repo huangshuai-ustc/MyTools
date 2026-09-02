@@ -143,13 +143,12 @@ struct SecretVaultView: View {
     var body: some View {
         List {
             Section {
-                Picker("分类", selection: $categoryFilter) {
+                PickerFieldRow(title: "分类", selection: $categoryFilter) {
                     Text(SecretCategoryFilter.all.title).tag(SecretCategoryFilter.all)
                     ForEach(SecretCategory.allCases) { category in
                         Text(category.title).tag(SecretCategoryFilter.category(category))
                     }
                 }
-                .pickerStyle(.menu)
                 if !availableTags.isEmpty {
                     AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
                 }
@@ -342,8 +341,8 @@ private struct SecretPasswordImportView: View {
                         Label("选择 Apple 密码 CSV", systemImage: "doc.badge.plus")
                     }
                     if let preview {
-                        LabeledContent("文件名", value: preview.fileName)
-                        LabeledContent("待导入", value: "\(preview.items.count) 条")
+                        DetailValueRow(title: "文件名", value: preview.fileName)
+                        DetailValueRow(title: "待导入", value: "\(preview.items.count) 条")
                     }
                 }
                 if let preview {
@@ -447,9 +446,10 @@ private struct SecretFieldTemplateEditorView: View {
                             .pickerStyle(.menu)
                             .labelsHidden()
                             .fixedSize()
+                            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                         }
                         .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
-                        .padding(.vertical, 4)
+                        .appListRowStyle()
                         .onDrag {
                             draggedFieldID = field.wrappedValue.id
                             return NSItemProvider(object: NSString(string: field.wrappedValue.id.uuidString))
@@ -474,19 +474,16 @@ private struct SecretFieldTemplateEditorView: View {
                             fields.removeAll { $0.id == field.wrappedValue.id }
                         }
                     }
-                } header: {
-                    Text("字段模板 · \(category.title)")
-                } footer: {
-                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
-                }
-
-                Section {
                     Button {
                         newFieldName = ""
                         showingNewField = true
                     } label: {
                         Label("添加模板字段", systemImage: "plus.circle")
                     }
+                } header: {
+                    Text("字段模板 · \(category.title)")
+                } footer: {
+                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
                 }
             }
             .appNavigationTitle("字段模板")
@@ -626,10 +623,10 @@ struct SecretDetailView: View {
             if let item {
                 Form {
                     Section {
-                        LabeledContent("分类", value: item.category.title)
-                        LabeledContent("用途", value: item.purpose.title)
+                        DetailValueRow(title: "分类", value: item.category.title)
+                        DetailValueRow(title: "用途", value: item.purpose.title)
                         if !item.tags.isEmpty {
-                            LabeledContent("标签") {
+                            AppLabeledContentRow("标签") {
                                 if canRevealSensitiveFields {
                                     AppTagCapsules(tags: AppTagSupport.parse(item.tags))
                                 } else {
@@ -911,7 +908,6 @@ struct SecretEditorView: View {
                     ForEach(draft.item.fields) { field in
                         let fieldBinding = binding(for: field.id, fallback: field)
                         fieldEditorRow(field: fieldBinding)
-                            .padding(.vertical, 4)
                             .modifier(SecretFieldSwipeActionsModifier(
                                 field: fieldBinding,
                                 onRename: { beginFieldNameEdit(field) }
@@ -923,6 +919,12 @@ struct SecretEditorView: View {
                     .onMove { source, destination in
                         draft.item.fields.move(fromOffsets: source, toOffset: destination)
                     }
+                    Button {
+                        newFieldNameDraft = ""
+                        showingNewFieldNameEditor = true
+                    } label: {
+                        Label("添加字段", systemImage: "plus.circle")
+                    }
                 } header: {
                     HStack {
                         Text("字段")
@@ -933,14 +935,6 @@ struct SecretEditorView: View {
                         .appFont(.subheadline)
                         .foregroundStyle(.blue)
                         .underline()
-                    }
-                }
-                Section {
-                    Button {
-                        newFieldNameDraft = ""
-                        showingNewFieldNameEditor = true
-                    } label: {
-                        Label("添加字段", systemImage: "plus.circle")
                     }
                 }
 
@@ -1067,16 +1061,27 @@ struct SecretEditorView: View {
                 .labelsHidden()
                 .datePickerStyle(.compact)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
             case .text, .url:
-                IMESafeMultilineTextField(
-                    prompt: "请在此处键入\(field.wrappedValue.label)",
-                    text: field.value,
-                    minHeight: 34,
-                    maxHeight: 180
-                )
+                if field.wrappedValue.kind.isMultiline {
+                    IMESafeMultilineTextField(
+                        prompt: "请在此处键入\(field.wrappedValue.label)",
+                        text: field.value,
+                        minHeight: 34,
+                        maxHeight: 180
+                    )
+                } else {
+                    IMESafeTextField(
+                        prompt: "请在此处键入\(field.wrappedValue.label)",
+                        text: field.value,
+                        alignment: .leading,
+                        mode: field.wrappedValue.inputType == .url ? .url : .text
+                    )
+                }
             }
         }
         .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
+        .appListRowStyle()
         .onChange(of: field.wrappedValue.value) { _, value in
             if field.wrappedValue.inputType == .text,
                value.contains(where: { $0.isNewline }) {

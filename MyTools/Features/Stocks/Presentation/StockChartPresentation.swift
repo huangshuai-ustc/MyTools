@@ -217,12 +217,16 @@ struct StockChartPresentation {
     let technicalPlotPoints: [StockTechnicalPlotPoint]
     let transactionMarkers: [StockTransactionMarker]
     let xDomain: ClosedRange<Double>
+    let yDomain: ClosedRange<Double>
     private let preparedData: PreparedData
+    let cachedIntradayPreviousClose: Double?
+    private let decimalFormatter: NumberFormatter
+    private let chartDateFormatter: DateFormatter
+    private let axisDateFormatter: DateFormatter
 
     static func headerPerformanceTitle(for range: StockChartRange) -> String {
         range == .intraday ? "今日涨跌" : "区间涨跌"
     }
-    let yDomain: ClosedRange<Double>
 
     /// The most recent point in the currently displayed price series.
     /// Used by the summary when no point is selected yet.
@@ -396,6 +400,40 @@ struct StockChartPresentation {
             preMarketPlotPoints: preMarketPlotPoints,
             postMarketPlotPoints: postMarketPlotPoints
         )
+        preMarketPointIDs = Set(preMarketPlotPoints.map { $0.point.id })
+        postMarketPointIDs = Set(postMarketPlotPoints.map { $0.point.id })
+
+        if range == .intraday || range == .fiveDays {
+            cachedIntradayPreviousClose = Self.intradayPreviousClose(
+                snapshot: snapshot,
+                market: stock.market
+            )
+        } else {
+            cachedIntradayPreviousClose = nil
+        }
+
+        let numFmt = NumberFormatter()
+        numFmt.numberStyle = .decimal
+        decimalFormatter = numFmt
+
+        let chartDateFmt = DateFormatter()
+        chartDateFmt.locale = Locale(identifier: "zh_CN")
+        chartDateFmt.timeZone = Self.timeZone(for: stock.market)
+        chartDateFmt.dateFormat = range == .intraday || range == .fiveDays ? "MM-dd HH:mm" : "yyyy-MM-dd"
+        chartDateFormatter = chartDateFmt
+
+        let axisFmt = DateFormatter()
+        axisFmt.locale = Locale(identifier: "zh_CN")
+        axisFmt.timeZone = Self.timeZone(for: stock.market)
+        switch range {
+        case .intraday:
+            axisFmt.dateFormat = "HH:mm"
+        case .fiveDays, .dayK:
+            axisFmt.dateFormat = "MM-dd"
+        case .weekK, .monthK, .quarterK, .yearK:
+            axisFmt.dateFormat = "yyyy"
+        }
+        axisDateFormatter = axisFmt
     }
 
     private static func prepare(
@@ -643,12 +681,17 @@ struct StockChartPresentation {
         return lower
     }
 
+    // Build lookup sets once so isPreMarket/isPostMarket are O(1) instead of
+    // O(n) on every gesture-driven redraw.
+    private let preMarketPointIDs: Set<Date>
+    private let postMarketPointIDs: Set<Date>
+
     func isPreMarket(_ point: StockChartPoint) -> Bool {
-        hasPreMarketChart && preMarketPlotPoints.contains { $0.point.id == point.id }
+        hasPreMarketChart && preMarketPointIDs.contains(point.id)
     }
 
     func isPostMarket(_ point: StockChartPoint) -> Bool {
-        hasPostMarketChart && postMarketPlotPoints.contains { $0.point.id == point.id }
+        hasPostMarketChart && postMarketPointIDs.contains(point.id)
     }
 
     func technicalIndicator(at point: StockChartPoint) -> StockTechnicalIndicatorPoint? {
@@ -724,24 +767,11 @@ struct StockChartPresentation {
     }
 
     func chartDateText(_ date: Date) -> String {
-        let formatter = Self.dateFormatter(market: stock.market)
-        formatter.dateFormat = range == .intraday || range == .fiveDays
-            ? "MM-dd HH:mm"
-            : "yyyy-MM-dd"
-        return formatter.string(from: date)
+        chartDateFormatter.string(from: date)
     }
 
     func axisLabelText(_ date: Date) -> String {
-        let formatter = Self.dateFormatter(market: stock.market)
-        switch range {
-        case .intraday:
-            formatter.dateFormat = "HH:mm"
-        case .fiveDays, .dayK:
-            formatter.dateFormat = "MM-dd"
-        case .weekK, .monthK, .quarterK, .yearK:
-            formatter.dateFormat = "yyyy"
-        }
-        return formatter.string(from: date)
+        axisDateFormatter.string(from: date)
     }
 
     static func isModeAvailable(
@@ -819,14 +849,18 @@ struct StockChartPresentation {
         snapshot: StockChartSnapshot,
         range: StockChartRange,
         market: StockMarket,
-        visibleXDomain: ClosedRange<Double>? = nil
+        visibleXDomain: ClosedRange<Double>? = nil,
+        quotePreviousClose: Double? = nil,
+        quoteUpdatedAt: Date? = nil
     ) -> (change: Double, percent: Double)? {
         guard let latest = snapshot.latestPoint,
               let referencePrice = rangeReferencePrice(
                 snapshot: snapshot,
                 range: range,
                 market: market,
-                visibleXDomain: visibleXDomain
+                visibleXDomain: visibleXDomain,
+                quotePreviousClose: quotePreviousClose,
+                quoteUpdatedAt: quoteUpdatedAt
               ) else { return nil }
         guard referencePrice != 0 else { return nil }
         let change = latest.close - referencePrice
@@ -837,15 +871,19 @@ struct StockChartPresentation {
         snapshot: StockChartSnapshot,
         range: StockChartRange,
         market: StockMarket,
-        visibleXDomain: ClosedRange<Double>? = nil
+        visibleXDomain: ClosedRange<Double>? = nil,
+        quotePreviousClose: Double? = nil,
+        quoteUpdatedAt: Date? = nil
     ) -> Double? {
         guard let first = snapshot.points.first else { return nil }
         switch range {
         case .intraday:
             return intradayPreviousClose(
                 snapshot: snapshot,
-                market: market
-            ) ?? first.close
+                market: market,
+                quotePreviousClose: quotePreviousClose,
+                quoteUpdatedAt: quoteUpdatedAt
+            )
         case .fiveDays:
             let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
             if let visibleXDomain {
@@ -900,7 +938,9 @@ struct StockChartPresentation {
 
     static func intradayPreviousClose(
         snapshot: StockChartSnapshot,
-        market: StockMarket
+        market: StockMarket,
+        quotePreviousClose: Double? = nil,
+        quoteUpdatedAt: Date? = nil
     ) -> Double? {
         guard let latest = snapshot.latestPoint else { return nil }
         let dailyPreviousClose = snapshot.dailyIndicatorPoints.flatMap {
@@ -916,24 +956,45 @@ struct StockChartPresentation {
             market: market
         )
 
+        // Only accept a quote from the same market-local day as the visible
+        // regular session. During the next day's pre-market, the quote's
+        // `previousClose` has already advanced to the visible day's close.
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let currentQuotePreviousClose: Double? = {
+            guard let quotePreviousClose,
+                  quotePreviousClose > 0,
+                  let quoteUpdatedAt,
+                  calendar.isDate(quoteUpdatedAt, inSameDayAs: latest.date) else {
+                return nil
+            }
+            return quotePreviousClose
+        }()
+
         // Daily bars and the provider quote contain the exchange's settled
         // previous close. A minute feed can end at 15:59 or before the closing
         // auction and therefore must only be a fallback (for example BRK.B
         // reported 503.70 officially while its last minute bar was 503.87).
+        // A daily candidate is valid only when it belongs to the immediately
+        // preceding trading day. Yahoo can publish a timestamp with a null
+        // close; after parsing, an unrestricted search would otherwise skip
+        // that missing session and reuse an older value (NVDA: 227.98 instead
+        // of 217.55).
         //
         // Before the next regular session opens, however, `points` still shows
         // the preceding trading day while a quote provider may already expose
         // that day's close as the new session's reference. A newer pre-market
         // day therefore keeps the historical close-before-visible-day rule.
-        let calendar = StockChartSeriesProcessor.marketCalendar(market)
         let latestRegularDay = calendar.startOfDay(for: latest.date)
         let hasNewerPreMarketDay = snapshot.preMarketPoints.contains {
             calendar.startOfDay(for: $0.date) > latestRegularDay
         }
         if hasNewerPreMarketDay {
-            return dailyPreviousClose ?? minutePreviousClose ?? snapshot.previousClose
+            return dailyPreviousClose ?? minutePreviousClose
         }
-        return dailyPreviousClose ?? snapshot.previousClose ?? minutePreviousClose
+        return dailyPreviousClose
+            ?? currentQuotePreviousClose
+            ?? snapshot.previousClose
+            ?? minutePreviousClose
     }
 
     static func candleWidth(pointCount: Int, isExpanded: Bool) -> CGFloat {
@@ -1137,11 +1198,13 @@ struct StockChartPresentation {
         in points: [StockChartPoint],
         market: StockMarket
     ) -> Double? {
-        let startOfTradingDay = StockChartSeriesProcessor
-            .marketCalendar(market)
-            .startOfDay(for: date)
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        guard let previousTradingDay = StockMarketTradingCalendar
+            .previousTradingDay(for: market, before: date) else {
+            return nil
+        }
         return points
-            .filter { $0.date < startOfTradingDay }
+            .filter { calendar.isDate($0.date, inSameDayAs: previousTradingDay) }
             .max { $0.date < $1.date }?
             .close
     }
@@ -1282,9 +1345,12 @@ struct StockChartPresentation {
             let latestDay = calendar.startOfDay(for: latest.point.date)
             let startIndex: Int
             if range == .intraday {
-                startIndex = minutePlotPoints.firstIndex {
-                    calendar.isDate($0.point.date, inSameDayAs: latestDay)
-                } ?? 0
+                // Binary search: find first point whose day equals latestDay.
+                // minutePlotPoints is sorted by x (ascending date), so a scan
+                // from the tail is cheap — regular sessions have ≤ 391 points.
+                startIndex = minutePlotPoints.lastIndex {
+                    !calendar.isDate($0.point.date, inSameDayAs: latestDay)
+                }.map { $0 + 1 } ?? 0
             } else {
                 var days: [Date] = []
                 for point in minutePlotPoints.reversed() {
@@ -1293,9 +1359,10 @@ struct StockChartPresentation {
                     if days.count == 5 { break }
                 }
                 let earliestDay = days.last ?? latestDay
-                startIndex = minutePlotPoints.firstIndex {
-                    calendar.isDate($0.point.date, inSameDayAs: earliestDay)
-                } ?? 0
+                startIndex = minutePlotPoints.lastIndex {
+                    !calendar.isDate($0.point.date, inSameDayAs: earliestDay)
+                        && $0.point.date < earliestDay
+                }.map { $0 + 1 } ?? 0
             }
             var lower = minutePlotPoints[startIndex].x
             var upper = latest.x

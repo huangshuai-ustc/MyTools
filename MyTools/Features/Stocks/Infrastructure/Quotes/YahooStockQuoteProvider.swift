@@ -20,6 +20,7 @@ struct YahooStockQuoteProvider: StockQuoteProviding {
         let shortName: String?
         let regularMarketPrice: Double?
         let chartPreviousClose: Double?
+        let previousClose: Double?
         let regularMarketTime: TimeInterval?
     }
 
@@ -58,7 +59,7 @@ struct YahooStockQuoteProvider: StockQuoteProviding {
               rawLatestPrice > 0 else { return nil }
 
         let latestPrice = Decimal(rawLatestPrice)
-        let previousClose = meta.chartPreviousClose.map { Decimal($0) }
+        let previousClose = (meta.previousClose ?? meta.chartPreviousClose).map { Decimal($0) }
         return StockQuote(
             symbol: symbol,
             name: meta.longName ?? meta.shortName ?? "",

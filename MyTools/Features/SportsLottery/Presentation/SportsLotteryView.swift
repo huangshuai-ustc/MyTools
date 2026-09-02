@@ -291,6 +291,7 @@ private struct SportsLotteryAddLeagueView: View {
                 Text(errorMessage ?? "")
             }
         }
+        .appListSpacing()
     }
 
     private func addLeague() async {
@@ -440,7 +441,10 @@ private struct SportsLotteryLeagueView: View {
                 }
                 Section {
                     if let fetchedAt = model.snapshot?.fetchedAt {
-                        LabeledContent("更新时间", value: AppDateFormatter.dateTimeWithoutSecondsString(from: fetchedAt))
+                        DetailValueRow(
+                            title: "更新时间",
+                            value: AppDateFormatter.dateTimeWithoutSecondsString(from: fetchedAt)
+                        )
                     }
                 }
             }

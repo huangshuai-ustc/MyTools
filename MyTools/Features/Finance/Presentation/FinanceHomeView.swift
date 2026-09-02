@@ -37,10 +37,10 @@ struct HomeView: View {
                 .appListRowStyle()
             }
 
-            Section("银行账户") {
-                if snapshot.activeAccounts.isEmpty {
+            Section("银行") {
+                if snapshot.activeAccounts.isEmpty, snapshot.inactiveAccounts.isEmpty {
                     ContentUnavailableView(
-                        query.isEmpty ? "暂无正常银行账户" : "没有搜索结果",
+                        query.isEmpty ? "暂无银行" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
                         description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
@@ -51,19 +51,13 @@ struct HomeView: View {
                 ForEach(snapshot.activeAccounts) { account in
                     accountLink(account, cards: snapshot.cards(for: account))
                 }
-                if !showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
+                if !snapshot.inactiveAccounts.isEmpty {
                     HiddenItemsVisibilityButton(
                         itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
                         isShowing: $showsInactiveBanks
                     )
                 }
-            }
-            if showsInactiveBanks, !snapshot.inactiveAccounts.isEmpty {
-                Section("停用银行（\(snapshot.inactiveAccounts.count)）") {
-                    HiddenItemsVisibilityButton(
-                        itemsDescription: "\(snapshot.inactiveAccounts.count) 家停用银行",
-                        isShowing: $showsInactiveBanks
-                    )
+                if showsInactiveBanks {
                     ForEach(snapshot.inactiveAccounts) { account in
                         accountLink(account, cards: snapshot.cards(for: account))
                     }
@@ -142,9 +136,9 @@ struct HomeView: View {
     @ViewBuilder
     private func financeMetrics(_ snapshot: FinanceViewSnapshot) -> some View {
         financeMetric("银行", value: snapshot.visibleAccountCount, systemImage: "building.columns")
-        financeMetric("子账户", value: snapshot.visibleSubaccountCount, systemImage: "list.bullet.rectangle")
         financeMetric("借记卡", value: snapshot.visibleDebitCount, systemImage: "creditcard")
         financeMetric("信用卡", value: snapshot.visibleCreditCount, systemImage: "creditcard.fill")
+        financeMetric("子账户", value: snapshot.visibleSubaccountCount, systemImage: "list.bullet.rectangle")
     }
 
     private func financeMetric(_ title: String, value: Int, systemImage: String) -> some View {
@@ -233,7 +227,12 @@ struct HomeView: View {
     private func cardMatches(_ card: BankCard, searchTerm: String) -> Bool {
         let currencyTitles = card.currencies.map(\.title).joined(separator: " ")
         let networks = card.networks.map(\.title).joined(separator: " " )
-        return [card.kind.title, card.cardType, card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles, networks]
+        let additionalCredentials = card.additionalCredentials.flatMap {
+            let credentialNetworks = $0.networks.map(\.title).joined(separator: " ")
+            let credentialCurrencies = $0.currencies.map(\.title).joined(separator: " ")
+            return [$0.name, $0.cardNumber, credentialNetworks, credentialCurrencies, $0.holderName, $0.status.title]
+        }.joined(separator: " ")
+        return [card.kind.title, card.cardType, card.branchName ?? "", card.status.title, card.holderName, card.cardNumber, card.currencySummary, currencyTitles, networks, additionalCredentials]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 
@@ -241,12 +240,7 @@ struct HomeView: View {
         let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
         let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
         let subs = account.activeSubaccountCount
-        switch account.region {
-        case .domestic:
-            return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subs) 个子账户"
-        case .overseas:
-            return "\(subs) 个子账户 · \(debit) 张借记卡 · \(credit) 张信用卡"
-        }
+        return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subs) 个子账户"
     }
 
     private func isInactive(_ account: BankAccount, cards: [BankCard]) -> Bool {
@@ -425,76 +419,6 @@ struct CardStatusText: View {
             .foregroundStyle(color)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
-enum CardSortOrder: String {
-    case nameAscending
-    case nameDescending
-
-    var direction: SortDirection {
-        switch self {
-        case .nameAscending: return .ascending
-        case .nameDescending: return .descending
-        }
-    }
-
-    func sorted(_ cards: [BankCard]) -> [BankCard] {
-        switch self {
-        case .nameAscending:
-            return cards.sorted(by: isNameAscending)
-        case .nameDescending:
-            return cards.sorted {
-                let comparison = displayName($0).localizedStandardCompare(displayName($1))
-                return comparison == .orderedSame
-                    ? tieBreak($1, $0)
-                    : comparison == .orderedDescending
-            }
-        }
-    }
-
-    private func isNameAscending(_ lhs: BankCard, _ rhs: BankCard) -> Bool {
-        let comparison = displayName(lhs).localizedStandardCompare(displayName(rhs))
-        return comparison == .orderedSame
-            ? tieBreak(lhs, rhs)
-            : comparison == .orderedAscending
-    }
-
-    private func tieBreak(_ lhs: BankCard, _ rhs: BankCard) -> Bool {
-        let numberComparison = lhs.cardNumber.localizedStandardCompare(rhs.cardNumber)
-        return numberComparison == .orderedSame
-            ? lhs.id.uuidString < rhs.id.uuidString
-            : numberComparison == .orderedAscending
-    }
-
-    private func displayName(_ card: BankCard) -> String {
-        let name = card.cardType.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? card.kind.title : name
-    }
-
-}
-
-enum CardCategoryFilter: String, CaseIterable, Identifiable {
-    case all
-    case debit
-    case credit
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .all: return "全部卡片"
-        case .debit: return "借记卡"
-        case .credit: return "信用卡"
-        }
-    }
-
-    func includes(_ card: BankCard) -> Bool {
-        switch self {
-        case .all: return true
-        case .debit: return card.kind == .debit
-        case .credit: return card.kind == .credit
-        }
     }
 }
 

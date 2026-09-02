@@ -34,13 +34,12 @@ struct HealthRecordsView: View {
         let yearGroups = presentation.yearGroups(from: pagedVisitGroups)
         List {
             Section("健康总览") {
-                Picker("统计范围", selection: $selectedYear) {
+                PickerFieldRow(title: "统计范围", selection: $selectedYear) {
                     Text("全部").tag(nil as Int?)
                     ForEach(presentation.availableYears, id: \.self) { year in
                         Text(verbatim: "\(year) 年").tag(year as Int?)
                     }
                 }
-                .pickerStyle(.menu)
 
                 overviewMetrics(presentation.overview)
                     .appListRowStyle()

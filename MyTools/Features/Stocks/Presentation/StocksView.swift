@@ -215,7 +215,7 @@ struct StocksView: View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
-                LabeledContent("最新数据获取时间") {
+                AppLabeledContentRow("最新数据获取时间") {
                     if let updatedAt = store.lastRefreshAt(for: marketFilter.market) {
                         Text(AppDateFormatter.dateTimeString(from: updatedAt))
                             .foregroundStyle(.secondary)

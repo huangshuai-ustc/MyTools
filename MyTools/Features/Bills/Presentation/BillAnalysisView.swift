@@ -226,11 +226,11 @@ struct BillAnalysisView: View {
             .padding(.vertical, 4)
             .appListRowStyle()
 
-            LabeledContent("交易笔数", value: "\(snapshot.transactionCount)")
+            DetailValueRow(title: "交易笔数", value: "\(snapshot.transactionCount)")
             if snapshot.neutralCount > 0 {
-                LabeledContent("不计收支", value: "\(snapshot.neutralCount) 笔")
+                DetailValueRow(title: "不计收支", value: "\(snapshot.neutralCount) 笔")
             }
-            LabeledContent("月度结余") {
+            AppLabeledContentRow("月度结余") {
                 Text(BillAnalysisFormatting.amount(snapshot.balance, currency: currency))
                     .foregroundStyle(snapshot.balance >= 0 ? Color.green : Color.red)
                     .monospacedDigit()
@@ -260,8 +260,14 @@ struct BillAnalysisView: View {
             .appListRowStyle()
 
             if let previousSnapshot {
-                LabeledContent("支出较上周期", value: comparisonText(current: snapshot.expense, previous: previousSnapshot.expense))
-                LabeledContent("净支出较上周期", value: comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense))
+                DetailValueRow(
+                    title: "支出较上周期",
+                    value: comparisonText(current: snapshot.expense, previous: previousSnapshot.expense)
+                )
+                DetailValueRow(
+                    title: "净支出较上周期",
+                    value: comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense)
+                )
             }
         }
     }
@@ -415,10 +421,10 @@ struct BillAnalysisView: View {
 
                 switch calendarMode {
                 case .anchor:
-                    DatePicker("周期基准日", selection: $anchorDate, displayedComponents: .date)
+                    DateFieldRow(title: "周期基准日", date: $anchorDate)
                 case .range:
-                    DatePicker("开始日期", selection: $customStart, displayedComponents: .date)
-                    DatePicker("结束日期", selection: $customEnd, displayedComponents: .date)
+                    DateFieldRow(title: "开始日期", date: $customStart)
+                    DateFieldRow(title: "结束日期", date: $customEnd)
                 }
             }
             .appNavigationTitle("选择分析时间")

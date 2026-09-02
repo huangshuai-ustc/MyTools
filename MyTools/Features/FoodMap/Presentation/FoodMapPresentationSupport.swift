@@ -34,6 +34,112 @@ struct FoodStatusLabel: View {
     }
 }
 
+struct FoodPlaceMetricsView: View {
+    var rating: Double?
+    var reviewCount: Int?
+    var averagePrice: Decimal?
+    var averagePriceCurrency: CurrencyCode = .cny
+
+    init(
+        rating: Double?,
+        reviewCount: Int?,
+        averagePrice: Decimal?,
+        averagePriceCurrency: CurrencyCode = .cny
+    ) {
+        self.rating = rating
+        self.reviewCount = reviewCount
+        self.averagePrice = averagePrice
+        self.averagePriceCurrency = averagePriceCurrency
+    }
+
+    init(place: FoodPlace) {
+        self.init(
+            rating: place.rating,
+            reviewCount: place.reviewCount,
+            averagePrice: place.averagePrice,
+            averagePriceCurrency: place.averagePriceCurrency
+        )
+    }
+
+    private var hasContent: Bool {
+        rating != nil || reviewCount != nil || averagePrice != nil
+    }
+
+    var body: some View {
+        if hasContent {
+            HStack(spacing: 6) {
+                if let rating {
+                    metric(
+                        value: rating.formatted(.number.precision(.fractionLength(1))),
+                        icon: "star.fill",
+                        accessibilityLabel: "星级 \(rating.formatted(.number.precision(.fractionLength(1))))"
+                    )
+                        .foregroundStyle(.orange)
+                }
+                if let reviewCount {
+                    metric(
+                        value: reviewCount.formatted(),
+                        icon: "text.bubble.fill",
+                        accessibilityLabel: "评论数 \(reviewCount.formatted()) 条"
+                    )
+                }
+                if let averagePrice {
+                    metric(
+                        value: FoodPlaceValueFormatter.compactPrice(
+                            averagePrice,
+                            currency: averagePriceCurrency
+                        ),
+                        icon: "banknote.fill",
+                        accessibilityLabel: "人均消费 \(FoodPlaceValueFormatter.price(averagePrice, currency: averagePriceCurrency))"
+                    )
+                }
+            }
+            .appFont(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func metric(value: String, icon: String, accessibilityLabel: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+            Text(value).lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.quaternary, in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+enum FoodPlaceValueFormatter {
+    static func price(_ value: Decimal, currency: CurrencyCode) -> String {
+        let amount = NSDecimalNumber(decimal: value).stringValue
+        let currencyName = currency.title.replacingOccurrences(of: " \(currency.rawValue)", with: "")
+        return "\(amount) \(currencyName)"
+    }
+
+    static func compactPrice(_ value: Decimal, currency: CurrencyCode) -> String {
+        let amount = NSDecimalNumber(decimal: value).stringValue
+        let symbol: String
+        switch currency {
+        case .cny: symbol = "¥"
+        case .hkd: symbol = "HK$"
+        case .cad: symbol = "CA$"
+        case .chf: symbol = "CHF "
+        case .eur: symbol = "€"
+        case .gbp: symbol = "£"
+        case .jpy: symbol = "JP¥"
+        case .nzd: symbol = "NZ$"
+        case .sgd: symbol = "S$"
+        case .thb: symbol = "฿"
+        case .usd: symbol = "$"
+        case .aud: symbol = "A$"
+        }
+        return "\(symbol)\(amount)"
+    }
+}
+
 struct FoodNavigationMenu: View {
     let place: FoodPlace
 

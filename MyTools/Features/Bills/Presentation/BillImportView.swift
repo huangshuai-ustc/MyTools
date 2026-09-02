@@ -27,7 +27,7 @@ struct BillImportView: View {
                         Label("选择账单文件", systemImage: "doc.badge.plus")
                     }
                     if let fileName {
-                        LabeledContent("文件", value: fileName)
+                        DetailValueRow(title: "文件", value: fileName)
                     }
                     Text("支持方寸账单交换 JSON、微信支付 XLSX 和支付宝 CSV。银行卡账单需按具体银行格式继续接入。")
                         .appFont(.footnote)
@@ -45,9 +45,9 @@ struct BillImportView: View {
 
                 if let document {
                     Section("导入预览") {
-                        LabeledContent("来源", value: document.source.providerName)
-                        LabeledContent("协议版本", value: "\(document.version)")
-                        LabeledContent("交易数量", value: "\(previewRecords.count)")
+                        DetailValueRow(title: "来源", value: document.source.providerName)
+                        DetailValueRow(title: "协议版本", value: "\(document.version)")
+                        DetailValueRow(title: "交易数量", value: "\(previewRecords.count)")
                     }
                     Section("交易记录") {
                         ForEach(Array(previewRecords.prefix(20))) { record in
@@ -74,8 +74,8 @@ struct BillImportView: View {
 
                 if let outcome {
                     Section("导入结果") {
-                        LabeledContent("新增", value: "\(outcome.insertedCount) 笔")
-                        LabeledContent("更新", value: "\(outcome.updatedCount) 笔")
+                        DetailValueRow(title: "新增", value: "\(outcome.insertedCount) 笔")
+                        DetailValueRow(title: "更新", value: "\(outcome.updatedCount) 笔")
                     }
                 }
             }

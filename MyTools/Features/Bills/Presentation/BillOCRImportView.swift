@@ -46,7 +46,7 @@ struct BillOCRImportView: View {
                         Label("从文件中选择", systemImage: "folder")
                     }
                     if let sourceFileName {
-                        LabeledContent("当前图片", value: sourceFileName)
+                        DetailValueRow(title: "当前图片", value: sourceFileName)
                     }
                 }
 
@@ -163,14 +163,13 @@ struct BillOCRImportView: View {
             }
             .pickerStyle(.segmented)
             NumericFieldRow(title: "金额", prompt: "必填", text: $amountText)
-            Picker("币种", selection: $currency) {
+            PickerFieldRow(title: "币种", selection: $currency) {
                 ForEach(CurrencyCode.selectableCases) { currency in
                     Text(currency.title).tag(currency)
                 }
             }
-            .pickerStyle(.menu)
-            DatePicker("交易时间", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
-            LabeledContent("秒") {
+            DateFieldRow(title: "交易时间", date: $occurredAt, displayedComponents: [.date, .hourAndMinute])
+            AppLabeledContentRow("秒") {
                 TextField("00", text: $secondsText)
                     .multilineTextAlignment(.trailing)
 #if os(iOS)

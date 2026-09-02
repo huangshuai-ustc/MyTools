@@ -7,7 +7,7 @@ struct CloudSyncSettingsView: View {
     var body: some View {
         List {
             Section {
-                Toggle("iCloud 同步", isOn: syncEnabled)
+                ToggleFieldRow(title: "iCloud 同步", isOn: syncEnabled)
             } footer: {
                 Text("开启后，首页模块开关和排序，以及银行、股票、换汇、健康档案、保密资料和附件会保存到当前 Apple 账户的 CloudKit 私有数据库。行情缓存、汇率缓存、诊断日志和设备认证状态不会上传。")
 #if os(macOS)
@@ -16,7 +16,7 @@ struct CloudSyncSettingsView: View {
             }
 
             Section("同步状态") {
-                LabeledContent("状态") {
+                AppLabeledContentRow("状态") {
                     HStack(spacing: 8) {
                         if cloudSync.status.isBusy {
                             ProgressView()
@@ -27,8 +27,8 @@ struct CloudSyncSettingsView: View {
                 }
 
                 if let date = cloudSync.lastSuccessfulSyncAt {
-                    LabeledContent(
-                        "最近成功同步",
+                    DetailValueRow(
+                        title: "最近成功同步",
                         value: date.formatted(date: .abbreviated, time: .shortened)
                     )
                 }

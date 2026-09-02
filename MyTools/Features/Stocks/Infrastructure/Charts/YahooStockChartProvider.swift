@@ -179,7 +179,11 @@ struct YahooStockChartProvider: StockChartProvider {
             symbol: result.meta.symbol ?? symbol,
             name: result.meta.longName ?? result.meta.shortName ?? stock.displayName,
             currencyCode: result.meta.currency ?? stock.market.currencyCode,
-            previousClose: result.meta.chartPreviousClose ?? result.meta.previousClose,
+            // `chartPreviousClose` is the close immediately before the
+            // requested chart range. For a five-day minute request it can be
+            // several sessions old; `previousClose` is the current quote's
+            // actual prior-session close.
+            previousClose: result.meta.previousClose ?? result.meta.chartPreviousClose,
             points: points,
             preMarketPoints: preMarketPoints,
             postMarketPoints: postMarketPoints,

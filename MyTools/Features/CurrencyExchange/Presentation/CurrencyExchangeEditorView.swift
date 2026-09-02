@@ -76,15 +76,15 @@ struct CurrencyExchangeEditorView: View {
 
                 Section("损耗预览") {
                     if let preview {
-                        LabeledContent("理论买入", value: CurrencyExchangeValueFormatter.amount(preview.expectedBoughtAmount, currency: preview.boughtCurrency))
-                        LabeledContent("实际买入", value: CurrencyExchangeValueFormatter.amount(preview.boughtAmount, currency: preview.boughtCurrency))
+                        DetailValueRow(title: "理论买入", value: CurrencyExchangeValueFormatter.amount(preview.expectedBoughtAmount, currency: preview.boughtCurrency))
+                        DetailValueRow(title: "实际买入", value: CurrencyExchangeValueFormatter.amount(preview.boughtAmount, currency: preview.boughtCurrency))
                         if let effectiveRate = preview.effectiveRate {
-                            LabeledContent("含手续费实际汇率", value: CurrencyExchangeValueFormatter.rate(effectiveRate))
+                            DetailValueRow(title: "含手续费实际汇率", value: CurrencyExchangeValueFormatter.rate(effectiveRate))
                         }
                         if let currentValue = preview.currentRenminbiValue(using: exchangeRateStore.renminbiBuyingRates),
                            let loss = preview.renminbiLoss(using: exchangeRateStore.renminbiBuyingRates) {
-                            LabeledContent("按中国银行买入价可换回", value: CurrencyExchangeValueFormatter.amount(currentValue, currency: .cny))
-                            LabeledContent("\(CurrencyExchangeResult(amount: loss).title) · 当前人民币损耗") {
+                            DetailValueRow(title: "按中国银行买入价可换回", value: CurrencyExchangeValueFormatter.amount(currentValue, currency: .cny))
+                            AppLabeledContentRow("\(CurrencyExchangeResult(amount: loss).title) · 当前人民币损耗") {
                                 Text(CurrencyExchangeValueFormatter.amount(
                                     CurrencyExchangeResult(amount: loss).displayValue(loss),
                                     currency: .cny
@@ -92,8 +92,8 @@ struct CurrencyExchangeEditorView: View {
                                     .foregroundStyle(resultColor(for: loss))
                             }
                             if let lossRate = preview.renminbiLossRate(using: exchangeRateStore.renminbiBuyingRates) {
-                                LabeledContent(
-                                    "当前损耗率",
+                                DetailValueRow(
+                                    title: "当前损耗率",
                                     value: CurrencyExchangeValueFormatter.percent(
                                         CurrencyExchangeResult(amount: loss).displayValue(lossRate)
                                     )

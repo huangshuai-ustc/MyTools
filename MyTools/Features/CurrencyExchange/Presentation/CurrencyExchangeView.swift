@@ -98,30 +98,27 @@ struct CurrencyExchangeView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Picker("年份", selection: $selectedYear) {
+                PickerFieldRow(title: "年份", selection: $selectedYear) {
                     Text("全部年份").tag(nil as Int?)
                     ForEach(availableYears, id: \.self) { year in
                         Text(verbatim: "\(year) 年").tag(year as Int?)
                     }
                 }
-                .pickerStyle(.menu)
 
-                Picker("相关币种", selection: $primaryCurrencyFilter) {
+                PickerFieldRow(title: "相关币种", selection: $primaryCurrencyFilter) {
                     Text("全部币种").tag(nil as CurrencyCode?)
                     ForEach(availableCurrencies) { currency in
                         Text(currency.title).tag(currency as CurrencyCode?)
                     }
                 }
-                .pickerStyle(.menu)
 
                 if primaryCurrencyFilter != nil {
-                    Picker("组合币种", selection: $pairedCurrencyFilter) {
+                    PickerFieldRow(title: "组合币种", selection: $pairedCurrencyFilter) {
                         Text("不限另一币种").tag(nil as CurrencyCode?)
                         ForEach(availablePairedCurrencies) { currency in
                             Text(currency.title).tag(currency as CurrencyCode?)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
 
                 if records.isEmpty {

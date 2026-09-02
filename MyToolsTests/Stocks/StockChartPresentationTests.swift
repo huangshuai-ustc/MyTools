@@ -738,6 +738,68 @@ struct StockChartPresentationTests {
         #expect(performance?.percent == 0.1)
     }
 
+    @Test func intradayIgnoresDailyCloseOlderThanImmediatelyPreviousTradingDay() {
+        let staleThursdayClose = point(
+            day: 27,
+            hour: 16,
+            close: 227.98,
+            timeZone: "America/New_York"
+        )
+        let mondayClose = point(
+            day: 31,
+            hour: 12,
+            minute: 36,
+            close: 219.93,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [mondayClose],
+            indicatorPoints: [mondayClose],
+            dailyIndicatorPoints: [staleThursdayClose, mondayClose],
+            previousClose: 217.55
+        )
+
+        let previousClose = StockChartPresentation.intradayPreviousClose(
+            snapshot: snapshot,
+            market: .unitedStates
+        )
+
+        #expect(previousClose == 217.55)
+    }
+
+    @Test func intradayUsesSameDayQuoteBeforeStaleChartRangeReference() {
+        let staleThursdayClose = point(
+            day: 27,
+            hour: 16,
+            close: 227.98,
+            timeZone: "America/New_York"
+        )
+        let mondayClose = point(
+            day: 31,
+            hour: 12,
+            minute: 36,
+            close: 219.93,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [mondayClose],
+            indicatorPoints: [mondayClose],
+            dailyIndicatorPoints: [staleThursdayClose, mondayClose],
+            previousClose: 208.48
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .unitedStates,
+            quotePreviousClose: 217.55,
+            quoteUpdatedAt: mondayClose.date
+        )
+
+        #expect(abs((performance?.change ?? 0) - 2.38) < 0.000_001)
+        #expect(abs((performance?.percent ?? 0) - (2.38 / 217.55)) < 0.000_001)
+    }
+
     @Test func intradayPerformanceFallsBackToProviderPreviousClose() {
         let points = [
             point(day: 7, hour: 9, minute: 30, close: 105),

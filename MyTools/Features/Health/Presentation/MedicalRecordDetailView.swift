@@ -57,11 +57,12 @@ struct MedicalRecordDetailView: View {
 
     private var detailNavigationTitle: String {
         guard let record else { return "就诊详情" }
+        if record.isPharmacyPurchase { return "购药详情" }
         if record.isPhysicalExam { return "体检详情" }
         if record.isInpatientEpisode { return "住院详情" }
         if record.isInpatientDailyRecord { return "住院日详情" }
         if record.isFollowUp { return "复诊详情" }
-        return record.hospital.isEmpty ? "就诊详情" : record.hospital
+        return "\(record.visitType.shortTitle)详情"
     }
 
     private var informationSectionTitle: String {
@@ -114,16 +115,8 @@ struct MedicalRecordDetailView: View {
                         } label: {
                             Image(systemName: "calendar.badge.plus")
                         }
-                        .accessibilityLabel("新增复诊记录")
-                        .help("新增复诊记录")
-
-                        Button {
-                            editingRecord = MedicalRecord(pharmacyPurchaseFor: record)
-                        } label: {
-                            Image(systemName: "pills.fill")
-                        }
-                        .accessibilityLabel("新增关联药房购药")
-                        .help("新增关联药房购药")
+                        .accessibilityLabel("新增复诊或购药记录")
+                        .help("新增复诊或购药记录")
                     }
                     Button { editingRecord = record } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel("编辑健康记录")
@@ -219,12 +212,15 @@ struct MedicalRecordDetailView: View {
                 } else if record.isPhysicalExam {
                     DetailValueRow(
                         title: "主要内容",
-                        value: record.physicalExamDetails?.packageName ?? ""
+                        value: record.physicalExamDetails?.packageName ?? "",
+                        alignment: detailTextAlignment(
+                            for: record.physicalExamDetails?.packageName ?? ""
+                        )
                     )
                     MarkdownValueRow(
                         title: "查出的问题",
                         markdown: record.diagnosis,
-                        alignment: .leading
+                        alignment: detailTextAlignment(for: record.diagnosis)
                     )
                 } else if record.isInpatient {
                     DetailValueRow(title: "科室", value: record.department)
@@ -417,8 +413,8 @@ struct MedicalRecordDetailView: View {
                     .appListRowStyle()
                 }
                 if !record.expenseItems.isEmpty {
-                    LabeledContent(
-                        "项目合计",
+                    DetailValueRow(
+                        title: "项目合计",
                         value: MedicalValueFormatter.money(record.expenseItemsTotal)
                     )
                 }
@@ -470,6 +466,10 @@ struct MedicalRecordDetailView: View {
 #endif
     }
 
+    private func detailTextAlignment(for value: String) -> TextAlignment {
+        value.contains(where: { $0.isNewline }) ? .leading : .trailing
+    }
+
     private func inpatientDayCount(for record: MedicalRecord) -> Int {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
@@ -512,7 +512,7 @@ private struct MedicalPhysicalExamFollowUpRow: View {
                     .foregroundStyle(.secondary)
             }
             if !record.diagnosis.isEmpty {
-                MarkdownText(record.diagnosis)
+                MarkdownText(record.diagnosis, preservesLineBreaks: true)
                     .appFont(.subheadline)
                     .foregroundStyle(.primary)
             }
@@ -679,7 +679,6 @@ struct MedicalExpenseItemRow: View {
 }
 
 private struct MedicalExpenseItemDetailView: View {
-    @Environment(\.dismiss) private var dismiss
     let item: MedicalExpenseItem
 
     var body: some View {
@@ -709,11 +708,6 @@ private struct MedicalExpenseItemDetailView: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
         }
     }
 }

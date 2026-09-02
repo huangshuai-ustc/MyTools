@@ -83,7 +83,7 @@ struct MapLocationPickerConfiguration {
     var centersOnUserLocation = false
 }
 
-private final class MapLocationPermissionManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+final class MapLocationPermissionManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var coordinate: CLLocationCoordinate2D?
     private let manager = CLLocationManager()
 
@@ -163,10 +163,19 @@ struct MapLocationPickerView: View {
         NavigationStack {
             VStack(spacing: 12) {
                 searchBar
-                map
-                if !results.isEmpty {
-                    resultList
+
+                ScrollView {
+                    VStack(spacing: 12) {
+                        map
+                        if !results.isEmpty {
+                            resultList
+                        }
+                    }
                 }
+#if os(iOS)
+                .scrollDismissesKeyboard(.interactively)
+#endif
+
                 Button {
                     guard let selection else { return }
                     onSave(selection)
@@ -189,7 +198,6 @@ struct MapLocationPickerView: View {
                 }
             }
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .task {
             if configuration.centersOnUserLocation {
                 locationManager.requestPermission()
@@ -272,26 +280,23 @@ struct MapLocationPickerView: View {
                 resolveAddress(for: value)
             }
         }
-        .frame(minHeight: 280)
+        .frame(height: 320)
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
     private var resultList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(results, id: \.self) { item in
-                    Button { select(item) } label: {
-                        MapLocationSearchResultRow(item: item, isSelected: isSelected(item))
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                    if item != results.last {
-                        Divider()
-                    }
+        LazyVStack(spacing: 0) {
+            ForEach(results, id: \.self) { item in
+                Button { select(item) } label: {
+                    MapLocationSearchResultRow(item: item, isSelected: isSelected(item))
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.plain)
+                if item != results.last {
+                    Divider()
                 }
             }
         }
-        .frame(maxHeight: 220)
     }
 
     private func performSearch() {
@@ -317,11 +322,13 @@ struct MapLocationPickerView: View {
         searchFocused = false
         dismissKeyboard()
         let coordinate = item.location.coordinate
+        let selectedName = item.name ?? configuration.markerTitle
         let address = item.address?.fullAddress
             ?? item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
             ?? ""
+        searchText = selectedName
         selection = MapLocationSelection(
-            name: item.name ?? configuration.markerTitle,
+            name: selectedName,
             address: address,
             coordinate: coordinate,
             administrativeContext: [

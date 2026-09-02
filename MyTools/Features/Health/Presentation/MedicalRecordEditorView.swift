@@ -3,6 +3,20 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
+private enum AssociatedMedicalRecordKind: String, CaseIterable, Identifiable {
+    case followUp
+    case pharmacyPurchase
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .followUp: return "复诊"
+        case .pharmacyPurchase: return "购药"
+        }
+    }
+}
+
 @MainActor
 private final class MedicalRecordEditorDraft: ObservableObject {
     @Published var record: MedicalRecord
@@ -54,6 +68,9 @@ struct MedicalRecordEditorView: View {
             Form {
                 if draft.record.hasAssociatedRecord {
                     associatedVisitSection
+                }
+                if canChooseAssociatedRecordKind {
+                    associatedRecordKindSection
                 }
                 basicInformationSection
                 if draft.record.isPhysicalExam {
@@ -126,6 +143,9 @@ struct MedicalRecordEditorView: View {
     }
 
     private var editorTitle: String {
+        if canChooseAssociatedRecordKind {
+            return "新增复诊或购药"
+        }
         if draft.record.isPharmacyPurchase {
             return isNew ? "新增购药" : "编辑购药"
         }
@@ -171,6 +191,68 @@ struct MedicalRecordEditorView: View {
                     .foregroundStyle(.orange)
             }
         }
+    }
+
+    private var canChooseAssociatedRecordKind: Bool {
+        guard isNew, let associatedRecord else { return false }
+        return !associatedRecord.isPhysicalExam
+            && !associatedRecord.isInpatient
+            && !associatedRecord.isPharmacyPurchase
+    }
+
+    private var associatedRecordKindSection: some View {
+        Section("记录类型") {
+            Picker("记录类型", selection: associatedRecordKindBinding) {
+                ForEach(AssociatedMedicalRecordKind.allCases) { kind in
+                    Text(kind.title).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("记录类型")
+        }
+    }
+
+    private var associatedRecordKindBinding: Binding<AssociatedMedicalRecordKind> {
+        Binding(
+            get: {
+                draft.record.isPharmacyPurchase ? .pharmacyPurchase : .followUp
+            },
+            set: { kind in
+                switchAssociatedRecordKind(to: kind)
+            }
+        )
+    }
+
+    private func switchAssociatedRecordKind(to kind: AssociatedMedicalRecordKind) {
+        guard let associatedRecord else { return }
+        let current = draft.record
+        let currentKind: AssociatedMedicalRecordKind = current.isPharmacyPurchase
+            ? .pharmacyPurchase
+            : .followUp
+        guard currentKind != kind else { return }
+
+        var replacement: MedicalRecord
+        switch kind {
+        case .followUp:
+            replacement = MedicalRecord(followUpTo: associatedRecord, date: current.date)
+            replacement.paymentMethod = current.paymentMethod
+        case .pharmacyPurchase:
+            replacement = MedicalRecord(pharmacyPurchaseFor: associatedRecord, date: current.date)
+            replacement.paymentMethod = .selfPay
+            draft.costInputSource = .selfPay
+            draft.insuranceCostText = ""
+        }
+
+        // 类型切换不应丢失用户已经添加的通用资料；类型专属字段则采用对应记录的默认值。
+        replacement.id = current.id
+        replacement.expenseItems = current.expenseItems
+        replacement.attachments = current.attachments
+        replacement.tags = current.tags
+        replacement.notes = current.notes
+        replacement.createdAt = current.createdAt
+        replacement.updatedAt = current.updatedAt
+        draft.record = replacement
     }
 
     private var basicInformationSection: some View {
@@ -230,10 +312,11 @@ struct MedicalRecordEditorView: View {
                 }
             }
             if draft.record.hasAssociatedRecord {
-                LabeledContent(
-                    draft.record.isInpatient ? "住院日类型：" : (draft.record.isFollowUp ? "复诊方式：" : "记录类型：")
-                ) {
-                    Text(draft.record.visitType.shortTitle)
+                if !canChooseAssociatedRecordKind {
+                    DetailValueRow(
+                        title: draft.record.isInpatient ? "住院日类型：" : (draft.record.isFollowUp ? "复诊方式：" : "记录类型："),
+                        value: draft.record.visitType.shortTitle
+                    )
                 }
             } else {
                 Picker(draft.record.isFollowUp ? "复诊方式：" : "记录类型：", selection: $draft.record.visitType) {
@@ -468,7 +551,7 @@ struct MedicalRecordEditorView: View {
     }
 
     private func calculatedCostRow(_ title: String, amount: Decimal?) -> some View {
-        LabeledContent(title) {
+        AppLabeledContentRow(title) {
             if let amount, amount >= 0 {
                 Text(MedicalValueFormatter.money(amount))
                     .monospacedDigit()

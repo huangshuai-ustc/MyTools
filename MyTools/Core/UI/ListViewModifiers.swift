@@ -527,9 +527,10 @@ struct AppListPagination {
 }
 
 @MainActor
+// 列表行高的所有尺寸参数集中在这里。
+// 想整体调松紧，只改 densityScale；想单独调某个方向，改对应函数里的系数。
 enum AppListMetrics {
-    /// 系统当前 body 文本样式的行高。iOS 原生跟随 Dynamic Type；macOS 没有系统级
-    /// Dynamic Type，改用 App 自己的 `appFontScale` 对基准行高做线性缩放。
+    // iOS 跟随系统 Dynamic Type；macOS 无系统级 Dynamic Type，改用 appFontScale 线性缩放。
     static func baseLineHeight(fontScale: CGFloat?) -> CGFloat {
 #if os(iOS)
         UIFont.preferredFont(forTextStyle: .body).lineHeight
@@ -539,11 +540,10 @@ enum AppListMetrics {
 #endif
     }
 
-    /// 全局密度系数：小于 1 更紧凑，大于 1 更宽松。调整这一个值即可整体缩放所有行间距，
-    /// 且不破坏“随字体自适应”的关系。具体数值由使用者自行微调。
-    static let densityScale: CGFloat = 1.0
-    /// 标准单行内容的最低高度。保持略高于当前 body 字体本身，让统一组件的视觉密度
-    /// 接近裸 `LabeledContent`，同时为 TextField、Picker 和 DatePicker 提供相同基线。
+    // 全局密度系数。< 1 更紧凑，> 1 更宽松，改这一个值整体缩放所有行间距。
+    static let densityScale: CGFloat = 1.1
+
+    // 单行内容的最低高度，用于让 TextField / Picker / DatePicker 与纯文本行视觉对齐。
     static func minimumRowHeight(fontScale: CGFloat?) -> CGFloat {
         let lineHeight = baseLineHeight(fontScale: fontScale)
 #if os(iOS)
@@ -554,21 +554,22 @@ enum AppListMetrics {
         return max(nativeContentFloor, lineHeight * 1.05) * densityScale
     }
 
-    /// `minimumRowHeight` 是标准单行内容本身的最低高度；SwiftUI 的 List/Form
-    /// 还会在内容外叠加系统上下边距。全局列表地板需要包含这部分空间，否则带有
-    /// 显式内容高度的输入/文本行会比裸 Picker、Badge 或按钮行更高。
+    // 传给 List 的行高地板，包含内容高度 + 系统自带的上下边距空间，
+    // 确保有显式高度的输入行不会比裸 Picker / Badge 行更高。
     static func listRowHeightFloor(fontScale: CGFloat?) -> CGFloat {
         minimumRowHeight(fontScale: fontScale)
             + baseLineHeight(fontScale: fontScale) * 0.7 * densityScale
     }
-    /// 单元格内容上下留白
+
+    // 单元格内容的上下内边距。
     static func rowVerticalInset(fontScale: CGFloat?) -> CGFloat {
         baseLineHeight(fontScale: fontScale) * 0.6 * densityScale
     }
 
-    /// 横向内边距与字体行高的关系较弱，暂保持固定值。单元格内容左右留白
+    // 单元格内容的左右内边距，与字体大小关系较弱，保持固定值。
     static let rowHorizontalInset: CGFloat = 16
-    /// 单条记录内部元素间距
+
+    // 单条记录内部各元素之间的纵向间距。
     static func recordContentSpacing(fontScale: CGFloat?) -> CGFloat {
         baseLineHeight(fontScale: fontScale) * 0.4 * densityScale
     }
@@ -744,17 +745,20 @@ extension View {
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
             // iPad 上不要按内容收缩，否则表单会退化成无法操作的小浮层。
-            presentationDetents([.large])
+            appListSpacing()
+                .presentationDetents([.large])
                 .presentationSizing(.page)
                 .presentationDragIndicator(.visible)
         } else {
-            presentationDetents([.large])
+            appListSpacing()
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
 #elseif os(macOS)
-        modifier(MacAdaptiveSheetFrameModifier(kind: .large))
+        appListSpacing()
+            .modifier(MacAdaptiveSheetFrameModifier(kind: .large))
 #else
-        self
+        appListSpacing()
 #endif
     }
 
@@ -763,17 +767,20 @@ extension View {
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
             // 认证表单与其他页面弹窗保持同样的 iPad 页面尺寸。
-            presentationDetents([.large])
+            appListSpacing()
+                .presentationDetents([.large])
                 .presentationSizing(.page)
                 .presentationDragIndicator(.visible)
         } else {
-            presentationDetents([.height(360)])
+            appListSpacing()
+                .presentationDetents([.height(360)])
                 .presentationDragIndicator(.visible)
         }
 #elseif os(macOS)
-        modifier(MacAdaptiveSheetFrameModifier(kind: .authentication))
+        appListSpacing()
+            .modifier(MacAdaptiveSheetFrameModifier(kind: .authentication))
 #else
-        self
+        appListSpacing()
 #endif
     }
 

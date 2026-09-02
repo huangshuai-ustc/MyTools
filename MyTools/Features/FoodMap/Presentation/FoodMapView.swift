@@ -28,6 +28,8 @@ struct FoodMapView: View {
     @State private var statusFilter: FoodStatusFilter = .all
     @State private var selectedTag = ""
     @State private var editingPlace: FoodPlace?
+    @State private var showingDianpingImport = false
+    @State private var showingSourceRefresh = false
     @State private var pagination = AppListPagination(pageSize: FoodMapView.pageSize)
 
     private var locatedPlaceCount: Int {
@@ -76,13 +78,12 @@ struct FoodMapView: View {
 
             if !store.places.isEmpty {
                 Section("筛选") {
-                    Picker("状态", selection: $statusFilter) {
+                    PickerFieldRow(title: "状态", selection: $statusFilter) {
                         Text(FoodStatusFilter.all.title).tag(FoodStatusFilter.all)
                         ForEach(FoodPlaceStatus.allCases) { status in
                             Text(status.title).tag(FoodStatusFilter.status(status))
                         }
                     }
-                    .pickerStyle(.menu)
 
                     if !availableTags.isEmpty {
                         AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
@@ -106,13 +107,21 @@ struct FoodMapView: View {
         }
         .appNavigationTitle(ToolModule.foodMap.title)
         .iOSLabeledBackButton("工具")
-        .searchable(text: $query, prompt: "搜索美食、店名、地点或标签")
+        .searchable(text: $query, prompt: "搜索店名、推荐食物、特色、地址或标签")
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showingSourceRefresh = true
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("更新全部店铺资料")
+                .help("更新全部店铺资料")
+
                 AdminEditAccessButton()
 
                 if auth.isAdmin {
@@ -122,12 +131,27 @@ struct FoodMapView: View {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("添加美食记录")
+                    .contextMenu {
+                        Button {
+                            showingDianpingImport = true
+                        } label: {
+                            Label("从大众点评导入", systemImage: "square.and.arrow.down")
+                        }
+                    }
                 }
             }
         }
         .sheet(item: $editingPlace) { place in
             FoodPlaceEditorView(place: place)
                 .id(place.id)
+                .iOSLargeSheet()
+        }
+        .sheet(isPresented: $showingDianpingImport) {
+            DianpingImportView()
+                .iOSLargeSheet()
+        }
+        .sheet(isPresented: $showingSourceRefresh) {
+            FoodPlaceSourceRefreshView()
                 .iOSLargeSheet()
         }
         .onChange(of: availableTags) { _, tags in
@@ -186,15 +210,23 @@ private struct FoodPlaceRow: View {
                     Spacer(minLength: 4)
                     FoodStatusLabel(status: place.status)
                 }
-                if !place.shopName.isEmpty, place.shopName != place.displayTitle {
-                    Text(place.shopName)
-                        .appFont(.subheadline)
+                FoodPlaceMetricsView(place: place)
+                if !place.specialty.isEmpty {
+                    Label(place.specialty, systemImage: "sparkles")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Text(place.locationSummary)
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                if !place.recommendedFood.isEmpty {
+                    Text("推荐：\(place.recommendedFood)")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 AppTagCapsules(tags: place.tags, limit: 3)
             }
         }

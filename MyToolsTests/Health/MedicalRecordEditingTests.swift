@@ -3,6 +3,15 @@ import Testing
 @testable import MyTools
 
 struct MedicalRecordEditingTests {
+    @Test func markdownRendererPreservesExplicitPhysicalExamLineBreaks() {
+        let rendered = MarkdownRenderer.attributedString(
+            from: "体重指数：$24.9kg/m^2$\n第二项\n第三项",
+            preservesLineBreaks: true
+        )
+
+        #expect(String(rendered.characters) == "体重指数：24.9kg/m²\n第二项\n第三项")
+    }
+
     @Test func validatorNormalizesFieldsTagsAndMixedCosts() throws {
         var record = MedicalRecord()
         record.hospital = "  示例医院  "

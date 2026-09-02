@@ -145,20 +145,18 @@ struct DocumentsView: View {
         List {
             if !store.documents.isEmpty {
                 Section("筛选") {
-                    Picker("类型", selection: $typeFilter) {
+                    PickerFieldRow(title: "类型", selection: $typeFilter) {
                         Text(CredentialTypeFilter.all.title).tag(CredentialTypeFilter.all)
                         ForEach(CredentialDocumentType.allCases) { type in
                             Text(type.title).tag(CredentialTypeFilter.type(type))
                         }
                     }
-                    .pickerStyle(.menu)
-                    Picker("有效期", selection: $statusFilter) {
+                    PickerFieldRow(title: "有效期", selection: $statusFilter) {
                         ForEach(CredentialStatusFilter.allCases) { status in
                             Text(status.title).tag(status)
                         }
                     }
-                    .pickerStyle(.menu)
-                    Picker("证照状态", selection: $versionStatusFilter) {
+                    PickerFieldRow(title: "证照状态", selection: $versionStatusFilter) {
                         Text(CredentialVersionStatusFilter.all.title)
                             .tag(CredentialVersionStatusFilter.all)
                         ForEach(CredentialVersionStatus.allCases) { status in
@@ -166,7 +164,6 @@ struct DocumentsView: View {
                                 .tag(CredentialVersionStatusFilter.status(status))
                         }
                     }
-                    .pickerStyle(.menu)
                     if !availableTags.isEmpty {
                         AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
                     }

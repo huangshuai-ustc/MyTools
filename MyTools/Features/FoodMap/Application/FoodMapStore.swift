@@ -57,8 +57,8 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
 
     func upsert(_ place: FoodPlace) {
         var stored = place
-        stored.foodName = normalizedText(place.foodName)
         stored.shopName = normalizedText(place.shopName)
+        stored.recommendedFood = normalizedText(place.recommendedFood)
         if let location = place.administrativeLocation {
             stored.administrativeLocation = ChinaAdministrativeDivisions.location(
                 province: normalizedText(location.province),
@@ -69,6 +69,11 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         stored.address = normalizedText(place.address)
         stored.sourceTitle = normalizedText(place.sourceTitle)
         stored.sourceURL = normalizedText(place.sourceURL)
+        stored.shopURL = normalizedText(place.shopURL)
+        stored.rating = place.rating.flatMap { (0...5).contains($0) ? $0 : nil }
+        stored.reviewCount = place.reviewCount.flatMap { $0 >= 0 ? $0 : nil }
+        stored.averagePrice = place.averagePrice.flatMap { $0 >= 0 ? $0 : nil }
+        stored.specialty = normalizedText(place.specialty)
         stored.note = place.note.trimmingCharacters(in: .whitespacesAndNewlines)
         stored.tags = normalizedTags(place.tags)
         knownTags = AppTagSupport.merged(knownTags, with: stored.tags)

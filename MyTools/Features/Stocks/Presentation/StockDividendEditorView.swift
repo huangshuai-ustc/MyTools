@@ -32,7 +32,6 @@ struct StockDividendEditorView: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: StockDividendEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
@@ -65,8 +64,7 @@ struct StockDividendEditorView: View {
                         text: $draft.dividendPerShareText,
                         field: .dividendPerShare
                     )
-                    LabeledContent("税前分红", value: grossAmountText)
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    DetailValueRow(title: "税前分红", value: grossAmountText)
                     decimalField(
                         "预扣税：",
                         placeholder: "可选",
@@ -82,8 +80,8 @@ struct StockDividendEditorView: View {
                 }
 
                 Section("结算") {
-                    LabeledContent("结算币种", value: stock.market.currencyCode)
-                    LabeledContent("净到账", value: netAmountText)
+                    DetailValueRow(title: "结算币种", value: stock.market.currencyCode)
+                    DetailValueRow(title: "净到账", value: netAmountText)
                 }
 
                 Section("备注") {

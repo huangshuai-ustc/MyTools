@@ -37,7 +37,7 @@ struct CredentialDetailView: View {
             if let document {
                 Form {
                     Section("证照信息") {
-                        LabeledContent("类型", value: document.typeTitle)
+                        DetailValueRow(title: "类型", value: document.typeTitle)
                             .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                         detailRow("证照状态") {
                             CredentialVersionStatusLabel(status: document.versionStatus)
@@ -66,7 +66,7 @@ struct CredentialDetailView: View {
                     }
 
                     Section("有效期") {
-                        LabeledContent("期限", value: document.validity.kind.title)
+                        DetailValueRow(title: "期限", value: document.validity.kind.title)
                         HStack(spacing: 12) {
                             Text("有效状态")
                             Spacer(minLength: 12)
@@ -93,7 +93,10 @@ struct CredentialDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                         if document.expiryReminder.isEnabled {
-                            LabeledContent("到期提醒", value: reminderTitle(document.expiryReminder.daysBefore))
+                            DetailValueRow(
+                                title: "到期提醒",
+                                value: reminderTitle(document.expiryReminder.daysBefore)
+                            )
                         }
                     }
 
@@ -391,9 +394,10 @@ struct CredentialFieldTemplateEditorView: View {
                             .pickerStyle(.menu)
                             .labelsHidden()
                             .fixedSize()
+                            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                         }
                         .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
-                        .padding(.vertical, 4)
+                        .appListRowStyle()
                         .onDrag {
                             draggedFieldID = field.wrappedValue.id
                             return NSItemProvider(object: NSString(string: field.wrappedValue.id.uuidString))
@@ -418,19 +422,16 @@ struct CredentialFieldTemplateEditorView: View {
                             fields.removeAll { $0.id == field.wrappedValue.id }
                         }
                     }
-                } header: {
-                    Text("字段模板 · \(documentType.title)")
-                } footer: {
-                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建证照时会生成空白字段。")
-                }
-
-                Section {
                     Button {
                         newFieldName = ""
                         showingNewField = true
                     } label: {
                         Label("添加模板字段", systemImage: "plus.circle")
                     }
+                } header: {
+                    Text("字段模板 · \(documentType.title)")
+                } footer: {
+                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建证照时会生成空白字段。")
                 }
             }
             .appNavigationTitle("字段模板")

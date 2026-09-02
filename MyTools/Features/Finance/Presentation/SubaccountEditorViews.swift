@@ -22,31 +22,65 @@ struct DomesticSubaccountDetailRow: View {
 }
 
 struct DomesticSubaccountReadOnlyView: View {
-    let subaccount: DomesticSubaccount
-    @Environment(\.dismiss) private var dismiss
+    private let initialSubaccount: DomesticSubaccount
+    let accountID: UUID
+    @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
+    @State private var editingSubaccount: DomesticSubaccount?
+
+    init(subaccount: DomesticSubaccount, accountID: UUID) {
+        initialSubaccount = subaccount
+        self.accountID = accountID
+    }
+
+    private var subaccount: DomesticSubaccount {
+        store.accounts.first { $0.id == accountID }?
+            .domesticSubaccounts.first { $0.id == initialSubaccount.id }
+            ?? initialSubaccount
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    DetailValueRow(title: "账户名称", value: subaccount.name)
-                    LabeledContent("账户类型", value: subaccount.type.isEmpty ? "未填写" : subaccount.type)
-                    DetailValueRow(title: "账户号", value: subaccount.accountNumber)
-                    LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
-                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                    SubaccountDetailCard(
+                        name: subaccount.name,
+                        type: subaccount.type,
+                        accountNumber: subaccount.accountNumber,
+                        status: subaccount.status,
+                        currencies: subaccount.currencies
+                    )
                 }
             }
-            .appNavigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    AdminEditAccessButton()
+                    if auth.isAdmin {
+                        Button {
+                            editingSubaccount = subaccount
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .accessibilityLabel("编辑子账户")
+                        .help("编辑子账户")
+                    }
                 }
+            }
+            .sheet(item: $editingSubaccount) { value in
+                DomesticSubaccountEditorView(subaccount: value, onSave: save)
+                    .id(value.id)
+                    .iOSLargeSheet()
             }
         }
+    }
+
+    private func save(_ value: DomesticSubaccount) {
+        guard var account = store.accounts.first(where: { $0.id == accountID }),
+              let index = account.domesticSubaccounts.firstIndex(where: { $0.id == value.id }) else {
+            return
+        }
+        account.domesticSubaccounts[index] = value
+        store.replaceAccount(account, cards: store.cards(for: account))
     }
 }
 
@@ -57,7 +91,6 @@ private final class DomesticSubaccountDraft: ObservableObject {
 
 struct DomesticSubaccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: DomesticSubaccountDraft
     @State private var selectedType: DomesticAccountType
     let onSave: (DomesticSubaccount) -> Void
@@ -84,25 +117,16 @@ struct DomesticSubaccountEditorView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    LabeledContent("账户名称：") {
-                        IMESafeTextField(prompt: "例如退休金账户", text: $draft.subaccount.name, alignment: .trailing)
-                    }
-                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    FieldEditorRow(title: "账户名称：", prompt: "例如退休金账户", text: $draft.subaccount.name)
                     PickerFieldRow(title: "账户类型：", selection: $selectedType) {
                         ForEach(DomesticAccountType.allCases) { type in
                             Text(type.title).tag(type)
                         }
                     }
                     if selectedType == .other {
-                        LabeledContent("自定义类型：") {
-                            IMESafeTextField(prompt: "例如私人理财账户", text: $draft.subaccount.type, alignment: .trailing)
-                        }
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                        FieldEditorRow(title: "自定义类型：", prompt: "例如私人理财账户", text: $draft.subaccount.type)
                     }
-                    LabeledContent("账户号：") {
-                        IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
-                    }
-                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    FieldEditorRow(title: "账户号：", prompt: "未填写", text: $draft.subaccount.accountNumber)
                     Picker("状态：", selection: $draft.subaccount.status) {
                         ForEach(AccountStatus.allCases) { status in
                             Text(status.title).tag(status)
@@ -203,31 +227,65 @@ private struct SubaccountSummaryRow: View {
 }
 
 struct ForeignSubaccountReadOnlyView: View {
-    let subaccount: ForeignSubaccount
-    @Environment(\.dismiss) private var dismiss
+    private let initialSubaccount: ForeignSubaccount
+    let accountID: UUID
+    @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
+    @State private var editingSubaccount: ForeignSubaccount?
+
+    init(subaccount: ForeignSubaccount, accountID: UUID) {
+        initialSubaccount = subaccount
+        self.accountID = accountID
+    }
+
+    private var subaccount: ForeignSubaccount {
+        store.accounts.first { $0.id == accountID }?
+            .foreignSubaccounts.first { $0.id == initialSubaccount.id }
+            ?? initialSubaccount
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    DetailValueRow(title: "账户名称", value: subaccount.name)
-                    LabeledContent("账户类型", value: subaccount.typeTitle)
-                    DetailValueRow(title: "账户号", value: subaccount.accountNumber)
-                    LabeledContent("状态") { AccountStatusText(status: subaccount.status) }
-                    LabeledContent("币种", value: subaccount.currencySummary.isEmpty ? "未选择" : subaccount.currencySummary)
+                    SubaccountDetailCard(
+                        name: subaccount.name,
+                        type: subaccount.typeTitle,
+                        accountNumber: subaccount.accountNumber,
+                        status: subaccount.status,
+                        currencies: subaccount.currencies
+                    )
                 }
             }
-            .appNavigationTitle(subaccount.name.isEmpty ? "子账户详情" : subaccount.name)
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    AdminEditAccessButton()
+                    if auth.isAdmin {
+                        Button {
+                            editingSubaccount = subaccount
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .accessibilityLabel("编辑子账户")
+                        .help("编辑子账户")
+                    }
                 }
+            }
+            .sheet(item: $editingSubaccount) { value in
+                ForeignSubaccountEditorView(subaccount: value, onSave: save)
+                    .id(value.id)
+                    .iOSLargeSheet()
             }
         }
+    }
+
+    private func save(_ value: ForeignSubaccount) {
+        guard var account = store.accounts.first(where: { $0.id == accountID }),
+              let index = account.foreignSubaccounts.firstIndex(where: { $0.id == value.id }) else {
+            return
+        }
+        account.foreignSubaccounts[index] = value
+        store.replaceAccount(account, cards: store.cards(for: account))
     }
 }
 
@@ -238,7 +296,6 @@ private final class ForeignSubaccountDraft: ObservableObject {
 
 struct ForeignSubaccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: ForeignSubaccountDraft
     let onSave: (ForeignSubaccount) -> Void
 
@@ -259,23 +316,14 @@ struct ForeignSubaccountEditorView: View {
         NavigationStack {
             Form {
                 Section("账户信息") {
-                    LabeledContent("账户名称：") {
-                        IMESafeTextField(prompt: "例如港币储蓄", text: $draft.subaccount.name, alignment: .trailing)
-                    }
-                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    FieldEditorRow(title: "账户名称：", prompt: "例如港币储蓄", text: $draft.subaccount.name)
                     PickerFieldRow(title: "账户类型：", selection: $draft.subaccount.type) {
                         ForEach(ForeignAccountType.allCases) { Text($0.title).tag($0) }
                     }
                     if draft.subaccount.type == .other {
-                        LabeledContent("自定义类型：") {
-                            IMESafeTextField(prompt: "例如贵金属账户", text: customType, alignment: .trailing)
-                        }
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                        FieldEditorRow(title: "自定义类型：", prompt: "例如贵金属账户", text: customType)
                     }
-                    LabeledContent("账户号：") {
-                        IMESafeTextField(prompt: "未填写", text: $draft.subaccount.accountNumber, alignment: .trailing)
-                    }
-                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+                    FieldEditorRow(title: "账户号：", prompt: "未填写", text: $draft.subaccount.accountNumber)
                     Picker("状态：", selection: $draft.subaccount.status) {
                         ForEach(AccountStatus.allCases) { status in
                             Text(status.title).tag(status)
@@ -346,6 +394,75 @@ struct AccountStatusText: View {
     }
 }
 
+private struct SubaccountDetailCard: View {
+    let name: String
+    let type: String
+    let accountNumber: String
+    let status: AccountStatus
+    let currencies: Set<CurrencyCode>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(name.isEmpty ? "未命名子账户" : name)
+                    .appFont(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                AccountStatusText(status: status)
+            }
+
+            Text(type.isEmpty ? "未填写类型" : type)
+                .appFont(.caption.weight(.semibold))
+                .foregroundStyle(.indigo)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.indigo.opacity(0.14), in: Capsule())
+                .copyableText(type.isEmpty ? nil : type)
+
+            detailFact(
+                title: "账户号",
+                value: accountNumber.isEmpty ? "未填写" : accountNumber,
+                copyValue: accountNumber.isEmpty ? nil : accountNumber,
+                monospaced: true,
+                prominent: true
+            )
+            detailFact(
+                title: "币种",
+                value: currencyText,
+                copyValue: currencies.isEmpty ? nil : currencyText
+            )
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var currencyText: String {
+        guard !currencies.isEmpty else { return "未选择" }
+        return CurrencyCode.displayOrdered(currencies).map(\.rawValue).joined(separator: " · ")
+    }
+
+    private func detailFact(
+        title: String,
+        value: String,
+        copyValue: String?,
+        monospaced: Bool = false,
+        prominent: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .appFont(prominent ? .title3.weight(.semibold) : .subheadline)
+                .fontDesign(monospaced ? .monospaced : .default)
+                .lineLimit(prominent ? 1 : nil)
+                .minimumScaleFactor(prominent ? 0.65 : 1)
+                .fixedSize(horizontal: false, vertical: !prominent)
+                .copyableText(copyValue)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct CurrencySelectionRows: View {
     @Binding var currencies: Set<CurrencyCode>
     var region: BankRegion = .overseas
@@ -391,6 +508,31 @@ struct CurrencySelectionRows: View {
 
     private func toggle(_ currency: CurrencyCode) {
         if currencies.contains(currency) { currencies.remove(currency) } else { currencies.insert(currency) }
+    }
+}
+
+struct FinanceCurrenciesRow: View {
+    let currencies: Set<CurrencyCode>
+
+    var body: some View {
+        AppLabeledContentRow("币种") {
+            if currencies.isEmpty {
+                Text("未选择").foregroundStyle(.secondary)
+            } else {
+                Text(currencyText)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .copyableText(currencyText)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    private var currencyText: String {
+        CurrencyCode.displayOrdered(currencies)
+            .map(\.rawValue)
+            .joined(separator: "、")
     }
 }
 

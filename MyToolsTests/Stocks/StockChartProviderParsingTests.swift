@@ -181,7 +181,8 @@ struct StockChartProviderParsingTests {
                         "currency": "USD",
                         "symbol": "BABA",
                         "longName": "Alibaba Group Holding Limited",
-                        "chartPreviousClose": 116.31,
+                        "chartPreviousClose": 108.48,
+                        "previousClose": 116.31,
                         "regularMarketPrice": 118.90,
                         "regularMarketTime": officialCloseTime.timeIntervalSince1970
                     ],
@@ -220,6 +221,7 @@ struct StockChartProviderParsingTests {
         #expect(snapshot.points.map(\.date) == [regularStart, regularEnd])
         #expect(snapshot.points.last?.close == 118.90)
         #expect(snapshot.points.last?.high == 118.90)
+        #expect(snapshot.previousClose == 116.31)
         #expect(snapshot.postMarketPoints.map(\.date) == [postMarketStart, postMarketNext])
         #expect(snapshot.postMarketPoints.first?.close == 118.64)
         #expect(

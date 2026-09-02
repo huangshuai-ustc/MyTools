@@ -136,11 +136,6 @@ struct NotificationSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)
 #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                AdminEditAccessButton()
-            }
-        }
         .onAppear {
             notifications.refreshAuthorizationStatus()
         }
@@ -267,7 +262,7 @@ private struct CurrencyRateAlertEditorView: View {
         NavigationStack {
             Form {
                 Section("提醒条件") {
-                    Picker("币种", selection: $draft.currency) {
+                    PickerFieldRow(title: "币种", selection: $draft.currency) {
                         ForEach(CurrencyCode.selectableCases.filter { $0 != .cny }) { currency in
                             Text(currency.title).tag(currency)
                         }
@@ -277,7 +272,7 @@ private struct CurrencyRateAlertEditorView: View {
 #if os(iOS)
                         .keyboardType(.decimalPad)
 #endif
-                    Picker("方向", selection: $draft.direction) {
+                    PickerFieldRow(title: "方向", selection: $draft.direction) {
                         ForEach(PriceAlertDirection.allCases) { direction in
                             Text(direction.title).tag(direction)
                         }
@@ -287,7 +282,7 @@ private struct CurrencyRateAlertEditorView: View {
 #if os(iOS)
                         .keyboardType(.decimalPad)
 #endif
-                    Toggle("启用提醒", isOn: $draft.isEnabled)
+                    ToggleFieldRow(title: "启用提醒", isOn: $draft.isEnabled)
                 }
 
                 Section {
@@ -369,8 +364,8 @@ private struct StockPriceAlertEditorView: View {
         NavigationStack {
             Form {
                 Section("提醒条件") {
-                    Picker(
-                        "股票",
+                    PickerFieldRow(
+                        title: "股票",
                         selection: Binding(
                             get: { draft.stockID ?? stocks.first?.id ?? UUID() },
                             set: { draft.stockID = $0 }
@@ -388,7 +383,7 @@ private struct StockPriceAlertEditorView: View {
                             }
                         }
                     }
-                    Picker("方向", selection: $draft.direction) {
+                    PickerFieldRow(title: "方向", selection: $draft.direction) {
                         ForEach(PriceAlertDirection.allCases) { direction in
                             Text(direction.title).tag(direction)
                         }
@@ -407,7 +402,7 @@ private struct StockPriceAlertEditorView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Toggle("启用提醒", isOn: $draft.isEnabled)
+                    ToggleFieldRow(title: "启用提醒", isOn: $draft.isEnabled)
                 }
             }
             .appNavigationTitle("股票价格提醒")

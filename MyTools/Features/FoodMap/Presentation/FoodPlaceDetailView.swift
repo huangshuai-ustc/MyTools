@@ -20,88 +20,53 @@ struct FoodPlaceDetailView: View {
     var body: some View {
         Group {
             if let place {
-                List {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(place.displayTitle).appFont(.title2.bold())
-                                Spacer()
-                                FoodStatusLabel(status: place.status)
-                            }
-                            if !place.shopName.isEmpty, place.shopName != place.displayTitle {
-                                Label(place.shopName, systemImage: "storefront")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .appListRowStyle()
-                    }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        summaryCard(place)
 
-                    if place.coordinate?.isValid == true {
-                        Section("地图定位") {
+                        if place.coordinate?.isValid == true {
                             FoodLocationCard(place: place)
-                                .padding(.vertical, 4)
                         }
-                    }
 
-                    Section("地点信息") {
-                        detailRow("店名", value: place.shopName)
-                        detailRow("省市", value: place.administrativeArea)
-                        detailRow("地址", value: place.address)
-                        if place.status == .tried, let visitedAt = place.visitedAt {
-                            LabeledContent("吃过日期", value: visitedAt.formatted(date: .abbreviated, time: .omitted))
-                        }
-                    }
-
-                    if !place.photos.isEmpty {
-                        Section("图片") {
-                            ScrollView(.horizontal) {
-                                HStack(spacing: 10) {
-                                    ForEach(place.photos) { photo in
-                                        Button {
-                                            open(photo)
-                                        } label: {
-                                            FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 132)
+                        if !place.photos.isEmpty {
+                            contentCard(title: "图片", systemImage: "photo.on.rectangle") {
+                                ScrollView(.horizontal) {
+                                    HStack(spacing: 10) {
+                                        ForEach(place.photos) { photo in
+                                            Button {
+                                                open(photo)
+                                            } label: {
+                                                FoodPhotoThumbnail(url: store.photoURL(for: photo), size: 132)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityLabel("查看图片\(photo.fileName)")
                                         }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("查看图片\(photo.fileName)")
                                     }
                                 }
+                                .scrollIndicators(.hidden)
                             }
-                            .scrollIndicators(.hidden)
                         }
-                    }
 
-                    if !place.tags.isEmpty {
-                        Section("标签") {
-                            AppTagCapsules(tags: place.tags)
+                        if !place.tags.isEmpty {
+                            contentCard(title: "标签", systemImage: "tag") {
+                                AppTagCapsules(tags: place.tags)
+                            }
                         }
-                    }
 
-                    if !place.sourceTitle.isEmpty || !place.sourceURL.isEmpty {
-                        Section("信息来源") {
-                            detailRow("来源", value: place.sourceTitle)
-                            DetailValueRow.link(
-                                "链接",
-                                urlString: place.sourceURL,
-                                resolveURL: FoodSourceLink.url(from:)
-                            )
+                        if !place.note.isEmpty {
+                            contentCard(title: "备注", systemImage: "note.text") {
+                                Text(place.note).textSelection(.enabled)
+                            }
                         }
                     }
-
-                    if !place.note.isEmpty {
-                        Section("备注") {
-                            Text(place.note).textSelection(.enabled)
-                        }
-                    }
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
+                    .padding(16)
                 }
+                .background(.quaternary.opacity(0.35))
                 .appNavigationTitle(place.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        if place.coordinate?.isValid == true {
-                            FoodNavigationMenu(place: place)
-                                .labelStyle(.iconOnly)
-                                .accessibilityLabel("选择导航应用")
-                        }
                         AdminEditAccessButton()
                         if auth.isAdmin {
                             Button {
@@ -120,7 +85,6 @@ struct FoodPlaceDetailView: View {
         .iOSLabeledBackButton("美食地图")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
 #endif
         .sheet(item: $editingPlace) { place in
             FoodPlaceEditorView(place: place)
@@ -149,10 +113,131 @@ struct FoodPlaceDetailView: View {
         }
     }
 
+    private func summaryCard(_ place: FoodPlace) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(place.displayTitle)
+                    .appFont(.title2.bold())
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                FoodStatusLabel(status: place.status)
+            }
+
+            FoodPlaceMetricsView(place: place)
+
+            Divider()
+
+            compactFact(
+                title: "推荐食物",
+                value: place.recommendedFood.isEmpty ? "暂无" : place.recommendedFood,
+                systemImage: "fork.knife"
+            )
+            compactFact(
+                title: "主打特色",
+                value: place.specialty.isEmpty ? "暂无" : place.specialty,
+                systemImage: "sparkles"
+            )
+            compactFact(
+                title: "地址",
+                value: place.address.isEmpty ? "待补充" : place.address,
+                systemImage: "mappin.and.ellipse"
+            )
+            if !place.sourceTitle.isEmpty || !place.sourceURL.isEmpty {
+                sourceFact(place)
+            }
+            if !place.shopURL.isEmpty {
+                shopLinkFact(place)
+            }
+            if place.status == .tried, let visitedAt = place.visitedAt {
+                compactFact(
+                    title: "吃过日期",
+                    value: visitedAt.formatted(date: .abbreviated, time: .omitted),
+                    systemImage: "calendar"
+                )
+            }
+        }
+        .padding(16)
+        .background(.background, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+        }
+    }
+
+    private func compactFact(title: String, value: String, systemImage: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 88, alignment: .leading)
+            Text(value)
+                .appFont(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
     @ViewBuilder
-    private func detailRow(_ title: String, value: String) -> some View {
-        if !value.isEmpty {
-            DetailValueRow(title: title, value: value, alignment: .leading)
+    private func sourceFact(_ place: FoodPlace) -> some View {
+        let value = place.sourceTitle.isEmpty ? "来源链接" : place.sourceTitle
+        if let url = FoodSourceLink.url(from: place.sourceURL) {
+            Link(destination: url) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Label("信息源", systemImage: "link")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 88, alignment: .leading)
+                    Text(value)
+                        .appFont(.subheadline)
+                    Image(systemName: "arrow.up.right.square")
+                        .appFont(.caption)
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
+        } else {
+            compactFact(title: "信息源", value: value, systemImage: "link")
+        }
+    }
+
+    @ViewBuilder
+    private func shopLinkFact(_ place: FoodPlace) -> some View {
+        if let url = FoodSourceLink.url(from: place.shopURL) {
+            Link(destination: url) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Label("店铺链接", systemImage: "storefront")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 88, alignment: .leading)
+                    Text("打开店铺页面")
+                        .appFont(.subheadline)
+                    Image(systemName: "arrow.up.right.square")
+                        .appFont(.caption)
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
+        } else {
+            compactFact(title: "店铺链接", value: place.shopURL, systemImage: "storefront")
+        }
+    }
+
+    private func contentCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .appFont(.headline)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(.background, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
         }
     }
 

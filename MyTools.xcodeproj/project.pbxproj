@@ -185,6 +185,8 @@
 		U20000000000000000000007 /* FoodPlaceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000007 /* FoodPlaceEditorView.swift */; };
 		U20000000000000000000008 /* FoodLocationPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000008 /* FoodLocationPickerView.swift */; };
 		U20000000000000000000009 /* FoodPlacesMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000009 /* FoodPlacesMapView.swift */; };
+		U20000000000000000000010 /* DianpingImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000010 /* DianpingImport.swift */; };
+		U20000000000000000000011 /* DianpingImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = U10000000000000000000011 /* DianpingImportView.swift */; };
 		V20000000000000000000001 /* FoodMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = V10000000000000000000001 /* FoodMapTests.swift */; };
 		W20000000000000000000001 /* ChinaAdministrativeDivision.swift in Sources */ = {isa = PBXBuildFile; fileRef = W10000000000000000000001 /* ChinaAdministrativeDivision.swift */; };
 		XE1000000000000000000001 /* CredentialDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = XD1000000000000000000001 /* CredentialDocument.swift */; };
@@ -413,6 +415,8 @@
 		U10000000000000000000007 /* FoodPlaceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlaceEditorView.swift; sourceTree = "<group>"; };
 		U10000000000000000000008 /* FoodLocationPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodLocationPickerView.swift; sourceTree = "<group>"; };
 		U10000000000000000000009 /* FoodPlacesMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPlacesMapView.swift; sourceTree = "<group>"; };
+		U10000000000000000000010 /* DianpingImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DianpingImport.swift; sourceTree = "<group>"; };
+		U10000000000000000000011 /* DianpingImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DianpingImportView.swift; sourceTree = "<group>"; };
 		V10000000000000000000001 /* FoodMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodMapTests.swift; sourceTree = "<group>"; };
 		W10000000000000000000001 /* ChinaAdministrativeDivision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChinaAdministrativeDivision.swift; sourceTree = "<group>"; };
 		XD1000000000000000000001 /* CredentialDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialDocument.swift; sourceTree = "<group>"; };
@@ -1155,6 +1159,7 @@
 			isa = PBXGroup;
 			children = (
 				W10000000000000000000001 /* ChinaAdministrativeDivision.swift */,
+				U10000000000000000000010 /* DianpingImport.swift */,
 				U10000000000000000000001 /* FoodPlace.swift */,
 			);
 			path = Domain;
@@ -1185,6 +1190,7 @@
 				U10000000000000000000007 /* FoodPlaceEditorView.swift */,
 				U10000000000000000000008 /* FoodLocationPickerView.swift */,
 				U10000000000000000000009 /* FoodPlacesMapView.swift */,
+				U10000000000000000000011 /* DianpingImportView.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -1423,6 +1429,8 @@
 				U20000000000000000000007 /* FoodPlaceEditorView.swift in Sources */,
 				U20000000000000000000008 /* FoodLocationPickerView.swift in Sources */,
 				U20000000000000000000009 /* FoodPlacesMapView.swift in Sources */,
+				U20000000000000000000010 /* DianpingImport.swift in Sources */,
+				U20000000000000000000011 /* DianpingImportView.swift in Sources */,
 				S10000000000000000000001 /* OCRModels.swift in Sources */,
 				S10000000000000000000002 /* OCRDocumentLoader.swift in Sources */,
 				S10000000000000000000003 /* OCRService.swift in Sources */,

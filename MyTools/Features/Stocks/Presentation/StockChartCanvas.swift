@@ -191,13 +191,22 @@ struct StockChartCanvas: View {
         let visiblePostMarketPlotPoints = visibleData.postMarketPlotPoints
         let visibleTechnicalPlotPoints = visibleData.technicalPlotPoints
         let visibleTransactionMarkers = visibleData.transactionMarkers
+        // lineColor() resolves rangePerformance → intradayPreviousClose → a
+        // full filter scan over indicatorPoints. Computing it once here instead
+        // of inside the ForEach closure drops the per-render cost from
+        // O(n_visible × n_indicator) to O(n_indicator).
+        let resolvedLineColor = lineColor()
 
         return Chart {
             if presentation.hasPriceChart,
                range == .intraday,
-               let previousClose = StockChartPresentation.intradayPreviousClose(
+               let previousClose = presentation.cachedIntradayPreviousClose ?? StockChartPresentation.intradayPreviousClose(
                 snapshot: snapshot,
-                market: stock.market
+                market: stock.market,
+                quotePreviousClose: stock.previousClose.map {
+                    NSDecimalNumber(decimal: $0).doubleValue
+                },
+                quoteUpdatedAt: stock.lastQuoteAt
                ) {
                 let displayedPreviousClose = StockChartPresentation
                     .clampedReferencePrice(previousClose, to: chartYDomain)
@@ -220,7 +229,7 @@ struct StockChartCanvas: View {
                         x: .value("时间", plotPoint.x),
                         y: .value("价格", plotPoint.point.close)
                     )
-                    .foregroundStyle(lineColor())
+                    .foregroundStyle(resolvedLineColor)
                     .lineStyle(StockChartVisualStyle.dataLine)
                     .interpolationMethod(.linear)
                 }
@@ -1384,13 +1393,25 @@ struct StockChartCanvas: View {
     }
 
     private func lineColor() -> Color {
-        guard let performance = StockChartPresentation.rangePerformance(
-            snapshot: snapshot,
-            range: range,
-            market: stock.market,
-            visibleXDomain: visibleXDomain
-        ) else { return .accentColor }
-        return valueColor(performance.change)
+        let quotePreviousClose = stock.previousClose.map { NSDecimalNumber(decimal: $0).doubleValue }
+        let referencePrice: Double?
+        switch range {
+        case .intraday:
+            referencePrice = cachedPresentation.cachedIntradayPreviousClose
+                ?? StockChartPresentation.intradayPreviousClose(
+                    snapshot: snapshot, market: stock.market,
+                    quotePreviousClose: quotePreviousClose, quoteUpdatedAt: stock.lastQuoteAt
+                )
+        default:
+            referencePrice = StockChartPresentation.rangeReferencePrice(
+                snapshot: snapshot, range: range, market: stock.market,
+                visibleXDomain: visibleXDomain,
+                quotePreviousClose: quotePreviousClose, quoteUpdatedAt: stock.lastQuoteAt
+            )
+        }
+        guard let referencePrice, referencePrice != 0,
+              let latest = snapshot.latestPoint else { return .accentColor }
+        return valueColor(latest.close - referencePrice)
     }
 
     private func candleColor(_ point: StockChartPoint) -> Color {

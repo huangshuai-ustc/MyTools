@@ -42,10 +42,11 @@ struct BillEditorView: View {
                             Text(currency.title).tag(currency)
                         }
                     }
-                    LabeledContent("交易时间") {
+                    AppLabeledContentRow("交易时间") {
                         HStack(spacing: 6) {
                             DatePicker("", selection: $draft.occurredAt, displayedComponents: [.date, .hourAndMinute])
                                 .labelsHidden()
+                                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                             Text(":")
                                 .foregroundStyle(.secondary)
                             TextField("00", text: $secondsText)
@@ -56,7 +57,6 @@ struct BillEditorView: View {
 #endif
                         }
                     }
-                    .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                     PickerFieldRow(title: "状态", selection: $draft.status) {
                         ForEach(BillTransactionStatus.allCases) { status in
                             Text(status.title).tag(status)

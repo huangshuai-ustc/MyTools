@@ -125,30 +125,27 @@ private struct HospitalProfileEditorView: View {
         NavigationStack {
             Form {
                 Section("机构") {
-                    LabeledContent("机构名称：") {
-                        IMESafeTextField(prompt: "必填", text: $profile.name, alignment: .trailing)
-                            .frame(maxWidth: 260)
-                    }
+                    FieldEditorRow(title: "机构名称：", prompt: "必填", text: $profile.name)
                 }
                 Section("机构类别") {
                     ForEach(MedicalInstitutionType.allCases) { type in
-                        Toggle(type.title, isOn: Binding(
+                        ToggleFieldRow(title: type.title, isOn: Binding(
                             get: { profile.supports(type) },
                             set: { profile.setSupport(type, enabled: $0) }
                         ))
                     }
                     if profile.supports(.hospital) {
-                        Picker("机构级别：", selection: $profile.level) {
+                        PickerFieldRow(title: "机构级别：", selection: $profile.level) {
                             ForEach(HospitalLevel.displayOrder) { level in
                                 Text(level.title).tag(level)
                             }
                         }
-                        Picker("机构等次：", selection: $profile.grade) {
+                        PickerFieldRow(title: "机构等次：", selection: $profile.grade) {
                             ForEach(HospitalGrade.displayOrder) { grade in
                                 Text(grade.title).tag(grade)
                             }
                         }
-                        Picker("医院性质：", selection: $profile.category) {
+                        PickerFieldRow(title: "医院性质：", selection: $profile.category) {
                             ForEach(HospitalCategory.allCases) { category in
                                 Text(category.title).tag(category)
                             }

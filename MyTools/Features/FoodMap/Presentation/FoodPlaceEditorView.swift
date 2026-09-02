@@ -9,6 +9,9 @@ struct FoodPlaceEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: FoodPlace
     @State private var tagsText: String
+    @State private var ratingText: String
+    @State private var reviewCountText: String
+    @State private var averagePriceText: String
     @State private var selectedProvince: String
     @State private var selectedCity: String
     @State private var selectedDistrict: String
@@ -24,6 +27,13 @@ struct FoodPlaceEditorView: View {
         let location = place.administrativeLocation
         _draft = State(initialValue: place)
         _tagsText = State(initialValue: AppTagSupport.joined(place.tags))
+        _ratingText = State(initialValue: place.rating.map {
+            $0.formatted(.number.precision(.fractionLength(1)))
+        } ?? "")
+        _reviewCountText = State(initialValue: place.reviewCount.map(String.init) ?? "")
+        _averagePriceText = State(initialValue: place.averagePrice.map {
+            NSDecimalNumber(decimal: $0).stringValue
+        } ?? "")
         _selectedProvince = State(initialValue: location?.province ?? "")
         _selectedCity = State(initialValue: location?.city ?? "")
         _selectedDistrict = State(initialValue: location?.district ?? "")
@@ -43,9 +53,21 @@ struct FoodPlaceEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("美食信息") {
-                    IMESafeTextField(prompt: "食物名称（必填）", text: $draft.foodName)
-                    IMESafeTextField(prompt: "店名", text: $draft.shopName)
+                Section("店铺信息") {
+                    FieldEditorRow(title: "店名", prompt: "必填", text: $draft.shopName)
+                    FieldEditorRow(title: "推荐食物", prompt: "选填", text: $draft.recommendedFood)
+                    FieldEditorRow(title: "主打特色", prompt: "如烤串、日式自助", text: $draft.specialty)
+                    NumericFieldRow(title: "星级", prompt: "0–5，选填", text: $ratingText)
+                    NumericFieldRow(title: "评论数", prompt: "选填", text: $reviewCountText)
+                    NumericFieldRow(title: "人均消费", prompt: "选填", text: $averagePriceText)
+                    PickerFieldRow(title: "消费币种", selection: $draft.averagePriceCurrency) {
+                        ForEach(CurrencyCode.selectableCases(including: draft.averagePriceCurrency)) { currency in
+                            Text(currency.title).tag(currency)
+                        }
+                    }
+                }
+
+                Section("记录状态") {
                     Picker("状态", selection: $draft.status) {
                         ForEach(FoodPlaceStatus.allCases) { status in
                             Label(status.title, systemImage: status.systemImage).tag(status)
@@ -54,16 +76,12 @@ struct FoodPlaceEditorView: View {
                     .pickerStyle(.segmented)
 
                     if draft.status == .tried {
-                        DatePicker(
-                            "吃过日期",
-                            selection: visitedAtBinding,
-                            displayedComponents: .date
-                        )
+                        DateFieldRow(title: "吃过日期", date: visitedAtBinding)
                     }
                 }
 
-                Section("地点") {
-                    Picker("省级行政区", selection: $selectedProvince) {
+                Section("地址与定位") {
+                    PickerFieldRow(title: "省级行政区", selection: $selectedProvince) {
                         Text("不填写（国外）").tag("")
                         ForEach(ChinaAdministrativeDivisions.provinces) { province in
                             Text(province.name).tag(province.name)
@@ -74,7 +92,7 @@ struct FoodPlaceEditorView: View {
                     }
 
                     if !selectedProvince.isEmpty {
-                        Picker("城市", selection: $selectedCity) {
+                        PickerFieldRow(title: "城市", selection: $selectedCity) {
                             Text("请选择").tag("")
                             if !selectedCity.isEmpty, !selectedProvinceCities.contains(selectedCity) {
                                 Text(selectedCity).tag(selectedCity)
@@ -163,6 +181,11 @@ struct FoodPlaceEditorView: View {
                     IMESafeTextField(
                         prompt: "来源链接",
                         text: $draft.sourceURL,
+                        mode: .url
+                    )
+                    IMESafeTextField(
+                        prompt: "店铺独立页面链接",
+                        text: $draft.shopURL,
                         mode: .url
                     )
                 }
@@ -299,8 +322,38 @@ struct FoodPlaceEditorView: View {
     }
 
     private func validateAndRequestSave() {
-        guard !draft.foodName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = "请填写食物名称。"
+        guard !draft.shopName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "请填写店名。"
+            return
+        }
+        let trimmedRating = ratingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedRating.isEmpty {
+            draft.rating = nil
+        } else if let rating = Double(trimmedRating), (0...5).contains(rating) {
+            draft.rating = rating
+        } else {
+            errorMessage = "星级需要填写 0 到 5 之间的数字。"
+            return
+        }
+        let normalizedReviewCount = reviewCountText
+            .replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "，", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedReviewCount.isEmpty {
+            draft.reviewCount = nil
+        } else if let reviewCount = Int(normalizedReviewCount), reviewCount >= 0 {
+            draft.reviewCount = reviewCount
+        } else {
+            errorMessage = "评论数需要填写不小于 0 的整数。"
+            return
+        }
+        let trimmedAveragePrice = averagePriceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAveragePrice.isEmpty {
+            draft.averagePrice = nil
+        } else if let averagePrice = DecimalTextParser.decimal(from: trimmedAveragePrice), averagePrice >= 0 {
+            draft.averagePrice = averagePrice
+        } else {
+            errorMessage = "人均消费需要填写不小于 0 的数字。"
             return
         }
         if !selectedProvince.isEmpty,
@@ -315,6 +368,11 @@ struct FoodPlaceEditorView: View {
         if !draft.sourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            FoodSourceLink.url(from: draft.sourceURL) == nil {
             errorMessage = "来源链接格式不正确。"
+            return
+        }
+        if !draft.shopURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           FoodSourceLink.url(from: draft.shopURL) == nil {
+            errorMessage = "店铺链接格式不正确。"
             return
         }
         guard auth.isAdmin else {

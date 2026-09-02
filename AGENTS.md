@@ -1,6 +1,6 @@
 # MyTools 能力目录与开发准则
 
-更新日期：2026-08-30
+更新日期：2026-08-31
 
 本文件是 MyTools 的项目级开发准则和可复用能力索引。`README.md` 说明产品行为，源码和测试定义真实契约，本文件负责回答两个问题：项目已经具备什么能力，以及开发新功能时应该先复用什么。
 
@@ -234,7 +234,7 @@
 | `MyTools/Core/UI/IMETextInput.swift` | 中文组合输入安全的单行/多行字段和保存前 marked text 提交。 |
 | `MyTools/Core/UI/ListViewModifiers.swift` | 列表密度与包含系统内边距的统一单行高度地板、按功能配置页大小的 `AppListPagination` 增量列表状态（首屏/触底/上限/重置）、统一左滑删除/右滑操作样式配置（删除为红色“删除”）、模板字段显隐/改名滑动动作和拖动代理、跨模块标签解析/去重、灰色标签胶囊、标签筛选胶囊、历史标签建议编辑器、跨平台语义字体 `AppFontSpec`/`.appFont()`、可缩放导航标题 `.appNavigationTitle()`、Sheet、可读宽度、隐藏项按钮、排序方向和页面诊断 modifier。 |
 | `MyTools/Core/UI/MarkdownRendering.swift` | Markdown 渲染、容错回退、常用上标归一化和可复制值行。 |
-| `MyTools/Core/UI/FormRowComponents.swift` | 详情页/编辑页/新增页统一单行：底层 `AppLabeledContentRow` 承载标签与任意尾部内容并固定内容高度；`DetailValueRow` 提供展示态单行截断、复制、敏感遮罩和链接，leading 模式保留地址/备注多行；`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` 分别承载文本、日期、选择和数值输入，全部复用同一底层行。 |
+| `MyTools/Core/UI/FormRowComponents.swift` | 详情页/编辑页/新增页统一单行：底层 `AppLabeledContentRow` 承载标签与任意尾部内容并固定内容高度；`DetailValueRow` 提供展示态单行截断、复制、敏感遮罩和链接，leading 模式保留地址/备注多行；`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`ToggleFieldRow`、`NumericFieldRow` 分别承载文本、日期、选择、开关和数值输入，全部复用同一底层行。 |
 
 ### `MyTools/Features/Bills/`：收支账单
 
@@ -298,12 +298,12 @@
 | 文件 | 职责与定位用途 |
 | --- | --- |
 | `MyTools/Features/Finance/Application/FinanceStore.swift` | 银行、子账户、银行卡 CRUD，境内/境外登录字段模板，账单附件生命周期和冗余字段清理。 |
-| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、分行坐标、境内/境外差异化子账户类型与自定义类型、登录字段模板、银行卡、账单及状态/卡组织领域模型。 |
-| `MyTools/Features/Finance/Presentation/BankAccountViews.swift` | 银行详情与银行档案新增/编辑、分行地图选点/导航、登录字段左右滑操作和模板编辑，包括境内外扩展资料。 |
-| `MyTools/Features/Finance/Presentation/BankCardDetailView.swift` | 银行卡敏感详情、账单附件和相关操作。 |
-| `MyTools/Features/Finance/Presentation/BankCardEditorView.swift` | 借记卡/信用卡编辑和信用卡账单附件编辑。 |
-| `MyTools/Features/Finance/Presentation/FinanceHomeView.swift` | 金融首页、地区/类别筛选、搜索排序、统计和列表行。 |
-| `MyTools/Features/Finance/Presentation/SubaccountEditorViews.swift` | 境内与境外子账户新增/编辑表单。 |
+| `MyTools/Features/Finance/Domain/BankCard.swift` | 银行、账户级分行坐标、境内银行卡开卡网点坐标及未单独填写时继承账户开户网点的统一解析、境内/境外差异化子账户类型与自定义类型、登录字段模板、银行卡、账单及状态/卡组织领域模型。 |
+| `MyTools/Features/Finance/Presentation/BankAccountViews.swift` | 银行详情与银行档案新增/编辑、银行卡固定字典序、分行地图选点/导航、登录字段左右滑操作和模板编辑，包括境内外扩展资料。 |
+| `MyTools/Features/Finance/Presentation/BankCardDetailView.swift` | 无额外导航标题的银行卡敏感详情、直接编辑、账单附件和相关操作。 |
+| `MyTools/Features/Finance/Presentation/BankCardEditorView.swift` | 借记卡/信用卡编辑、境内卡开卡网点选点和信用卡账单附件编辑。 |
+| `MyTools/Features/Finance/Presentation/FinanceHomeView.swift` | 金融首页、地区筛选、搜索排序、随当前可见银行范围变化的统计，以及活跃/停用银行列表行。 |
+| `MyTools/Features/Finance/Presentation/SubaccountEditorViews.swift` | 无额外导航标题的境内与境外子账户详情、管理员直接编辑及新增/编辑表单。 |
 
 ### `MyTools/Features/FoodMap/`：美食地图
 
@@ -313,15 +313,17 @@
 | --- | --- |
 | `MyTools/Features/FoodMap/Application/FoodMapStore.swift` | 美食地点 CRUD、图片附件、数据规范化、冗余字段清理和美食标签库。 |
 | `MyTools/Features/FoodMap/Domain/ChinaAdministrativeDivision.swift` | 中国省市目录、下级行政区字段、标准化和中文地址省市推断；兼容缺少下级行政区的旧记录。 |
-| `MyTools/Features/FoodMap/Domain/FoodPlace.swift` | “吃过/想吃”两种美食状态、坐标、来源、图片和地点实体。 |
+| `MyTools/Features/FoodMap/Domain/DianpingImport.swift` | 大众点评单店分享文字与收藏夹页面条目的店名、星级、评论数、人均、主打特色、商圈地址、来源入口和独立单店链接解析及导入候选模型。 |
+| `MyTools/Features/FoodMap/Domain/FoodPlace.swift` | 店名、推荐食物、地址、来源名称/来源链接、独立店铺链接、星级、评论数、人均消费及币种、主打特色、“吃过/想吃”状态、坐标、图片和旧字段兼容迁移。 |
 | `MyTools/Features/FoodMap/Infrastructure/FoodNavigationService.swift` | Apple/高德/百度/腾讯/Google 地图 URL 生成与可用性判断。 |
-| `MyTools/Core/Location/MapLocationSearchService.swift` | 美食地图、银行网点及后续地图功能共用的 `MapLocationPickerView`、MapKit 搜索服务和候选行；统一定位权限、地图展示、请求取消、国际地址兜底、反向地理编码、手动点选、保存/取消、整行点击和蓝色选中标记。 |
+| `MyTools/Core/Location/MapLocationSearchService.swift` | 美食地图、银行网点及后续地图功能共用的 `MapLocationPickerView`、MapKit 搜索服务和候选行；统一定位权限、地图展示、请求取消、国际地址兜底、反向地理编码、手动点选、保存/取消、整行点击和蓝色选中标记；搜索栏与保存按钮固定在键盘可见区，中间地图和候选列表独立滚动。 |
 | `MyTools/Features/FoodMap/Presentation/FoodLocationPickerView.swift` | Core 公共地图选点组件的美食业务适配器，只负责把统一选点结果转换为地点名称、详细地址和中国行政区。 |
-| `MyTools/Features/FoodMap/Presentation/FoodMapPresentationSupport.swift` | 地图卡片、导航菜单、来源链接和照片缩略图等共享组件。 |
-| `MyTools/Features/FoodMap/Presentation/FoodMapView.swift` | 美食 30 条增量列表、状态/标签筛选、搜索和总地图入口。 |
-| `MyTools/Features/FoodMap/Presentation/FoodPlaceDetailView.swift` | 地点详情、图片、来源、地图与导航操作。 |
-| `MyTools/Features/FoodMap/Presentation/FoodPlaceEditorView.swift` | 地点字段、图片、行政区和地图位置编辑。 |
-| `MyTools/Features/FoodMap/Presentation/FoodPlacesMapView.swift` | 所有已定位地点的总地图、标记选择和详情跳转。 |
+| `MyTools/Features/FoodMap/Presentation/DianpingImportView.swift` | 大众点评分享内容导入、iOS 移动端/macOS 桌面端自适应的仅本机持久 WebKit 登录、含单店 URL 的当前页面条目抽取、可左滑删除的紧凑候选卡、MapKit 自动匹配、公开封面落地和会话清除。 |
+| `MyTools/Features/FoodMap/Presentation/FoodMapPresentationSupport.swift` | 店铺星级/评论/人均“图标 + 数值”紧凑指标、金额展示、地图卡片、导航菜单、来源链接和照片缩略图等共享组件。 |
+| `MyTools/Features/FoodMap/Presentation/FoodMapView.swift` | 带店铺摘要指标的美食 30 条增量列表、状态/标签筛选、搜索和总地图入口。 |
+| `MyTools/Features/FoodMap/Presentation/FoodPlaceDetailView.swift` | 店铺主要字段摘要卡、图片、标签、备注、地图与导航操作。 |
+| `MyTools/Features/FoodMap/Presentation/FoodPlaceEditorView.swift` | 店名必填、推荐食物、评分/评论/人均/特色、来源与独立店铺链接、图片、行政区和地图位置编辑。 |
+| `MyTools/Features/FoodMap/Presentation/FoodPlacesMapView.swift` | 所有已定位地点与用户当前位置的总地图、附近/全局视角切换、标记选择和详情跳转。 |
 
 ### `MyTools/Features/Health/`：健康档案
 
@@ -467,10 +469,10 @@
 | `MyToolsTests/Core/OCRTests.swift` | OCR 区域坐标、阅读顺序、图片/PDF 加载和渲染。 |
 | `MyToolsTests/Core/AppAlphabeticalSortTests.swift` | 中英文混排、拼音首字母、大小写和数字自然顺序。 |
 | `MyToolsTests/Documents/DocumentsTests.swift` | 证照模板、签发/有效期、OCR、版本、附件、通知、备份和 CloudKit。 |
-| `MyToolsTests/FoodMap/FoodMapTests.swift` | 美食规范化、附件、行政区、导航、清理、备份和 CloudKit。 |
+| `MyToolsTests/FoodMap/FoodMapTests.swift` | 美食字段往返与旧食物名称迁移、大众点评评分/评论/人均/单店链接解析、规范化、附件、行政区、导航、清理、备份和 CloudKit。 |
 | `MyToolsTests/Health/MedicalRecordEditingTests.swift` | 医疗草稿、费用分配、关联关系和附件编辑会话。 |
 | `MyToolsTests/Health/MedicalRecordsPresentationTests.swift` | 健康搜索、年份/事件分组、统计和关联计数。 |
-| `MyToolsTests/Stores/ModuleStoreTests.swift` | 金融、秘密、换汇、健康等 Store 及生命周期/清理隔离，包括信用卡银行的启用状态判定。 |
+| `MyToolsTests/Stores/ModuleStoreTests.swift` | 金融、秘密、换汇、健康等 Store 及生命周期/清理隔离，包括信用卡银行的启用状态判定和地图候选网点名称回填。 |
 
 ### `MyToolsTests/Stocks/`：股票测试
 
@@ -506,7 +508,7 @@
 | 股票投资 | A/港/美股、买卖和分红、任意时点持仓校验、成本与盈亏、组合分析、按当前持仓/看盘/历史股票分区、清仓历史保留与存档恢复、按中文/英文/代码模糊搜索股票（按市场与交易所过滤、同代码多源合并、美股原生正式名称/券商中文简称/规范代码回填、正式名称右侧代码标签和紧凑候选行、中文名称完整/后缀/前缀/包含匹配、普通股优先于相近 ETF、主板交易所优先于 OTC、数据源相关排序和热门代码稳定兜底、证券类型标识和无结果提示）、实时行情、市场标准七档图表周期（分时/5日分钟线固定近期窗口，日K/周K/月K/季K/年K默认仅盘中并可平移缩放，内部切换保持用户图层选择，底层由原始序列重新计算，新上市股票按实际可用 K 线柱绘制）、区间切换加载蒙版与进度状态、分时与5日均线/布林/MACD使用跨交易日分钟历史预热后仅投影可见柱，分时分钟级/其他范围交易日级 RSI14/RSI30、按交易价格和可见盘中定位交易标记、仅美股提供连续盘前/盘后图表模式，A 股和港股竞价阶段不绘制为扩展时段曲线、投资机会评分、按市场分组的提醒选择和涨跌色 | `Features/Stocks/Presentation/StocksView.swift` | `StockStore`、`Stock.swift`、`StockQuoteProvider.swift` |
 | 换汇记录 | 双报价口径、理论与实际买入、手续费、人民币损益、筛选分组、中国银行牌价、双向换算和汇率提醒 | `Features/CurrencyExchange/Presentation/CurrencyExchangeView.swift` | `CurrencyExchangeStore`、`CurrencyExchange.swift` |
 | 健康档案 | 门诊、急诊、住院、购药、体检轮次、关联复诊、机构资料、费用分配、年度统计、标签胶囊、标签建议/筛选/搜索、图片/PDF 附件 | `Features/Health/Presentation/HealthRecordsView.swift` | `HealthStore`、`HealthRecord.swift` |
-| 美食地图 | 吃过/想吃、店铺、中国省市、详细地址、地图坐标、图片、来源、标签胶囊、标签建议/筛选/搜索、总地图和第三方导航 | `Features/FoodMap/Presentation/FoodMapView.swift` | `FoodMapStore`、`FoodPlace.swift` |
+| 美食地图 | 吃过/想吃、店铺、中国省市、详细地址、地图坐标、图片、来源、标签胶囊、标签建议/筛选/搜索、大众点评单店/收藏夹本机登录导入、图片地图标记、总地图和第三方导航 | `Features/FoodMap/Presentation/FoodMapView.swift` | `FoodMapStore`、`FoodPlace.swift`、`DianpingImport.swift` |
 | 保密资料 | 六类模板、个人/工作用途、自定义字段、字段模板名称/类型编辑、普通模式按当前模板显隐、切换分类重建目标模板字段、模板字段右滑内容显隐、左滑删除与长按拖动排序、按换行自动单行/多行、默认字段遮罩、条目字段右滑内容显隐/改名、左滑删除、标签胶囊、标签建议/筛选/搜索、Apple 密码 CSV 导入、独立查看认证和管理员编辑 | `Features/Secrets/Presentation/SecretVaultView.swift` | `SecretStore`、`Secret.swift`、`ApplePasswordImport.swift` |
 | 证照 | 首页显示名称统一为“证照类型-持有人”，不使用自定义显示名称；附件展示名允许重复，内部磁盘名保持独立，重命名分开编辑文件名和扩展名；身份证、护照、港澳通行证、驾驶证、学历/学位/房产证、出生医学证明、预防接种证、职业资格证书和自定义模板；其他信息字段支持文本/网址/日期、按值中实际换行自适应单行/多行、显隐、改名、删除和拖动排序；每种证照独立字段模板，模板随 Vault、备份和 CloudKit 同步；所有证照必填签发日期，固定期限从签发日期起算；身份证、港澳通行证和驾驶证使用年限届满日，普通护照的到期日为年限届满日前一日；到期提醒、多版本及证照状态、标签胶囊、标签建议/筛选/搜索、自定义字段、图片/PDF 附件和 OCR 候选确认/字段填充；出生日期仅作为自定义字段，旧版固定值支持无损迁移 | `Features/Documents/Presentation/DocumentsView.swift` | `DocumentsStore`、`CredentialDocument.swift` |
 | 账单 | 手工收支记录、图片区域 OCR、金额/日期/商户/支付方式候选、默认 30 条增量列表和搜索/收支/分类/标签筛选；记录/分析顶层分区与按周、月、季、年或自定义区间、按币种统计，提供上一周期对比、每日支出、分类、商户和付款方式图表；标签以胶囊显示并支持历史建议复用；设置中可按预设/自定义区间、来源、分类和收支方向导出 JSON；版本化交换协议、导入预览及来源交易号去重；支持微信支付 XLSX 和支付宝 GB18030/UTF-8 CSV，自动跳过导出摘要 | `Features/Bills/Presentation/BillsView.swift` | `BillsStore`、`BillRecord.swift`、`BillAnalytics.swift`、`BillExchange.swift` |
@@ -632,10 +634,10 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | 数字和表达式解析 | `DecimalTextParser` in `Core/Formatting/DecimalTextParser.swift` | Decimal、可选值及 `+ - * / × ÷`、括号表达式，不要自行写金额字符串解析器 |
 | 日期格式化 | `AppDateFormatting` helpers in `Core/Formatting/AppDateFormatting.swift` | 跨页面统一日期显示 |
 | Markdown 展示 | `MarkdownText`、`MarkdownRenderer`、`MarkdownValueRow` in `Core/UI/MarkdownRendering.swift` | Swift Markdown、容错回退、常见 `$...^...$` 上标归一化和可复制值 |
-| 列表和弹窗规范 | `AppListMetrics`（`minimumRowHeight(fontScale:)` 定义接近裸 `LabeledContent` 的紧凑单行内容高度，`listRowHeightFloor(fontScale:)` 加入系统上下边距后作为全局 List/Form 整行地板；`rowVerticalInset(fontScale:)`/`recordContentSpacing(fontScale:)` 用于记录卡片，均随字体缩放）、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 单行文本、输入、日期、Picker、Badge 和按钮具有统一且接近系统原生的紧凑行高，多行内容按需增高；同时统一列表密度、滑动动作、iPhone/iPad/macOS Sheet 和宽屏可读宽度 |
+| 列表和弹窗规范 | `AppListMetrics`（`minimumRowHeight(fontScale:)` 定义接近裸 `LabeledContent` 的紧凑单行内容高度，`listRowHeightFloor(fontScale:)` 加入系统上下边距后作为全局 List/Form 整行地板；`rowVerticalInset(fontScale:)`/`recordContentSpacing(fontScale:)` 用于记录卡片，均随字体缩放）、`AppSwipeActions`、`.appListRowStyle()`、`.appListSpacing()`、`.appTemplateFieldSwipeActions(...)`、`.appSwipeActions(...)`、`.appDeleteSwipeAction(...)`、`.iOSLargeSheet()`、`.iOSAuthenticationSheet()`、`.appReadableContent()` in `Core/UI/ListViewModifiers.swift` | 单行文本、输入、日期、Picker、Badge 和按钮具有统一且接近系统原生的紧凑行高，多行内容按需增高；`.iOSLargeSheet()` 会在新的 Sheet 展示层重新应用列表密度，保证新增/编辑表单不依赖父页面环境继承；同时统一滑动动作、iPhone/iPad/macOS Sheet 和宽屏可读宽度 |
 | 隐藏项开关和排序方向 | `HiddenItemsVisibilityButton`、`SortDirection` | 统一显示/隐藏按钮与升降序语义 |
 | 页面诊断 | `.diagnosticScreen(...)` | 自动记录页面进入和离开 |
-| 详情页/编辑页/新增页统一行 | `AppLabeledContentRow`、`DetailValueRow`、`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`NumericFieldRow` in `Core/UI/FormRowComponents.swift` | Badge、状态、菜单或自定义按钮等任意单行尾部内容使用 `AppLabeledContentRow`；普通值、敏感值和链接使用 `DetailValueRow`；文本、日期、Picker、数值输入使用对应编辑组件。所有组件共享同一内容高度，新页面不得再手搓混排的裸 `LabeledContent`/Picker/DatePicker；地址、备注、算式预览和记录卡片等真实多行内容可以自适应增高 |
+| 详情页/编辑页/新增页统一行 | `AppLabeledContentRow`、`DetailValueRow`、`FieldEditorRow`、`DateFieldRow`、`PickerFieldRow`、`ToggleFieldRow`、`NumericFieldRow` in `Core/UI/FormRowComponents.swift` | Badge、状态、菜单或自定义按钮等任意单行尾部内容使用 `AppLabeledContentRow`；普通值、敏感值和链接使用 `DetailValueRow`；文本、日期、Picker、Toggle、数值输入使用对应编辑组件。所有组件共享同一内容高度，新页面不得再手搓混排的裸 `LabeledContent`/Picker/DatePicker/Toggle；地址、备注、算式预览和记录卡片等真实多行内容可以自适应增高 |
 
 所有可能输入中文或其他组合输入法文本的持久化字段都必须直接使用 `IMESafeTextField` 或 `IMESafeMultilineTextField`，保存动作同时调用 `commitPendingTextInput`。只调用提交函数不能替代安全输入控件；普通 SwiftUI `TextField`、`TextEditor` 仅用于不持久化的搜索或明确不接受组合输入的数值字段。
 
@@ -669,7 +671,8 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | FoodMap | 中国 34 个省级行政区、城市目录、区县/街道/乡镇等下级行政区和中文地址推断 | `Domain/ChinaAdministrativeDivision.swift` |
 | FoodMap | 定位权限、附近地图、候选选中状态、地图搜索/点选和 MapKit 地址回填 | `Presentation/FoodLocationPickerView.swift` |
 | FoodMap | Apple/高德/百度/腾讯/Google 地图导航 URL | `Infrastructure/FoodNavigationService.swift` |
-| FoodMap | 地图卡片、导航菜单、来源链接、照片缩略图 | `Presentation/FoodMapPresentationSupport.swift` |
+| FoodMap | 星级/评论/人均紧凑指标、金额格式化、地图卡片、导航菜单、来源链接、照片缩略图 | `Presentation/FoodMapPresentationSupport.swift` |
+| FoodMap | 大众点评单店分享文字、收藏夹店铺字段与单店 URL、iOS 移动端/macOS 桌面端自适应的仅本机 WebKit 会话、MapKit 自动定位和公开封面导入 | `Domain/DianpingImport.swift`、`Presentation/DianpingImportView.swift` |
 | Secrets | 秘密分类模板、自定义字段、遮罩和附件状态 | `Domain/Secret.swift`、`Application/SecretStore.swift` |
 | Documents | 证照模板、字段输入/展示和显隐、自定义字段、身份证/护照/港澳通行证/驾驶证期限推导（区分年限届满日和前一日规则）、有效期状态、多版本关系与状态、到期提醒、附件角色和数据规范化 | `Domain/CredentialDocument.swift`、`Application/DocumentsStore.swift` |
 | Documents | 按证照类型从 Core OCR 结果提取待确认字段候选；确认后更新已有字段并自动创建缺失自定义字段 | `Domain/CredentialOCRParser.swift`、`Presentation/CredentialOCRView.swift` |
@@ -704,7 +707,7 @@ CloudKit 快照采用显式白名单，新增字段不能因为已经写入 `Vau
 | App 组合 | `MyToolsTests/AppStore`：提醒规则、备份处理/合并、CloudKit 合并、根 Store、汇率缓存、健康同步 |
 | Core OCR | `MyToolsTests/Core/OCRTests.swift`：区域坐标、阅读顺序、图片/PDF 载入和渲染 |
 | 模块 Store | `MyToolsTests/Stores/ModuleStoreTests.swift`：金融、秘密、换汇、健康等 Store 行为、模块显隐的本地持久化/编译默认值、开关生命周期和冗余字段清理隔离 |
-| 美食地图 | `MyToolsTests/FoodMap/FoodMapTests.swift`：吃过/想吃状态集合、规范化、附件、行政区推断、导航、冗余字段清理、备份和 CloudKit 隔离 |
+| 美食地图 | `MyToolsTests/FoodMap/FoodMapTests.swift`：吃过/想吃状态集合、规范化、附件、大众点评单店/收藏夹解析、行政区推断、导航、冗余字段清理、备份和 CloudKit 隔离 |
 | 证照 | `MyToolsTests/Documents/DocumentsTests.swift`：证照字段模板与旧字段兼容解码、身份证、护照、港澳通行证和驾驶证期限推导（含两种到期日规则）、OCR 字段提取/应用、版本关系与兼容解码、规范化、冗余字段清理、附件与提醒生命周期、空 Vault 解码、备份和 CloudKit 隔离 |
 | 账单 | `MyToolsTests/Bills/BillsTests.swift`：规范化、分析周期、导出预设/自定义区间与来源/分类/收支筛选、OCR 候选、交换协议、重复导入、微信 XLSX、支付宝 GB18030 CSV、真实样本可选集成验证、银行卡待接状态、空 Vault、备份和 CloudKit 隔离 |
 | 健康 | `MyToolsTests/Health`：医疗草稿、附件编辑、筛选分组和统计 |

@@ -145,9 +145,10 @@ struct BillsView: View {
                         .appListRowStyle()
                 }
                 Section("筛选") {
-                    HStack {
-                        Label("收支类型", systemImage: "arrow.up.arrow.down")
-                        Spacer()
+                    AppLabeledContentRow(
+                        "收支类型",
+                        systemImage: "arrow.up.arrow.down"
+                    ) {
                         Picker("收支类型", selection: $directionFilter) {
                             Text("全部").tag(BillDirectionFilter.all)
                             ForEach(BillDirection.allCases) { direction in
@@ -157,12 +158,12 @@ struct BillsView: View {
                         .labelsHidden()
                         .pickerStyle(.menu)
                     }
-                    .appListRowStyle()
 
                     if !availableCategories.isEmpty {
-                        HStack {
-                            Label("分类", systemImage: "square.grid.2x2")
-                            Spacer()
+                        AppLabeledContentRow(
+                            "分类",
+                            systemImage: "square.grid.2x2"
+                        ) {
                             Picker("分类", selection: $categoryFilter) {
                                 Text(BillCategoryFilter.all.title).tag(BillCategoryFilter.all)
                                 ForEach(availableCategories) { category in
@@ -172,7 +173,6 @@ struct BillsView: View {
                             .labelsHidden()
                             .pickerStyle(.menu)
                         }
-                        .appListRowStyle()
                     }
                     if !availableTags.isEmpty {
                         AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
@@ -352,11 +352,14 @@ private struct BillDetailView: View {
             if let record {
                 List {
                     Section("交易") {
-                        LabeledContent("金额", value: record.formattedAmount)
-                        LabeledContent("收支类型", value: record.direction.title)
-                        LabeledContent("时间", value: AppDateFormatter.dateTimeWithoutSecondsString(from: record.occurredAt))
-                        LabeledContent("状态", value: record.status.title)
-                        LabeledContent("分类", value: record.category.title)
+                        DetailValueRow(title: "金额", value: record.formattedAmount)
+                        DetailValueRow(title: "收支类型", value: record.direction.title)
+                        DetailValueRow(
+                            title: "时间",
+                            value: AppDateFormatter.dateTimeWithoutSecondsString(from: record.occurredAt)
+                        )
+                        DetailValueRow(title: "状态", value: record.status.title)
+                        DetailValueRow(title: "分类", value: record.category.title)
                     }
                     detailSection(record)
                     if !record.tags.isEmpty {
@@ -366,29 +369,29 @@ private struct BillDetailView: View {
                         Section("备注") { Text(record.note) }
                     }
                     Section("来源") {
-                        LabeledContent("录入方式", value: record.origin.kind.title)
+                        DetailValueRow(title: "录入方式", value: record.origin.kind.title)
                         if !record.origin.providerName.isEmpty {
-                            LabeledContent("来源", value: record.origin.providerName)
+                            DetailValueRow(title: "来源", value: record.origin.providerName)
                         }
                         if !record.providerTransactionType.isEmpty {
-                            LabeledContent("平台交易类型", value: record.providerTransactionType)
+                            DetailValueRow(title: "平台交易类型", value: record.providerTransactionType)
                         }
                         if !record.providerCategory.isEmpty {
-                            LabeledContent("平台分类", value: record.providerCategory)
+                            DetailValueRow(title: "平台分类", value: record.providerCategory)
                         }
                         if !record.counterpartyAccount.isEmpty {
-                            LabeledContent("对方账号", value: record.counterpartyAccount)
+                            DetailValueRow(title: "对方账号", value: record.counterpartyAccount)
                                 .textSelection(.enabled)
                         }
                         if !record.providerStatus.isEmpty {
-                            LabeledContent("平台状态", value: record.providerStatus)
+                            DetailValueRow(title: "平台状态", value: record.providerStatus)
                         }
                         if let externalID = record.origin.externalTransactionID {
-                            LabeledContent("外部交易号", value: externalID)
+                            DetailValueRow(title: "外部交易号", value: externalID)
                                 .textSelection(.enabled)
                         }
                         if !record.merchantTransactionID.isEmpty {
-                            LabeledContent("商户订单号", value: record.merchantTransactionID)
+                            DetailValueRow(title: "商户订单号", value: record.merchantTransactionID)
                                 .textSelection(.enabled)
                         }
                     }
@@ -426,11 +429,19 @@ private struct BillDetailView: View {
         if !record.merchant.isEmpty || !record.counterparty.isEmpty || !record.itemDescription.isEmpty
             || !record.paymentMethod.isEmpty || !record.accountHint.isEmpty {
             Section("明细") {
-                if !record.merchant.isEmpty { LabeledContent("商户", value: record.merchant) }
-                if !record.counterparty.isEmpty { LabeledContent("交易对方", value: record.counterparty) }
-                if !record.itemDescription.isEmpty { LabeledContent("商品说明", value: record.itemDescription) }
-                if !record.paymentMethod.isEmpty { LabeledContent("支付方式", value: record.paymentMethod) }
-                if !record.accountHint.isEmpty { LabeledContent("付款账户", value: record.accountHint) }
+                if !record.merchant.isEmpty { DetailValueRow(title: "商户", value: record.merchant) }
+                if !record.counterparty.isEmpty {
+                    DetailValueRow(title: "交易对方", value: record.counterparty)
+                }
+                if !record.itemDescription.isEmpty {
+                    DetailValueRow(title: "商品说明", value: record.itemDescription)
+                }
+                if !record.paymentMethod.isEmpty {
+                    DetailValueRow(title: "支付方式", value: record.paymentMethod)
+                }
+                if !record.accountHint.isEmpty {
+                    DetailValueRow(title: "付款账户", value: record.accountHint)
+                }
             }
         }
     }
@@ -532,32 +543,32 @@ struct BillsExportSettingsView: View {
     var body: some View {
         Form {
             Section("导出范围") {
-                Picker("时间区间", selection: $period) {
+                PickerFieldRow(title: "时间区间", selection: $period) {
                     ForEach(BillExportPeriod.allCases) { value in
                         Text(value.title).tag(value)
                     }
                 }
                 if period == .custom {
-                    DatePicker("开始日期", selection: $customStart, displayedComponents: .date)
-                    DatePicker("结束日期", selection: $customEnd, displayedComponents: .date)
+                    DateFieldRow(title: "开始日期", date: $customStart)
+                    DateFieldRow(title: "结束日期", date: $customEnd)
                 }
-                LabeledContent("符合条件", value: "\(filteredRecords.count) 笔")
+                DetailValueRow(title: "符合条件", value: "\(filteredRecords.count) 笔")
             }
 
             Section("筛选条件") {
-                Picker("来源", selection: $source) {
+                PickerFieldRow(title: "来源", selection: $source) {
                     Text(BillExportSource.all.title).tag(BillExportSource.all)
                     ForEach(sourceNames, id: \.self) { name in
                         Text(name).tag(BillExportSource.provider(name))
                     }
                 }
-                Picker("分类", selection: $category) {
+                PickerFieldRow(title: "分类", selection: $category) {
                     Text(BillExportCategory.all.title).tag(BillExportCategory.all)
                     ForEach(BillCategory.allCases) { value in
                         Text(value.title).tag(BillExportCategory.category(value))
                     }
                 }
-                Picker("收支", selection: $direction) {
+                PickerFieldRow(title: "收支", selection: $direction) {
                     Text(BillExportDirection.all.title).tag(BillExportDirection.all)
                     ForEach(BillDirection.allCases) { value in
                         Text(value.title).tag(BillExportDirection.direction(value))
@@ -581,11 +592,6 @@ struct BillsExportSettingsView: View {
         }
         .appNavigationTitle("账单导出")
         .iOSLabeledBackButton("设置")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                AdminEditAccessButton()
-            }
-        }
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)

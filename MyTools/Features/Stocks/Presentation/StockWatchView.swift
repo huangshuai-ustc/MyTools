@@ -353,6 +353,7 @@ struct StockWatchView: View {
         }
 #if os(iOS)
         .listStyle(.insetGrouped)
+        .scrollDisabled(isInteractingWithChart)
 #endif
         .simultaneousGesture(outsideChartTapGesture)
     }
@@ -624,7 +625,11 @@ struct StockWatchView: View {
                 snapshot: snapshot,
                 range: selectedRange,
                 market: stock.market,
-                visibleXDomain: visibleXDomain
+                visibleXDomain: visibleXDomain,
+                quotePreviousClose: stock.previousClose.map {
+                    NSDecimalNumber(decimal: $0).doubleValue
+                },
+                quoteUpdatedAt: stock.lastQuoteAt
            ) {
             return (
                 StockChartPresentation.headerPerformanceTitle(for: selectedRange),
@@ -632,7 +637,8 @@ struct StockWatchView: View {
                 performance.percent
             )
         }
-        guard let latestPrice = stock.latestPrice,
+        guard snapshot == nil,
+              let latestPrice = stock.latestPrice,
               let previousClose = stock.previousClose,
               previousClose != 0 else {
             return nil
@@ -1366,40 +1372,40 @@ private struct StockInvestmentScoreDetailView: View {
                    fundamentals.availableMetricCount > 0 {
                     Section {
                         if let value = fundamentals.priceEarningsRatioTTM {
-                            LabeledContent("市盈率（TTM）", value: ratioText(value))
+                            DetailValueRow(title: "市盈率（TTM）", value: ratioText(value))
                         }
                         if let value = fundamentals.priceBookRatioMRQ {
-                            LabeledContent("市净率（MRQ）", value: ratioText(value))
+                            DetailValueRow(title: "市净率（MRQ）", value: ratioText(value))
                         }
                         if let value = fundamentals.priceEarningsGrowthRatio {
-                            LabeledContent("PEG", value: ratioText(value))
+                            DetailValueRow(title: "PEG", value: ratioText(value))
                         }
                         if let value = fundamentals.priceCashFlowRatioTTM {
-                            LabeledContent("市现率（TTM）", value: ratioText(value))
+                            DetailValueRow(title: "市现率（TTM）", value: ratioText(value))
                         }
                         if let value = fundamentals.priceSalesRatioTTM {
-                            LabeledContent("市销率（TTM）", value: ratioText(value))
+                            DetailValueRow(title: "市销率（TTM）", value: ratioText(value))
                         }
                         if let value = fundamentals.enterpriseValueToEBITDA {
-                            LabeledContent("EV / EBITDA", value: ratioText(value))
+                            DetailValueRow(title: "EV / EBITDA", value: ratioText(value))
                         }
                         if let value = fundamentals.earningsPerShareTTM {
-                            LabeledContent("每股收益（TTM）", value: ratioText(value))
+                            DetailValueRow(title: "每股收益（TTM）", value: ratioText(value))
                         }
                         if let value = fundamentals.dividendYield {
-                            LabeledContent("股息率", value: percentageText(value))
+                            DetailValueRow(title: "股息率", value: percentageText(value))
                         }
                         if let value = fundamentals.returnOnEquity {
-                            LabeledContent("净资产收益率", value: percentageText(value))
+                            DetailValueRow(title: "净资产收益率", value: percentageText(value))
                         }
                         if let value = fundamentals.netProfitMargin {
-                            LabeledContent("净利率", value: percentageText(value))
+                            DetailValueRow(title: "净利率", value: percentageText(value))
                         }
                         if let value = fundamentals.revenueGrowth {
-                            LabeledContent("收入增长", value: percentageText(value))
+                            DetailValueRow(title: "收入增长", value: percentageText(value))
                         }
                         if let value = fundamentals.earningsGrowth {
-                            LabeledContent("盈利增长", value: percentageText(value))
+                            DetailValueRow(title: "盈利增长", value: percentageText(value))
                         }
                     } header: {
                         Text("基本面指标")
@@ -1409,26 +1415,26 @@ private struct StockInvestmentScoreDetailView: View {
                 }
 
                 Section {
-                    LabeledContent("模型版本", value: score.modelVersion)
+                    DetailValueRow(title: "模型版本", value: score.modelVersion)
                     if score.unadjustedValue != score.value {
-                        LabeledContent("可信度调整前", value: "\(score.unadjustedValue)")
+                        DetailValueRow(title: "可信度调整前", value: "\(score.unadjustedValue)")
                     }
-                    LabeledContent("周期", value: "日线")
-                    LabeledContent("历史样本", value: "\(score.sampleCount) 个交易日")
-                    LabeledContent(
-                        "数据可信度",
+                    DetailValueRow(title: "周期", value: "日线")
+                    DetailValueRow(title: "历史样本", value: "\(score.sampleCount) 个交易日")
+                    DetailValueRow(
+                        title: "数据可信度",
                         value: "\(score.confidence.rawValue) · \(Int((score.confidenceValue * 100).rounded()))%"
                     )
-                    LabeledContent(
-                        "基本面覆盖",
+                    DetailValueRow(
+                        title: "基本面覆盖",
                         value: "\(score.fundamentalMetricCount) / 12 项"
                     )
                     if let fundamentalSource = score.fundamentalSource {
-                        LabeledContent("基本面来源", value: fundamentalSource)
+                        DetailValueRow(title: "基本面来源", value: fundamentalSource)
                     }
                     if let fundamentalAsOfDate = score.fundamentalAsOfDate {
-                        LabeledContent(
-                            "基本面时间",
+                        DetailValueRow(
+                            title: "基本面时间",
                             value: AppDateFormatter.dateTimeString(from: fundamentalAsOfDate)
                         )
                     }
@@ -1455,6 +1461,7 @@ private struct StockInvestmentScoreDetailView: View {
                 }
             }
         }
+        .appListSpacing()
     }
 
     private func ratioText(_ value: Double) -> String {
