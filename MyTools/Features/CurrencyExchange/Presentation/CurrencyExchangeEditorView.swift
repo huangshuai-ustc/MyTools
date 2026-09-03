@@ -28,13 +28,11 @@ struct CurrencyExchangeEditorView: View {
 
     @EnvironmentObject private var store: CurrencyExchangeStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: CurrencyExchangeEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var showingAuthentication = false
 
     init(record: CurrencyExchangeRecord) {
         _draft = StateObject(wrappedValue: CurrencyExchangeEditorDraft(record: record))
@@ -110,7 +108,6 @@ struct CurrencyExchangeEditorView: View {
                 }
             }
             .appNavigationTitle(store.records.contains { $0.id == draft.record.id } ? "编辑换汇" : "新增换汇")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -122,9 +119,6 @@ struct CurrencyExchangeEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication).iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -180,10 +174,6 @@ struct CurrencyExchangeEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         guard draft.record.soldCurrency != draft.record.boughtCurrency else {
             reportError("卖出币种和买入币种不能相同。")
             return
@@ -196,11 +186,6 @@ struct CurrencyExchangeEditorView: View {
         datedRecord.exchangedAt = CurrencyExchangeRecord.noon(on: record.exchangedAt)
         store.upsertRecord(datedRecord)
         dismiss()
-    }
-
-    private func saveAfterAuthentication() {
-        // 认证页直接回调当前表单，避免管理员会话恢复时父页面重建并清空草稿。
-        save()
     }
 
     private func reportError(_ message: String) {

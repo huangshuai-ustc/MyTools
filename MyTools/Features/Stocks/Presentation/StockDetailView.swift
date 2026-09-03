@@ -3,14 +3,11 @@ import SwiftUI
 
 struct StockDetailView: View {
     private enum EditorRoute: Identifiable {
-        case stock(StockHolding)
         case transaction(StockTransaction)
         case dividend(StockDividend)
 
         var id: String {
             switch self {
-            case .stock(let stock):
-                return "stock-\(stock.id.uuidString)"
             case .transaction(let transaction):
                 return "transaction-\(transaction.id.uuidString)"
             case .dividend(let dividend):
@@ -20,7 +17,6 @@ struct StockDetailView: View {
     }
 
     @EnvironmentObject private var store: StockStore
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stockID: UUID
     @State private var editorRoute: EditorRoute?
@@ -87,15 +83,6 @@ struct StockDetailView: View {
                 }
                 .disabled(store.isRefreshingQuotes)
                 .accessibilityLabel("刷新股票行情")
-
-                AdminEditAccessButton()
-
-                if auth.isEditSessionReady, let stock {
-                    Button { editorRoute = .stock(stock) } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .accessibilityLabel("编辑股票")
-                }
             }
         }
         .navigationDestination(isPresented: $showingStockWatch) {
@@ -103,10 +90,6 @@ struct StockDetailView: View {
         }
         .sheet(item: $editorRoute) { route in
             switch route {
-            case .stock(let stock):
-                StockEditorView(stock: stock, isNew: false)
-                    .id(stock.id)
-                    .iOSLargeSheet()
             case .transaction(let transaction):
                 if let stock {
                     StockTransactionEditorView(transaction: transaction, stock: stock)
@@ -150,68 +133,50 @@ struct StockDetailView: View {
                 .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
-            Section("持仓总览") {
-                StockHoldingOverview(
-                    stock: stock,
-                    appearanceSettings: stockAppearanceSettings
-                )
-                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+            if stock.currentShares > 0 {
+                Section("持仓总览") {
+                    StockHoldingOverview(
+                        stock: stock,
+                        appearanceSettings: stockAppearanceSettings
+                    )
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                }
             }
 
             Section("交易记录") {
-                if sortedTransactions.isEmpty {
-                    Text("暂无交易记录").foregroundStyle(.secondary)
-                }
-                if auth.isEditSessionReady {
-                    ForEach(sortedTransactions) { transaction in
-                        Button { editorRoute = .transaction(transaction) } label: {
-                            StockTransactionRow(transaction: transaction, market: stock.market)
-                        }
-                        .buttonStyle(.plain)
-                        .appListRowStyle()
-                        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
-                            deleteTransaction(id: transaction.id, from: sortedTransactions)
-                        }
-                    }
-                    Button { editorRoute = .transaction(StockTransaction()) } label: {
-                        Label("添加买入或卖出记录", systemImage: "plus.circle")
-                    }
-                    if !stock.reorderableTransactionDayGroups.isEmpty {
-                        Button { showingTransactionOrderEditor = true } label: {
-                            Label("调整同日交易顺序", systemImage: "arrow.up.arrow.down")
-                        }
-                    }
-                } else {
-                    ForEach(sortedTransactions) { transaction in
+                ForEach(sortedTransactions) { transaction in
+                    Button { editorRoute = .transaction(transaction) } label: {
                         StockTransactionRow(transaction: transaction, market: stock.market)
-                            .appListRowStyle()
+                    }
+                    .buttonStyle(.plain)
+                    .appListRowStyle()
+                    .appDeleteSwipeAction(isEnabled: true) {
+                        deleteTransaction(id: transaction.id, from: sortedTransactions)
+                    }
+                }
+                Button { editorRoute = .transaction(StockTransaction()) } label: {
+                    Label("添加买入或卖出记录", systemImage: "plus.circle")
+                }
+                if !stock.reorderableTransactionDayGroups.isEmpty {
+                    Button { showingTransactionOrderEditor = true } label: {
+                        Label("调整同日交易顺序", systemImage: "arrow.up.arrow.down")
                     }
                 }
             }
 
             Section("分红记录") {
-                if sortedDividends.isEmpty {
-                    Text("暂无分红记录").foregroundStyle(.secondary)
-                }
-                if auth.isEditSessionReady {
-                    ForEach(sortedDividends) { dividend in
-                        Button { editorRoute = .dividend(dividend) } label: {
-                            StockDividendRow(dividend: dividend, market: stock.market)
-                        }
-                        .buttonStyle(.plain)
-                        .appListRowStyle()
-                        .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
-                            deleteDividend(id: dividend.id, from: sortedDividends)
-                        }
-                    }
-                    Button { editorRoute = .dividend(StockDividend()) } label: {
-                        Label("添加分红记录", systemImage: "plus.circle")
-                    }
-                } else {
-                    ForEach(sortedDividends) { dividend in
+                ForEach(sortedDividends) { dividend in
+                    Button { editorRoute = .dividend(dividend) } label: {
                         StockDividendRow(dividend: dividend, market: stock.market)
-                            .appListRowStyle()
                     }
+                    .buttonStyle(.plain)
+                    .appListRowStyle()
+                    .appDeleteSwipeAction(isEnabled: true) {
+                        deleteDividend(id: dividend.id, from: sortedDividends)
+                    }
+                }
+                Button { editorRoute = .dividend(StockDividend()) } label: {
+                    Label("添加分红记录", systemImage: "plus.circle")
                 }
             }
         }
@@ -431,28 +396,7 @@ private struct StockHoldingOverview: View {
     }
 }
 
-private struct StockDetailMetricCell: View {
-    let title: String
-    let value: String
-    var color: Color = .primary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Text(value)
-                .appFont(.subheadline.weight(.medium).monospacedDigit())
-                .foregroundStyle(color)
-                .lineLimit(2)
-                .minimumScaleFactor(0.68)
-                .allowsTightening(true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-}
+private typealias StockDetailMetricCell = AppMetricCell
 
 private struct StockTransactionDayGroup: Identifiable {
     let date: Date
@@ -516,7 +460,6 @@ private struct StockTransactionOrderEditorView: View {
                 }
             }
             .appNavigationTitle("当日交易顺序")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .listStyle(.insetGrouped)

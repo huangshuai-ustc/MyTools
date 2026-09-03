@@ -7,7 +7,7 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
     @Published private(set) var rateAlerts: [CurrencyRateAlert]
 
     private let alertNotifications: any AlertNotificationRouting
-    private weak var moduleSettings: ToolModuleSettings?
+    private var isModuleVisible: Bool
     private weak var exchangeRateStore: ExchangeRateStore?
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
@@ -15,13 +15,13 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
         records: [CurrencyExchangeRecord] = [],
         rateAlerts: [CurrencyRateAlert] = [],
         alertNotifications: any AlertNotificationRouting,
-        moduleSettings: ToolModuleSettings? = nil,
+        isModuleVisible: Bool = true,
         exchangeRateStore: ExchangeRateStore? = nil
     ) {
         self.records = records
         self.rateAlerts = rateAlerts
         self.alertNotifications = alertNotifications
-        self.moduleSettings = moduleSettings
+        self.isModuleVisible = isModuleVisible
         self.exchangeRateStore = exchangeRateStore
     }
 
@@ -35,6 +35,7 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
     ) {
         self.records = records
         self.rateAlerts = rateAlerts
+        DiagnosticLogger.shared.log(.data, "换汇数据替换 records=\(records.count) alerts=\(rateAlerts.count)")
     }
 
     func moduleVisibilityChanged(isVisible: Bool) {
@@ -45,31 +46,41 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
     var observedModules: Set<ToolModule> { [.currencyExchange] }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
+        isModuleVisible = isEnabled
         moduleVisibilityChanged(isVisible: isEnabled)
     }
 
     func upsertRecord(_ record: CurrencyExchangeRecord) {
+        let isUpdate = records.contains { $0.id == record.id }
         if let index = records.firstIndex(where: { $0.id == record.id }) {
             records[index] = record
         } else {
             records.append(record)
         }
+        DiagnosticLogger.shared.log(.data, "换汇记录\(isUpdate ? "更新" : "新增") id=\(record.id)")
         didMutate()
     }
 
     func deleteRecords(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
         records.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "换汇记录删除 count=\(ids.count)")
         didMutate()
     }
 
     func upsertRateAlert(_ alert: CurrencyRateAlert) {
-        guard alert.amount > 0, alert.threshold > 0 else { return }
+        guard alert.amount > 0, alert.threshold > 0 else {
+            DiagnosticLogger.shared.log(.data, "汇率提醒被拒绝（无效金额或阈值） id=\(alert.id)", level: .warning)
+            return
+        }
+        let isUpdate = rateAlerts.contains { $0.id == alert.id }
         if let index = rateAlerts.firstIndex(where: { $0.id == alert.id }) {
             rateAlerts[index] = alert
         } else {
             rateAlerts.append(alert)
         }
         alertNotifications.clearState(for: alert.id)
+        DiagnosticLogger.shared.log(.data, "汇率提醒\(isUpdate ? "更新" : "新增") id=\(alert.id)")
         didMutate()
     }
 
@@ -82,6 +93,7 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
             }
             return false
         }
+        DiagnosticLogger.shared.log(.data, "汇率提醒删除 count=\(ids.count)")
         didMutate()
     }
 
@@ -91,10 +103,6 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
 
     func exchangeRatesDidUpdate(_ rates: [CurrencyCode: Decimal]) {
         evaluateRateAlerts(using: rates)
-    }
-
-    private var isModuleVisible: Bool {
-        moduleSettings?.isVisible(.currencyExchange) ?? true
     }
 
     private func evaluateRateAlerts(using rates: [CurrencyCode: Decimal]) {
@@ -114,6 +122,9 @@ final class CurrencyExchangeStore: ObservableObject, ExchangeRateUpdateObserving
                 title: "换汇价格提醒",
                 body: "\(CurrencyExchangeValueFormatter.amount(alert.amount, currency: alert.currency)) 约合 \(CurrencyExchangeValueFormatter.amount(value, currency: .cny))，已\(alert.direction.title) \(CurrencyExchangeValueFormatter.amount(alert.threshold, currency: .cny))。"
             )
+        }
+        if !triggeredAlertIDs.isEmpty {
+            DiagnosticLogger.shared.log(.notification, "汇率提醒触发 count=\(triggeredAlertIDs.count)")
         }
         disableRateAlerts(ids: triggeredAlertIDs)
     }

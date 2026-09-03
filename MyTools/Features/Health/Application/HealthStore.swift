@@ -9,7 +9,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     @Published private(set) var knownTags: [String]
 
     let attachmentStore: AttachmentStore
-    private weak var moduleSettings: ToolModuleSettings?
+    private var isModuleVisible: Bool
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
     init(
@@ -17,14 +17,14 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         hospitalProfiles: [HospitalProfile] = [],
         knownTags: [String] = [],
         attachmentStore: AttachmentStore,
-        moduleSettings: ToolModuleSettings? = nil
+        isModuleVisible: Bool = true
     ) {
         let normalizedRecords = medicalRecords.map(Self.normalizedTags(in:))
         self.medicalRecords = normalizedRecords
         self.hospitalProfiles = hospitalProfiles
         self.knownTags = AppTagSupport.merged(knownTags, with: normalizedRecords.flatMap(\.tags))
         self.attachmentStore = attachmentStore
-        self.moduleSettings = moduleSettings
+        self.isModuleVisible = isModuleVisible
     }
 
     func attach(mutationNotifier: any VaultMutationNotifying) {
@@ -43,6 +43,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
             knownTags ?? self.knownTags,
             with: normalizedRecords.flatMap(\.tags)
         )
+        DiagnosticLogger.shared.log(.data, "健康数据替换 records=\(normalizedRecords.count) hospitals=\(hospitalProfiles.count)")
     }
 
     func moduleVisibilityChanged(isVisible: Bool) {
@@ -54,6 +55,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     var cleanupModule: ToolModule { .healthRecords }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
+        isModuleVisible = isEnabled
         moduleVisibilityChanged(isVisible: isEnabled)
     }
 
@@ -128,14 +130,17 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         storedRecord.normalizeInstitutionClassification()
         storedRecord.hospital = storedRecord.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
         knownTags = AppTagSupport.merged(knownTags, with: storedRecord.tags)
+        let isUpdate: Bool
         if let index = medicalRecords.firstIndex(where: { $0.id == storedRecord.id }) {
             let retainedIDs = Set(storedRecord.attachments.map(\.id))
             for attachment in medicalRecords[index].attachments where !retainedIDs.contains(attachment.id) {
                 attachmentStore.delete(attachment)
             }
             medicalRecords[index] = storedRecord
+            isUpdate = true
         } else {
             medicalRecords.append(storedRecord)
+            isUpdate = false
         }
         medicalRecords = HealthRecordSynchronizer.synchronizeInpatientDailyRecords(
             in: medicalRecords,
@@ -148,6 +153,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         )
         medicalRecords = synchronization.medicalRecords
         hospitalProfiles = synchronization.hospitalProfiles
+        DiagnosticLogger.shared.log(.data, "就医记录\(isUpdate ? "更新" : "新增") id=\(storedRecord.id)")
         didMutate()
     }
 
@@ -184,20 +190,24 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         storedProfile.normalizeClassification()
         guard !storedProfile.name.isEmpty,
               !hospitalProfileNameExists(storedProfile.name, excluding: storedProfile.id) else {
+            DiagnosticLogger.shared.log(.data, "医院档案保存被拒绝（名称为空或重复） id=\(profile.id)", level: .warning)
             return false
         }
 
         let previousName: String?
+        let isUpdate: Bool
         if let index = hospitalProfiles.firstIndex(where: { $0.id == storedProfile.id }) {
             previousName = hospitalProfiles[index].name
             storedProfile.createdAt = hospitalProfiles[index].createdAt
             storedProfile.updatedAt = Date()
             hospitalProfiles[index] = storedProfile
+            isUpdate = true
         } else {
             previousName = nil
             storedProfile.createdAt = Date()
             storedProfile.updatedAt = storedProfile.createdAt
             hospitalProfiles.append(storedProfile)
+            isUpdate = false
         }
 
         let namesToMatch = [previousName, storedProfile.name]
@@ -215,16 +225,20 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
             medicalRecords[index].normalizeInstitutionClassification()
             medicalRecords[index].updatedAt = Date()
         }
+        DiagnosticLogger.shared.log(.data, "医院档案\(isUpdate ? "更新" : "新增") id=\(storedProfile.id)")
         didMutate()
         return true
     }
 
     func deleteHospitalProfiles(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
         hospitalProfiles.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "医院档案删除 count=\(ids.count)")
         didMutate()
     }
 
     func deleteMedicalRecords(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
         var recordIDsToDelete = ids
         let childrenByParentID = Dictionary(
             grouping: medicalRecords.compactMap { record -> (UUID, UUID)? in
@@ -247,6 +261,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
             record.attachments.forEach(attachmentStore.delete)
         }
         medicalRecords.removeAll { recordIDsToDelete.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "就医记录删除 requested=\(ids.count) total=\(recordIDsToDelete.count)")
         didMutate()
     }
 
@@ -268,10 +283,6 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
 
     // deleteUncommittedAttachment, renameAttachment, restoreAttachmentLocation, attachmentURL
     // are provided by the AttachmentManaging protocol extension.
-
-    private var isModuleVisible: Bool {
-        moduleSettings?.isVisible(.healthRecords) ?? true
-    }
 
     private func classificationFieldCount(in record: MedicalRecord) -> Int {
         (record.hospitalLevel == .unspecified ? 0 : 1)

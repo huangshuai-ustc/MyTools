@@ -103,7 +103,6 @@ struct AttachmentPreviewSheet: View {
                     }
                 }
         }
-        .adminModeIndicator()
         .toolbarBackground(.visible, for: .navigationBar)
         .interactiveDismissDisabled(false)
         .iOSLargeSheet()

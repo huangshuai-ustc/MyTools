@@ -130,10 +130,100 @@ private final class DianpingBrowserModel: NSObject, ObservableObject, WKNavigati
         (() => {
           const containers = Array.from(document.querySelectorAll('.relation-container'));
           const isCollection = /collectionlist/i.test(location.pathname);
-          // A collection page initially contains only an empty application shell. Returning
-          // no items here lets the caller wait until the same cards used by manual import
-          // have actually been rendered instead of parsing the whole shell as one shop.
           if (isCollection && containers.length === 0) { return '[]'; }
+
+          // ── Single-shop page helpers ─────────────────────────────────────
+          const isShopPage = /\/(?:shopinfo|appshare\/shop|shop)\//i.test(location.pathname);
+
+          function extractSingleShopAddress() {
+            // og:description is the most reliable: "品类 · 区域 · 地址"
+            const desc = document.querySelector('meta[property="og:description"]')?.content || '';
+            if (desc) {
+              const parts = desc.split(/[·｜|]/).map(s => s.trim()).filter(Boolean);
+              if (parts.length >= 2) {
+                const candidate = parts[parts.length - 1];
+                if (candidate.length > 5) return candidate;
+              }
+            }
+            // Walk all elements looking for one that starts with a label like "地址"
+            const allElements = Array.from(document.querySelectorAll('*'));
+            for (const el of allElements) {
+              if (el.children.length > 0) continue;
+              const t = (el.innerText || el.textContent || '').trim();
+              const stripped = t.replace(/^地址[：:]\s*/, '');
+              if (t !== stripped && stripped.length > 5) return stripped;
+            }
+            return '';
+          }
+
+          function extractPhone() {
+            // tel: links are canonical
+            const telLink = document.querySelector('a[href^="tel:"]');
+            if (telLink) return telLink.href.replace('tel:', '').trim();
+            // Walk text nodes for a phone-number pattern (mainland / HK / intl)
+            const allElements = Array.from(document.querySelectorAll('*'));
+            for (const el of allElements) {
+              if (el.children.length > 0) continue;
+              const t = (el.innerText || el.textContent || '').trim();
+              const m = t.match(/^(?:\+?86[-\s]?)?(?:1[3-9]\d{9}|0\d{2,3}[-\s]\d{7,8}|\d{3,4}[-\s]\d{7,8})$/);
+              if (m) return m[0].replace(/\s/g, '');
+            }
+            return '';
+          }
+
+          function extractBusinessHours() {
+            // Walk text nodes for one that starts with "营业时间"
+            const allElements = Array.from(document.querySelectorAll('*'));
+            for (const el of allElements) {
+              if (el.children.length > 0) continue;
+              const t = (el.innerText || el.textContent || '').trim();
+              const stripped = t.replace(/^营业时间[：:]\s*/, '');
+              if (t !== stripped && stripped.length > 3) return stripped;
+            }
+            // Fallback: a sibling/parent pattern — find a label node then grab next sibling text
+            const labelNodes = Array.from(document.querySelectorAll('*')).filter(el => {
+              const t = (el.innerText || el.textContent || '').trim();
+              return t === '营业时间' && el.children.length === 0;
+            });
+            for (const label of labelNodes) {
+              const sibling = label.nextElementSibling;
+              if (sibling) {
+                const t = (sibling.innerText || sibling.textContent || '').trim();
+                if (t.length > 3 && !t.includes('打开')) return t.replace(/\n+/g, ' ');
+              }
+              const parent = label.parentElement;
+              if (parent) {
+                const combined = (parent.innerText || '').trim()
+                  .replace(/^营业时间[：:]\s*/, '').replace(/\n+/g, ' ');
+                if (combined.length > 3 && !combined.includes('打开')) return combined;
+              }
+            }
+            return '';
+          }
+
+          function extractLatLng() {
+            // Many Dianping pages embed lat/lng in data attributes or window state
+            const mapNode = document.querySelector('[data-lat], [data-lng], [data-latitude], [data-longitude]');
+            if (mapNode && mapNode.dataset) {
+              const lat = parseFloat(mapNode.dataset.lat || mapNode.dataset.latitude || '');
+              const lng = parseFloat(mapNode.dataset.lng || mapNode.dataset.longitude || '');
+              if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+            }
+            // Try window.__InitialState__ or similar global JS state
+            try {
+              const stateStr = JSON.stringify(window.__InitialState__ || window._data || {});
+              const latMatch = stateStr.match(/"lat(?:itude)?"\s*:\s*([\d.]+)/);
+              const lngMatch = stateStr.match(/"l(?:ng|ongitude)"\s*:\s*([\d.]+)/);
+              if (latMatch && lngMatch) {
+                const lat = parseFloat(latMatch[1]);
+                const lng = parseFloat(lngMatch[1]);
+                if (lat > 0 && lng > 0) return { lat, lng };
+              }
+            } catch (_) {}
+            return null;
+          }
+
+          // ── Per-node extraction ─────────────────────────────────────────
           const nodes = containers.length ? containers : [document.body];
           return JSON.stringify(nodes.map(node => {
             const image = node.querySelector('img.pic, img');
@@ -145,9 +235,7 @@ private final class DianpingBrowserModel: NSObject, ObservableObject, WKNavigati
             const shopID = shopNode.dataset
               ? (shopNode.dataset.shopuuid || shopNode.dataset.shopid || shopNode.dataset.shopId || '')
               : '';
-            const currentShopURL = /\/(?:shopinfo|appshare\/shop|shop)\//i.test(location.pathname)
-              ? location.href
-              : '';
+            const currentShopURL = isShopPage ? location.href : '';
             const titleNode = document.querySelector('h1, .shop-name, .shopName, [class*="shopName"]');
             const metadataTitle = document.querySelector('meta[property="og:title"]')?.content || '';
             const pageTitle = (metadataTitle || (titleNode ? titleNode.textContent : '') || '')
@@ -171,10 +259,38 @@ private final class DianpingBrowserModel: NSObject, ObservableObject, WKNavigati
             const text = pageTitle && !bodyText.startsWith(pageTitle)
               ? `${pageTitle}\n${bodyText}`
               : bodyText;
+
+            // Pick the best cover image: prefer a large photo (src contains /photos/ or /shopimgs/)
+            // and skip tiny icons / placeholder images (< 50px or dianping logo)
+            let bestImage = null;
+            const imgCandidates = Array.from(node.querySelectorAll('img'));
+            for (const img of imgCandidates) {
+              const src = img.currentSrc || img.src || '';
+              if (!src || src.includes('icon') || src.includes('logo') || src.includes('default')) continue;
+              if (img.naturalWidth > 0 && img.naturalWidth < 50) continue;
+              bestImage = src;
+              if (/\/(photos?|shopimgs?|upload)\//i.test(src)) break;
+            }
+            if (!bestImage) {
+              // Fallback: og:image meta is the shop cover photo
+              bestImage = document.querySelector('meta[property="og:image"]')?.content || '';
+            }
+
+            // Extra fields — only meaningful on a single-shop detail page
+            const address = isShopPage ? extractSingleShopAddress() : '';
+            const phone = isShopPage ? extractPhone() : '';
+            const businessHours = isShopPage ? extractBusinessHours() : '';
+            const coords = isShopPage ? extractLatLng() : null;
+
             return {
               text,
-              imageURL: image ? (image.currentSrc || image.src || '') : '',
-              shopURL
+              imageURL: bestImage || (imgCandidates[0] ? (imgCandidates[0].currentSrc || imgCandidates[0].src || '') : ''),
+              shopURL,
+              address,
+              phone,
+              businessHours,
+              latitude: coords ? coords.lat : null,
+              longitude: coords ? coords.lng : null
             };
           }).filter(item => item.text));
         })()
@@ -381,10 +497,15 @@ struct DianpingImportView: View {
                             }
                         }
                     Button {
-                        parseShareText()
+                        Task { await parseShareText() }
                     } label: {
-                        Label("解析分享内容", systemImage: "doc.text.magnifyingglass")
+                        if isExtracting {
+                            Label("正在解析…", systemImage: "doc.text.magnifyingglass")
+                        } else {
+                            Label("解析分享内容", systemImage: "doc.text.magnifyingglass")
+                        }
                     }
+                    .disabled(isExtracting)
                     Button {
                         prepareBrowser()
                     } label: {
@@ -434,6 +555,12 @@ struct DianpingImportView: View {
             .sheet(isPresented: $showingBrowser) {
                 browserSheet
                     .iOSLargeSheet()
+            }
+            .background {
+                DianpingWebViewRepresentable(model: browser)
+                    .frame(width: 1, height: 1)
+                    .opacity(0)
+                    .allowsHitTesting(false)
             }
             .confirmationDialog("清除登录数据？", isPresented: $showingClearConfirmation) {
                 Button("清除", role: .destructive) {
@@ -557,14 +684,28 @@ struct DianpingImportView: View {
         .appFont(.caption)
     }
 
-    private func parseShareText() {
+    private func parseShareText() async {
         let parsed = DianpingImportParser.parseSharedText(shareText)
         if parsed.isEmpty {
-            if let url = extractDianpingURL(from: shareText) {
+            guard let url = extractDianpingURL(from: shareText) else {
+                errorMessage = "没有识别到单店分享内容或大众点评链接。"
+                return
+            }
+            if DianpingImportCandidate.shopIdentifier(in: url) != nil,
+               !DianpingImportParser.isCollectionPageURL(url) {
+                isExtracting = true
+                defer { isExtracting = false }
+                do {
+                    let page = try await browser.loadAndExtract(url)
+                    let autoparsed = DianpingImportParser.parseWebItems(page.items, sourceURL: page.url)
+                    guard !autoparsed.isEmpty else { throw DianpingBrowserError.invalidPage }
+                    candidates = autoparsed
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            } else {
                 browser.currentURL = url
                 showingBrowser = true
-            } else {
-                errorMessage = "没有识别到单店分享内容或大众点评链接。"
             }
         } else {
             candidates = parsed
@@ -629,21 +770,31 @@ struct DianpingImportView: View {
                 reviewCount: candidate.reviewCount,
                 averagePrice: candidate.pricePerPerson.map { Decimal($0) },
                 averagePriceCurrency: .cny,
-                specialty: candidate.category
+                specialty: candidate.category,
+                tags: candidate.tags,
+                phone: candidate.phone,
+                businessHours: candidate.businessHours
             )
-            let query = [candidate.city, candidate.name, candidate.address]
-                .filter { !$0.isEmpty }.joined(separator: " ")
-            if let item = try? await MapLocationSearchService.search(query: query).first {
-                place.coordinate = FoodCoordinate(
-                    latitude: item.location.coordinate.latitude,
-                    longitude: item.location.coordinate.longitude
-                )
-                let mapAddress = item.address?.fullAddress
-                    ?? item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
-                    ?? ""
-                if place.address.isEmpty { place.address = mapAddress }
-                if place.administrativeLocation == nil {
-                    place.administrativeLocation = ChinaAdministrativeDivisions.infer(from: mapAddress)
+            // Use coordinates from Dianping page when available; otherwise fall back to MapKit search
+            if let lat = candidate.latitude, let lng = candidate.longitude {
+                let coord = FoodCoordinate(latitude: lat, longitude: lng)
+                if coord.isValid { place.coordinate = coord }
+            }
+            if place.coordinate == nil {
+                let query = [candidate.city, candidate.name, candidate.address]
+                    .filter { !$0.isEmpty }.joined(separator: " ")
+                if let item = try? await MapLocationSearchService.search(query: query).first {
+                    place.coordinate = FoodCoordinate(
+                        latitude: item.location.coordinate.latitude,
+                        longitude: item.location.coordinate.longitude
+                    )
+                    let mapAddress = item.address?.fullAddress
+                        ?? item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true)
+                        ?? ""
+                    if place.address.isEmpty { place.address = mapAddress }
+                    if place.administrativeLocation == nil {
+                        place.administrativeLocation = ChinaAdministrativeDivisions.infer(from: mapAddress)
+                    }
                 }
             }
             if let imageURL = URL(string: candidate.imageURL), imageURL.scheme == "https" {

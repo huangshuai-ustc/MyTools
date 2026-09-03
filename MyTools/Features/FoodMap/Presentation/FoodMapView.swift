@@ -23,7 +23,6 @@ private enum FoodStatusFilter: Hashable {
 struct FoodMapView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: FoodMapStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var statusFilter: FoodStatusFilter = .all
     @State private var selectedTag = ""
@@ -122,21 +121,17 @@ struct FoodMapView: View {
                 .accessibilityLabel("更新全部店铺资料")
                 .help("更新全部店铺资料")
 
-                AdminEditAccessButton()
-
-                if auth.isAdmin {
+                Button {
+                    editingPlace = FoodPlace()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("添加美食记录")
+                .contextMenu {
                     Button {
-                        editingPlace = FoodPlace()
+                        showingDianpingImport = true
                     } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加美食记录")
-                    .contextMenu {
-                        Button {
-                            showingDianpingImport = true
-                        } label: {
-                            Label("从大众点评导入", systemImage: "square.and.arrow.down")
-                        }
+                        Label("从大众点评导入", systemImage: "square.and.arrow.down")
                     }
                 }
             }
@@ -171,7 +166,7 @@ struct FoodMapView: View {
             FoodPlaceRow(place: place)
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+        .appDeleteSwipeAction(isEnabled: true) {
             store.delete(ids: [place.id])
         }
     }

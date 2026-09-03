@@ -25,7 +25,6 @@ struct DomesticSubaccountReadOnlyView: View {
     private let initialSubaccount: DomesticSubaccount
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var editingSubaccount: DomesticSubaccount?
 
     init(subaccount: DomesticSubaccount, accountID: UUID) {
@@ -54,16 +53,13 @@ struct DomesticSubaccountReadOnlyView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    AdminEditAccessButton()
-                    if auth.isAdmin {
-                        Button {
-                            editingSubaccount = subaccount
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                        }
-                        .accessibilityLabel("编辑子账户")
-                        .help("编辑子账户")
+                    Button {
+                        editingSubaccount = subaccount
+                    } label: {
+                        Image(systemName: "square.and.pencil")
                     }
+                    .accessibilityLabel("编辑子账户")
+                    .help("编辑子账户")
                 }
             }
             .sheet(item: $editingSubaccount) { value in
@@ -149,7 +145,6 @@ struct DomesticSubaccountEditorView: View {
                     ? "新增子账户"
                     : "编辑子账户"
             )
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -230,7 +225,6 @@ struct ForeignSubaccountReadOnlyView: View {
     private let initialSubaccount: ForeignSubaccount
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var editingSubaccount: ForeignSubaccount?
 
     init(subaccount: ForeignSubaccount, accountID: UUID) {
@@ -259,16 +253,13 @@ struct ForeignSubaccountReadOnlyView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    AdminEditAccessButton()
-                    if auth.isAdmin {
-                        Button {
-                            editingSubaccount = subaccount
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                        }
-                        .accessibilityLabel("编辑子账户")
-                        .help("编辑子账户")
+                    Button {
+                        editingSubaccount = subaccount
+                    } label: {
+                        Image(systemName: "square.and.pencil")
                     }
+                    .accessibilityLabel("编辑子账户")
+                    .help("编辑子账户")
                 }
             }
             .sheet(item: $editingSubaccount) { value in
@@ -342,7 +333,6 @@ struct ForeignSubaccountEditorView: View {
                 }
             }
             .appNavigationTitle(draft.subaccount.accountNumber.isEmpty ? "新增子账户" : "编辑子账户")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

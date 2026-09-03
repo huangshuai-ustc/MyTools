@@ -34,6 +34,7 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             knownTags ?? self.knownTags,
             with: normalizedPlaces.flatMap(\.tags)
         )
+        DiagnosticLogger.shared.log(.data, "美食地图数据替换 count=\(normalizedPlaces.count)")
     }
 
     func scanRedundantData() -> [RedundantDataFinding] {
@@ -96,6 +97,7 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             stored.createdAt = stored.updatedAt
             places.append(stored)
         }
+        DiagnosticLogger.shared.log(.data, "美食地点保存 id=\(stored.id)")
         didMutate()
     }
 
@@ -105,6 +107,7 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             place.photos.forEach(attachmentStore.delete)
         }
         places.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "美食地点删除 count=\(ids.count)")
         didMutate()
     }
 
@@ -112,6 +115,7 @@ final class FoodMapStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         let attachment = try attachmentStore.importFile(from: url)
         guard attachment.contentType.conforms(to: .image) else {
             attachmentStore.delete(attachment)
+            DiagnosticLogger.shared.log(.attachment, "美食图片导入被拒绝（不支持的文件类型） name=\(url.lastPathComponent)", level: .warning)
             throw AttachmentStoreError.invalidFile
         }
         return attachment

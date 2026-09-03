@@ -51,6 +51,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
     var specialty = ""
     var tags: [String] = []
     var note = ""
+    var phone = ""
+    var businessHours = ""
     var createdAt = Date()
     var updatedAt = Date()
 
@@ -74,6 +76,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
         specialty: String = "",
         tags: [String] = [],
         note: String = "",
+        phone: String = "",
+        businessHours: String = "",
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -96,6 +100,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
         self.specialty = specialty
         self.tags = tags
         self.note = note
+        self.phone = phone
+        self.businessHours = businessHours
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -154,6 +160,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
         case specialty
         case tags
         case note
+        case phone
+        case businessHours
         case createdAt
         case updatedAt
     }
@@ -203,6 +211,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
         specialty = try container.decodeIfPresent(String.self, forKey: .specialty) ?? ""
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        phone = try container.decodeIfPresent(String.self, forKey: .phone) ?? ""
+        businessHours = try container.decodeIfPresent(String.self, forKey: .businessHours) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
@@ -228,6 +238,8 @@ struct FoodPlace: Identifiable, Codable, Equatable, Sendable {
         try container.encode(specialty, forKey: .specialty)
         try container.encode(tags, forKey: .tags)
         try container.encode(note, forKey: .note)
+        try container.encode(phone, forKey: .phone)
+        try container.encode(businessHours, forKey: .businessHours)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }

@@ -45,7 +45,7 @@ struct ToolBoxApp: App {
 #if MYTOOLS_FEATURE_STOCKS
         StockRefreshCoordinator.shared.attach(
             store: store.stockStore,
-            moduleSettings: moduleSettings
+            isModuleVisible: moduleSettings.isVisible(.myStocks)
         )
         // Pre-warm the A-share holiday calendar so that trading-day queries
         // during the current session reflect the official closure/补班 schedule.

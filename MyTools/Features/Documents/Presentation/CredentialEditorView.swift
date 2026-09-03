@@ -8,7 +8,6 @@ import UIKit
 
 struct CredentialEditorView: View {
     @EnvironmentObject private var store: DocumentsStore
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: AppNotificationService
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appFontScale) private var fontScale
@@ -17,7 +16,6 @@ struct CredentialEditorView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingCamera = false
-    @State private var showingAuthentication = false
     @State private var showingFieldNameEditor = false
     @State private var showingNewFieldNameEditor = false
     @State private var showingTemplateEditor = false
@@ -68,7 +66,6 @@ struct CredentialEditorView: View {
             }
             .appListSpacing()
             .appNavigationTitle(isExisting ? "编辑证照" : "新增证照")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -81,10 +78,6 @@ struct CredentialEditorView: View {
                     Button("保存", action: requestSave)
                         .disabled(!canSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication)
-                    .iOSAuthenticationSheet()
             }
             .sheet(item: $renamingAttachment) { attachment in
                 CredentialAttachmentRenameView(fileName: attachment.file.fileName) { name in
@@ -697,15 +690,6 @@ struct CredentialEditorView: View {
             errorMessage = "请选择适用于该证照类型的期限。"
             return
         }
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-        save()
-    }
-
-    private func saveAfterAuthentication() {
-        showingAuthentication = false
         save()
     }
 

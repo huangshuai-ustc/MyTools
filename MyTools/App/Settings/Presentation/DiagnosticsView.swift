@@ -76,7 +76,6 @@ struct DiagnosticsView: View {
             }
         }
         .appNavigationTitle("调试信息")
-        .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

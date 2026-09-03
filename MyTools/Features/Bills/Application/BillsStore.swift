@@ -31,6 +31,7 @@ final class BillsStore: ObservableObject {
             knownTags ?? self.knownTags,
             with: normalizedRecords.flatMap(\.tags)
         )
+        DiagnosticLogger.shared.log(.data, "账单数据替换 count=\(normalizedRecords.count)")
     }
 
     func upsert(_ record: BillRecord) {
@@ -38,20 +39,25 @@ final class BillsStore: ObservableObject {
         guard stored.amount > 0 else { return }
         knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
         stored.updatedAt = Date()
+        let isUpdate: Bool
         if let index = records.firstIndex(where: { $0.id == stored.id }) {
             stored.createdAt = records[index].createdAt
             records[index] = stored
+            isUpdate = true
         } else {
             stored.createdAt = stored.updatedAt
             records.append(stored)
+            isUpdate = false
         }
         records = Self.sorted(records)
+        DiagnosticLogger.shared.log(.data, "账单记录\(isUpdate ? "更新" : "新增") id=\(stored.id)")
         didMutate()
     }
 
     func delete(ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
         records.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "账单记录删除 count=\(ids.count)")
         didMutate()
     }
 
@@ -82,6 +88,7 @@ final class BillsStore: ObservableObject {
             return BillImportOutcome(insertedCount: 0, updatedCount: 0)
         }
         records = Self.sorted(records)
+        DiagnosticLogger.shared.log(.data, "账单导入完成 inserted=\(insertedCount) updated=\(updatedCount)")
         didMutate()
         return BillImportOutcome(insertedCount: insertedCount, updatedCount: updatedCount)
     }

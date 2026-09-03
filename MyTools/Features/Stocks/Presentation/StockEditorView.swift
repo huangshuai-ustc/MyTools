@@ -26,13 +26,11 @@ struct StockEditorView: View {
     }
 
     @EnvironmentObject private var store: StockStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var showingAuthentication = false
     @State private var searchResults: [StockSearchResult] = []
     @State private var isSearching = false
     @State private var didFinishSearch = false
@@ -145,7 +143,6 @@ struct StockEditorView: View {
                 }
             }
             .appNavigationTitle(isNew ? "添加股票" : "编辑股票")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -157,10 +154,6 @@ struct StockEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .task(id: searchKey) {
                 await searchStocks()
@@ -194,11 +187,6 @@ struct StockEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-
         var stock = draft.stock
         stock.symbol = StockHolding.normalizedSymbol(draft.symbolText, market: stock.market)
         stock.name = draft.nameText

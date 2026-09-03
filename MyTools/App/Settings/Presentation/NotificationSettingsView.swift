@@ -7,7 +7,6 @@ struct NotificationSettingsView: View {
 #if MYTOOLS_FEATURE_STOCKS
     @EnvironmentObject private var stockStore: StockStore
 #endif
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var notifications: AppNotificationService
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -71,25 +70,17 @@ struct NotificationSettingsView: View {
                         Text("暂无换汇价格提醒")
                             .foregroundStyle(.secondary)
                     }
-                    if auth.isEditSessionReady {
-                        ForEach(currencyStore.rateAlerts) { alert in
-                            currencyAlertRow(alert)
-                                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
-                                    currencyStore.deleteRateAlerts(ids: [alert.id])
-                                }
-                        }
-                    } else {
-                        ForEach(currencyStore.rateAlerts) { alert in
-                            currencyAlertRow(alert)
-                        }
+                    ForEach(currencyStore.rateAlerts) { alert in
+                        currencyAlertRow(alert)
+                            .appDeleteSwipeAction(isEnabled: true) {
+                                currencyStore.deleteRateAlerts(ids: [alert.id])
+                            }
                     }
 
-                    if auth.isEditSessionReady {
-                        Button {
-                            editingCurrencyAlert = CurrencyRateAlert()
-                        } label: {
-                            Label("添加换汇提醒", systemImage: "plus.circle")
-                        }
+                    Button {
+                        editingCurrencyAlert = CurrencyRateAlert()
+                    } label: {
+                        Label("添加换汇提醒", systemImage: "plus.circle")
                     }
                 }
             }
@@ -102,24 +93,18 @@ struct NotificationSettingsView: View {
                         Text("暂无股票价格提醒")
                             .foregroundStyle(.secondary)
                     }
-                    if auth.isEditSessionReady {
-                        ForEach(stockStore.priceAlerts) { alert in
-                            stockAlertRow(alert)
-                                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
-                                    stockStore.deletePriceAlerts(ids: [alert.id])
-                                }
-                        }
-                    } else {
-                        ForEach(stockStore.priceAlerts) { alert in
-                            stockAlertRow(alert)
-                        }
+                    ForEach(stockStore.priceAlerts) { alert in
+                        stockAlertRow(alert)
+                            .appDeleteSwipeAction(isEnabled: true) {
+                                stockStore.deletePriceAlerts(ids: [alert.id])
+                            }
                     }
 
                     if configuredStocks.isEmpty {
                         Text("请先添加股票后再设置价格提醒。")
                             .appFont(.footnote)
                             .foregroundStyle(.secondary)
-                    } else if auth.isEditSessionReady {
+                    } else {
                         Button {
                             editingStockAlert = StockPriceAlert(stockID: configuredStocks.first?.id)
                         } label: {
@@ -163,7 +148,6 @@ struct NotificationSettingsView: View {
     private func currencyAlertRow(_ alert: CurrencyRateAlert) -> some View {
         HStack(spacing: 10) {
             Button {
-                guard auth.isEditSessionReady else { return }
                 editingCurrencyAlert = alert
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
@@ -190,7 +174,6 @@ struct NotificationSettingsView: View {
                 )
             )
             .labelsHidden()
-            .disabled(!auth.isEditSessionReady)
         }
         .appListRowStyle()
     }
@@ -202,7 +185,6 @@ struct NotificationSettingsView: View {
         let currencyCode = stock?.market.currencyCode ?? ""
         return HStack(spacing: 10) {
             Button {
-                guard auth.isEditSessionReady else { return }
                 editingStockAlert = alert
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
@@ -229,7 +211,6 @@ struct NotificationSettingsView: View {
                 )
             )
             .labelsHidden()
-            .disabled(!auth.isEditSessionReady)
         }
         .appListRowStyle()
     }
@@ -292,7 +273,6 @@ private struct CurrencyRateAlertEditorView: View {
                 }
             }
             .appNavigationTitle("换汇价格提醒")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -406,7 +386,6 @@ private struct StockPriceAlertEditorView: View {
                 }
             }
             .appNavigationTitle("股票价格提醒")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

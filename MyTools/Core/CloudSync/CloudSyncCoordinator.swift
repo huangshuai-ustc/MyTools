@@ -132,6 +132,7 @@ final class CloudSyncCoordinator: ObservableObject {
 
     func localDataDidLoad() {
         hasLoadedLocalData = true
+        DiagnosticLogger.shared.log(.cloudSync, "本地数据已载入，云同步可启动")
         startIfPossible()
     }
 
@@ -144,6 +145,7 @@ final class CloudSyncCoordinator: ObservableObject {
         guard isSupported, enabled != isEnabled else { return }
         isEnabled = enabled
         defaults.set(enabled, forKey: DefaultsKey.enabled)
+        DiagnosticLogger.shared.log(.cloudSync, "云同步\(enabled ? "开启" : "关闭")")
 
         guard enabled else {
             status = .disabled
@@ -165,6 +167,7 @@ final class CloudSyncCoordinator: ObservableObject {
     func synchronizeNow() {
         guard activeOperationID == nil,
               let worker = prepareWorkerIfPossible() else { return }
+        DiagnosticLogger.shared.log(.cloudSync, "手动触发立即同步")
         reconciliationTask?.cancel()
         reconciliationTask = nil
         let operationID = UUID()
@@ -263,6 +266,23 @@ final class CloudSyncCoordinator: ObservableObject {
         if case .synced(let date) = status {
             lastSuccessfulSyncAt = date
             defaults.set(date, forKey: DefaultsKey.lastSuccessfulSyncAt)
+            DiagnosticLogger.shared.log(.cloudSync, "云同步完成")
+        }
+        switch status {
+        case .error(let message):
+            DiagnosticLogger.shared.log(.cloudSync, "云同步错误：\(message)", level: .error)
+        case .accountChanged:
+            DiagnosticLogger.shared.log(.cloudSync, "iCloud 账户已变化，同步自动关闭", level: .warning)
+        case .cloudDataRemoved:
+            DiagnosticLogger.shared.log(.cloudSync, "iCloud 数据已被移除，同步自动关闭", level: .warning)
+        case .noAccount:
+            DiagnosticLogger.shared.log(.cloudSync, "未登录 iCloud 账户", level: .warning)
+        case .restricted:
+            DiagnosticLogger.shared.log(.cloudSync, "iCloud 访问受限", level: .warning)
+        case .temporarilyUnavailable:
+            DiagnosticLogger.shared.log(.cloudSync, "iCloud 暂时不可用", level: .warning)
+        case .disabled, .checkingAccount, .syncing, .synced:
+            break
         }
         if status == .accountChanged || status == .cloudDataRemoved {
             isEnabled = false

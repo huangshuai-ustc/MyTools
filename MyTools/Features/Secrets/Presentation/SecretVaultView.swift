@@ -92,7 +92,6 @@ private final class SecretEditorDraft: ObservableObject {
 struct SecretVaultView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: SecretStore
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.appFontScale) private var fontScale
@@ -114,7 +113,7 @@ struct SecretVaultView: View {
     }
 
     private var canAccess: Bool {
-        auth.isAdmin || isUnlocked
+        isUnlocked
     }
 
     private var visibleItems: [SecretItem] {
@@ -168,7 +167,7 @@ struct SecretVaultView: View {
                         SecretItemRow(item: item)
                     }
                     .appListRowStyle()
-                    .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                    .appDeleteSwipeAction(isEnabled: true) {
                         store.deleteSecrets(ids: [item.id])
                     }
                     .onAppear { loadMoreIfNeeded(item) }
@@ -193,25 +192,22 @@ struct SecretVaultView: View {
                     }
                     .accessibilityLabel("验证身份后查看保密资料")
                 }
-                AdminEditAccessButton()
-                if canAccess, auth.isAdmin {
-                    Button {
-                        isCreating = true
-                        editingItem = SecretItem(fields: store.makeFields(for: .login))
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加保密条目")
-                    .contextMenu {
-                        Menu {
-                            Button {
-                                showingPasswordImportPage = true
-                            } label: {
-                                Label("Apple 密码 CSV", systemImage: "key.fill")
-                            }
+                Button {
+                    isCreating = true
+                    editingItem = SecretItem(fields: store.makeFields(for: .login))
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("添加保密条目")
+                .contextMenu {
+                    Menu {
+                        Button {
+                            showingPasswordImportPage = true
                         } label: {
-                            Label("从文件导入", systemImage: "square.and.arrow.down")
+                            Label("Apple 密码 CSV", systemImage: "key.fill")
                         }
+                    } label: {
+                        Label("从文件导入", systemImage: "square.and.arrow.down")
                     }
                 }
             }
@@ -242,13 +238,6 @@ struct SecretVaultView: View {
             Button("确定", role: .cancel) { showingImportResult = false }
         } message: {
             Text(importResult ?? "")
-        }
-        .onChange(of: auth.isAdmin) { _, isAdmin in
-            if isAdmin {
-                isUnlocked = true
-            } else {
-                isUnlocked = false
-            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
@@ -599,7 +588,6 @@ private struct SecretAttachmentRow: View {
 
 struct SecretDetailView: View {
     @EnvironmentObject private var store: SecretStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     let itemID: UUID
     @Binding var isUnlocked: Bool
@@ -611,7 +599,7 @@ struct SecretDetailView: View {
     @State private var attachmentError = ""
 
     private var canRevealSensitiveFields: Bool {
-        auth.isAdmin || isUnlocked
+        isUnlocked
     }
 
     private var item: SecretItem? {
@@ -690,15 +678,12 @@ struct SecretDetailView: View {
                             }
                             .accessibilityLabel("验证身份后查看保密内容")
                         }
-                        AdminEditAccessButton()
-                        if auth.isAdmin {
-                            Button {
-                                editingItem = item
-                            } label: {
-                                Image(systemName: "square.and.pencil")
-                            }
-                            .accessibilityLabel("编辑保密条目")
+                        Button {
+                            editingItem = item
+                        } label: {
+                            Image(systemName: "square.and.pencil")
                         }
+                        .accessibilityLabel("编辑保密条目")
                     }
                 }
             } else {
@@ -731,15 +716,6 @@ struct SecretDetailView: View {
 #endif
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { hiddenFieldIDs = [] }
-        }
-        .onChange(of: auth.isAdmin) { _, isAdmin in
-            if isAdmin {
-                isUnlocked = true
-                hiddenFieldIDs = []
-            } else {
-                isUnlocked = false
-                hiddenFieldIDs = []
-            }
         }
         .alert("无法打开附件", isPresented: $showingAttachmentError) {
             Button("确定", role: .cancel) {}
@@ -843,13 +819,11 @@ private struct SecretTextSelectionModifier: ViewModifier {
 
 struct SecretEditorView: View {
     @EnvironmentObject private var store: SecretStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appFontScale) private var fontScale
     @StateObject private var draft: SecretEditorDraft
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
-    @State private var showingAuthentication = false
     @State private var showingFieldNameEditor = false
     @State private var showingNewFieldNameEditor = false
     @State private var showingTemplateEditor = false
@@ -946,7 +920,6 @@ struct SecretEditorView: View {
                 }
             }
             .appNavigationTitle(isNew ? "新增保密资料" : "编辑保密资料")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -959,10 +932,6 @@ struct SecretEditorView: View {
                     Button("保存", action: requestSave)
                         .disabled(!canSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .alert("编辑字段名称", isPresented: $showingFieldNameEditor) {
                 TextField("字段名称", text: $fieldNameDraft)
@@ -1271,11 +1240,6 @@ struct SecretEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-
         didSave = true
         store.upsertSecret(draft.item)
         dismiss()

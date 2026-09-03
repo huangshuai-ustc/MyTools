@@ -3,26 +3,50 @@ import SwiftUI
 struct SensitiveAccessView: View {
     @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
-    @State private var password = ""
     @State private var error = ""
     @State private var didAttemptBiometrics = false
     @State private var isVerifying = false
     let onVerified: () -> Void
 
     var body: some View {
-        IdentityVerificationForm(
-            mode: .verify,
-            password: $password,
-            error: error,
-            isVerifying: isVerifying,
-            passwordAction: verifyPassword,
-            biometricAction: { Task { await verifyBiometrics() } },
-            onCancel: { dismiss() }
-        )
+        NavigationStack {
+            Form {
+                if !error.isEmpty {
+                    Section {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+                Section {
+                    Button {
+                        Task { await verifyBiometrics() }
+                    } label: {
+                        if isVerifying {
+                            HStack {
+                                ProgressView()
+                                Text("正在验证")
+                            }
+                        } else {
+                            Label("使用 Face ID / Touch ID 或设备密码验证", systemImage: "faceid")
+                        }
+                    }
+                    .disabled(isVerifying)
+                } footer: {
+                    Text("验证本人身份后查看敏感信息，不会改变任何会话状态。")
+                }
+            }
+            .appNavigationTitle("验证身份")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
         .task {
             guard !didAttemptBiometrics else { return }
             didAttemptBiometrics = true
-            // 等待验证页完成呈现，避免系统认证与 sheet 转场同时发生而偶发无响应。
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
             await verifyBiometrics()
@@ -37,17 +61,7 @@ struct SensitiveAccessView: View {
         if await auth.verifyWithBiometrics() {
             finish()
         } else {
-            error = "系统身份验证未通过，请输入管理员密码。"
-        }
-    }
-
-    private func verifyPassword() {
-        commitPendingTextInput {
-            if auth.verify(password: password) {
-                finish()
-            } else {
-                error = "密码错误"
-            }
+            error = "身份验证未通过，请重试。"
         }
     }
 

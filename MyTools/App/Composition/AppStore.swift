@@ -113,7 +113,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         )
         let exchangeRateStore = ExchangeRateStore(
             repository: dependencies.exchangeRateRepository,
-            moduleSettings: moduleSettings
+            initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks].filter { moduleSettings.isVisible($0) })
         )
         self.exchangeRateStore = exchangeRateStore
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -121,7 +121,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             records: initialVault?.currencyExchangeRecords ?? [],
             rateAlerts: initialVault?.currencyRateAlerts ?? [],
             alertNotifications: dependencies.alertNotifications,
-            moduleSettings: moduleSettings,
+            isModuleVisible: moduleSettings.isVisible(.currencyExchange),
             exchangeRateStore: exchangeRateStore
         )
 #endif
@@ -134,7 +134,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             alertNotifications: dependencies.alertNotifications,
             refreshInvalidator: dependencies.stockRefreshInvalidator,
             defaults: dependencies.defaults,
-            moduleSettings: moduleSettings,
+            isModuleVisible: moduleSettings.isVisible(.myStocks),
             exchangeRateStore: exchangeRateStore
         )
 #endif
@@ -144,7 +144,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             hospitalProfiles: initialVault?.hospitalProfiles ?? [],
             knownTags: initialVault?.medicalRecordTags ?? [],
             attachmentStore: attachmentStore,
-            moduleSettings: moduleSettings
+            isModuleVisible: moduleSettings.isVisible(.healthRecords)
         )
 #endif
 #if MYTOOLS_FEATURE_FINANCE
@@ -178,7 +178,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             knownTags: initialVault?.credentialTags ?? [],
             attachmentStore: attachmentStore,
             notificationScheduler: dependencies.localNotificationScheduler,
-            moduleSettings: moduleSettings
+            isModuleVisible: moduleSettings.isVisible(.documents)
         )
 #endif
 #if MYTOOLS_FEATURE_BILLS
@@ -340,6 +340,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     func moduleVisibilityChanged(_ module: ToolModule, isVisible: Bool) {
         guard module != .healthRecords || isInitialDataLoaded else { return }
         moduleLifecycleRegistry.notify(module: module, isEnabled: isVisible)
+#if MYTOOLS_FEATURE_STOCKS
+        if module == .myStocks {
+            StockRefreshCoordinator.shared.updateModuleVisibility(isVisible)
+        }
+#endif
     }
 
     func preferenceSettingsDidChange() {
@@ -491,6 +496,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         canPersistVault = true
         didLogPersistenceBlocked = false
         persistenceError = nil
+        DiagnosticLogger.shared.log(.backup, "备份导入完成 modules=\(restoredPayload.includedModules.map { $0.rawValue }.sorted().joined(separator: ","))")
 #if MYTOOLS_FEATURE_STOCKS
         if restoredPayload.includedModules.contains(.myStocks) {
             stockStore.clearNotificationState(
@@ -573,6 +579,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         )
         pendingModuleLocalDataDeletion = deletion
         let didChangeVault = clearLocalData(for: module)
+        DiagnosticLogger.shared.log(.data, "模块本地数据清除开始 module=\(module.rawValue)")
         if didChangeVault {
             persist()
         }
@@ -598,6 +605,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         restoreLocalData(from: snapshot)
         pendingModuleDeletionSnapshot = nil
         pendingModuleLocalDataDeletion = nil
+        DiagnosticLogger.shared.log(.data, "模块本地数据清除已撤销 module=\(deletion.module.rawValue)")
         persist()
         cloudSync.localDataDidChange()
         return true
@@ -614,6 +622,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         pendingModuleDeletionSnapshot = nil
         pendingModuleLocalDataDeletion = nil
         finalizeLocalDataDeletion(snapshot)
+        DiagnosticLogger.shared.log(.data, "模块本地数据清除已提交 module=\(snapshot.module.rawValue)")
         cloudSync.localDataDidChange()
         await moduleLocalDataCacheCleaner.clearLocalCache(for: deletion.module)
     }

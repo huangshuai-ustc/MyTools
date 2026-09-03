@@ -33,7 +33,6 @@ struct AppearanceSettingsView: View {
             }
         }
         .appNavigationTitle("外观与文字")
-        .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -89,7 +88,6 @@ struct StockAppearanceSettingsView: View {
             }
         }
         .appNavigationTitle(ToolModule.myStocks.title)
-        .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

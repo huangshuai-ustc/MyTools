@@ -6,7 +6,6 @@ import AppKit
 
 struct CredentialDetailView: View {
     @EnvironmentObject private var store: DocumentsStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.appFontScale) private var fontScale
     let documentID: UUID
@@ -21,7 +20,7 @@ struct CredentialDetailView: View {
         store.documents.first { $0.id == documentID }
     }
 
-    private var canReveal: Bool { auth.isAdmin || isUnlocked }
+    private var canReveal: Bool { isUnlocked }
 
     private var versionGroup: [CredentialDocument] {
         guard let document else { return [] }
@@ -161,7 +160,7 @@ struct CredentialDetailView: View {
                                     CredentialVersionRow(document: version)
                                 }
                                 .appListRowStyle()
-                                .appDeleteSwipeAction(isEnabled: auth.isAdmin && version.isVersion) {
+                                .appDeleteSwipeAction(isEnabled: version.isVersion) {
                                     store.delete(ids: [version.id])
                                 }
                             }
@@ -179,21 +178,18 @@ struct CredentialDetailView: View {
                             }
                             .accessibilityLabel("验证身份后查看证照信息")
                         }
-                        AdminEditAccessButton()
-                        if auth.isAdmin {
-                            Button {
-                                editingDocument = CredentialDocument(versionOf: document)
-                            } label: {
-                                Image(systemName: "doc.badge.plus")
-                            }
-                            .accessibilityLabel("添加证照新版本")
-                            Button {
-                                editingDocument = document
-                            } label: {
-                                Image(systemName: "square.and.pencil")
-                            }
-                            .accessibilityLabel("编辑证照")
+                        Button {
+                            editingDocument = CredentialDocument(versionOf: document)
+                        } label: {
+                            Image(systemName: "doc.badge.plus")
                         }
+                        .accessibilityLabel("添加证照新版本")
+                        Button {
+                            editingDocument = document
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .accessibilityLabel("编辑证照")
                     }
                 }
             } else {
@@ -221,10 +217,6 @@ struct CredentialDetailView: View {
             )
         }
 #endif
-        .onChange(of: auth.isAdmin) { _, isAdmin in
-            isUnlocked = isAdmin
-            if isAdmin { hiddenFieldIDs = [] }
-        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 isUnlocked = false

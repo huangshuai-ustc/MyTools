@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CloudSyncSettingsView: View {
     @EnvironmentObject private var cloudSync: CloudSyncCoordinator
-    @EnvironmentObject private var auth: AuthManager
 
     var body: some View {
         List {
@@ -48,7 +47,6 @@ struct CloudSyncSettingsView: View {
             }
         }
         .appNavigationTitle("iCloud 同步")
-        .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

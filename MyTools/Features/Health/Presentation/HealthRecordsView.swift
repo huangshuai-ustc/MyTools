@@ -4,7 +4,6 @@ import SwiftUI
 struct HealthRecordsView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: HealthStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var selectedTag = ""
     @State private var selectedYear: Int?
@@ -111,13 +110,10 @@ struct HealthRecordsView: View {
         .onChange(of: selectedYear) { _, _ in pagination.reset() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button { editingRecord = MedicalRecord() } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("新增健康记录")
+                Button { editingRecord = MedicalRecord() } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("新增健康记录")
             }
         }
 #if os(iOS)
@@ -232,7 +228,7 @@ struct HealthRecordsView: View {
             )
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+        .appDeleteSwipeAction(isEnabled: true) {
             store.deleteMedicalRecords(ids: [record.id])
         }
     }

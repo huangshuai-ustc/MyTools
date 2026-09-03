@@ -18,6 +18,9 @@ enum DiagnosticLogCategory: String, Sendable {
     case exchangeRate = "外汇牌价"
     case textInput = "文字输入"
     case navigation = "页面"
+    case data = "数据"
+    case cloudSync = "云同步"
+    case notification = "通知"
 }
 
 struct DiagnosticLogOverview: Sendable {

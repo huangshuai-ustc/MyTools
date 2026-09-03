@@ -21,7 +21,7 @@ final class StockRefreshCoordinator {
 #endif
 
     private weak var store: StockStore?
-    private weak var moduleSettings: ToolModuleSettings?
+    private var isStockModuleVisible: Bool = true
     private var foregroundTask: Task<Void, Never>?
     private var lastClosingRefreshSessionEndByMarket: [StockMarket: Date] = [:]
     private var lastClosingChartRefreshSessionEndByMarket: [StockMarket: Date] = [:]
@@ -36,12 +36,15 @@ final class StockRefreshCoordinator {
         self.chartService = chartService
     }
 
-    func attach(store: StockStore, moduleSettings: ToolModuleSettings? = nil) {
+    func attach(store: StockStore, isModuleVisible: Bool = true) {
         self.store = store
-        if let moduleSettings {
-            self.moduleSettings = moduleSettings
-        }
+        self.isStockModuleVisible = isModuleVisible
         reconcileForegroundPolling()
+    }
+
+    func updateModuleVisibility(_ isVisible: Bool) {
+        isStockModuleVisible = isVisible
+        setStocksPageVisible(isStocksPageVisible && isVisible)
     }
 
     func update(scenePhase: ScenePhase) {
@@ -78,10 +81,6 @@ final class StockRefreshCoordinator {
 #endif
         }
         reconcileForegroundPolling()
-    }
-
-    private var isStockModuleVisible: Bool {
-        moduleSettings?.isVisible(.myStocks) ?? true
     }
 
     private var shouldPollInForeground: Bool {

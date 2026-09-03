@@ -42,7 +42,6 @@ struct OCRTestView: View {
             }
         }
         .appNavigationTitle("文字识别测试")
-        .adminModeIndicator()
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .listStyle(.insetGrouped)

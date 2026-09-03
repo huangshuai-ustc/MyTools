@@ -7,7 +7,6 @@ import AppKit
 struct CardDetailView: View {
     private let initialCard: BankCard
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var sensitiveInformationRevealed = false
     @State private var showingSensitiveAccess = false
@@ -29,7 +28,7 @@ struct CardDetailView: View {
     }
 
     private var canShowSensitiveInformation: Bool {
-        auth.isAdmin || sensitiveInformationRevealed
+        sensitiveInformationRevealed
     }
 
     var body: some View {
@@ -69,7 +68,7 @@ struct CardDetailView: View {
                     }
                 }
 
-                if !auth.isAdmin, hasSensitiveInformation {
+                if hasSensitiveInformation {
                     Section {
                         Button {
                             if sensitiveInformationRevealed {
@@ -112,16 +111,13 @@ struct CardDetailView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    AdminEditAccessButton()
-                    if auth.isAdmin {
-                        Button {
-                            editingCard = card
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                        }
-                        .accessibilityLabel("编辑银行卡")
-                        .help("编辑银行卡")
+                    Button {
+                        editingCard = card
+                    } label: {
+                        Image(systemName: "square.and.pencil")
                     }
+                    .accessibilityLabel("编辑银行卡")
+                    .help("编辑银行卡")
                 }
             }
             .sheet(item: $editingCard) { cardToEdit in
@@ -151,9 +147,6 @@ struct CardDetailView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { sensitiveInformationRevealed = false }
             }
-            .onChange(of: auth.isAdmin) { _, _ in
-                sensitiveInformationRevealed = false
-            }
             .alert("无法打开账单", isPresented: $showingAttachmentError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -182,7 +175,7 @@ struct CardDetailView: View {
                 alignment: .leading,
                 spacing: 12
             ) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("卡片类型")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
@@ -204,7 +197,7 @@ struct CardDetailView: View {
 
     private var openingBranchFact: some View {
         let branch = resolvedOpeningBranch
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 4) {
             Text("开卡网点")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
@@ -359,7 +352,7 @@ struct CardDetailView: View {
         copyValue: String?,
         monospaced: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)

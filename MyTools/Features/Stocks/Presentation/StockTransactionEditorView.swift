@@ -21,13 +21,11 @@ struct StockTransactionEditorView: View {
     }
 
     @EnvironmentObject private var store: StockStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockTransactionEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var showingAuthentication = false
     let stock: StockHolding
 
     init(transaction: StockTransaction, stock: StockHolding) {
@@ -57,7 +55,6 @@ struct StockTransactionEditorView: View {
                 }
             }
             .appNavigationTitle(draft.transaction.type == .buy ? "买入记录" : "卖出记录")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -69,10 +66,6 @@ struct StockTransactionEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -99,10 +92,6 @@ struct StockTransactionEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         guard let quantity = DecimalTextParser.decimal(from: draft.quantityText), quantity > 0,
               let unitPrice = DecimalTextParser.decimal(from: draft.unitPriceText), unitPrice > 0 else {
             reportError("交易股数和每股价格必须大于零。")

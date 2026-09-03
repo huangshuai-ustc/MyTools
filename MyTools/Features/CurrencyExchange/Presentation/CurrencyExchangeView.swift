@@ -5,7 +5,6 @@ struct CurrencyExchangeView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: CurrencyExchangeStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var editingRecord: CurrencyExchangeRecord?
     @State private var recordFilter: CurrencyExchangeRecordFilter = .all
     @State private var selectedYear: Int?
@@ -132,20 +131,9 @@ struct CurrencyExchangeView: View {
 
             ForEach(recordGroups) { group in
                 Section(group.title) {
-                    if auth.isAdmin {
-                        ForEach(group.records) { record in
-                            recordButton(record)
-                                .onAppear { loadMoreIfNeeded(record) }
-                        }
-                    } else {
-                        ForEach(group.records) { record in
-                            CurrencyExchangeRecordRow(
-                                record: record,
-                                buyingRates: exchangeRateStore.renminbiBuyingRates
-                            )
-                            .appListRowStyle()
+                    ForEach(group.records) { record in
+                        recordButton(record)
                             .onAppear { loadMoreIfNeeded(record) }
-                        }
                     }
                 }
             }
@@ -187,14 +175,10 @@ struct CurrencyExchangeView: View {
                 .accessibilityLabel("刷新中国银行结售汇牌价")
                 .help("刷新中国银行结售汇牌价")
 
-                AdminEditAccessButton()
-
-                if auth.isAdmin {
-                    Button { editingRecord = CurrencyExchangeRecord() } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加换汇记录")
+                Button { editingRecord = CurrencyExchangeRecord() } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("添加换汇记录")
             }
         }
         .sheet(item: $editingRecord) { record in
@@ -345,7 +329,7 @@ struct CurrencyExchangeView: View {
         }
         .buttonStyle(.plain)
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+        .appDeleteSwipeAction(isEnabled: true) {
             store.deleteRecords(ids: [record.id])
         }
     }

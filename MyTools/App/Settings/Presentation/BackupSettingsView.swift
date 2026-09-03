@@ -21,57 +21,6 @@ enum BackupPasswordMode: Int, Identifiable {
     }
 }
 
-struct AdminPasswordChangeView: View {
-    @EnvironmentObject private var auth: AuthManager
-    @Environment(\.dismiss) private var dismiss
-    @State private var password = ""
-    @State private var confirmation = ""
-    @State private var error = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    SecureField("至少 8 位", text: $password)
-                    SecureField("再次输入", text: $confirmation)
-                } header: {
-                    Text("新管理员密码")
-                } footer: {
-                    Text("修改后原管理员密码立即失效，导出和导入备份的默认密码也会同步更新。")
-                }
-
-                if !error.isEmpty {
-                    Section {
-                        Text(error).foregroundStyle(.red)
-                    }
-                }
-            }
-            .appNavigationTitle("修改管理员密码")
-            .adminModeIndicator()
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: save)
-                }
-            }
-        }
-    }
-
-    private func save() {
-        commitPendingTextInput {
-            guard auth.changePassword(password, confirmation: confirmation) else {
-                error = "密码至少 8 位且两次输入需一致"
-                return
-            }
-            dismiss()
-        }
-    }
-}
 
 struct BackupPasswordView: View {
     @Environment(\.dismiss) private var dismiss
@@ -132,7 +81,6 @@ struct BackupPasswordView: View {
                 }
             }
             .appNavigationTitle(mode.title)
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif

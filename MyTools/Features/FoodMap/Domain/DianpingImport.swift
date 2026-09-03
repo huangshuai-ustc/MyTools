@@ -11,6 +11,11 @@ struct DianpingImportCandidate: Identifiable, Equatable, Sendable {
     var category: String
     var address: String
     var city: String
+    var phone: String
+    var businessHours: String
+    var tags: [String]
+    var latitude: Double?
+    var longitude: Double?
     var sourceURL: String
     var shopURL: String
     var imageURL: String
@@ -24,6 +29,11 @@ struct DianpingImportCandidate: Identifiable, Equatable, Sendable {
         category: String = "",
         address: String = "",
         city: String = "",
+        phone: String = "",
+        businessHours: String = "",
+        tags: [String] = [],
+        latitude: Double? = nil,
+        longitude: Double? = nil,
         sourceURL: String = "",
         shopURL: String = "",
         imageURL: String = ""
@@ -36,6 +46,11 @@ struct DianpingImportCandidate: Identifiable, Equatable, Sendable {
         self.category = category
         self.address = address
         self.city = city
+        self.phone = phone
+        self.businessHours = businessHours
+        self.tags = tags
+        self.latitude = latitude
+        self.longitude = longitude
         self.sourceURL = sourceURL
         self.shopURL = shopURL
         self.imageURL = imageURL
@@ -91,6 +106,11 @@ struct DianpingWebPageItem: Codable, Equatable, Sendable {
     var text: String
     var imageURL: String
     var shopURL: String = ""
+    var address: String = ""
+    var phone: String = ""
+    var businessHours: String = ""
+    var latitude: Double? = nil
+    var longitude: Double? = nil
 }
 
 enum DianpingImportParser {
@@ -145,9 +165,14 @@ enum DianpingImportParser {
             let price = firstCapture(in: item.text, pattern: "[¥￥]\\s*([0-9]+)\\s*/?人")
                 .flatMap(Int.init)
             let metadata = lines.dropFirst().filter { !isStatisticOrFacilityLine($0) }
+            let facilityTags = lines.filter { isFacilityTag($0) }
             let category = metadata.first ?? ""
             let area = metadata.indices.contains(1) ? metadata[1] : ""
             let city = metadata.indices.contains(2) ? metadata[2] : ""
+
+            // Prefer explicitly extracted address from DOM; fall back to text inference
+            let address = item.address.isEmpty ? area : item.address
+
             return DianpingImportCandidate(
                 name: name,
                 rating: rating,
@@ -155,8 +180,13 @@ enum DianpingImportParser {
                 pricePerPerson: price,
                 businessArea: area,
                 category: category,
-                address: area,
+                address: address,
                 city: city,
+                phone: item.phone,
+                businessHours: item.businessHours,
+                tags: facilityTags,
+                latitude: item.latitude,
+                longitude: item.longitude,
                 sourceURL: canonicalURL(sourceURL),
                 shopURL: item.shopURL.isEmpty ? "" : canonicalURL(item.shopURL),
                 imageURL: item.imageURL
@@ -169,6 +199,10 @@ enum DianpingImportParser {
         "有包厢", "无包厢", "有大桌", "付费停车", "免费停车", "有宝宝椅",
         "有无障碍设施", "免费Wi-Fi", "可预订"
     ]
+
+    private static func isFacilityTag(_ line: String) -> Bool {
+        facilityTerms.contains(line)
+    }
 
     private static func isStatisticOrFacilityLine(_ line: String) -> Bool {
         if facilityTerms.contains(line) { return true }
@@ -317,11 +351,23 @@ enum FoodPlaceSourceRefreshMerge {
             result.averagePriceCurrency = .cny
         }
         if !candidate.category.isEmpty { result.specialty = candidate.category }
+        if !candidate.phone.isEmpty { result.phone = candidate.phone }
+        if !candidate.businessHours.isEmpty { result.businessHours = candidate.businessHours }
+        if !candidate.tags.isEmpty {
+            let existing = Set(result.tags)
+            let newTags = candidate.tags.filter { !existing.contains($0) }
+            result.tags = result.tags + newTags
+        }
 
         // Collection pages expose a business area rather than a full street address. Never
         // replace a richer address or a user-selected map coordinate with that shorter value.
         if result.address.isEmpty, !candidate.address.isEmpty {
             result.address = candidate.address
+        }
+        if result.coordinate == nil,
+           let lat = candidate.latitude, let lng = candidate.longitude {
+            let coord = FoodCoordinate(latitude: lat, longitude: lng)
+            if coord.isValid { result.coordinate = coord }
         }
         if result.administrativeLocation == nil {
             result.administrativeLocation = ChinaAdministrativeDivisions.infer(

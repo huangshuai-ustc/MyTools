@@ -155,7 +155,6 @@ struct CardEditorView: View {
                 }
             }
             .appNavigationTitle(navigationTitle)
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -538,7 +537,6 @@ private struct CreditCardStatementEditorView: View {
                 }
             }
             .appNavigationTitle(statement.attachment == nil ? "添加信用卡账单" : "编辑信用卡账单")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

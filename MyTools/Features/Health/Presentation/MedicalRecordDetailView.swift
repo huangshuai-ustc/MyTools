@@ -6,7 +6,6 @@ import AppKit
 
 struct MedicalRecordDetailView: View {
     @EnvironmentObject private var store: HealthStore
-    @EnvironmentObject private var auth: AuthManager
     let recordID: UUID
     @State private var editingRecord: MedicalRecord?
     @State private var viewingExpenseItem: MedicalExpenseItem?
@@ -98,8 +97,7 @@ struct MedicalRecordDetailView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin, let record {
+                if let record {
                     if record.isPhysicalExam, !record.hasAssociatedRecord {
                         Button { editingRecord = MedicalRecord(followUpTo: record) } label: {
                             Image(systemName: "calendar.badge.plus")
@@ -183,129 +181,83 @@ struct MedicalRecordDetailView: View {
             }
 
             Section(informationSectionTitle) {
-                DetailValueRow(
-                    title: dayRecordDateTitle,
-                    value: AppDateFormatter.string(from: record.date)
+                MedicalInfoOverview(
+                    record: record,
+                    dateTitle: dayRecordDateTitle,
+                    inpatientDayCount: record.isInpatientEpisode ? inpatientDayCount(for: record) : nil
                 )
-                if record.isInpatientEpisode {
-                    DetailValueRow(
-                        title: "出院日期",
-                        value: AppDateFormatter.string(from: record.inpatientEndDate ?? record.date)
-                    )
-                    DetailValueRow(
-                        title: "住院天数",
-                        value: "\(inpatientDayCount(for: record)) 天"
-                    )
-                }
-                DetailValueRow(title: record.institutionLabel, value: record.hospital)
-                if !record.hospitalClassificationTitles.isEmpty {
-                    DetailValueRow(
-                        title: "机构分类",
-                        value: record.hospitalClassificationTitles.joined(separator: " · ")
-                    )
-                }
-                DetailValueRow(title: "类型", value: record.visitType.title)
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 if record.isPharmacyPurchase {
                     if !record.chiefComplaint.isEmpty {
-                        DetailValueRow(title: "用药原因", value: record.chiefComplaint)
+                        DetailValueRow(title: "用药原因", value: record.chiefComplaint, alignment: .leading)
                     }
                 } else if record.isPhysicalExam {
-                    DetailValueRow(
-                        title: "主要内容",
-                        value: record.physicalExamDetails?.packageName ?? "",
-                        alignment: detailTextAlignment(
-                            for: record.physicalExamDetails?.packageName ?? ""
-                        )
-                    )
-                    MarkdownValueRow(
-                        title: "查出的问题",
-                        markdown: record.diagnosis,
-                        alignment: detailTextAlignment(for: record.diagnosis)
-                    )
-                } else if record.isInpatient {
-                    DetailValueRow(title: "科室", value: record.department)
-                    if !record.doctor.isEmpty { DetailValueRow(title: "医生", value: record.doctor) }
-                    if record.isInpatientDailyRecord {
-                        DetailValueRow(
-                            title: "当天情况",
-                            value: record.chiefComplaint,
-                            alignment: .leading
-                        )
-                        DetailValueRow(
-                            title: "当天诊疗结果",
-                            value: record.diagnosis,
-                            alignment: .leading
-                        )
-                        DetailValueRow(
-                            title: "当天用药与操作",
-                            value: record.treatment,
-                            alignment: .leading
-                        )
-                    } else {
-                        DetailValueRow(
-                            title: "入院原因",
-                            value: record.chiefComplaint,
-                            alignment: .leading
-                        )
-                        DetailValueRow(
-                            title: "主要诊断",
-                            value: record.diagnosis,
-                            alignment: .leading
-                        )
-                        DetailValueRow(
-                            title: "治疗方案",
-                            value: record.treatment,
-                            alignment: .leading
+                    if !record.diagnosis.isEmpty {
+                        MarkdownValueRow(
+                            title: "查出的问题",
+                            markdown: record.diagnosis,
+                            alignment: detailTextAlignment(for: record.diagnosis)
                         )
                     }
+                } else if record.isInpatientDailyRecord {
+                    if !record.chiefComplaint.isEmpty {
+                        DetailValueRow(title: "当天情况", value: record.chiefComplaint, alignment: .leading)
+                    }
+                    if !record.diagnosis.isEmpty {
+                        DetailValueRow(title: "当天诊疗结果", value: record.diagnosis, alignment: .leading)
+                    }
+                    if !record.treatment.isEmpty {
+                        DetailValueRow(title: "当天用药与操作", value: record.treatment, alignment: .leading)
+                    }
+                } else if record.isInpatientEpisode {
+                    if !record.chiefComplaint.isEmpty {
+                        DetailValueRow(title: "入院原因", value: record.chiefComplaint, alignment: .leading)
+                    }
+                    if !record.diagnosis.isEmpty {
+                        DetailValueRow(title: "主要诊断", value: record.diagnosis, alignment: .leading)
+                    }
+                    if !record.treatment.isEmpty {
+                        DetailValueRow(title: "治疗方案", value: record.treatment, alignment: .leading)
+                    }
                 } else {
-                    DetailValueRow(title: "科室", value: record.department)
-                    if !record.doctor.isEmpty { DetailValueRow(title: "医生", value: record.doctor) }
-                    DetailValueRow(
-                        title: "主诉",
-                        value: record.chiefComplaint,
-                        alignment: .leading
-                    )
-                    DetailValueRow(
-                        title: "初步诊断",
-                        value: record.diagnosis,
-                        alignment: .leading
-                    )
-                    DetailValueRow(
-                        title: "治疗建议",
-                        value: record.treatment,
-                        alignment: .leading
-                    )
+                    if !record.chiefComplaint.isEmpty {
+                        DetailValueRow(title: "主诉", value: record.chiefComplaint, alignment: .leading)
+                    }
+                    if !record.diagnosis.isEmpty {
+                        DetailValueRow(title: "初步诊断", value: record.diagnosis, alignment: .leading)
+                    }
+                    if !record.treatment.isEmpty {
+                        DetailValueRow(title: "治疗建议", value: record.treatment, alignment: .leading)
+                    }
                 }
             }
 
             if !record.hasAssociatedRecord, !record.isPharmacyPurchase {
                 if record.isPhysicalExam {
-                    Section("检查批次") {
-                        if followUps.isEmpty {
-                            Text("暂无其他检查批次").foregroundStyle(.secondary)
-                        }
-                        ForEach(followUps) { followUp in
-                            NavigationLink {
-                                MedicalRecordDetailView(recordID: followUp.id)
-                            } label: {
-                                MedicalPhysicalExamFollowUpRow(record: followUp)
-                            }
-                            .appListRowStyle()
-                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
-                                store.deleteMedicalRecords(ids: [followUp.id])
+                    if !followUps.isEmpty {
+                        Section("检查批次") {
+                            ForEach(followUps) { followUp in
+                                NavigationLink {
+                                    MedicalRecordDetailView(recordID: followUp.id)
+                                } label: {
+                                    MedicalPhysicalExamFollowUpRow(record: followUp)
+                                }
+                                .appListRowStyle()
+                                .appDeleteSwipeAction(isEnabled: true) {
+                                    store.deleteMedicalRecords(ids: [followUp.id])
+                                }
                             }
                         }
                     }
                 } else if record.isInpatient {
                     Section("住院日记录") {
-                        if followUps.isEmpty {
-                            Text("暂无住院日记录").foregroundStyle(.secondary)
-                        }
                         if !outOfRangeInpatientDailyRecords.isEmpty {
                             Text("区间外但已有内容的住院日记录已保留，请确认住院日期范围。")
                                 .appFont(.footnote)
                                 .foregroundStyle(.orange)
+                        }
+                        if followUps.isEmpty {
+                            Text("暂无住院日记录").foregroundStyle(.secondary)
                         }
                         ForEach(followUps) { followUp in
                             NavigationLink {
@@ -314,42 +266,40 @@ struct MedicalRecordDetailView: View {
                                 MedicalInpatientDayRow(record: followUp, parent: record)
                             }
                             .appListRowStyle()
-                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                            .appDeleteSwipeAction(isEnabled: true) {
                                 store.deleteMedicalRecords(ids: [followUp.id])
                             }
                         }
                     }
                 } else {
-                    Section("复诊记录") {
-                        if followUps.isEmpty {
-                            Text("暂无复诊记录").foregroundStyle(.secondary)
-                        }
-                        ForEach(followUps) { followUp in
-                            NavigationLink {
-                                MedicalRecordDetailView(recordID: followUp.id)
-                            } label: {
-                                MedicalFollowUpRow(record: followUp)
-                            }
-                            .appListRowStyle()
-                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
-                                store.deleteMedicalRecords(ids: [followUp.id])
+                    if !followUps.isEmpty {
+                        Section("复诊记录") {
+                            ForEach(followUps) { followUp in
+                                NavigationLink {
+                                    MedicalRecordDetailView(recordID: followUp.id)
+                                } label: {
+                                    MedicalFollowUpRow(record: followUp)
+                                }
+                                .appListRowStyle()
+                                .appDeleteSwipeAction(isEnabled: true) {
+                                    store.deleteMedicalRecords(ids: [followUp.id])
+                                }
                             }
                         }
                     }
 
-                    Section("关联药房购药") {
-                        if pharmacyPurchases.isEmpty {
-                            Text("暂无关联购药记录").foregroundStyle(.secondary)
-                        }
-                        ForEach(pharmacyPurchases) { purchase in
-                            NavigationLink {
-                                MedicalRecordDetailView(recordID: purchase.id)
-                            } label: {
-                                MedicalLinkedPharmacyPurchaseRow(record: purchase)
-                            }
-                            .appListRowStyle()
-                            .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
-                                store.deleteMedicalRecords(ids: [purchase.id])
+                    if !pharmacyPurchases.isEmpty {
+                        Section("关联药房购药") {
+                            ForEach(pharmacyPurchases) { purchase in
+                                NavigationLink {
+                                    MedicalRecordDetailView(recordID: purchase.id)
+                                } label: {
+                                    MedicalLinkedPharmacyPurchaseRow(record: purchase)
+                                }
+                                .appListRowStyle()
+                                .appDeleteSwipeAction(isEnabled: true) {
+                                    store.deleteMedicalRecords(ids: [purchase.id])
+                                }
                             }
                         }
                     }
@@ -357,94 +307,71 @@ struct MedicalRecordDetailView: View {
             }
 
             Section("费用") {
-                if !record.hasAssociatedRecord, (!followUps.isEmpty || !pharmacyPurchases.isEmpty) {
-                    DetailValueRow(title: "本次费用", value: MedicalValueFormatter.money(record.totalCost))
-                    if !followUps.isEmpty {
-                        DetailValueRow(
-                            title: record.isPhysicalExam
-                                ? "其他检查批次费用"
-                                : (record.isInpatient ? "住院日费用" : "复诊费用"),
-                            value: MedicalValueFormatter.money(followUpCostSummary.totalCost)
-                        )
-                    }
-                    if !pharmacyPurchases.isEmpty {
-                        DetailValueRow(
-                            title: "关联购药费用",
-                            value: MedicalValueFormatter.money(pharmacyPurchaseCostSummary.totalCost)
-                        )
-                    }
-                }
-                DetailValueRow(
-                    title: "总费用",
-                    value: MedicalValueFormatter.money(episodeCostSummary.totalCost)
+                MedicalCostOverview(
+                    record: record,
+                    episodeCostSummary: episodeCostSummary,
+                    followUpCostSummary: followUpCostSummary,
+                    pharmacyPurchaseCostSummary: pharmacyPurchaseCostSummary,
+                    hasFollowUps: !followUps.isEmpty,
+                    hasPharmacyPurchases: !pharmacyPurchases.isEmpty
                 )
-                DetailValueRow(
-                    title: "医保支付",
-                    value: MedicalValueFormatter.money(episodeCostSummary.insuranceCost)
-                )
-                DetailValueRow(
-                    title: "自费",
-                    value: MedicalValueFormatter.money(episodeCostSummary.selfPayCost)
-                )
-                DetailValueRow(
-                    title: followUps.isEmpty && pharmacyPurchases.isEmpty ? "支付方式" : "本次支付方式",
-                    value: record.paymentMethod.title
-                )
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
-            Section(
-                record.isPharmacyPurchase
-                    ? "药品"
-                    : (record.isPhysicalExam
-                        ? "体检费用"
-                        : (record.isInpatient ? "住院期间项目" : "费用项目"))
-            ) {
-                if record.expenseItems.isEmpty {
-                    Text(record.isInpatient ? "未记录住院期间项目" : "未记录费用项目")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(record.expenseItems) { item in
-                    Button {
-                        viewingExpenseItem = item
-                    } label: {
-                        MedicalExpenseItemRow(item: item)
+            if !record.expenseItems.isEmpty || record.hasAssociatedRecord == false {
+                Section(
+                    record.isPharmacyPurchase
+                        ? "药品"
+                        : (record.isPhysicalExam
+                            ? "体检费用"
+                            : (record.isInpatient ? "住院期间项目" : "费用项目"))
+                ) {
+                    if record.expenseItems.isEmpty {
+                        Text(record.isInpatient ? "未记录住院期间项目" : "未记录费用项目")
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .appListRowStyle()
-                }
-                if !record.expenseItems.isEmpty {
-                    DetailValueRow(
-                        title: "项目合计",
-                        value: MedicalValueFormatter.money(record.expenseItemsTotal)
-                    )
-                }
-            }
-
-            Section("附件") {
-                if record.attachments.isEmpty {
-                    Text("未添加附件").foregroundStyle(.secondary)
-                }
-                ForEach(record.attachments) { attachment in
-                    Button { open(attachment) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: attachment.kind.systemImage)
-                                .foregroundStyle(.pink)
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(attachment.fileName).lineLimit(2)
-                                Text("\(attachment.kind.title) · \(attachment.displaySize)")
-                                    .appFont(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .appFont(.caption)
-                                .foregroundStyle(.tertiary)
+                    ForEach(record.expenseItems) { item in
+                        Button {
+                            viewingExpenseItem = item
+                        } label: {
+                            MedicalExpenseItemRow(item: item)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .appListRowStyle()
                     }
-                    .buttonStyle(.plain)
+                    if !record.expenseItems.isEmpty {
+                        DetailValueRow(
+                            title: "项目合计",
+                            value: MedicalValueFormatter.money(record.expenseItemsTotal)
+                        )
+                    }
+                }
+            }
+
+            if !record.attachments.isEmpty {
+                Section("附件") {
+                    ForEach(record.attachments) { attachment in
+                        Button { open(attachment) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: attachment.kind.systemImage)
+                                    .foregroundStyle(.pink)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(attachment.fileName).lineLimit(2)
+                                    Text("\(attachment.kind.title) · \(attachment.displaySize)")
+                                        .appFont(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .appFont(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
 
@@ -661,6 +588,138 @@ private struct MedicalLinkedPharmacyPurchaseRow: View {
         }
     }
 }
+
+private struct MedicalInfoOverview: View {
+    let record: MedicalRecord
+    let dateTitle: String
+    let inpatientDayCount: Int?
+
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            MedicalCostCell(
+                title: dateTitle,
+                value: AppDateFormatter.string(from: record.date)
+            )
+            if record.isInpatientEpisode {
+                MedicalCostCell(
+                    title: "出院日期",
+                    value: AppDateFormatter.string(from: record.inpatientEndDate ?? record.date)
+                )
+                MedicalCostCell(
+                    title: "住院天数",
+                    value: inpatientDayCount.map { "\($0) 天" } ?? ""
+                )
+            }
+            MedicalCostCell(title: record.institutionLabel, value: record.hospital)
+            if !record.hospitalClassificationTitles.isEmpty {
+                MedicalCostCell(
+                    title: "机构分类",
+                    value: record.hospitalClassificationTitles.joined(separator: " · ")
+                )
+            }
+            MedicalCostCell(title: "类型", value: record.visitType.title)
+            if record.isInpatient {
+                if !record.department.isEmpty {
+                    MedicalCostCell(title: "科室", value: record.department)
+                }
+                if !record.doctor.isEmpty {
+                    MedicalCostCell(title: "医生", value: record.doctor)
+                }
+            } else if !record.isPhysicalExam, !record.isPharmacyPurchase {
+                if !record.department.isEmpty {
+                    MedicalCostCell(title: "科室", value: record.department)
+                }
+                if !record.doctor.isEmpty {
+                    MedicalCostCell(title: "医生", value: record.doctor)
+                }
+            }
+            if record.isPhysicalExam,
+               let packageName = record.physicalExamDetails?.packageName,
+               !packageName.isEmpty {
+                MedicalCostCell(title: "主要内容", value: packageName)
+            }
+        }
+    }
+}
+
+private struct MedicalCostOverview: View {
+    let record: MedicalRecord
+    let episodeCostSummary: MedicalCostSummary
+    let followUpCostSummary: MedicalCostSummary
+    let pharmacyPurchaseCostSummary: MedicalCostSummary
+    let hasFollowUps: Bool
+    let hasPharmacyPurchases: Bool
+
+    private var showBreakdown: Bool {
+        !record.hasAssociatedRecord && (hasFollowUps || hasPharmacyPurchases)
+    }
+
+    private var followUpLabel: String {
+        record.isPhysicalExam ? "其他批次费用"
+            : (record.isInpatient ? "住院日费用" : "复诊费用")
+    }
+
+    private var paymentLabel: String {
+        hasFollowUps || hasPharmacyPurchases ? "本次支付方式" : "支付方式"
+    }
+
+    var body: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .leading,
+            spacing: 14
+        ) {
+            if showBreakdown {
+                MedicalCostCell(
+                    title: "本次费用",
+                    value: MedicalValueFormatter.money(record.totalCost)
+                )
+                if hasFollowUps {
+                    MedicalCostCell(
+                        title: followUpLabel,
+                        value: MedicalValueFormatter.money(followUpCostSummary.totalCost)
+                    )
+                }
+                if hasPharmacyPurchases {
+                    MedicalCostCell(
+                        title: "关联购药费用",
+                        value: MedicalValueFormatter.money(pharmacyPurchaseCostSummary.totalCost)
+                    )
+                }
+            }
+            MedicalCostCell(
+                title: "总费用",
+                value: MedicalValueFormatter.money(episodeCostSummary.totalCost)
+            )
+            MedicalCostCell(
+                title: "医保支付",
+                value: MedicalValueFormatter.money(episodeCostSummary.insuranceCost)
+            )
+            MedicalCostCell(
+                title: "自费",
+                value: MedicalValueFormatter.money(episodeCostSummary.selfPayCost)
+            )
+            MedicalCostCell(
+                title: paymentLabel,
+                value: record.paymentMethod.title
+            )
+        }
+    }
+}
+
+private typealias MedicalCostCell = AppMetricCell
 
 struct MedicalExpenseItemRow: View {
     let item: MedicalExpenseItem

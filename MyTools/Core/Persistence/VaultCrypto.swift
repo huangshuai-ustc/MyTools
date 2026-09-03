@@ -27,8 +27,7 @@ enum VaultCryptoError: LocalizedError {
 ///
 /// 信封格式：`{format: "mytools-vault", version: "2.0", combined: <AES-GCM sealed>}`。
 /// `combined` 已包含 nonce、密文和认证标签，不需要单独保存 nonce。
-/// PBKDF2-HMAC-SHA256 派生同时供加密备份（`VaultBackupCrypto`）和管理员密码
-/// 摘要（`AdminPasswordHash`）复用，避免维护第二套派生实现。
+/// PBKDF2-HMAC-SHA256 派生供加密备份（`VaultBackupCrypto`）复用。
 enum VaultCrypto {
     static let envelopeFormat = "mytools-vault"
     static let encryptedVersion = "2.0"

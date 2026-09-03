@@ -51,6 +51,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
     func replace(accounts: [BankAccount], cards: [BankCard]) {
         self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
+        DiagnosticLogger.shared.log(.data, "财务数据替换 accounts=\(accounts.count) cards=\(cards.count)")
     }
 
     func replace(
@@ -67,6 +68,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         self.overseasLoginFieldTemplates = Self.normalizedTemplates(
             overseasLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.overseasDefaults : overseasLoginFieldTemplates
         )
+        DiagnosticLogger.shared.log(.data, "财务数据替换（含模板） accounts=\(accounts.count) cards=\(cards.count)")
     }
 
     func loginFieldTemplates(for region: BankRegion) -> [BankLoginFieldTemplate] {
@@ -81,8 +83,12 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
     func upsertLoginFieldTemplate(_ template: BankLoginFieldTemplate, for region: BankRegion) {
         var value = template
         value.name = value.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.name.isEmpty else { return }
+        guard !value.name.isEmpty else {
+            DiagnosticLogger.shared.log(.data, "登录字段模板保存被拒绝（名称为空） region=\(region)", level: .warning)
+            return
+        }
         var templates = loginFieldTemplates(for: region)
+        let isUpdate = templates.contains { $0.id == value.id }
         if let index = templates.firstIndex(where: { $0.id == value.id }) {
             templates[index] = value
         } else {
@@ -94,6 +100,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         } else {
             overseasLoginFieldTemplates = templates
         }
+        DiagnosticLogger.shared.log(.data, "登录字段模板\(isUpdate ? "更新" : "新增") region=\(region) id=\(value.id)")
         didMutate()
     }
 
@@ -104,6 +111,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         } else {
             overseasLoginFieldTemplates = templates
         }
+        DiagnosticLogger.shared.log(.data, "登录字段模板删除 region=\(region) id=\(template.id)")
         didMutate()
     }
 
@@ -193,6 +201,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             }
         }
 
+        let isUpdate = accounts.contains { $0.id == account.id }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
             accounts[index] = account
         } else {
@@ -204,16 +213,19 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             attached.accountID = account.id
             return attached
         })
+        DiagnosticLogger.shared.log(.data, "银行账户\(isUpdate ? "更新" : "新增") id=\(account.id) cards=\(updatedCards.count)")
         didMutate()
     }
 
     func deleteAccount(id: UUID) {
         let ids = [id]
+        let cardCount = cards.filter { ids.contains($0.accountID ?? UUID()) }.count
         for card in cards where ids.contains(card.accountID ?? UUID()) {
             card.statements.compactMap(\.attachment).forEach(attachmentStore.delete)
         }
         accounts.removeAll { $0.id == id }
         cards.removeAll { card in ids.contains(card.accountID ?? UUID()) }
+        DiagnosticLogger.shared.log(.data, "银行账户删除 id=\(id) 关联卡片=\(cardCount)")
         didMutate()
     }
 
@@ -225,6 +237,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         let attachment = try attachmentStore.importFile(from: url)
         guard attachment.contentType.conforms(to: .pdf) else {
             attachmentStore.delete(attachment)
+            DiagnosticLogger.shared.log(.attachment, "信用卡账单导入被拒绝（不支持的文件类型） name=\(url.lastPathComponent)", level: .warning)
             throw AttachmentStoreError.invalidFile
         }
         return attachment

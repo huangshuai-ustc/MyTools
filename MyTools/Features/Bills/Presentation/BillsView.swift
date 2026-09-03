@@ -55,7 +55,6 @@ struct BillsPagePicker: View {
 struct BillsView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var directionFilter: BillDirectionFilter = .all
     @State private var categoryFilter: BillCategoryFilter = .all
@@ -213,29 +212,26 @@ struct BillsView: View {
     @ToolbarContentBuilder
     private var billsToolbar: some ToolbarContent {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button {
-                        editingRecord = BillRecord()
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("手工添加账单")
-                    .contextMenu {
-                        Menu {
-                            Button {
-                                showingOCRImport = true
-                            } label: {
-                                Label("图片识别", systemImage: "text.viewfinder")
-                            }
-                            Button {
-                                showingFileImport = true
-                            } label: {
-                                Label("账单文件", systemImage: "doc.badge.plus")
-                            }
+                Button {
+                    editingRecord = BillRecord()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("手工添加账单")
+                .contextMenu {
+                    Menu {
+                        Button {
+                            showingOCRImport = true
                         } label: {
-                            Label("从文件导入", systemImage: "square.and.arrow.down")
+                            Label("图片识别", systemImage: "text.viewfinder")
                         }
+                        Button {
+                            showingFileImport = true
+                        } label: {
+                            Label("账单文件", systemImage: "doc.badge.plus")
+                        }
+                    } label: {
+                        Label("从文件导入", systemImage: "square.and.arrow.down")
                     }
                 }
             }
@@ -290,7 +286,7 @@ struct BillsView: View {
             BillRow(record: record)
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+        .appDeleteSwipeAction(isEnabled: true) {
             store.delete(ids: [record.id])
         }
     }
@@ -339,7 +335,6 @@ private struct BillRow: View {
 
 private struct BillDetailView: View {
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     let recordID: UUID
     @State private var editingRecord: BillRecord?
 
@@ -402,15 +397,12 @@ private struct BillDetailView: View {
                 .appNavigationTitle(record.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        AdminEditAccessButton()
-                        if auth.isAdmin {
-                            Button {
-                                editingRecord = record
-                            } label: {
-                                Image(systemName: "pencil")
-                            }
-                            .accessibilityLabel("编辑账单")
+                        Button {
+                            editingRecord = record
+                        } label: {
+                            Image(systemName: "pencil")
                         }
+                        .accessibilityLabel("编辑账单")
                     }
                 }
             } else {
@@ -509,7 +501,6 @@ private enum BillExportDirection: Hashable {
 
 struct BillsExportSettingsView: View {
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var period: BillExportPeriod = .oneMonth
     @State private var customStart = Calendar.autoupdatingCurrent.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var customEnd = Date()
@@ -582,12 +573,7 @@ struct BillsExportSettingsView: View {
                 } label: {
                     Label("导出账单", systemImage: "square.and.arrow.up")
                 }
-                .disabled(filteredRecords.isEmpty || !auth.isAdmin)
-                if !auth.isAdmin {
-                    Text("进入管理员模式后才能导出账单。")
-                        .appFont(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                .disabled(filteredRecords.isEmpty)
             }
         }
         .appNavigationTitle("账单导出")

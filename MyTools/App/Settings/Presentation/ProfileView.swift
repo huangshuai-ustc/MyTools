@@ -2,9 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ProfileView: View {
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var store: AppStore
-    @State private var showAuth = false
     @State private var backupPasswordMode: BackupPasswordMode?
     @State private var exportDocument: VaultBackupDocument?
     @State private var pendingImportData: Data?
@@ -16,24 +14,10 @@ struct ProfileView: View {
     @State private var importSucceeded = false
     @State private var isPreparingImport = false
     @State private var exportFilename = "备份"
-    @State private var showingPasswordChange = false
 
     var body: some View {
         NavigationStack {
             List {
-                Section("权限与安全") {
-                    if auth.isAdmin {
-                        Label("管理员模式已开启", systemImage: "checkmark.shield.fill")
-                        Button("修改管理员密码") {
-                            showingPasswordChange = true
-                        }
-                        Button("退出管理员模式") { auth.lock() }
-                    } else {
-                        Button { showAuth = true } label: {
-                            Label("进入管理员模式", systemImage: "lock.shield")
-                        }
-                    }
-                }
                 Section("设置") {
                     NavigationLink {
                         ProfileSettingsView()
@@ -48,14 +32,14 @@ struct ProfileView: View {
                     } label: {
                         Label("导出加密备份", systemImage: "square.and.arrow.up")
                     }
-                    .disabled(!auth.isAdmin || isPreparingImport)
+                    .disabled(isPreparingImport)
 
                     Button {
                         showingImportConfirmation = true
                     } label: {
                         Label("从文件导入备份", systemImage: "square.and.arrow.down")
                     }
-                    .disabled(!auth.isAdmin || isPreparingImport)
+                    .disabled(isPreparingImport)
 
                     if isPreparingImport {
                         HStack(spacing: 10) {
@@ -64,35 +48,20 @@ struct ProfileView: View {
                         }
                         .foregroundStyle(.secondary)
                     }
-
-                    if !auth.isAdmin {
-                        Text("进入管理员模式后可以导出或导入备份。")
-                            .appFont(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
                 Section("关于") {
                     DetailValueRow(title: "版本", value: AppMetadata.versionDescription)
                 }
             }
             .appNavigationTitle("我的")
-            .adminModeIndicator()
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)
 #endif
-            .sheet(isPresented: $showAuth) {
-                AuthenticationView()
-                    .iOSAuthenticationSheet()
-            }
-            .sheet(isPresented: $showingPasswordChange) {
-                AdminPasswordChangeView()
-                    .iOSAuthenticationSheet()
-            }
             .sheet(item: $backupPasswordMode, onDismiss: finishBackupPasswordFlow) { mode in
                 BackupPasswordView(
                     mode: mode,
-                    defaultPassword: auth.defaultBackupPassword
+                    defaultPassword: nil
                 ) { password in
                     await handleBackupPassword(password, mode: mode)
                 }
@@ -146,10 +115,7 @@ struct ProfileView: View {
 
     private func handleBackupPassword(_ password: String, mode: BackupPasswordMode) async -> String? {
         do {
-            auth.rememberPasswordForBackup(password)
-            let effectivePassword = password.isEmpty
-                ? auth.defaultBackupPassword
-                : password
+            let effectivePassword = password.isEmpty ? nil : password
             guard let effectivePassword else {
                 throw VaultBackupError.missingPassword
             }

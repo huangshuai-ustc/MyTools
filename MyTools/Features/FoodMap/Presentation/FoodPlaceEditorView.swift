@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 
 struct FoodPlaceEditorView: View {
     @EnvironmentObject private var store: FoodMapStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var draft: FoodPlace
     @State private var tagsText: String
@@ -18,7 +17,6 @@ struct FoodPlaceEditorView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
     @State private var showingLocationPicker = false
-    @State private var showingAuthentication = false
     @State private var errorMessage: String?
     @State private var attachmentSession: AttachmentEditSession
     @State private var didFinish = false
@@ -173,6 +171,11 @@ struct FoodPlaceEditorView: View {
                     AppTagEditor(text: $tagsText, suggestions: store.knownTags)
                 }
 
+                Section("联系与营业") {
+                    FieldEditorRow(title: "电话", prompt: "选填", text: $draft.phone)
+                    FieldEditorRow(title: "营业时间", prompt: "如 周一至周日 10:00–22:00", text: $draft.businessHours)
+                }
+
                 Section("信息来源") {
                     IMESafeTextField(
                         prompt: "来源名称，如朋友推荐、小红书",
@@ -195,7 +198,6 @@ struct FoodPlaceEditorView: View {
                 }
             }
             .appNavigationTitle(isExisting ? "编辑美食" : "新增美食")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -214,10 +216,6 @@ struct FoodPlaceEditorView: View {
                     showingLocationPicker = false
                 }
                 .iOSLargeSheet()
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication)
-                    .iOSAuthenticationSheet()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -375,15 +373,6 @@ struct FoodPlaceEditorView: View {
             errorMessage = "店铺链接格式不正确。"
             return
         }
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-        save()
-    }
-
-    private func saveAfterAuthentication() {
-        showingAuthentication = false
         save()
     }
 

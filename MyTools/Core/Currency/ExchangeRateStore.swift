@@ -9,18 +9,20 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var isRefreshing = false
 
     private let repository: any ExchangeRateProviding
-    private weak var moduleSettings: ToolModuleSettings?
     private weak var updateObserver: (any ExchangeRateUpdateObserving)?
     private var lastRequestAt: Date?
     private var refreshTask: Task<Void, Never>?
+    private var enabledModules: Set<ToolModule>
 
     init(
         repository: any ExchangeRateProviding,
-        moduleSettings: ToolModuleSettings? = nil
+        initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks]
     ) {
         self.repository = repository
-        self.moduleSettings = moduleSettings
+        self.enabledModules = initialEnabledModules
     }
+
+    private var isCapabilityNeeded: Bool { !enabledModules.isEmpty }
 
     func attach(updateObserver: any ExchangeRateUpdateObserving) {
         self.updateObserver = updateObserver
@@ -30,18 +32,20 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         apply(snapshot)
     }
 
-    func moduleVisibilityChanged() {
-        if isCapabilityNeeded {
-            refreshIfNeeded()
-        } else {
-            stopRefresh()
-        }
-    }
-
     var observedModules: Set<ToolModule> { [.currencyExchange, .myStocks] }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
-        moduleVisibilityChanged()
+        let wasNeeded = isCapabilityNeeded
+        if isEnabled {
+            enabledModules.insert(module)
+        } else {
+            enabledModules.remove(module)
+        }
+        if isCapabilityNeeded {
+            refreshIfNeeded()
+        } else if wasNeeded {
+            stopRefresh()
+        }
     }
 
     func refreshIfNeeded() {
@@ -88,12 +92,6 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         renminbiBuyingRates = [.cny: 1]
         renminbiSellingRates = [.cny: 1]
         updatedAt = nil
-    }
-
-    private var isCapabilityNeeded: Bool {
-        guard let moduleSettings else { return true }
-        return moduleSettings.isVisible(.currencyExchange)
-            || moduleSettings.isVisible(.myStocks)
     }
 
     private func apply(_ snapshot: ExchangeRateSnapshot) {

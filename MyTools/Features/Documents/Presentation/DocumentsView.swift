@@ -88,7 +88,6 @@ private struct CredentialDocumentGroup: Identifiable {
 struct DocumentsView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: DocumentsStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var typeFilter: CredentialTypeFilter = .all
@@ -100,7 +99,7 @@ struct DocumentsView: View {
     @State private var editingDocument: CredentialDocument?
     @State private var pagination = AppListPagination(pageSize: DocumentsView.pageSize)
 
-    private var canAccess: Bool { auth.isAdmin || isUnlocked }
+    private var canAccess: Bool { isUnlocked }
 
     private var availableTags: [String] {
         AppTagSupport.normalize(store.documents.flatMap(\.tags)).sorted {
@@ -200,15 +199,12 @@ struct DocumentsView: View {
                     }
                     .accessibilityLabel("验证身份后查看证照信息")
                 }
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button {
-                        editingDocument = CredentialDocument()
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加证照")
+                Button {
+                    editingDocument = CredentialDocument()
+                } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("添加证照")
             }
         }
         .sheet(isPresented: $showingSensitiveAccess) {
@@ -219,9 +215,6 @@ struct DocumentsView: View {
             CredentialEditorView(document: document)
                 .id(document.id)
                 .iOSLargeSheet()
-        }
-        .onChange(of: auth.isAdmin) { _, isAdmin in
-            isUnlocked = isAdmin
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { isUnlocked = false }
@@ -249,7 +242,7 @@ struct DocumentsView: View {
             )
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+        .appDeleteSwipeAction(isEnabled: true) {
             store.delete(ids: [group.id])
         }
     }

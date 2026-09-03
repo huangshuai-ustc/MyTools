@@ -6,7 +6,6 @@ import UniformTypeIdentifiers
 
 struct BillOCRImportView: View {
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingFileImporter = false
@@ -28,7 +27,6 @@ struct BillOCRImportView: View {
     @State private var note = ""
     @State private var isLoading = false
     @State private var isRecognizing = false
-    @State private var showingAuthentication = false
     @State private var errorMessage: String?
     @State private var workTask: Task<Void, Never>?
     private let service: any OCRRecognizing = VisionOCRService()
@@ -108,10 +106,6 @@ struct BillOCRImportView: View {
             .onChange(of: selectedPhotoItem) { _, item in
                 guard let item else { return }
                 loadPhoto(item)
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication)
-                    .iOSAuthenticationSheet()
             }
             .onDisappear { workTask?.cancel() }
             .alert(
@@ -310,10 +304,6 @@ struct BillOCRImportView: View {
             errorMessage = "请输入 0 到 59 之间的秒数。"
             return
         }
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         save(amount: amount)
     }
 
@@ -328,15 +318,6 @@ struct BillOCRImportView: View {
         guard let date = calendar.date(from: components) else { return false }
         occurredAt = date
         return true
-    }
-
-    private func saveAfterAuthentication() {
-        showingAuthentication = false
-        guard let amount = DecimalTextParser.expression(from: amountText), amount > 0 else {
-            errorMessage = "请选择或输入大于 0 的有效金额。"
-            return
-        }
-        save(amount: amount)
     }
 
     private func save(amount: Decimal) {

@@ -4,7 +4,6 @@ import UIKit
 #endif
 
 struct RootView: View {
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
     @Binding private var desktopSelection: RootDestination?
@@ -59,7 +58,6 @@ struct RootView: View {
         }
 #endif
         .onAppear {
-            auth.applicationDidBecomeActive()
             retryInitialVaultLoadIfPossible()
         }
 #if os(iOS)
@@ -80,14 +78,12 @@ struct RootView: View {
 #endif
             if phase == .background {
                 DiagnosticLogger.shared.markEnteredBackground()
-                auth.applicationDidEnterBackground()
                 Task {
                     await store.flushPendingPersistence()
                     await DiagnosticLogger.shared.flush()
                 }
             } else if phase == .active {
                 DiagnosticLogger.shared.markBecameActive()
-                auth.applicationDidBecomeActive()
                 retryInitialVaultLoadIfPossible()
             }
         }

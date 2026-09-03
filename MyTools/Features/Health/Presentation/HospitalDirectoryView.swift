@@ -3,7 +3,6 @@ import SwiftUI
 
 struct HospitalDirectoryView: View {
     @EnvironmentObject private var store: HealthStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var editingProfile: HospitalProfile?
 
@@ -30,13 +29,13 @@ struct HospitalDirectoryView: View {
                 )
             } else {
                 ForEach(displayedProfiles) { profile in
-                    HospitalProfileRow(profile: profile, showsEditIndicator: auth.isAdmin)
+                    HospitalProfileRow(profile: profile)
                         .appListRowStyle()
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            if auth.isAdmin { editingProfile = profile }
+                            editingProfile = profile
                         }
-                        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                        .appDeleteSwipeAction(isEnabled: true) {
                             store.deleteHospitalProfiles(ids: [profile.id])
                         }
                 }
@@ -47,13 +46,10 @@ struct HospitalDirectoryView: View {
         .searchable(text: $query, prompt: "搜索机构名称或分类")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button { editingProfile = HospitalProfile() } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("新增机构")
+                Button { editingProfile = HospitalProfile() } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("新增机构")
             }
         }
 #if os(iOS)
@@ -74,7 +70,6 @@ struct HospitalDirectoryView: View {
 private struct HospitalProfileRow: View {
     @Environment(\.appFontScale) private var fontScale
     let profile: HospitalProfile
-    let showsEditIndicator: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -97,21 +92,14 @@ private struct HospitalProfileRow: View {
                 }
             }
             Spacer(minLength: 6)
-            if showsEditIndicator {
-                Image(systemName: "square.and.pencil")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 }
 
 private struct HospitalProfileEditorView: View {
     @EnvironmentObject private var store: HealthStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var profile: HospitalProfile
-    @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
     let isNew: Bool
@@ -154,7 +142,6 @@ private struct HospitalProfileEditorView: View {
                 }
             }
             .appNavigationTitle(isNew ? "新增机构" : "编辑机构")
-            .adminModeIndicator()
             .onChange(of: profile.institutionTypes) { _, _ in
                 profile.normalizeClassification()
             }
@@ -170,10 +157,6 @@ private struct HospitalProfileEditorView: View {
                     Button("保存") { commitPendingTextInput { requestSave() } }
                 }
             }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
-            }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -183,10 +166,6 @@ private struct HospitalProfileEditorView: View {
     }
 
     private func requestSave() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         save()
     }
 

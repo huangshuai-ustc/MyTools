@@ -7,7 +7,6 @@ import AppKit
 
 struct FoodPlaceDetailView: View {
     @EnvironmentObject private var store: FoodMapStore
-    @EnvironmentObject private var auth: AuthManager
     let placeID: UUID
     @State private var editingPlace: FoodPlace?
     @State private var previewPhoto: FileAttachment?
@@ -67,15 +66,12 @@ struct FoodPlaceDetailView: View {
                 .appNavigationTitle(place.displayTitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        AdminEditAccessButton()
-                        if auth.isAdmin {
-                            Button {
-                                editingPlace = place
-                            } label: {
-                                Image(systemName: "square.and.pencil")
-                            }
-                            .accessibilityLabel("编辑美食记录")
+                        Button {
+                            editingPlace = place
+                        } label: {
+                            Image(systemName: "square.and.pencil")
                         }
+                        .accessibilityLabel("编辑美食记录")
                     }
                 }
             } else {
@@ -142,6 +138,12 @@ struct FoodPlaceDetailView: View {
                 value: place.address.isEmpty ? "待补充" : place.address,
                 systemImage: "mappin.and.ellipse"
             )
+            if !place.phone.isEmpty {
+                compactFact(title: "电话", value: place.phone, systemImage: "phone")
+            }
+            if !place.businessHours.isEmpty {
+                compactFact(title: "营业时间", value: place.businessHours, systemImage: "clock")
+            }
             if !place.sourceTitle.isEmpty || !place.sourceURL.isEmpty {
                 sourceFact(place)
             }

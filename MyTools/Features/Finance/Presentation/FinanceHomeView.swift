@@ -3,7 +3,6 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
@@ -69,17 +68,14 @@ struct HomeView: View {
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                AdminEditAccessButton()
-                if auth.isAdmin {
-                    Button {
-                        var account = BankAccount()
-                        account.additionalLoginFields = store.makeLoginFields(for: .domestic)
-                        editingAccount = account
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加银行账户")
+                Button {
+                    var account = BankAccount()
+                    account.additionalLoginFields = store.makeLoginFields(for: .domestic)
+                    editingAccount = account
+                } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("添加银行账户")
             }
         }
 #if os(iOS)
@@ -123,13 +119,12 @@ struct HomeView: View {
             }
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
-            deleteAccount(id: account.id)
+        .appDeleteSwipeAction(isEnabled: true) {
+            store.deleteAccount(id: account.id)
         }
     }
 
     private func deleteAccount(id: UUID) {
-        guard auth.isAdmin else { return }
         store.deleteAccount(id: id)
     }
 

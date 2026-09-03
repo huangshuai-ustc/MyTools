@@ -2,7 +2,6 @@ import SwiftUI
 
 struct StorageDataView: View {
     @EnvironmentObject private var store: AppStore
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @State private var scanResult: StorageScanResult?
     @State private var redundantDataReport: RedundantDataCleanupReport?
@@ -87,13 +86,7 @@ struct StorageDataView: View {
                             Label("清理无效附件", systemImage: "trash")
                         }
                         .tint(.red)
-                        .disabled(!auth.isAdmin || isScanning)
-
-                        if !auth.isAdmin {
-                            Text("进入管理员模式后可以清理无效附件。")
-                                .appFont(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                        .disabled(isScanning)
                     }
                 } header: {
                     Text("无效附件")
@@ -130,13 +123,7 @@ struct StorageDataView: View {
                             Label("清理不适用字段", systemImage: "eraser")
                         }
                         .tint(.red)
-                        .disabled(!auth.isAdmin || isScanning)
-
-                        if !auth.isAdmin {
-                            Text("进入管理员模式后可以清理不适用字段。")
-                                .appFont(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                        .disabled(isScanning)
                     }
                 } header: {
                     Text("冗余字段")
@@ -161,7 +148,7 @@ struct StorageDataView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .accessibilityLabel("清理\(module.title)本地缓存")
-                                .disabled(!auth.isAdmin || isClearingCache)
+                                .disabled(isClearingCache)
                             }
                         }
                     } header: {
@@ -219,8 +206,7 @@ struct StorageDataView: View {
                         }
                     }
                     .disabled(
-                        !auth.isAdmin
-                            || !store.isInitialDataLoaded
+                        !store.isInitialDataLoaded
                             || store.pendingModuleLocalDataDeletion != nil
                     )
                     .accessibilityLabel("删除\(module.title)的所有本地数据")
@@ -228,11 +214,7 @@ struct StorageDataView: View {
             } header: {
                 Text("删除功能数据")
             } footer: {
-                if auth.isAdmin {
-                    Text("每次只能删除一个功能的数据。操作需要经过两次各 10 秒的确认，删除后还有 10 秒可以撤回。")
-                } else {
-                    Text("进入管理员模式后可以删除功能数据。")
-                }
+                Text("每次只能删除一个功能的数据。操作需要经过两次各 10 秒的确认，删除后还有 10 秒可以撤回。")
             }
 
             Section {
@@ -252,7 +234,6 @@ struct StorageDataView: View {
             }
         }
         .appNavigationTitle("存储与数据")
-        .adminModeIndicator()
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -371,7 +352,7 @@ struct StorageDataView: View {
     }
 
     private func cleanupOrphans() {
-        guard auth.isAdmin, scanResult != nil else { return }
+        guard scanResult != nil else { return }
         isScanning = true
         let orphans = unreferencedOrphans
         guard !orphans.isEmpty else {
@@ -399,7 +380,7 @@ struct StorageDataView: View {
     }
 
     private func cleanupRedundantData() {
-        guard auth.isAdmin, redundantDataReport?.isEmpty == false else { return }
+        guard redundantDataReport?.isEmpty == false else { return }
         let cleanupReport = store.cleanupRedundantData()
         guard !cleanupReport.isEmpty else {
             report("没有可清理的不适用字段，或当前档案暂时无法安全写入。")
@@ -411,7 +392,7 @@ struct StorageDataView: View {
     }
 
     private func clearLocalCache(for module: ToolModule) {
-        guard auth.isAdmin, !isClearingCache else { return }
+        guard !isClearingCache else { return }
         isClearingCache = true
         Task { @MainActor in
             await store.clearLocalCache(for: module)

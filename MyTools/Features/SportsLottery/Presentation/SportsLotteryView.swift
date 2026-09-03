@@ -37,7 +37,6 @@ private final class SportsLotteryViewModel: ObservableObject {
 
 struct SportsLotteryView: View {
     private static let pageSize = 30
-    @EnvironmentObject private var auth: AuthManager
     private let service: any SportsLotteryProviding
     private let defaults: UserDefaults
     @State private var leagues: [SportsLotteryLeague]
@@ -65,16 +64,13 @@ struct SportsLotteryView: View {
 #endif
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    AdminEditAccessButton()
-                    if auth.isAdmin {
-                        Button {
-                            showingAddLeague = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("添加赛事")
-                        .help("添加赛事")
+                    Button {
+                        showingAddLeague = true
+                    } label: {
+                        Image(systemName: "plus")
                     }
+                    .accessibilityLabel("添加赛事")
+                    .help("添加赛事")
                 }
             }
             .sheet(isPresented: $showingAddLeague) {
@@ -123,7 +119,7 @@ struct SportsLotteryView: View {
                         }
                         .padding(.vertical, 4)
                     }
-                    .appDeleteSwipeAction(isEnabled: auth.isAdmin) {
+                    .appDeleteSwipeAction(isEnabled: true) {
                         delete(league)
                     }
                     .appListRowStyle()
@@ -216,10 +212,8 @@ struct SportsLotteryView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if auth.isAdmin {
-                Button("删除", systemImage: "trash", role: .destructive) {
-                    delete(league)
-                }
+            Button("删除", systemImage: "trash", role: .destructive) {
+                delete(league)
             }
         }
     }

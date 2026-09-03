@@ -46,6 +46,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
             knownTags ?? self.knownTags,
             with: normalizedItems.flatMap { AppTagSupport.parse($0.tags) }
         )
+        DiagnosticLogger.shared.log(.data, "密码数据替换 count=\(normalizedItems.count)")
     }
 
     func fieldTemplate(for category: SecretCategory) -> SecretFieldTemplate {
@@ -115,6 +116,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
         storedItem.tags = AppTagSupport.joined(tags)
         knownTags = AppTagSupport.merged(knownTags, with: tags)
         storedItem.updatedAt = Date()
+        let isUpdate: Bool
         if let index = secretItems.firstIndex(where: { $0.id == storedItem.id }) {
             let retainedAttachmentIDs = Set(storedItem.attachments.map(\.id))
             for attachment in secretItems[index].attachments
@@ -123,9 +125,12 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
             }
             storedItem.createdAt = secretItems[index].createdAt
             secretItems[index] = storedItem
+            isUpdate = true
         } else {
             secretItems.append(storedItem)
+            isUpdate = false
         }
+        DiagnosticLogger.shared.log(.data, "密码\(isUpdate ? "更新" : "新增") id=\(storedItem.id)")
         didMutate()
     }
 
@@ -135,6 +140,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
             item.attachments.forEach(attachmentStore.delete)
         }
         secretItems.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "密码删除 count=\(ids.count)")
         didMutate()
     }
 
@@ -156,6 +162,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
             secretItems.append(storedItem)
             inserted += 1
         }
+        DiagnosticLogger.shared.log(.data, "密码导入完成 inserted=\(inserted) skipped=\(skipped)")
         if inserted > 0 { didMutate() }
         return (inserted, skipped)
     }
@@ -165,6 +172,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
         guard attachment.contentType.conforms(to: .image)
                 || attachment.contentType.conforms(to: .pdf) else {
             attachmentStore.delete(attachment)
+            DiagnosticLogger.shared.log(.attachment, "密码附件导入被拒绝（不支持的文件类型） name=\(url.lastPathComponent)", level: .warning)
             throw AttachmentStoreError.invalidFile
         }
         return attachment

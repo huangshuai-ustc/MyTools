@@ -3,14 +3,12 @@ import SwiftUI
 
 struct BillEditorView: View {
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appFontScale) private var fontScale
     @State private var draft: BillRecord
     @State private var amountText: String
     @State private var tagsText: String
     @State private var secondsText: String
-    @State private var showingAuthentication = false
     @State private var errorMessage: String?
 
     init(record: BillRecord) {
@@ -85,7 +83,6 @@ struct BillEditorView: View {
                 }
             }
             .appNavigationTitle(isExisting ? "编辑账单" : "新增账单")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -97,10 +94,6 @@ struct BillEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: saveAfterAuthentication)
-                    .iOSAuthenticationSheet()
             }
             .alert(
                 "无法保存",
@@ -130,15 +123,6 @@ struct BillEditorView: View {
             return
         }
         draft.amount = amount
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-        save()
-    }
-
-    private func saveAfterAuthentication() {
-        showingAuthentication = false
         save()
     }
 

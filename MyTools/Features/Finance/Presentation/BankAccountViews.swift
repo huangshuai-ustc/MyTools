@@ -69,7 +69,6 @@ enum BankBranchNavigationService {
 
 struct AccountDetailView: View {
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
     private let backTitle: String
@@ -107,10 +106,7 @@ struct AccountDetailView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if account != nil {
-                    AdminEditAccessButton()
-                }
-                if auth.isAdmin, let account {
+                if let account {
                     Button { editingAccount = account } label: {
                         Image(systemName: "square.and.pencil")
                     }
@@ -160,9 +156,6 @@ struct AccountDetailView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { sensitiveLoginInformationRevealed = false }
-        }
-        .onChange(of: auth.isAdmin) { _, _ in
-            sensitiveLoginInformationRevealed = false
         }
         .onDisappear {
             showsClosedCards = false
@@ -239,11 +232,6 @@ struct AccountDetailView: View {
                 .foregroundStyle(.secondary)
             if account.isOnlineBank {
                 Text("网络银行")
-            } else if auth.isAdmin {
-                Button { editingBranchLocation = account } label: {
-                    branchLocationValueLabel(for: account)
-                }
-                .buttonStyle(.plain)
             } else {
                 Menu {
                     ForEach(BankNavigationApplication.allCases) { application in
@@ -369,15 +357,13 @@ struct AccountDetailView: View {
                             field.name,
                             value: field.value,
                             concealedValue: "••••••••",
-                            isRevealed: auth.isAdmin || sensitiveLoginInformationRevealed
+                            isRevealed: sensitiveLoginInformationRevealed
                         )
-                        .foregroundStyle(.secondary)
                     } else {
                         DetailValueRow(title: field.name, value: field.value)
-                            .foregroundStyle(.secondary)
                     }
                 }
-                if !auth.isAdmin, hasSensitive {
+                if hasSensitive {
                     Button {
                         if sensitiveLoginInformationRevealed {
                             sensitiveLoginInformationRevealed = false
@@ -603,7 +589,6 @@ private final class AccountEditorDraft: ObservableObject {
 
 struct AccountEditorView: View {
     @EnvironmentObject private var store: FinanceStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: AccountEditorDraft
     @State private var editingDomesticSubaccount: DomesticSubaccount?
@@ -612,7 +597,6 @@ struct AccountEditorView: View {
     @State private var editingAdditionalLoginField: AdditionalLoginField?
     @State private var editingLoginTemplate: BankRegion?
     @State private var editingBranchLocation = false
-    @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var didSave = false
@@ -660,7 +644,6 @@ struct AccountEditorView: View {
                 }
             }
             .appNavigationTitle(navigationTitle)
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -668,10 +651,6 @@ struct AccountEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("保存", action: requestSave) }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .sheet(item: $editingCard) { card in
                 CardEditorView(card: card, account: draft.account, onSave: upsertCard)
@@ -689,9 +668,13 @@ struct AccountEditorView: View {
                     .iOSLargeSheet()
             }
             .sheet(item: $editingAdditionalLoginField) { field in
-                AdditionalLoginFieldEditorView(field: field, onSave: upsertAdditionalLoginField)
-                    .id(field.id)
-                    .iOSLargeSheet()
+                AdditionalLoginFieldEditorView(
+                    field: field,
+                    isNew: !draft.account.additionalLoginFields.contains { $0.id == field.id },
+                    onSave: upsertAdditionalLoginField
+                )
+                .id(field.id)
+                .iOSLargeSheet()
             }
             .sheet(item: $editingLoginTemplate) { region in
                 BankLoginTemplateEditorView(
@@ -881,21 +864,13 @@ struct AccountEditorView: View {
 
     private var loginEditorSection: some View {
         Section {
-            ForEach(draft.account.additionalLoginFields) { field in
-                Button { editingAdditionalLoginField = field } label: {
-                    HStack(spacing: 12) {
-                        Text(field.name.isEmpty ? "未命名字段" : field.name).lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(field.isSensitive ? "••••••••" : (field.value.isEmpty ? "未填写" : field.value))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .contentShape(Rectangle())
+            ForEach($draft.account.additionalLoginFields) { $field in
+                AppLabeledContentRow(field.name.isEmpty ? "未命名字段" : field.name) {
+                    IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
                 }
-                .buttonStyle(.plain)
                 .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
                     Button { editingAdditionalLoginField = field } label: {
-                        Label("编辑", systemImage: "square.and.pencil")
+                        Label("编辑名称", systemImage: "square.and.pencil")
                     }
                     Button {
                         var updated = field
@@ -957,10 +932,6 @@ struct AccountEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         var account = draft.account
         account.bankName = account.bankName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !account.bankName.isEmpty else {
@@ -1042,15 +1013,18 @@ struct AccountEditorView: View {
 private struct AdditionalLoginFieldEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var field: AdditionalLoginField
+    let isNew: Bool
     let onSave: (AdditionalLoginField) -> Void
 
-    init(field: AdditionalLoginField, onSave: @escaping (AdditionalLoginField) -> Void) {
+    init(field: AdditionalLoginField, isNew: Bool, onSave: @escaping (AdditionalLoginField) -> Void) {
         _field = State(initialValue: field)
+        self.isNew = isNew
         self.onSave = onSave
     }
 
     private var canSave: Bool {
-        !field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !field.value.isEmpty
+        !field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (isNew ? !field.value.isEmpty : true)
     }
 
     var body: some View {
@@ -1058,18 +1032,19 @@ private struct AdditionalLoginFieldEditorView: View {
             Form {
                 Section("字段内容") {
                     FieldEditorRow(title: "名称：", prompt: "例如电话银行密码", text: $field.name)
-                    AppLabeledContentRow("内容：") {
-                        if field.isSensitive {
-                            SecureField("请输入内容", text: $field.value).multilineTextAlignment(.trailing)
-                        } else {
-                            IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
+                    if isNew {
+                        AppLabeledContentRow("内容：") {
+                            if field.isSensitive {
+                                SecureField("请输入内容", text: $field.value).multilineTextAlignment(.trailing)
+                            } else {
+                                IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
+                            }
                         }
                     }
                 }
                 Section { ToggleFieldRow(title: "作为敏感信息隐藏", isOn: $field.isSensitive) }
             }
-            .appNavigationTitle(field.name.isEmpty ? "添加自定义字段" : "编辑自定义字段")
-            .adminModeIndicator()
+            .appNavigationTitle(isNew ? "添加自定义字段" : "编辑字段名称")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

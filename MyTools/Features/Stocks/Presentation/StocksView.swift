@@ -48,7 +48,6 @@ struct StocksView: View {
 
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
-    @EnvironmentObject private var auth: AuthManager
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
     @State private var didAutoSelectMarket = false
@@ -263,14 +262,10 @@ struct StocksView: View {
                 .disabled(store.isRefreshingQuotes)
                 .accessibilityLabel("刷新股票行情")
 
-                AdminEditAccessButton()
-
-                if auth.isEditSessionReady {
-                    Button { editingStock = StockHolding() } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("添加股票")
+                Button { editingStock = StockHolding() } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("添加股票")
             }
         }
 #if os(iOS)
@@ -345,7 +340,7 @@ struct StocksView: View {
                         Label("恢复看盘", systemImage: "arrow.uturn.backward")
                     }
                 }
-                .appDeleteSwipeAction(isEnabled: auth.isEditSessionReady) {
+                .appDeleteSwipeAction(isEnabled: true) {
                     store.deleteStocks(ids: [stock.id])
                 }
         } else {
@@ -353,7 +348,7 @@ struct StocksView: View {
                 .appListRowStyle()
                 .modifier(StockListRemovalActions(
                     stock: stock,
-                    isEnabled: auth.isEditSessionReady,
+                    isEnabled: true,
                     onArchive: { _ = store.archiveStock(id: stock.id) },
                     onDelete: { store.deleteStocks(ids: [stock.id]) }
                 ))

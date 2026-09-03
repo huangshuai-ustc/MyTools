@@ -4,7 +4,6 @@ import UniformTypeIdentifiers
 
 struct BillImportView: View {
     @EnvironmentObject private var store: BillsStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @State private var showingFileImporter = false
     @State private var fileName: String?
@@ -12,7 +11,6 @@ struct BillImportView: View {
     @State private var previewRecords: [BillRecord] = []
     @State private var outcome: BillImportOutcome?
     @State private var isLoading = false
-    @State private var showingAuthentication = false
     @State private var errorMessage: String?
     @State private var importTask: Task<Void, Never>?
     private let registry = BillImportAdapterRegistry()
@@ -100,10 +98,6 @@ struct BillImportView: View {
                 allowsMultipleSelection: false,
                 onCompletion: loadFile
             )
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: importAfterAuthentication)
-                    .iOSAuthenticationSheet()
-            }
             .onDisappear { importTask?.cancel() }
             .alert(
                 "无法导入",
@@ -161,15 +155,6 @@ struct BillImportView: View {
     }
 
     private func requestImport() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-        performImport()
-    }
-
-    private func importAfterAuthentication() {
-        showingAuthentication = false
         performImport()
     }
 

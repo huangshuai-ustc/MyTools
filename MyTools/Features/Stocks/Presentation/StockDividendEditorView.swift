@@ -30,13 +30,11 @@ struct StockDividendEditorView: View {
     }
 
     @EnvironmentObject private var store: StockStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: StockDividendEditorDraft
     @FocusState private var focusedField: Field?
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var showingAuthentication = false
     let stock: StockHolding
 
     init(dividend: StockDividend, stock: StockHolding) {
@@ -89,7 +87,6 @@ struct StockDividendEditorView: View {
                 }
             }
             .appNavigationTitle(draft.dividend.grossAmount == 0 ? "添加分红" : "编辑分红")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -101,10 +98,6 @@ struct StockDividendEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: requestSave)
                 }
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -157,10 +150,6 @@ struct StockDividendEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
         guard let quantity = DecimalTextParser.decimal(from: draft.quantityText), quantity > 0,
               let dividendPerShare = DecimalTextParser.decimal(from: draft.dividendPerShareText),
               dividendPerShare > 0 else {

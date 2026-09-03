@@ -204,6 +204,31 @@ struct ToggleFieldRow: View {
     }
 }
 
+/// 总览网格中的标准指标格：顶部 caption 标题（secondary），底部 subheadline 数值（可着色）。
+/// 用于 LazyVGrid 内，替代各模块的私有 MetricCell/CostCell 实现，确保视觉一致。
+struct AppMetricCell: View {
+    let title: String
+    let value: String
+    var color: Color = .primary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .appFont(.subheadline.weight(.medium).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(2)
+                .minimumScaleFactor(0.68)
+                .allowsTightening(true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// 编辑页"标签+数值/算式输入框"行；可选算式支持与计算结果预览（预览文案由调用处的 `previewFormatter` 提供，避免 Core 依赖具体模块的货币格式化规则）。焦点绑定由调用处自行附加。
 struct NumericFieldRow: View {
     let title: String

@@ -12,7 +12,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
 
     let attachmentStore: AttachmentStore
     private let notificationScheduler: any LocalNotificationScheduling
-    private weak var moduleSettings: ToolModuleSettings?
+    private var isModuleVisible: Bool
     private weak var mutationNotifier: (any VaultMutationNotifying)?
 
     init(
@@ -21,7 +21,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         knownTags: [String] = [],
         attachmentStore: AttachmentStore,
         notificationScheduler: any LocalNotificationScheduling = DisabledLocalNotificationScheduler(),
-        moduleSettings: ToolModuleSettings? = nil
+        isModuleVisible: Bool = true
     ) {
         let normalizedDocuments = documents.map(Self.normalizedTags(in:))
         self.documents = normalizedDocuments
@@ -29,7 +29,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         self.knownTags = AppTagSupport.merged(knownTags, with: normalizedDocuments.flatMap(\.tags))
         self.attachmentStore = attachmentStore
         self.notificationScheduler = notificationScheduler
-        self.moduleSettings = moduleSettings
+        self.isModuleVisible = isModuleVisible
         reconcileExpiryNotifications()
     }
 
@@ -54,6 +54,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
             knownTags ?? self.knownTags,
             with: normalizedDocuments.flatMap(\.tags)
         )
+        DiagnosticLogger.shared.log(.data, "证照数据替换 count=\(normalizedDocuments.count)")
         reconcileExpiryNotifications()
     }
 
@@ -99,6 +100,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
         guard module == .documents else { return }
+        isModuleVisible = isEnabled
         reconcileExpiryNotifications(forceEnabled: isEnabled)
     }
 
@@ -169,6 +171,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     func upsert(_ document: CredentialDocument) {
         var stored = normalized(document)
         stored.updatedAt = Date()
+        let isUpdate: Bool
         if let index = documents.firstIndex(where: { $0.id == stored.id }) {
             let retainedIDs = Set(stored.attachments.map(\.id))
             for attachment in documents[index].attachments where !retainedIDs.contains(attachment.id) {
@@ -176,10 +179,13 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
             }
             stored.createdAt = documents[index].createdAt
             documents[index] = stored
+            isUpdate = true
         } else {
             stored.createdAt = stored.updatedAt
             documents.append(stored)
+            isUpdate = false
         }
+        DiagnosticLogger.shared.log(.data, "证照\(isUpdate ? "更新" : "新增") id=\(stored.id)")
         reconcileExpiryNotifications()
         didMutate()
     }
@@ -196,6 +202,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
             document.attachments.forEach { attachmentStore.delete($0.file) }
         }
         documents.removeAll { deletionIDs.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "证照删除 requested=\(ids.count) total=\(deletionIDs.count)")
         reconcileExpiryNotifications()
         didMutate()
     }
@@ -212,6 +219,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         guard attachment.contentType.conforms(to: .image)
                 || attachment.contentType.conforms(to: .pdf) else {
             attachmentStore.delete(attachment)
+            DiagnosticLogger.shared.log(.attachment, "证照附件导入被拒绝（不支持的文件类型） name=\(url.lastPathComponent)", level: .warning)
             throw AttachmentStoreError.invalidFile
         }
         return attachment
@@ -233,10 +241,6 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
 
     func attachmentData(for attachment: FileAttachment) throws -> Data {
         try attachmentStore.data(for: attachment)
-    }
-
-    private var isModuleVisible: Bool {
-        moduleSettings?.isVisible(.documents) ?? true
     }
 
     private func normalized(_ document: CredentialDocument) -> CredentialDocument {

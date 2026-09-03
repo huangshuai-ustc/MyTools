@@ -39,7 +39,6 @@ private final class MedicalRecordEditorDraft: ObservableObject {
 
 struct MedicalRecordEditorView: View {
     @EnvironmentObject private var store: HealthStore
-    @EnvironmentObject private var auth: AuthManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var draft: MedicalRecordEditorDraft
     @State private var editingExpenseItem: MedicalExpenseItem?
@@ -47,7 +46,6 @@ struct MedicalRecordEditorView: View {
     @State private var showingFileImporter = false
     @State private var renamingAttachment: FileAttachment?
     @State private var renameText = ""
-    @State private var showingAuthentication = false
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var attachmentEditSession: AttachmentEditSession
@@ -82,7 +80,6 @@ struct MedicalRecordEditorView: View {
                 tagAndNotesSection
             }
             .appNavigationTitle(editorTitle)
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -100,10 +97,6 @@ struct MedicalRecordEditorView: View {
                     upsertExpenseItem(updated)
                 }
                 .iOSLargeSheet()
-            }
-            .sheet(isPresented: $showingAuthentication) {
-                AuthenticationView(onAuthenticated: save)
-                    .iOSAuthenticationSheet()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -693,11 +686,6 @@ struct MedicalRecordEditorView: View {
     }
 
     private func save() {
-        guard auth.isAdmin else {
-            showingAuthentication = true
-            return
-        }
-
         let result = MedicalRecordDraftValidator.validatedRecord(from: MedicalRecordDraftInput(
             record: draft.record,
             associatedRecord: associatedRecord,
@@ -895,7 +883,6 @@ private struct MedicalExpenseItemEditorView: View {
                 }
             }
             .appNavigationTitle("费用项目")
-            .adminModeIndicator()
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
