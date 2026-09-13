@@ -3,6 +3,7 @@ import SwiftUI
 struct ToolboxView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @Environment(\.appFontScale) private var fontScale
+    @State private var showingSettings = false
 
     private var visibleModules: [ToolModule] {
         moduleSettings.orderedModules.filter(moduleSettings.isVisible)
@@ -30,6 +31,20 @@ struct ToolboxView: View {
             .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)
 #endif
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("设置")
+                }
+            }
+            .sheet(isPresented: $showingSettings) {
+                ProfileSettingsView()
+                    .iOSLargeSheet()
+            }
         }
     }
 

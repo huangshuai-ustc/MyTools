@@ -92,8 +92,12 @@ struct StockWatchView: View {
             }
             modes.remove(.postMarket)
         } else if session == .regular {
+            // Regular session: preMarket is complete and contiguous — allowed.
+            // postMarket has not started yet — remove it.
             modes.remove(.postMarket)
         }
+        // session == .postMarket or .closed: all segments are complete,
+        // no further restrictions beyond the pairIsCompatible check above.
         if modes.contains(.preMarket), modes.contains(.postMarket), !modes.contains(.line) {
             modes.remove(.postMarket)
         }
@@ -374,6 +378,7 @@ struct StockWatchView: View {
                         errorMessage = nil
                         selectedDate = nil
                         visibleXDomain = nil
+                        ensureValidDisplayModesAfterRangeChange()
                     } label: {
                         Text(range.title)
                             .appFont(.caption.weight(
@@ -614,28 +619,47 @@ struct StockWatchView: View {
     }
 
     /// Prefers the chart's own performance contract: intraday is today's
-    /// change against previous close, while 5-day/K-line uses the visible
-    /// window's first bar. Falls back to the quote pipeline's `previousClose`
+    /// change against previous close, while 5-day/K-line measures from the
+    /// visible window's first opening price to its last closing price. Falls
+    /// back to the quote pipeline's `previousClose`
     /// only while the selected chart snapshot hasn't loaded yet.
     private func rangeHeaderPerformance(
         for stock: StockHolding
     ) -> (title: String, change: Double, percent: Double)? {
-        if let snapshot,
-           let performance = StockChartPresentation.rangePerformance(
-                snapshot: snapshot,
-                range: selectedRange,
-                market: stock.market,
-                visibleXDomain: visibleXDomain,
-                quotePreviousClose: stock.previousClose.map {
-                    NSDecimalNumber(decimal: $0).doubleValue
-                },
-                quoteUpdatedAt: stock.lastQuoteAt
-           ) {
-            return (
-                StockChartPresentation.headerPerformanceTitle(for: selectedRange),
-                performance.change,
-                performance.percent
-            )
+        if let snapshot {
+            let modes = displayModesForCurrentSession
+            if selectedRange == .intraday, modes.contains(.preMarket),
+               !modes.contains(.line), !modes.contains(.postMarket),
+               let performance = StockChartPresentation.preMarketPerformance(
+                    snapshot: snapshot,
+                    market: stock.market
+               ) {
+                return ("盘前涨跌", performance.change, performance.percent)
+            }
+            if selectedRange == .intraday, modes.contains(.postMarket),
+               !modes.contains(.line), !modes.contains(.preMarket),
+               let performance = StockChartPresentation.postMarketPerformance(
+                    snapshot: snapshot
+               ) {
+                return ("盘后涨跌", performance.change, performance.percent)
+            }
+            if let performance = StockChartPresentation.rangePerformance(
+                    snapshot: snapshot,
+                    range: selectedRange,
+                    market: stock.market,
+                    visibleXDomain: visibleXDomain,
+                    isPreMarketChart: modes.contains(.preMarket),
+                    quotePreviousClose: stock.previousClose.map {
+                        NSDecimalNumber(decimal: $0).doubleValue
+                    },
+                    quoteUpdatedAt: stock.lastQuoteAt
+            ) {
+                return (
+                    StockChartPresentation.headerPerformanceTitle(for: selectedRange),
+                    performance.change,
+                    performance.percent
+                )
+            }
         }
         guard snapshot == nil,
               let latestPrice = stock.latestPrice,
@@ -1094,12 +1118,43 @@ struct StockWatchView: View {
         )
     }
 
+    private func ensureValidDisplayModesAfterRangeChange() {
+        let market = stock?.market
+        // Strip only structurally blocked modes (preMarket/postMarket on
+        // non-intraday or unsupported markets). Data-dependent checks (RSI
+        // needs N points, etc.) run later in removeUnavailableChartModes once
+        // the new snapshot arrives, so we must not drop them here.
+        let surviving = selectedDisplayModes.filter { mode in
+            switch mode {
+            case .preMarket, .postMarket:
+                return StockChartPresentation.isModeAvailable(
+                    mode, in: nil, range: selectedRange, market: market
+                )
+            default:
+                return true
+            }
+        }
+        if surviving.isEmpty {
+            let ordered = availableChartDisplayModes
+            if let fallback = ordered.first(where: {
+                StockChartPresentation.isModeAvailable(
+                    $0, in: nil, range: selectedRange, market: market
+                )
+            }) {
+                selectedDisplayModes = [fallback]
+            }
+        } else {
+            selectedDisplayModes = surviving
+        }
+    }
+
     private func applyDefaultDisplayModesIfNeeded() {
         guard let stock, !hasAppliedDefaultDisplayModes else { return }
         let session = StockMarketTradingCalendar.session(for: stock.market)
         selectedDisplayModes = StockChartDisplayMode.defaultModes(
             for: selectedRange,
-            session: session
+            session: session,
+            market: stock.market
         )
         hasAppliedDefaultDisplayModes = true
     }
@@ -1107,7 +1162,7 @@ struct StockWatchView: View {
     private func pollActiveDataIfNeeded() async {
         while !Task.isCancelled {
             do {
-                let interval = selectedRange == .intraday ? 30 : 60
+                let interval = 60
                 try await Task.sleep(for: .seconds(interval))
             } catch {
                 return

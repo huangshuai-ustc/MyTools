@@ -147,6 +147,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var secretTags: [String] = []
     var currencyRateAlerts: [CurrencyRateAlert] = []
     var stockPriceAlerts: [StockPriceAlert] = []
+    var stockReturnAlerts: [StockReturnAlert] = []
     var secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
 
     init(
@@ -169,6 +170,7 @@ struct VaultData: Codable, @unchecked Sendable {
         secretTags: [String] = [],
         currencyRateAlerts: [CurrencyRateAlert] = [],
         stockPriceAlerts: [StockPriceAlert] = [],
+        stockReturnAlerts: [StockReturnAlert] = [],
         secretFieldTemplates: [SecretFieldTemplateVaultValue] = []
     ) {
         self.accounts = accounts
@@ -190,6 +192,7 @@ struct VaultData: Codable, @unchecked Sendable {
         self.secretTags = secretTags
         self.currencyRateAlerts = currencyRateAlerts
         self.stockPriceAlerts = stockPriceAlerts
+        self.stockReturnAlerts = stockReturnAlerts
         self.secretFieldTemplates = secretFieldTemplates
     }
 
@@ -213,6 +216,7 @@ struct VaultData: Codable, @unchecked Sendable {
         case secretTags
         case currencyRateAlerts
         case stockPriceAlerts
+        case stockReturnAlerts
         case secretFieldTemplates
     }
 
@@ -257,6 +261,10 @@ struct VaultData: Codable, @unchecked Sendable {
         stockPriceAlerts = try container.decodeIfPresent(
             [StockPriceAlert].self,
             forKey: .stockPriceAlerts
+        ) ?? []
+        stockReturnAlerts = try container.decodeIfPresent(
+            [StockReturnAlert].self,
+            forKey: .stockReturnAlerts
         ) ?? []
         secretFieldTemplates = try container.decodeIfPresent(
             [SecretFieldTemplateVaultValue].self,

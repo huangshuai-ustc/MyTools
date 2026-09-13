@@ -242,15 +242,7 @@ struct BillRecord: Identifiable, Codable, Equatable, Sendable {
     }
 
     var formattedAmount: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency.rawValue
-        formatter.locale = .autoupdatingCurrent
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        let value = formatter.string(from: NSDecimalNumber(decimal: amount))
-            ?? "\(currency.rawValue) \(amount)"
-        return direction.amountSign + value
+        AppCurrencyFormatter.signedMoney(amount, currency: currency, sign: direction.amountSign)
     }
 
     func matches(_ query: String) -> Bool {

@@ -102,3 +102,39 @@ struct StockPriceAlert: Identifiable, Codable, Equatable, Sendable {
         disabledByArchive = try container.decodeIfPresent(Bool.self, forKey: .disabledByArchive) ?? false
     }
 }
+
+struct StockReturnAlert: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var stockID: UUID?
+    /// 百分比小数，正数=盈利阈值，负数=亏损阈值（如 0.10 = 盈利≥10%，-0.10 = 亏损≤-10%）
+    var threshold: Decimal = 0.10
+    var isEnabled = true
+    var disabledByArchive = false
+
+    init(
+        id: UUID = UUID(),
+        stockID: UUID? = nil,
+        threshold: Decimal = 0.10,
+        isEnabled: Bool = true,
+        disabledByArchive: Bool = false
+    ) {
+        self.id = id
+        self.stockID = stockID
+        self.threshold = threshold
+        self.isEnabled = isEnabled
+        self.disabledByArchive = disabledByArchive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, stockID, threshold, isEnabled, disabledByArchive
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        stockID = try container.decodeIfPresent(UUID.self, forKey: .stockID)
+        threshold = try container.decodeIfPresent(Decimal.self, forKey: .threshold) ?? 0.10
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        disabledByArchive = try container.decodeIfPresent(Bool.self, forKey: .disabledByArchive) ?? false
+    }
+}

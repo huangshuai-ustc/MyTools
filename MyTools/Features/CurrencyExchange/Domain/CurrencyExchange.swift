@@ -22,7 +22,7 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
     var exchangedAt = Date()
     var soldCurrency: CurrencyCode = .cny
     var boughtCurrency: CurrencyCode = .usd
-    var quoteConvention: CurrencyExchangeQuoteConvention = .hundredBoughtToSold
+    var quoteConvention: CurrencyExchangeQuoteConvention = .hundredSoldToBought
     var quotedRate: Decimal = 0
     var soldAmount: Decimal = 0
     var boughtAmount: Decimal = 0
@@ -33,7 +33,7 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
         exchangedAt: Date = Date(),
         soldCurrency: CurrencyCode = .cny,
         boughtCurrency: CurrencyCode = .usd,
-        quoteConvention: CurrencyExchangeQuoteConvention = .hundredBoughtToSold,
+        quoteConvention: CurrencyExchangeQuoteConvention = .hundredSoldToBought,
         quotedRate: Decimal = 0,
         soldAmount: Decimal = 0,
         boughtAmount: Decimal = 0,
@@ -121,7 +121,7 @@ enum CurrencyExchangeValueFormatter {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 8
+        formatter.maximumFractionDigits = 4
         return formatter.string(from: value as NSDecimalNumber) ?? "--"
     }
 

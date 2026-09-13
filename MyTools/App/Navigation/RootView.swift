@@ -108,16 +108,7 @@ struct RootView: View {
         if usesWideLayout {
             DesktopRootView(selection: $desktopSelection)
         } else {
-            TabView {
-                ToolboxView()
-                    .tabItem { Label("工具", systemImage: "square.grid.2x2") }
-                ProfileView()
-                    .tabItem { Label("我的", systemImage: "person.crop.circle") }
-            }
-#if os(iOS)
-            .tint(.blue)
-            .toolbarBackground(.visible, for: .tabBar)
-#endif
+            ToolboxView()
         }
     }
 

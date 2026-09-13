@@ -135,12 +135,26 @@ struct SinaStockQuoteProvider: StockQuoteBatchProviding {
               let latestPrice = StockQuoteProviderSupport.decimal(fields[1]),
               latestPrice > 0 else { return nil }
         let changeAmount = StockQuoteProviderSupport.decimal(fields[4])
+        let previousClose = changeAmount.map { latestPrice - $0 }
+        // fields[2] is the supplier-reported change percent. Use it as-is, but
+        // if it is zero while there's a non-zero previousClose, compute from prices
+        // so pre-market windows still show the last session's move.
+        let suppliedChange = StockQuoteProviderSupport.decimal(fields[2]).map { $0 / 100 }
+        let changePercent: Decimal?
+        if suppliedChange?.isZero == true {
+            changePercent = StockQuoteProviderSupport.percentageChange(
+                latestPrice: latestPrice,
+                previousClose: previousClose
+            )
+        } else {
+            changePercent = suppliedChange
+        }
         return StockQuote(
             symbol: symbol,
             name: fields[0],
             latestPrice: latestPrice,
-            previousClose: changeAmount.map { latestPrice - $0 },
-            changePercent: StockQuoteProviderSupport.decimal(fields[2]).map { $0 / 100 },
+            previousClose: previousClose,
+            changePercent: changePercent,
             // Sina reports this field in Beijing time, including for US stocks.
             updatedAt: StockQuoteProviderSupport.quoteDate(
                 fields[3],

@@ -472,13 +472,7 @@ struct MedicalCostSummary: Equatable {
 
 enum MedicalValueFormatter {
     static func money(_ value: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "CNY"
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: value as NSDecimalNumber) ?? "¥0.00"
+        AppCurrencyFormatter.money(value, currency: .cny)
     }
 
     static func number(_ value: Decimal) -> String {

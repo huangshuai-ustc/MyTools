@@ -11,13 +11,15 @@ enum StockValueFormatter {
     }
 
     static func money(_ value: Decimal, currencyCode: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currencyCode
-        formatter.currencySymbol = currencySymbol(for: currencyCode)
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: value as NSDecimalNumber) ?? "--"
+        guard let currency = CurrencyCode(rawValue: currencyCode.uppercased()) else {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .currency
+            formatter.currencyCode = currencyCode
+            formatter.minimumFractionDigits = 2
+            formatter.maximumFractionDigits = 2
+            return formatter.string(from: value as NSDecimalNumber) ?? "--"
+        }
+        return AppCurrencyFormatter.money(value, currency: currency)
     }
 
     static func moneyMagnitude(_ value: Decimal, currencyCode: String) -> String {
@@ -25,12 +27,15 @@ enum StockValueFormatter {
     }
 
     static func price(_ value: Decimal, currencyCode: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currencyCode
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 4
-        return formatter.string(from: value as NSDecimalNumber) ?? "--"
+        guard let currency = CurrencyCode(rawValue: currencyCode.uppercased()) else {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .currency
+            formatter.currencyCode = currencyCode
+            formatter.minimumFractionDigits = 2
+            formatter.maximumFractionDigits = 4
+            return formatter.string(from: value as NSDecimalNumber) ?? "--"
+        }
+        return AppCurrencyFormatter.price(value, currency: currency)
     }
 
     static func quantity(_ value: Decimal) -> String {
@@ -75,15 +80,6 @@ enum StockValueFormatter {
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "0.00%"
-    }
-
-    private static func currencySymbol(for currencyCode: String) -> String {
-        switch currencyCode.uppercased() {
-        case "CNY": return "¥"
-        case "HKD": return "HK$"
-        case "USD": return "$"
-        default: return currencyCode.uppercased() + " "
-        }
     }
 }
 

@@ -56,7 +56,7 @@ struct TencentStockQuoteProvider: StockQuoteBatchProviding {
                 market: .aShare
             )
         case .hongKong:
-            identifier = "r_hk\(symbol)"
+            identifier = "hk\(symbol)"
         case .unitedStates:
             return nil
         }
@@ -162,13 +162,27 @@ struct TencentStockQuoteProvider: StockQuoteBatchProviding {
         } else {
             shortName = nil
         }
+        // When requiresTimestamp is true (batch mode), prefer the calculated change
+        // to avoid using a stale supplier-reported value. However, for US stocks in
+        // pre-market hours, the latest price equals the previous close, making
+        // calculatedChange == 0 even though the prior session had a real move.
+        // In that case fall back to suppliedChange which carries the last session's delta.
+        let effectiveChange: Decimal?
+        if requiresTimestamp {
+            let calcIsZeroOrNil = calculatedChange.map { $0 == 0 } ?? true
+            effectiveChange = (calcIsZeroOrNil && suppliedChange?.isZero == false)
+                ? suppliedChange
+                : calculatedChange
+        } else {
+            effectiveChange = suppliedChange
+        }
         return StockQuote(
             symbol: stock.market == .aShare && !fields[2].isEmpty ? fields[2] : symbol,
             name: name,
             shortName: shortName,
             latestPrice: latestPrice,
             previousClose: previousClose,
-            changePercent: requiresTimestamp ? calculatedChange : suppliedChange,
+            changePercent: effectiveChange,
             updatedAt: parsedDate ?? Date(),
             source: "腾讯证券"
         )

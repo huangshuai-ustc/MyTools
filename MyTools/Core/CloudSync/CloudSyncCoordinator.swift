@@ -80,6 +80,12 @@ final class CloudSyncCoordinator: ObservableObject {
     }
 
     private static let localChangeDebounce: Duration = .seconds(2)
+    // Backoff delays for transient startup failures: 30s, 2min, 5min, 15min.
+    // After the last attempt the coordinator stays in .error state until
+    // either the user taps "立即同步" or the app relaunches.
+    private static let startupRetryDelays: [Duration] = [
+        .seconds(30), .seconds(120), .seconds(300), .seconds(900),
+    ]
 
     private let defaults: UserDefaults
     private let attachmentStore: AttachmentStore
@@ -90,8 +96,10 @@ final class CloudSyncCoordinator: ObservableObject {
     private var worker: CloudKitSyncWorker?
     private var operationTask: Task<Void, Never>?
     private var reconciliationTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
     private var activeOperationID: UUID?
     private var hasLoadedLocalData = false
+    private var consecutiveStartupFailures = 0
 
     init(
         defaults: UserDefaults,
@@ -132,6 +140,7 @@ final class CloudSyncCoordinator: ObservableObject {
 
     func localDataDidLoad() {
         hasLoadedLocalData = true
+        consecutiveStartupFailures = 0
         DiagnosticLogger.shared.log(.cloudSync, "本地数据已载入，云同步可启动")
         startIfPossible()
     }
@@ -149,17 +158,14 @@ final class CloudSyncCoordinator: ObservableObject {
 
         guard enabled else {
             status = .disabled
-            operationTask?.cancel()
-            operationTask = nil
-            reconciliationTask?.cancel()
-            reconciliationTask = nil
-            activeOperationID = nil
+            cancelAllTasks()
             let previousWorker = worker
             worker = nil
             Task { await previousWorker?.stop() }
             return
         }
 
+        consecutiveStartupFailures = 0
         status = .checkingAccount
         startIfPossible()
     }
@@ -168,8 +174,11 @@ final class CloudSyncCoordinator: ObservableObject {
         guard activeOperationID == nil,
               let worker = prepareWorkerIfPossible() else { return }
         DiagnosticLogger.shared.log(.cloudSync, "手动触发立即同步")
+        retryTask?.cancel()
+        retryTask = nil
         reconciliationTask?.cancel()
         reconciliationTask = nil
+        consecutiveStartupFailures = 0
         let operationID = UUID()
         activeOperationID = operationID
         operationTask = Task { [weak self] in
@@ -197,8 +206,40 @@ final class CloudSyncCoordinator: ObservableObject {
         let operationID = UUID()
         activeOperationID = operationID
         operationTask = Task { [weak self] in
-            _ = await worker.start()
-            self?.operationDidFinish(operationID)
+            let succeeded = await worker.start()
+            self?.startDidFinish(operationID: operationID, succeeded: succeeded)
+        }
+    }
+
+    private func startDidFinish(operationID: UUID, succeeded: Bool) {
+        guard activeOperationID == operationID else { return }
+        activeOperationID = nil
+        operationTask = nil
+        if succeeded {
+            consecutiveStartupFailures = 0
+            return
+        }
+        let attempt = consecutiveStartupFailures
+        consecutiveStartupFailures += 1
+        guard attempt < Self.startupRetryDelays.count else {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "云同步已连续失败 \(consecutiveStartupFailures) 次，停止自动重试，等待手动触发",
+                level: .error
+            )
+            return
+        }
+        let delay = Self.startupRetryDelays[attempt]
+        DiagnosticLogger.shared.log(
+            .cloudSync,
+            "云同步启动失败（第 \(attempt + 1) 次），\(Int(delay.components.seconds))s 后自动重试"
+        )
+        retryTask?.cancel()
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, self.isEnabled else { return }
+            self.retryTask = nil
+            self.startIfPossible()
         }
     }
 
@@ -246,6 +287,16 @@ final class CloudSyncCoordinator: ObservableObject {
         }
     }
 
+    private func cancelAllTasks() {
+        operationTask?.cancel()
+        operationTask = nil
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        retryTask?.cancel()
+        retryTask = nil
+        activeOperationID = nil
+    }
+
     private func operationDidFinish(_ operationID: UUID) {
         guard activeOperationID == operationID else { return }
         activeOperationID = nil
@@ -287,11 +338,7 @@ final class CloudSyncCoordinator: ObservableObject {
         if status == .accountChanged || status == .cloudDataRemoved {
             isEnabled = false
             defaults.set(false, forKey: DefaultsKey.enabled)
-            operationTask?.cancel()
-            operationTask = nil
-            reconciliationTask?.cancel()
-            reconciliationTask = nil
-            activeOperationID = nil
+            cancelAllTasks()
             let previousWorker = worker
             worker = nil
             Task { await previousWorker?.stop() }

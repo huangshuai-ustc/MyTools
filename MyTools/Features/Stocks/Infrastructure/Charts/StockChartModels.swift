@@ -43,8 +43,8 @@ enum StockChartRange: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var yahooRange: String {
         switch self {
-        case .intraday: return "5d"
-        // Yahoo only supports 1-minute history for a short recent window.
+        // 1d returns today's intraday data with much lower latency than 5d.
+        case .intraday: return "1d"
         case .fiveDays: return "5d"
         case .dayK, .weekK, .monthK, .quarterK, .yearK: return "max"
         }

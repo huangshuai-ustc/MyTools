@@ -11,6 +11,7 @@ private final class StockEditorDraft: ObservableObject {
     @Published var quantityText = ""
     @Published var unitPriceText = ""
     @Published var feesText = ""
+    @Published var totalAmountText = ""
 
     init(stock: StockHolding) {
         self.stock = stock
@@ -18,11 +19,21 @@ private final class StockEditorDraft: ObservableObject {
         nameText = stock.name
         searchText = stock.name.isEmpty ? stock.symbol : stock.name
     }
+
+    static func display(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 4
+        formatter.usesGroupingSeparator = false
+        return formatter.string(from: value as NSDecimalNumber)
+            ?? NSDecimalNumber(decimal: value).stringValue
+    }
 }
 
 struct StockEditorView: View {
     private enum Field: Hashable {
-        case symbol, name, quantity, price, fees
+        case symbol, name, quantity, price, fees, totalAmount
     }
 
     @EnvironmentObject private var store: StockStore
@@ -138,7 +149,8 @@ struct StockEditorView: View {
                         DateFieldRow(title: "购买日期：", date: $draft.initialTradedAt)
                         decimalField("购买股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                         decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
-                        decimalField("交易费用：", placeholder: "可选", text: $draft.feesText, field: .fees)
+                        decimalField("交易费用：", placeholder: "可选，默认 0", text: $draft.feesText, field: .fees)
+                        expressionField("交易总额：", placeholder: "含费用", text: $draft.totalAmountText, field: .totalAmount)
                     }
                 }
             }
@@ -167,6 +179,10 @@ struct StockEditorView: View {
             } message: {
                 Text(errorMessage)
             }
+            .onChange(of: focusedField) { oldField, newField in
+                guard let oldField, oldField != newField else { return }
+                deriveField(editedField: oldField)
+            }
         }
     }
 
@@ -180,8 +196,53 @@ struct StockEditorView: View {
             .focused($focusedField, equals: field)
     }
 
+    private func expressionField(
+        _ title: String,
+        placeholder: String,
+        text: Binding<String>,
+        field: Field
+    ) -> some View {
+        NumericFieldRow(
+            title: title,
+            prompt: placeholder,
+            text: text,
+            allowsExpression: true,
+            previewFormatter: { value in
+                StockValueFormatter.money(value, currencyCode: draft.stock.market.currencyCode)
+            }
+        )
+        .focused($focusedField, equals: field)
+    }
+
+    // MARK: - Auto-derive
+
+    private func deriveField(editedField: Field) {
+        guard [Field.quantity, .price, .fees, .totalAmount].contains(editedField) else { return }
+        let fees = DecimalTextParser.optionalDecimal(from: draft.feesText) ?? 0
+        let quantity = DecimalTextParser.decimal(from: draft.quantityText)
+        let unitPrice = DecimalTextParser.decimal(from: draft.unitPriceText)
+        let totalAmount = DecimalTextParser.optionalExpression(from: draft.totalAmountText)
+
+        switch editedField {
+        case .quantity, .price, .fees:
+            if let q = quantity, let p = unitPrice, q > 0, p > 0 {
+                draft.totalAmountText = StockEditorDraft.display(q * p + fees)
+            }
+        case .totalAmount:
+            guard let total = totalAmount, total > 0 else { return }
+            let gross = total - fees
+            guard gross > 0, let p = unitPrice, p > 0 else { return }
+            draft.quantityText = StockEditorDraft.display(gross / p)
+        default:
+            break
+        }
+    }
+
     private func requestSave() {
         commitPendingTextInput {
+            if let field = focusedField {
+                deriveField(editedField: field)
+            }
             save()
         }
     }

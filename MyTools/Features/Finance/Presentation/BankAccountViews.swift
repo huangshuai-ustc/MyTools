@@ -50,13 +50,13 @@ enum BankBranchNavigationService {
         let url: URL?
         switch application {
         case .appleMaps:
-            url = URL(string: "maps://?daddr=\(coordinate)&q=\(encodedName)&dirflg=d")
+            url = URL(string: "maps://?q=\(encodedName)&ll=\(coordinate)")
         case .amap:
-            url = URL(string: "iosamap://navi?lat=\(resolvedLocation.latitude)&lon=\(resolvedLocation.longitude)&dev=0&style=2")
+            url = URL(string: "iosamap://poi?sourceApplication=MyTools&keywords=\(encodedName)&lat=\(resolvedLocation.latitude)&lon=\(resolvedLocation.longitude)&dev=0")
         case .baiduMaps:
-            url = URL(string: "baidumap://map/direction?destination=latlng:\(resolvedLocation.latitude),\(resolvedLocation.longitude)|name:\(encodedName)&mode=driving")
+            url = URL(string: "baidumap://map/geocoder?location=\(resolvedLocation.latitude),\(resolvedLocation.longitude)&name=\(encodedName)")
         case .googleMaps:
-            url = URL(string: "comgooglemaps://?daddr=\(coordinate)&directionsmode=driving")
+            url = URL(string: "comgooglemaps://?q=\(encodedName)&center=\(coordinate)")
         }
         guard let url else { return }
 #if os(iOS)
@@ -69,6 +69,7 @@ enum BankBranchNavigationService {
 
 struct AccountDetailView: View {
     @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
     private let backTitle: String
@@ -78,7 +79,6 @@ struct AccountDetailView: View {
     @State private var viewingForeignSubaccount: ForeignSubaccount?
     @State private var editingBranchLocation: BankAccount?
     @State private var sensitiveLoginInformationRevealed = false
-    @State private var showingSensitiveAccess = false
     @State private var showsClosedCards = false
     @State private var showsClosedSubaccounts = false
 
@@ -149,10 +149,6 @@ struct AccountDetailView: View {
                 store.replaceAccount(updated, cards: store.cards(for: account))
             }
             .iOSLargeSheet()
-        }
-        .sheet(isPresented: $showingSensitiveAccess) {
-            SensitiveAccessView { sensitiveLoginInformationRevealed = true }
-                .iOSAuthenticationSheet()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { sensitiveLoginInformationRevealed = false }
@@ -249,6 +245,7 @@ struct AccountDetailView: View {
                     branchLocationValueLabel(for: account)
                 }
                 .menuStyle(.borderlessButton)
+                .copyableText(account.branchName.isEmpty ? nil : account.branchName)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -368,7 +365,7 @@ struct AccountDetailView: View {
                         if sensitiveLoginInformationRevealed {
                             sensitiveLoginInformationRevealed = false
                         } else {
-                            showingSensitiveAccess = true
+                            Task { if await auth.verifyWithBiometrics() { sensitiveLoginInformationRevealed = true } }
                         }
                     } label: {
                         Label(

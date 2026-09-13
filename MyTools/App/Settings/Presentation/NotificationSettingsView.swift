@@ -14,6 +14,7 @@ struct NotificationSettingsView: View {
 #endif
 #if MYTOOLS_FEATURE_STOCKS
     @State private var editingStockAlert: StockPriceAlert?
+    @State private var editingReturnAlert: StockReturnAlert?
 #endif
 
 #if MYTOOLS_FEATURE_STOCKS
@@ -112,6 +113,31 @@ struct NotificationSettingsView: View {
                         }
                     }
                 }
+
+                Section("持仓盈亏提醒") {
+                    if stockStore.returnAlerts.isEmpty {
+                        Text("暂无持仓盈亏提醒")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(stockStore.returnAlerts) { alert in
+                        returnAlertRow(alert)
+                            .appDeleteSwipeAction(isEnabled: true) {
+                                stockStore.deleteReturnAlerts(ids: [alert.id])
+                            }
+                    }
+
+                    if configuredStocks.isEmpty {
+                        Text("请先添加股票后再设置盈亏提醒。")
+                            .appFont(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button {
+                            editingReturnAlert = StockReturnAlert(stockID: configuredStocks.first?.id)
+                        } label: {
+                            Label("添加盈亏提醒", systemImage: "plus.circle")
+                        }
+                    }
+                }
             }
 #endif
         }
@@ -137,6 +163,13 @@ struct NotificationSettingsView: View {
         .sheet(item: $editingStockAlert) { alert in
             StockPriceAlertEditorView(alert: alert, stocks: configuredStocks) { updated in
                 stockStore.upsertPriceAlert(updated)
+                requestNotificationPermissionIfNeeded()
+            }
+            .iOSLargeSheet()
+        }
+        .sheet(item: $editingReturnAlert) { alert in
+            StockReturnAlertEditorView(alert: alert, stocks: configuredStocks) { updated in
+                stockStore.upsertReturnAlert(updated)
                 requestNotificationPermissionIfNeeded()
             }
             .iOSLargeSheet()
@@ -207,6 +240,43 @@ struct NotificationSettingsView: View {
                         var updated = alert
                         updated.isEnabled = enabled
                         stockStore.upsertPriceAlert(updated)
+                    }
+                )
+            )
+            .labelsHidden()
+        }
+        .appListRowStyle()
+    }
+
+    private func returnAlertRow(_ alert: StockReturnAlert) -> some View {
+        let stock = alert.stockID.flatMap { id in configuredStocks.first { $0.id == id } }
+        let isProfit = alert.threshold >= 0
+        let thresholdPct = NSDecimalNumber(decimal: abs(alert.threshold) * 100).stringValue
+        let conditionText = isProfit ? "盈利 ≥ \(thresholdPct)%" : "亏损 ≤ -\(thresholdPct)%"
+        return HStack(spacing: 10) {
+            Button {
+                editingReturnAlert = alert
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(stock.map { "\($0.displayName)（\($0.symbol)）" } ?? "股票已不存在")
+                        .appFont(.subheadline.weight(.medium))
+                    Text(conditionText)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { stockStore.returnAlerts.first(where: { $0.id == alert.id })?.isEnabled ?? false },
+                    set: { enabled in
+                        var updated = alert
+                        updated.isEnabled = enabled
+                        stockStore.upsertReturnAlert(updated)
                     }
                 )
             )
@@ -416,6 +486,109 @@ private struct StockPriceAlertEditorView: View {
             return
         }
         draft.threshold = threshold
+        onSave(draft)
+        dismiss()
+    }
+
+    private func reportError(_ message: String) {
+        errorMessage = message
+        showingError = true
+    }
+}
+
+private struct StockReturnAlertEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: StockReturnAlert
+    @State private var thresholdText: String
+    @State private var errorMessage = ""
+    @State private var showingError = false
+    let stocks: [StockHolding]
+    let onSave: (StockReturnAlert) -> Void
+
+    init(
+        alert: StockReturnAlert,
+        stocks: [StockHolding],
+        onSave: @escaping (StockReturnAlert) -> Void
+    ) {
+        _draft = State(initialValue: alert)
+        let pct = NSDecimalNumber(decimal: alert.threshold * 100).stringValue
+        _thresholdText = State(initialValue: pct)
+        self.stocks = stocks
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("提醒条件") {
+                    PickerFieldRow(
+                        title: "股票",
+                        selection: Binding(
+                            get: { draft.stockID ?? stocks.first?.id ?? UUID() },
+                            set: { draft.stockID = $0 }
+                        )
+                    ) {
+                        ForEach(StockMarket.topLevelOrder) { market in
+                            let marketStocks = stocks.filter { $0.market == market }
+                            if !marketStocks.isEmpty {
+                                Section(market.title.replacingOccurrences(of: " ", with: "")) {
+                                    ForEach(marketStocks) { stock in
+                                        Text("\(stock.displayName)（\(stock.symbol)）")
+                                            .tag(stock.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    HStack {
+                        Text("比例阈值（%）")
+                        Spacer()
+                        TextField("必填", text: $thresholdText)
+                            .multilineTextAlignment(.trailing)
+#if os(iOS)
+                            .keyboardType(.numbersAndPunctuation)
+#endif
+                    }
+                    ToggleFieldRow(title: "启用提醒", isOn: $draft.isEnabled)
+                }
+
+                Section {
+                    Text("正数表示盈利超过该比例时提醒，负数表示亏损超过该比例时提醒。例如：10 表示盈利 ≥ 10% 时提醒，-10 表示亏损 ≤ -10% 时提醒。")
+                        .appFont(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .appNavigationTitle("持仓盈亏提醒")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: save)
+                        .disabled(stocks.isEmpty)
+                }
+            }
+            .alert("无法保存", isPresented: $showingError) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+        }
+    }
+
+    private func save() {
+        guard draft.stockID != nil else {
+            reportError("请选择股票。")
+            return
+        }
+        guard let pct = DecimalTextParser.decimal(from: thresholdText), pct != 0 else {
+            reportError("比例阈值不能为零。")
+            return
+        }
+        draft.threshold = pct / 100
         onSave(draft)
         dismiss()
     }

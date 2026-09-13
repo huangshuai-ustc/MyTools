@@ -6,12 +6,12 @@ import AppKit
 
 struct CredentialDetailView: View {
     @EnvironmentObject private var store: DocumentsStore
+    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.appFontScale) private var fontScale
     let documentID: UUID
     @Binding var isUnlocked: Bool
     @State private var hiddenFieldIDs: Set<UUID> = []
-    @State private var showingSensitiveAccess = false
     @State private var editingDocument: CredentialDocument?
     @State private var previewAttachment: FileAttachment?
     @State private var attachmentError: String?
@@ -140,7 +140,7 @@ struct CredentialDetailView: View {
                                 Label("附件已隐藏", systemImage: "lock.fill")
                                     .foregroundStyle(.secondary)
                                 Button {
-                                    showingSensitiveAccess = true
+                                    Task { if await auth.verifyWithBiometrics() { isUnlocked = true } }
                                 } label: {
                                     Label("验证身份后查看附件", systemImage: "faceid")
                                 }
@@ -172,7 +172,7 @@ struct CredentialDetailView: View {
                     ToolbarItemGroup(placement: .primaryAction) {
                         if !canReveal {
                             Button {
-                                showingSensitiveAccess = true
+                                Task { if await auth.verifyWithBiometrics() { isUnlocked = true } }
                             } label: {
                                 Image(systemName: "faceid")
                             }
@@ -199,10 +199,6 @@ struct CredentialDetailView: View {
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
-        .sheet(isPresented: $showingSensitiveAccess) {
-            SensitiveAccessView { isUnlocked = true }
-                .iOSAuthenticationSheet()
-        }
         .sheet(item: $editingDocument) { document in
             CredentialEditorView(document: document)
                 .id(document.id)

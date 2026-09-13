@@ -9,6 +9,7 @@ private enum StockStoreDefaultsKey {
 final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var stocks: [StockHolding]
     @Published private(set) var priceAlerts: [StockPriceAlert]
+    @Published private(set) var returnAlerts: [StockReturnAlert]
     @Published private(set) var isRefreshingQuotes = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var lastRefreshAtByMarket: [StockMarket: Date] = [:]
@@ -28,6 +29,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     init(
         stocks: [StockHolding] = [],
         priceAlerts: [StockPriceAlert] = [],
+        returnAlerts: [StockReturnAlert] = [],
         isDataLoaded: Bool = false,
         quoteService: any StockQuoteRefreshing,
         alertNotifications: any AlertNotificationRouting,
@@ -39,6 +41,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     ) {
         self.stocks = stocks
         self.priceAlerts = priceAlerts
+        self.returnAlerts = returnAlerts
         self.isDataLoaded = isDataLoaded
         self.quoteService = quoteService
         self.alertNotifications = alertNotifications
@@ -61,14 +64,16 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     func replace(
         stocks: [StockHolding],
         priceAlerts: [StockPriceAlert],
+        returnAlerts: [StockReturnAlert],
         isDataLoaded: Bool
     ) {
         self.stocks = stocks
         self.priceAlerts = priceAlerts
+        self.returnAlerts = returnAlerts
         self.isDataLoaded = isDataLoaded
         quoteErrors = [:]
         quoteSources = [:]
-        DiagnosticLogger.shared.log(.data, "股票数据替换 stocks=\(stocks.count) alerts=\(priceAlerts.count)")
+        DiagnosticLogger.shared.log(.data, "股票数据替换 stocks=\(stocks.count) alerts=\(priceAlerts.count) returnAlerts=\(returnAlerts.count)")
         refreshInvalidator.refreshEligibilityChanged()
     }
 
@@ -118,6 +123,12 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             priceAlerts[alertIndex].disabledByArchive = true
             alertNotifications.clearState(for: priceAlerts[alertIndex].id)
         }
+        for alertIndex in returnAlerts.indices where returnAlerts[alertIndex].stockID == id {
+            guard returnAlerts[alertIndex].isEnabled else { continue }
+            returnAlerts[alertIndex].isEnabled = false
+            returnAlerts[alertIndex].disabledByArchive = true
+            alertNotifications.clearState(for: returnAlerts[alertIndex].id)
+        }
         quoteErrors[id] = nil
         quoteSources[id] = nil
         DiagnosticLogger.shared.log(.data, "股票归档 id=\(id)")
@@ -143,6 +154,12 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             priceAlerts[alertIndex].disabledByArchive = false
             alertNotifications.clearState(for: priceAlerts[alertIndex].id)
         }
+        for alertIndex in returnAlerts.indices where returnAlerts[alertIndex].stockID == id {
+            guard returnAlerts[alertIndex].disabledByArchive else { continue }
+            returnAlerts[alertIndex].isEnabled = true
+            returnAlerts[alertIndex].disabledByArchive = false
+            alertNotifications.clearState(for: returnAlerts[alertIndex].id)
+        }
         DiagnosticLogger.shared.log(.data, "股票恢复归档 id=\(id)")
         didMutate()
         refreshInvalidator.refreshEligibilityChanged()
@@ -155,11 +172,14 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         let result = StockPortfolioEditor.deletingStocks(
             ids: ids,
             from: stocks,
-            alerts: priceAlerts
+            alerts: priceAlerts,
+            returnAlerts: returnAlerts
         )
         stocks = result.stocks
         priceAlerts = result.stockPriceAlerts
+        returnAlerts = result.stockReturnAlerts
         result.removedAlertIDs.forEach(alertNotifications.clearState)
+        result.removedReturnAlertIDs.forEach(alertNotifications.clearState)
         for id in ids {
             quoteErrors[id] = nil
             quoteSources[id] = nil
@@ -256,6 +276,39 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             return false
         }
         DiagnosticLogger.shared.log(.data, "股票价格提醒删除 count=\(ids.count)")
+        didMutate()
+        refreshInvalidator.refreshEligibilityChanged()
+    }
+
+    func upsertReturnAlert(_ alert: StockReturnAlert) {
+        guard let stockID = alert.stockID,
+              stocks.contains(where: { $0.id == stockID }),
+              alert.threshold != 0 else {
+            DiagnosticLogger.shared.log(.data, "股票盈亏提醒保存被拒绝（无效参数） id=\(alert.id)", level: .warning)
+            return
+        }
+        let isUpdate = returnAlerts.contains { $0.id == alert.id }
+        if let index = returnAlerts.firstIndex(where: { $0.id == alert.id }) {
+            returnAlerts[index] = alert
+        } else {
+            returnAlerts.append(alert)
+        }
+        alertNotifications.clearState(for: alert.id)
+        DiagnosticLogger.shared.log(.data, "股票盈亏提醒\(isUpdate ? "更新" : "新增") id=\(alert.id)")
+        didMutate()
+        refreshInvalidator.refreshEligibilityChanged()
+    }
+
+    func deleteReturnAlerts(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        returnAlerts.removeAll { alert in
+            if ids.contains(alert.id) {
+                alertNotifications.clearState(for: alert.id)
+                return true
+            }
+            return false
+        }
+        DiagnosticLogger.shared.log(.data, "股票盈亏提醒删除 count=\(ids.count)")
         didMutate()
         refreshInvalidator.refreshEligibilityChanged()
     }
@@ -371,6 +424,51 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             DiagnosticLogger.shared.log(.notification, "股票价格提醒触发 count=\(triggeredIDs.count)")
         }
         disablePriceAlerts(ids: triggeredIDs)
+        evaluateReturnAlerts()
+    }
+
+    private func evaluateReturnAlerts() {
+        guard isModuleVisible else { return }
+        let matches = AppStoreAlertEvaluator.matchingStockReturnAlertIDs(
+            alerts: returnAlerts,
+            stocks: stocks
+        )
+        let triggeredIDs = AppStoreAlertEvaluator.dispatchAlerts(
+            alerts: returnAlerts,
+            matchingIDs: matches,
+            isEnabled: \.isEnabled,
+            notifications: alertNotifications
+        ) { alert in
+            guard let stockID = alert.stockID,
+                  let stock = stocks.first(where: { $0.id == stockID }),
+                  let rate = stock.holdingProfitRate else { return nil }
+            let actualPct = StockValueFormatter.signedPercent(rate)
+            let thresholdPct = StockValueFormatter.signedPercent(alert.threshold)
+            let direction = alert.threshold >= 0 ? "盈利" : "亏损"
+            return (
+                title: "持仓盈亏提醒",
+                body: "\(stock.displayName)（\(stock.symbol)）\(direction)已达 \(actualPct)，触发阈值 \(thresholdPct)。"
+            )
+        }
+        if !triggeredIDs.isEmpty {
+            DiagnosticLogger.shared.log(.notification, "股票盈亏提醒触发 count=\(triggeredIDs.count)")
+        }
+        disableReturnAlerts(ids: triggeredIDs)
+    }
+
+    private func disableReturnAlerts(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        var didChange = false
+        for index in returnAlerts.indices where ids.contains(returnAlerts[index].id) {
+            guard returnAlerts[index].isEnabled else { continue }
+            returnAlerts[index].isEnabled = false
+            alertNotifications.clearState(for: returnAlerts[index].id)
+            didChange = true
+        }
+        if didChange {
+            didMutate()
+            refreshInvalidator.refreshEligibilityChanged()
+        }
     }
 
     private func disablePriceAlerts(ids: Set<UUID>) {

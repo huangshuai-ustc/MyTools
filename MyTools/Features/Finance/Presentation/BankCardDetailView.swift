@@ -7,9 +7,9 @@ import AppKit
 struct CardDetailView: View {
     private let initialCard: BankCard
     @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var sensitiveInformationRevealed = false
-    @State private var showingSensitiveAccess = false
     @State private var editingCard: BankCard?
     @State private var previewAttachment: FileAttachment?
     @State private var showingAttachmentError = false
@@ -74,7 +74,7 @@ struct CardDetailView: View {
                             if sensitiveInformationRevealed {
                                 sensitiveInformationRevealed = false
                             } else {
-                                showingSensitiveAccess = true
+                                Task { if await auth.verifyWithBiometrics() { sensitiveInformationRevealed = true } }
                             }
                         } label: {
                             Label(
@@ -101,7 +101,7 @@ struct CardDetailView: View {
                         } else {
                             Label("账单 PDF 已隐藏", systemImage: "lock.fill")
                                 .foregroundStyle(.secondary)
-                            Button { showingSensitiveAccess = true } label: {
+                            Button { Task { if await auth.verifyWithBiometrics() { sensitiveInformationRevealed = true } } } label: {
                                 Label("验证身份后查看账单", systemImage: "faceid")
                             }
                         }
@@ -130,10 +130,6 @@ struct CardDetailView: View {
                     }
                     .iOSLargeSheet()
                 }
-            }
-            .sheet(isPresented: $showingSensitiveAccess) {
-                SensitiveAccessView { sensitiveInformationRevealed = true }
-                    .iOSAuthenticationSheet()
             }
 #if os(iOS)
             .sheet(item: $previewAttachment) { attachment in

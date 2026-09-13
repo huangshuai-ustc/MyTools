@@ -79,7 +79,7 @@ struct AppFontSpec {
         return copy
     }
 
-    fileprivate func font(scale: CGFloat?) -> Font {
+    func font(scale: CGFloat?) -> Font {
         var result: Font
 #if os(macOS)
         if let scale {

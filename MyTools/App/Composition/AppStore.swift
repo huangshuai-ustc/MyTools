@@ -129,6 +129,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         stockStore = StockStore(
             stocks: initialVault?.stocks ?? [],
             priceAlerts: initialVault?.stockPriceAlerts ?? [],
+            returnAlerts: initialVault?.stockReturnAlerts ?? [],
             isDataLoaded: initialVault != nil,
             quoteService: dependencies.quoteService,
             alertNotifications: dependencies.alertNotifications,
@@ -378,6 +379,13 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         let loadSummary = "Local vault loaded from \(snapshot.source): \(snapshot.byteCount) bytes; read \(snapshot.readMilliseconds) ms, decode \(snapshot.decodeMilliseconds) ms, total \(snapshot.totalMilliseconds) ms"
         startupLogger.info("\(loadSummary, privacy: .public)")
         DiagnosticLogger.shared.log(.startup, loadSummary)
+        if snapshot.decodeMilliseconds > 10_000 {
+            DiagnosticLogger.shared.log(
+                .startup,
+                "vault 解密耗时异常：\(Int(snapshot.decodeMilliseconds))ms（read \(Int(snapshot.readMilliseconds))ms），设备可能处于受保护数据刚解锁后的资源紧张状态",
+                level: .warning
+            )
+        }
     }
 
     private func applyExchangeRateSnapshot(_ snapshot: ExchangeRateSnapshot) {
@@ -398,6 +406,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         stockStore.replace(
             stocks: vault.stocks,
             priceAlerts: vault.stockPriceAlerts,
+            returnAlerts: vault.stockReturnAlerts,
             isDataLoaded: true
         )
 #endif
@@ -501,6 +510,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         if restoredPayload.includedModules.contains(.myStocks) {
             stockStore.clearNotificationState(
                 for: Set(restoredPayload.vault.stockPriceAlerts.map(\.id))
+                    .union(Set(restoredPayload.vault.stockReturnAlerts.map(\.id)))
             )
         }
 #endif
@@ -672,6 +682,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_STOCKS
         vault.stocks = stockStore.stocks
         vault.stockPriceAlerts = stockStore.priceAlerts
+        vault.stockReturnAlerts = stockStore.returnAlerts
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
         vault.currencyExchangeRecords = currencyExchangeStore.records
@@ -809,6 +820,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_STOCKS
             vault.stocks = []
             vault.stockPriceAlerts = []
+            vault.stockReturnAlerts = []
 #endif
             break
         case .currencyExchange:
@@ -885,6 +897,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             vault.stockPriceAlerts = mergingRestored(
                 snapshot.vault.stockPriceAlerts,
                 into: vault.stockPriceAlerts
+            )
+            vault.stockReturnAlerts = mergingRestored(
+                snapshot.vault.stockReturnAlerts,
+                into: vault.stockReturnAlerts
             )
 #endif
             break
@@ -995,7 +1011,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         switch snapshot.module {
         case .myStocks:
 #if MYTOOLS_FEATURE_STOCKS
-            stockStore.clearNotificationState(for: Set(snapshot.vault.stockPriceAlerts.map(\.id)))
+            stockStore.clearNotificationState(
+                for: Set(snapshot.vault.stockPriceAlerts.map(\.id))
+                    .union(Set(snapshot.vault.stockReturnAlerts.map(\.id)))
+            )
             stockStore.clearLocalRefreshState()
 #endif
             break

@@ -13,6 +13,7 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
     case thb = "THB"
     case usd = "USD"
     case aud = "AUD"
+    case mop = "MOP"
 
     private static let supportedCases = Set(allCases)
 
@@ -36,6 +37,7 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .thb: return "泰国铢 THB"
         case .usd: return "美元 USD"
         case .aud: return "澳大利亚元 AUD"
+        case .mop: return "澳门元 MOP"
         }
     }
 
@@ -53,6 +55,7 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .thb: return "泰国铢"
         case .usd: return "美元"
         case .aud: return "澳大利亚元"
+        case .mop: return "澳门元"
         }
     }
 

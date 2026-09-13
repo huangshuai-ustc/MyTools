@@ -716,7 +716,7 @@ enum StockQuoteProviderSupport {
         case .aShare:
             return sinaIdentifier(symbol: symbol, market: .aShare)
         case .hongKong:
-            return "r_hk\(symbol)"
+            return "hk\(symbol)"
         case .unitedStates:
             return "us\(symbol.uppercased())"
         }

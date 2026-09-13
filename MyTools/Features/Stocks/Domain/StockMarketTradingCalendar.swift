@@ -673,11 +673,18 @@ enum StockMarketTradingCalendar {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard components.month == month,
               let year = components.year,
-              let range = calendar.range(of: .day, in: .month, for: date),
-              let last = makeDate(year: year, month: month, day: range.count, calendar: calendar) else {
+              let range = calendar.range(of: .day, in: .month, for: date) else {
             return false
         }
-        return components.day == range.count && calendar.component(.weekday, from: last) == weekday
+        // Walk backwards from the last day of the month to find the last
+        // occurrence of the target weekday (e.g. last Monday of May).
+        for day in stride(from: range.count, through: max(1, range.count - 6), by: -1) {
+            guard let candidate = makeDate(year: year, month: month, day: day, calendar: calendar) else { continue }
+            if calendar.component(.weekday, from: candidate) == weekday {
+                return components.day == day
+            }
+        }
+        return false
     }
 
     private static func easterSunday(year: Int, calendar: Calendar) -> Date? {

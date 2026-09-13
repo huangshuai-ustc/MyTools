@@ -28,12 +28,18 @@ struct NasdaqStockChartProvider: StockChartProvider {
         guard let rawChart = payload["chart"] as? [[String: Any]] else {
             throw StockChartError.noData
         }
+        // Nasdaq encodes timestamps as local ET epoch (i.e. it treats ET wall-clock
+        // seconds as if they were UTC). Adding the NY timezone offset converts them
+        // back to a correct UTC-based Date so session-time filters work properly.
+        let nyOffset = TimeInterval(
+            TimeZone(identifier: "America/New_York")!.secondsFromGMT(for: Date())
+        )
         let rawPoints = rawChart.compactMap { item -> StockChartPoint? in
             guard let milliseconds = cleanedDouble(item["x"]),
                   let price = cleanedDouble(item["y"]),
                   price > 0 else { return nil }
             return StockChartPoint(
-                date: Date(timeIntervalSince1970: milliseconds / 1_000),
+                date: Date(timeIntervalSince1970: milliseconds / 1_000 - nyOffset),
                 open: price,
                 high: price,
                 low: price,
@@ -41,14 +47,18 @@ struct NasdaqStockChartProvider: StockChartProvider {
                 volume: nil
             )
         }
+        let preMarketRaw = StockChartSeriesProcessor.preMarketUnitedStatesSessionPoints(rawPoints)
         let prepared = StockChartSeriesProcessor.preparedMinuteChartPoints(
             StockChartSeriesProcessor.regularUnitedStatesSessionPoints(rawPoints),
             range: .intraday,
             market: .unitedStates
         )
         let points = prepared.visible
-        guard points.count >= StockChartSeriesProcessor.minimumPointCount(for: .intraday),
-              let latest = points.last else { throw StockChartError.noData }
+        let preMarketPoints = preMarketRaw.sorted { $0.date < $1.date }
+        guard !points.isEmpty || !preMarketPoints.isEmpty else {
+            throw StockChartError.noData
+        }
+        let latest = points.last ?? preMarketPoints.last!
 
         return StockChartSnapshot(
             symbol: payload["symbol"] as? String ?? symbol,
@@ -57,6 +67,7 @@ struct NasdaqStockChartProvider: StockChartProvider {
             previousClose: cleanedDouble(payload["previousClose"])
                 ?? stock.previousClose.map { NSDecimalNumber(decimal: $0).doubleValue },
             points: points,
+            preMarketPoints: preMarketPoints,
             indicatorPoints: prepared.indicators,
             quoteUpdatedAt: latest.date,
             fetchedAt: Date(),

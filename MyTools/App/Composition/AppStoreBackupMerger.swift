@@ -42,6 +42,10 @@ enum AppStoreBackupMerger {
                 local: localVault.stockPriceAlerts,
                 imported: imported.vault.stockPriceAlerts
             )
+            merged.stockReturnAlerts = mergeByID(
+                local: localVault.stockReturnAlerts,
+                imported: imported.vault.stockReturnAlerts
+            )
         }
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE

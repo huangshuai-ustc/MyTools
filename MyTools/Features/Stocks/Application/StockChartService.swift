@@ -18,6 +18,13 @@ protocol StockChartServing: Sendable {
     /// refreshed minute/daily inputs rather than treating K-lines specially.
     func refreshAfterFinalSession(for stock: StockHolding) async throws
 
+    /// Returns true when the on-disk chart data for a stock is older than
+    /// the market's latest completed final session — i.e. a closing refresh
+    /// is actually needed. This reads only the local disk cache and makes no
+    /// network requests, so it is safe to call before deciding whether to
+    /// trigger a refresh.
+    func isChartStale(for stock: StockHolding) async -> Bool
+
     /// Removes in-memory and on-disk chart data for a single stock.
     func clearCache(for stock: StockHolding) async
 }
@@ -218,6 +225,23 @@ actor StockChartService: StockChartServing {
         }
     }
 
+    func isChartStale(for stock: StockHolding) async -> Bool {
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard !symbol.isEmpty else { return false }
+        guard let sessionEnd = StockMarketTradingCalendar
+            .latestCompletedFinalSessionEnd(for: stock.market) else { return false }
+        let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        guard let stored = diskStore.load(for: key) else { return true }
+        // Both the intraday and daily series must be up to date after the
+        // final session. Check whichever was fetched most recently; if that
+        // fetchedAt still predates the session end the data is stale.
+        let latestFetchedAt = [StockChartRange.intraday, .dayK]
+            .compactMap { stored.rangeMetadata[$0.rawValue]?.fetchedAt }
+            .max()
+        guard let latestFetchedAt else { return true }
+        return latestFetchedAt < sessionEnd
+    }
+
     func clearCache() {
         cacheGeneration += 1
         lastRefreshSessionEnd.removeAll()
@@ -258,10 +282,11 @@ actor StockChartService: StockChartServing {
                 )
             if request.stock.market == .unitedStates,
                request.range == .intraday,
-               (needsCompletedRegularSession
-                    || tencentSnapshot.preMarketPoints.isEmpty
-                    || tencentSnapshot.postMarketPoints.isEmpty),
                let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
+                // Always merge both sources for US intraday: Tencent provides
+                // denser regular-session bars while Yahoo is the authoritative
+                // extended-hours source. The merge keeps whichever series is
+                // denser for each session independently.
                 return preferredUSIntradaySnapshot(
                     primary: tencentSnapshot,
                     fallback: yahooSnapshot
@@ -410,8 +435,8 @@ actor StockChartService: StockChartServing {
         }
         switch session {
         case .preMarket:
-            guard let latest = snapshot.preMarketPoints.last else { return false }
-            guard now.timeIntervalSince(latest.date) < key.range.cacheLifetime else {
+            guard !snapshot.preMarketPoints.isEmpty else { return false }
+            guard now.timeIntervalSince(snapshot.fetchedAt) < key.range.cacheLifetime else {
                 return false
             }
             return regularChartCacheIsUsable(snapshot, key: key, now: now)
@@ -423,8 +448,8 @@ actor StockChartService: StockChartServing {
             return hasTodayRegularPoint
                 && now.timeIntervalSince(snapshot.fetchedAt) < key.range.cacheLifetime
         case .postMarket:
-            guard let latest = snapshot.postMarketPoints.last else { return false }
-            guard now.timeIntervalSince(latest.date) < key.range.cacheLifetime else {
+            guard !snapshot.postMarketPoints.isEmpty else { return false }
+            guard now.timeIntervalSince(snapshot.fetchedAt) < key.range.cacheLifetime else {
                 return false
             }
             return regularChartCacheIsUsable(snapshot, key: key, now: now)

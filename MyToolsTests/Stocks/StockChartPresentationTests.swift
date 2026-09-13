@@ -875,8 +875,8 @@ struct StockChartPresentationTests {
             market: .aShare
         )
 
-        #expect(performance?.change == 10)
-        #expect(performance?.percent == 0.1)
+        #expect(performance?.change == 11)
+        #expect(performance?.percent == 11.0 / 99.0)
     }
 
     @Test func fiveDayPerformanceFallsBackToFirstVisiblePointWithoutHistory() {
@@ -896,8 +896,8 @@ struct StockChartPresentationTests {
             market: .aShare
         )
 
-        #expect(performance?.change == 10)
-        #expect(performance?.percent == 0.1)
+        #expect(performance?.change == 11)
+        #expect(performance?.percent == 11.0 / 99.0)
     }
 
     @Test func kLinePerformanceUsesItsOwnVisibleWindow() {
@@ -924,9 +924,37 @@ struct StockChartPresentationTests {
                 range: range,
                 market: .aShare
             )
-            #expect(performance?.change == 20)
-            #expect(performance?.percent == 0.25)
+            #expect(performance?.change == 21)
+            #expect(performance?.percent == 21.0 / 79.0)
         }
+    }
+
+    @Test func kLinePerformanceMeasuresFirstOpenToLastClose() throws {
+        let first = StockChartPoint(
+            date: StockChartFixtures.date(2026, 8, 19),
+            open: 1_100,
+            high: 1_100,
+            low: 800.08,
+            close: 845,
+            volume: 1_000
+        )
+        let latest = StockChartPoint(
+            date: StockChartFixtures.date(2026, 9, 4),
+            open: 556.8,
+            high: 560,
+            low: 508.88,
+            close: 530.3,
+            volume: 1_000
+        )
+
+        let performance = try #require(StockChartPresentation.rangePerformance(
+            snapshot: makeSnapshot(points: [first, latest]),
+            range: .dayK,
+            market: .aShare
+        ))
+
+        #expect(abs(performance.change - (-569.7)) < 0.000_001)
+        #expect(abs(performance.percent - (-0.517_909_090_9)) < 0.000_001)
     }
 
     @Test func kLinePerformanceUsesVisibleWindowStart() {
@@ -945,8 +973,8 @@ struct StockChartPresentationTests {
             visibleXDomain: visibleXDomain
         )
 
-        #expect(performance?.change == 10)
-        #expect(performance?.percent == 0.1)
+        #expect(performance?.change == 11)
+        #expect(performance?.percent == 11.0 / 99.0)
     }
 
     @Test func availabilityUsesIndicatorHistoryRatherThanVisiblePointCount() {

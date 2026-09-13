@@ -6,18 +6,32 @@ private final class StockTransactionEditorDraft: ObservableObject {
     @Published var quantityText: String
     @Published var unitPriceText: String
     @Published var feesText: String
+    @Published var totalAmountText: String
 
     init(transaction: StockTransaction) {
         self.transaction = transaction
-        quantityText = transaction.quantity == 0 ? "" : NSDecimalNumber(decimal: transaction.quantity).stringValue
-        unitPriceText = transaction.unitPrice == 0 ? "" : NSDecimalNumber(decimal: transaction.unitPrice).stringValue
-        feesText = transaction.fees == 0 ? "" : NSDecimalNumber(decimal: transaction.fees).stringValue
+        quantityText = transaction.quantity == 0 ? "" : Self.display(transaction.quantity)
+        unitPriceText = transaction.unitPrice == 0 ? "" : Self.display(transaction.unitPrice)
+        feesText = transaction.fees == 0 ? "" : Self.display(transaction.fees)
+        totalAmountText = transaction.quantity == 0 || transaction.unitPrice == 0
+            ? ""
+            : Self.display(transaction.quantity * transaction.unitPrice + transaction.fees)
+    }
+
+    static func display(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 4
+        formatter.usesGroupingSeparator = false
+        return formatter.string(from: value as NSDecimalNumber)
+            ?? NSDecimalNumber(decimal: value).stringValue
     }
 }
 
 struct StockTransactionEditorView: View {
     private enum Field: Hashable {
-        case quantity, price, fees
+        case quantity, price, fees, totalAmount
     }
 
     @EnvironmentObject private var store: StockStore
@@ -46,7 +60,8 @@ struct StockTransactionEditorView: View {
                     DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt)
                     decimalField("交易股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                     decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
-                    decimalField("交易费用：", placeholder: "可选", text: $draft.feesText, field: .fees)
+                    decimalField("交易费用：", placeholder: "可选，默认 0", text: $draft.feesText, field: .fees)
+                    expressionField("交易总额：", placeholder: "含费用", text: $draft.totalAmountText, field: .totalAmount)
                 }
 
                 Section {
@@ -72,6 +87,10 @@ struct StockTransactionEditorView: View {
             } message: {
                 Text(errorMessage)
             }
+            .onChange(of: focusedField) { oldField, newField in
+                guard let oldField, oldField != newField else { return }
+                deriveField(editedField: oldField)
+            }
         }
     }
 
@@ -85,8 +104,59 @@ struct StockTransactionEditorView: View {
             .focused($focusedField, equals: field)
     }
 
+    private func expressionField(
+        _ title: String,
+        placeholder: String,
+        text: Binding<String>,
+        field: Field
+    ) -> some View {
+        NumericFieldRow(
+            title: title,
+            prompt: placeholder,
+            text: text,
+            allowsExpression: true,
+            previewFormatter: { value in
+                StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
+            }
+        )
+        .focused($focusedField, equals: field)
+    }
+
+    // MARK: - Auto-derive
+
+    // Rule: total = quantity × unitPrice + fees
+    // When a field loses focus, treat it as authoritative and derive
+    // the one field that was NOT just edited:
+    //   edited quantity/price/fees → update total
+    //   edited total              → update quantity
+    private func deriveField(editedField: Field) {
+        let fees = DecimalTextParser.optionalDecimal(from: draft.feesText) ?? 0
+        let quantity = DecimalTextParser.decimal(from: draft.quantityText)
+        let unitPrice = DecimalTextParser.decimal(from: draft.unitPriceText)
+        let totalAmount = DecimalTextParser.optionalExpression(from: draft.totalAmountText)
+
+        switch editedField {
+        case .quantity, .price, .fees:
+            if let q = quantity, let p = unitPrice, q > 0, p > 0 {
+                draft.totalAmountText = StockTransactionEditorDraft.display(q * p + fees)
+            }
+        case .totalAmount:
+            guard let total = totalAmount, total > 0 else { return }
+            let gross = total - fees
+            guard gross > 0 else { return }
+            if let q = quantity, q > 0 {
+                draft.quantityText = StockTransactionEditorDraft.display(gross / q)
+            }
+        }
+    }
+
+    // MARK: - Save
+
     private func requestSave() {
         commitPendingTextInput {
+            if let field = focusedField {
+                deriveField(editedField: field)
+            }
             save()
         }
     }

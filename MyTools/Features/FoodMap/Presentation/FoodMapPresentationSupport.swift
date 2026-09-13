@@ -135,6 +135,7 @@ enum FoodPlaceValueFormatter {
         case .thb: symbol = "฿"
         case .usd: symbol = "$"
         case .aud: symbol = "A$"
+        case .mop: symbol = "MOP "
         }
         return "\(symbol)\(amount)"
     }

@@ -235,9 +235,9 @@ enum CardNetwork: String, Codable, CaseIterable, Identifiable {
         case .unionPay: return "银联/UnionPay"
         case .visa: return "维萨/Visa"
         case .mastercard: return "万事达/Mastercard"
-        case .jcb: return "日财卡/JCB"
+        case .jcb: return "吉士美/JCB"
         case .americanExpress: return "美国运通/American Express"
-        case .dinersClub: return "大来/Diners Club"
+        case .dinersClub: return "大莱/Diners Club"
         case .discover: return "发现卡/Discover"
         }
     }

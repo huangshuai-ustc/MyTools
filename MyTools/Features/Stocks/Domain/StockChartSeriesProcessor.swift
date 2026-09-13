@@ -189,7 +189,11 @@ enum StockChartSeriesProcessor {
             }
         }
 
-        guard let latest = visible.last else { return nil }
+        // Allow a pre-market-only snapshot (empty regular-session visible bars) as
+        // long as preMarketPoints carries live data. The service layer will merge
+        // cached regular bars back in via snapshotByUpdatingCurrentSession.
+        let latestDate = visible.last?.date ?? snapshot.preMarketPoints.last?.date
+        guard let latestDate else { return nil }
         return StockChartSnapshot(
             symbol: snapshot.symbol,
             name: snapshot.name,
@@ -202,7 +206,7 @@ enum StockChartSeriesProcessor {
             dailyIndicatorPoints: range.isKLineRange
                 ? snapshot.points
                 : snapshot.dailyIndicatorPoints,
-            quoteUpdatedAt: latest.date,
+            quoteUpdatedAt: latestDate,
             fetchedAt: snapshot.fetchedAt,
             source: snapshot.source,
             supportsCandlesticks: snapshot.supportsCandlesticks

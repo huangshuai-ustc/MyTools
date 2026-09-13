@@ -4,7 +4,9 @@ import Foundation
 struct StockDeletionResult {
     var stocks: [StockHolding]
     var stockPriceAlerts: [StockPriceAlert]
+    var stockReturnAlerts: [StockReturnAlert]
     var removedAlertIDs: Set<UUID>
+    var removedReturnAlertIDs: Set<UUID>
 }
 
 enum StockPortfolioEditor {
@@ -49,9 +51,14 @@ enum StockPortfolioEditor {
     static func deletingStocks(
         ids: Set<UUID>,
         from stocks: [StockHolding],
-        alerts: [StockPriceAlert]
+        alerts: [StockPriceAlert],
+        returnAlerts: [StockReturnAlert]
     ) -> StockDeletionResult {
         let removedAlertIDs: Set<UUID> = Set(alerts.compactMap { alert in
+            guard let stockID = alert.stockID, ids.contains(stockID) else { return nil }
+            return alert.id
+        })
+        let removedReturnAlertIDs: Set<UUID> = Set(returnAlerts.compactMap { alert in
             guard let stockID = alert.stockID, ids.contains(stockID) else { return nil }
             return alert.id
         })
@@ -61,7 +68,12 @@ enum StockPortfolioEditor {
                 guard let stockID = alert.stockID else { return true }
                 return !ids.contains(stockID)
             },
-            removedAlertIDs: removedAlertIDs
+            stockReturnAlerts: returnAlerts.filter { alert in
+                guard let stockID = alert.stockID else { return true }
+                return !ids.contains(stockID)
+            },
+            removedAlertIDs: removedAlertIDs,
+            removedReturnAlertIDs: removedReturnAlertIDs
         )
     }
 

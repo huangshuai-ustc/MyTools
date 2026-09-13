@@ -36,6 +36,23 @@ enum AppStoreAlertEvaluator {
             return alert.id
         })
     }
+
+    static func matchingStockReturnAlertIDs(
+        alerts: [StockReturnAlert],
+        stocks: [StockHolding]
+    ) -> Set<UUID> {
+        var rateByStockID: [UUID: Decimal] = [:]
+        for stock in stocks {
+            if let rate = stock.holdingProfitRate { rateByStockID[stock.id] = rate }
+        }
+        return Set(alerts.compactMap { alert in
+            guard alert.isEnabled,
+                  let stockID = alert.stockID,
+                  let rate = rateByStockID[stockID] else { return nil }
+            let triggered = alert.threshold >= 0 ? rate >= alert.threshold : rate <= alert.threshold
+            return triggered ? alert.id : nil
+        })
+    }
 #endif
 
     // MARK: - Generic dispatch

@@ -16,6 +16,14 @@ struct StockPortfolioSummary {
         profitLoss.map { $0 + realizedProfitLoss }
     }
 
+    /// Unrealized return for all currently held positions in this market.
+    /// Both operands use the market's native currency, so no conversion is
+    /// needed until summaries from different markets are combined.
+    var holdingProfitRate: Decimal? {
+        guard holdingCost != 0, let profitLoss else { return nil }
+        return profitLoss / holdingCost
+    }
+
     init(market: StockMarket, stocks: [StockHolding]) {
         self.market = market
         let marketStocks = stocks.filter { $0.market == market }
