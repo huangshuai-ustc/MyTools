@@ -27,7 +27,7 @@ struct StockPortfolioEditorTests {
     }
 
     @Test func stockListStateSeparatesPositionWatchlistAndArchive() throws {
-        var watchOnly = StockHolding(symbol: "AAPL")
+        let watchOnly = StockHolding(symbol: "AAPL")
         #expect(watchOnly.listState == .watchlist)
 
         var holding = watchOnly
@@ -100,7 +100,8 @@ struct StockPortfolioEditorTests {
         let result = StockPortfolioEditor.deletingStocks(
             ids: [deletedStock.id],
             from: [deletedStock, retainedStock],
-            alerts: [deletedAlert, retainedAlert, unlinkedAlert]
+            alerts: [deletedAlert, retainedAlert, unlinkedAlert],
+            returnAlerts: []
         )
 
         #expect(result.stocks == [retainedStock])
@@ -185,11 +186,55 @@ struct StockPortfolioEditorTests {
         #expect(stock.holdingProfitRate == expectedProfit / expectedCost)
     }
 
+    @Test func marketSummaryProfitRateUsesAggregateProfitAndHoldingCost() {
+        var stock = StockHolding(market: .unitedStates, symbol: "AAPL")
+        stock.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
+        stock.latestPrice = 15
+
+        let summary = StockPortfolioSummary(market: .unitedStates, stocks: [stock])
+
+        #expect(summary.holdingCost == 20)
+        #expect(summary.profitLoss == 10)
+        #expect(summary.holdingProfitRate == 0.5)
+    }
+
     @Test func stockMetricsFormatOnlyAtDisplayBoundary() {
         #expect(StockValueFormatter.integerQuantity(1200) == "1,200")
         #expect(StockValueFormatter.signedPercent(Decimal(string: "-0.03456")!) == "-3.46%")
         #expect(StockValueFormatter.signedPercent(Decimal(string: "0.02344")!) == "+2.34%")
         #expect(StockValueFormatter.money(Decimal(string: "123456.789")!, currencyCode: "CNY") == "¥123,456.79")
+    }
+
+    @Test func pointInTimeHoldingCostMatchesCurrentHoldingCostAtToday() {
+        var stock = StockHolding(market: .aShare, symbol: "600000")
+        var buy1 = Self.transaction(type: .buy, day: 1, quantity: 10)
+        buy1.unitPrice = 10
+        buy1.fees = 1
+        var sell1 = Self.transaction(type: .sell, day: 2, quantity: 4)
+        sell1.unitPrice = 12
+        sell1.fees = 0.5
+        var buy2 = Self.transaction(type: .buy, day: 3, quantity: 6)
+        buy2.unitPrice = 11
+        buy2.fees = 0.8
+        stock.transactions = [buy1, sell1, buy2]
+
+        let pointInTimeCost = PortfolioValueHistoryBuilder.holdingCost(for: stock, on: Date())
+        #expect(pointInTimeCost == stock.holdingCost)
+    }
+
+    @Test func pointInTimeHoldingCostReplaysOnlyTransactionsUpToDate() {
+        var stock = StockHolding(market: .aShare, symbol: "600000")
+        var buy1 = Self.transaction(type: .buy, day: 1, quantity: 10)
+        buy1.unitPrice = 10
+        var buy2 = Self.transaction(type: .buy, day: 5, quantity: 5)
+        buy2.unitPrice = 20
+        stock.transactions = [buy1, buy2]
+
+        let costBeforeSecondBuy = PortfolioValueHistoryBuilder.holdingCost(for: stock, on: Self.date(day: 3))
+        #expect(costBeforeSecondBuy == 100)
+
+        let costAfterSecondBuy = PortfolioValueHistoryBuilder.holdingCost(for: stock, on: Self.date(day: 5))
+        #expect(costAfterSecondBuy == 200)
     }
 
     @Test func costAllocationUsesRemainingHoldingCostAndCurrencyConversion() throws {

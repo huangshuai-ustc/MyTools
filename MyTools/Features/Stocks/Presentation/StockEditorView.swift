@@ -146,7 +146,7 @@ struct StockEditorView: View {
 
                 if isNew, !draft.isWatchOnly {
                     Section("首次买入") {
-                        DateFieldRow(title: "购买日期：", date: $draft.initialTradedAt)
+                        DateFieldRow(title: "购买日期：", date: $draft.initialTradedAt, upperBound: Date())
                         decimalField("购买股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                         decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
                         decimalField("交易费用：", placeholder: "可选，默认 0", text: $draft.feesText, field: .fees)

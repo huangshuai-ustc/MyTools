@@ -156,13 +156,20 @@ struct DateFieldRow: View {
     let title: String
     @Binding var date: Date
     var displayedComponents: DatePicker.Components = .date
+    var upperBound: Date?
 
     var body: some View {
         AppLabeledContentRow(title) {
-            DatePicker("", selection: $date, displayedComponents: displayedComponents)
-                .labelsHidden()
-                .datePickerStyle(.compact)
-                .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+            Group {
+                if let upperBound {
+                    DatePicker("", selection: $date, in: ...upperBound, displayedComponents: displayedComponents)
+                } else {
+                    DatePicker("", selection: $date, displayedComponents: displayedComponents)
+                }
+            }
+            .labelsHidden()
+            .datePickerStyle(.compact)
+            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
     }
 }

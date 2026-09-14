@@ -65,7 +65,11 @@ struct HomeView: View {
         }
         .appNavigationTitle(ToolModule.personalFinance.title)
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索银行、支行、卡种或持卡人")
+#else
         .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
+#endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {

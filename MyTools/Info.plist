@@ -22,7 +22,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>4.1.0</string>
+	<string>4.4.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -39,7 +39,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>用于图片的拍摄</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>用于验证管理员身份，保护隐私信息</string>
+	<string>用于临时验证身份后查看敏感信息</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用于对用户的定位</string>
 	<key>UIBackgroundModes</key>

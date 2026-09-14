@@ -155,7 +155,11 @@ struct CurrencyExchangeView: View {
         }
         .appNavigationTitle("换汇记录")
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索币种或代码")
+#else
         .searchable(text: $query, prompt: "搜索币种或代码")
+#endif
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)

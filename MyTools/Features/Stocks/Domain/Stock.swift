@@ -177,7 +177,9 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     var currentShares: Decimal {
-        transactions.reduce(Decimal.zero) { $0 + $1.signedShares }
+        transactions.lazy
+            .filter { $0.tradedAt <= Date() }
+            .reduce(Decimal.zero) { $0 + $1.signedShares }
     }
 
     var hasHistoricalActivity: Bool {
@@ -195,13 +197,13 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var firstPurchasedAt: Date? {
         transactions.lazy
-            .filter { $0.type == .buy }
+            .filter { $0.type == .buy && $0.tradedAt <= Date() }
             .map(\.tradedAt)
             .min()
     }
 
     var hasPurchaseRecord: Bool {
-        transactions.contains { $0.type == .buy }
+        transactions.contains { $0.type == .buy && $0.tradedAt <= Date() }
     }
 
     var hasConfiguredSymbol: Bool {
@@ -210,12 +212,14 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     var totalBuyCost: Decimal {
         transactions.lazy
-            .filter { $0.type == .buy }
+            .filter { $0.type == .buy && $0.tradedAt <= Date() }
             .reduce(Decimal.zero) { $0 + $1.grossAmount + $1.fees }
     }
 
     var netDividendIncome: Decimal {
-        dividends.reduce(Decimal.zero) { $0 + $1.netAmount }
+        dividends.lazy
+            .filter { $0.receivedAt <= Date() }
+            .reduce(Decimal.zero) { $0 + $1.netAmount }
     }
 
     /// The cost of the shares that remain held, calculated with a moving
@@ -312,7 +316,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
-    private static func orderedTransactions(_ transactions: [StockTransaction]) -> [StockTransaction] {
+    static func orderedTransactions(_ transactions: [StockTransaction]) -> [StockTransaction] {
         transactions.sorted {
             if !StockTransaction.isSameDay($0.tradedAt, $1.tradedAt) {
                 return $0.tradedAt < $1.tradedAt
@@ -334,7 +338,8 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         var cost = Decimal.zero
         var realized = Decimal.zero
 
-        for transaction in Self.orderedTransactions(transactions) where transaction.quantity > 0 {
+        let effectiveTransactions = transactions.filter { $0.tradedAt <= Date() }
+        for transaction in Self.orderedTransactions(effectiveTransactions) where transaction.quantity > 0 {
             switch transaction.type {
             case .buy:
                 shares += transaction.quantity

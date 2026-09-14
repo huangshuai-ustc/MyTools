@@ -139,9 +139,11 @@ struct BillsView: View {
             }
 
             if !store.records.isEmpty {
-                Section("本月 CNY 概览") {
-                    monthlySummary
-                        .appListRowStyle()
+                Section("本月概览") {
+                    ForEach(monthlyCurrencies, id: \.self) { currency in
+                        monthlySummaryRow(currency: currency)
+                            .appListRowStyle()
+                    }
                 }
                 Section("筛选") {
                     AppLabeledContentRow(
@@ -202,7 +204,11 @@ struct BillsView: View {
 #if os(iOS)
         .listStyle(.insetGrouped)
 #endif
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索商户、商品、账户或标签")
+#else
         .searchable(text: $query, prompt: "搜索商户、商品、账户或标签")
+#endif
         .onChange(of: query) { _, _ in resetPagination() }
         .onChange(of: directionFilter) { _, _ in resetPagination() }
         .onChange(of: categoryFilter) { _, _ in resetPagination() }
@@ -237,19 +243,35 @@ struct BillsView: View {
             }
         }
 
-    private var monthlySummary: some View {
+    private var monthlyCurrencies: [CurrencyCode] {
         let month = Date()
-        let expense = store.total(direction: .expense, in: month)
-        let income = store.total(direction: .income, in: month)
-            + store.total(direction: .refund, in: month)
-        return HStack(spacing: 12) {
-            summaryValue("支出", amount: expense, color: .red)
-            Divider()
-            summaryValue("收入及退款", amount: income, color: .green)
-            Divider()
-            summaryValue("结余", amount: income - expense, color: .primary)
+        let monthCurrencies = Set(store.records(in: month).map(\.currency))
+        // CNY always first, then other currencies in display order
+        var result = CurrencyCode.displayOrdered(monthCurrencies)
+        if let cnyIndex = result.firstIndex(of: .cny) {
+            result.remove(at: cnyIndex)
         }
-        .padding(.vertical, 5)
+        return [.cny] + result
+    }
+
+    private func monthlySummaryRow(currency: CurrencyCode) -> some View {
+        let month = Date()
+        let expense = store.total(direction: .expense, in: month, currency: currency)
+        let income = store.total(direction: .income, in: month, currency: currency)
+            + store.total(direction: .refund, in: month, currency: currency)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(currency.title)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                summaryValue("支出", amount: expense, currency: currency, color: .red)
+                Divider()
+                summaryValue("收入及退款", amount: income, currency: currency, color: .green)
+                Divider()
+                summaryValue("结余", amount: income - expense, currency: currency, color: .primary)
+            }
+            .padding(.vertical, 5)
+        }
     }
 
     private func resetPagination() {
@@ -264,12 +286,12 @@ struct BillsView: View {
         )
     }
 
-    private func summaryValue(_ title: String, amount: Decimal, color: Color) -> some View {
+    private func summaryValue(_ title: String, amount: Decimal, currency: CurrencyCode, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
-            Text(BillPresentation.amount(amount, currency: .cny))
+            Text(BillPresentation.amount(amount, currency: currency))
                 .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(color)
                 .monospacedDigit()
@@ -441,14 +463,7 @@ private struct BillDetailView: View {
 
 enum BillPresentation {
     static func amount(_ amount: Decimal, currency: CurrencyCode) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency.rawValue
-        formatter.locale = .autoupdatingCurrent
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter.string(from: NSDecimalNumber(decimal: amount))
-            ?? "\(currency.rawValue) \(amount)"
+        AppCurrencyFormatter.money(amount, currency: currency)
     }
 }
 

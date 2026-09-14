@@ -1,4 +1,6 @@
-# MyTools 当前架构复审
+# MyTools 历史架构复审记录
+
+> 当前工作树的最新工程设计审查见 [`docs/engineering-design-review-2026-09.md`](docs/engineering-design-review-2026-09.md)；功能实现审查见 [`docs/feature-implementation-review-2026-09.md`](docs/feature-implementation-review-2026-09.md)。本文保留历史决策和演进记录，不作为当前状态报告。
 
 复审日期：2026-08-22
 审查范围：`MyTools` 当前生产代码、`MyToolsTests`、Xcode Target 装配、README/AGENTS 文档。统计以当前工作树和 `git ls-files` 为准；工作树中已有的未提交改动不在本次复审中回滚。

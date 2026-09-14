@@ -104,7 +104,11 @@ struct HealthRecordsView: View {
         }
         .appNavigationTitle("健康档案")
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索机构、药房、诊断、费用项目或标签")
+#else
         .searchable(text: $query, prompt: "搜索机构、药房、诊断、费用项目或标签")
+#endif
         .onChange(of: query) { _, _ in pagination.reset() }
         .onChange(of: selectedTag) { _, _ in pagination.reset() }
         .onChange(of: selectedYear) { _, _ in pagination.reset() }

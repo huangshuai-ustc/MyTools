@@ -10,6 +10,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
     case foodPlace
     case currencyRateAlert
     case stockPriceAlert
+    case stockReturnAlert
     case secretItem
     case credentialDocument
     case billRecord
@@ -26,7 +27,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .bankAccount, .bankCard:
             .personalFinance
-        case .stockHolding, .stockPriceAlert:
+        case .stockHolding, .stockPriceAlert, .stockReturnAlert:
             .myStocks
         case .currencyExchangeRecord, .currencyRateAlert:
             .currencyExchange
@@ -230,6 +231,7 @@ enum CloudSyncSnapshotBuilder {
                 to: &items
             )
             try append(vault.stockPriceAlerts, kind: .stockPriceAlert, encoder: encoder, to: &items)
+            try append(vault.stockReturnAlerts, kind: .stockReturnAlert, encoder: encoder, to: &items)
         }
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -308,7 +310,9 @@ enum CloudSyncSnapshotBuilder {
             )
             try append(
                 CloudSyncDocumentsMetadata(
-                    fieldTemplates: vault.credentialFieldTemplates,
+                    fieldTemplates: vault.credentialFieldTemplates.isEmpty
+                        ? CredentialFieldTemplate.defaultTemplates
+                        : vault.credentialFieldTemplates,
                     tags: vault.credentialTags
                 ),
                 id: CloudSyncDocumentsMetadata.itemID,
@@ -605,6 +609,14 @@ enum CloudSyncMerger {
                     )
 #endif
                     break
+                case .stockReturnAlert:
+#if MYTOOLS_FEATURE_STOCKS
+                    try upsert(
+                        decoder.decode(StockReturnAlert.self, from: payload),
+                        in: &vault.stockReturnAlerts
+                    )
+#endif
+                    break
                 case .secretItem:
 #if MYTOOLS_FEATURE_SECRETS
                     try upsert(decoder.decode(SecretItem.self, from: payload), in: &secrets)
@@ -722,6 +734,11 @@ enum CloudSyncMerger {
                 case .stockPriceAlert:
 #if MYTOOLS_FEATURE_STOCKS
                     vault.stockPriceAlerts.removeAll { $0.id == id }
+#endif
+                    break
+                case .stockReturnAlert:
+#if MYTOOLS_FEATURE_STOCKS
+                    vault.stockReturnAlerts.removeAll { $0.id == id }
 #endif
                     break
                 case .secretItem:

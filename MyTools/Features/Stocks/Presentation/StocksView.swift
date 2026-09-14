@@ -167,6 +167,14 @@ struct StocksView: View {
             }
 
             Section {
+                NavigationLink {
+                    PortfolioValueHistoryView(market: marketFilter.market)
+                        .environmentObject(store)
+                        .environmentObject(exchangeRateStore)
+                } label: {
+                    Label("持仓总价值走势", systemImage: "chart.line.uptrend.xyaxis")
+                }
+                .appListRowStyle()
                 RenminbiPortfolioSummaryRow(marketFilter: marketFilter)
                     .appListRowStyle()
                 ForEach(summaryMarkets) { market in
@@ -229,7 +237,11 @@ struct StocksView: View {
         }
         .appNavigationTitle(ToolModule.myStocks.title)
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索股票名称或代码")
+#else
         .searchable(text: $query, prompt: "搜索股票名称或代码")
+#endif
         .refreshable {
             await store.refreshQuotes(
                 for: marketFilter.market,
@@ -396,11 +408,18 @@ struct StocksView: View {
                 .map(\.market)
         )
         let now = Date()
-        if let openMarket = StockMarket.displayOrder.first(where: {
+        // Priority: regular session > extended hours; within each tier: US > A-share > HK.
+        let priorityOrder = StockMarket.displayOrder
+        let regularMarket = priorityOrder.first {
+            availableMarkets.contains($0) && StockMarketTradingCalendar.isOpen($0, at: now)
+        }
+        let extendedMarket = priorityOrder.first {
             availableMarkets.contains($0)
-                && StockMarketTradingCalendar.isOpen($0, at: now)
-        }) {
-            marketFilter = StockMarketFilter(openMarket)
+                && (StockMarketTradingCalendar.isPreMarketOpen($0, at: now)
+                    || StockMarketTradingCalendar.isPostMarketOpen($0, at: now))
+        }
+        if let market = regularMarket ?? extendedMarket {
+            marketFilter = StockMarketFilter(market)
         } else {
             marketFilter = .all
         }
@@ -413,6 +432,7 @@ struct StocksView: View {
         enteringRefreshTask?.cancel()
         enteringRefreshTask = Task { @MainActor in
             await store.refreshQuotes(for: marketFilter.market)
+            StockRefreshCoordinator.shared.triggerClosingRefreshIfNeeded()
         }
     }
 }
@@ -464,6 +484,7 @@ private struct RenminbiPortfolioSummaryRow: View {
     private var convertedValues: (
         holdingCost: Decimal,
         profitLoss: Decimal?,
+        holdingProfitRate: Decimal?,
         totalProfitLoss: Decimal?
     )? {
         var holdingCost = Decimal.zero
@@ -481,9 +502,11 @@ private struct RenminbiPortfolioSummaryRow: View {
             }
         }
         let profitLoss = missingQuote ? nil : holdingProfitLoss
+        let holdingProfitRate = holdingCost == 0 ? nil : profitLoss.map { $0 / holdingCost }
         return (
             holdingCost,
             profitLoss,
+            holdingProfitRate,
             profitLoss.map { $0 + realizedProfitLoss }
         )
     }
@@ -540,7 +563,14 @@ private struct RenminbiPortfolioSummaryRow: View {
             if let values = convertedValues {
                 HStack(spacing: 12) {
                     metric("持仓成本", value: StockValueFormatter.money(values.holdingCost, currencyCode: "CNY"))
-                    metric("持仓盈亏", value: profitLossText(values.profitLoss), color: profitLossColor(values.profitLoss))
+                    metric(
+                        "持仓盈亏",
+                        value: profitLossText(values.profitLoss),
+                        trailingValue: values.holdingProfitRate.map(
+                            StockValueFormatter.signedPercent
+                        ),
+                        color: profitLossColor(values.profitLoss)
+                    )
                     metric("总盈亏", value: profitLossText(values.totalProfitLoss), color: profitLossColor(values.totalProfitLoss))
                 }
             } else {
@@ -582,18 +612,34 @@ private struct RenminbiPortfolioSummaryRow: View {
         return lines.joined(separator: "\n")
     }
 
-    private func metric(_ title: String, value: String, color: Color = .primary) -> some View {
-        Text(value)
-            .appFont(.subheadline.weight(.semibold).monospacedDigit())
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.68)
-            .accessibilityLabel("\(title)，\(value)")
+    private func metric(
+        _ title: String,
+        value: String,
+        trailingValue: String? = nil,
+        color: Color = .primary
+    ) -> some View {
+        compositeMetricText(value: value, trailingValue: trailingValue)
+        .foregroundStyle(color)
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
+        .accessibilityLabel("\(title)，\(value)\(trailingValue.map { "，\($0)" } ?? "")")
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func compositeMetricText(value: String, trailingValue: String?) -> Text {
+        let amount = Text(value).font(
+            AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale)
+        )
+        guard let trailingValue else { return amount }
+        let rate = Text("（\(trailingValue)）").font(
+            AppFontSpec.caption.weight(.semibold).monospacedDigit().font(scale: fontScale)
+        )
+        return Text("\(amount)\(rate)")
+    }
+
     private func profitLossText(_ value: Decimal?) -> String {
-        value.map { StockValueFormatter.moneyMagnitude($0, currencyCode: "CNY") } ?? "待同步"
+        guard let value else { return "待同步" }
+        return StockValueFormatter.moneyMagnitude(value, currencyCode: "CNY")
     }
 
     private func profitLossColor(_ value: Decimal?) -> Color {
@@ -635,7 +681,12 @@ private struct StockMarketSummaryRow: View {
 
             HStack(spacing: 12) {
                 summaryMetric("持仓成本", value: StockValueFormatter.money(summary.holdingCost, currencyCode: summary.market.currencyCode))
-                summaryMetric("持仓盈亏", value: profitLossText, color: profitLossColor)
+                summaryMetric(
+                    "持仓盈亏",
+                    value: profitLossText,
+                    trailingValue: profitRateText,
+                    color: profitLossColor
+                )
                 summaryMetric("总盈亏", value: totalProfitLossText, color: totalProfitLossColor)
             }
         }
@@ -664,7 +715,14 @@ private struct StockMarketSummaryRow: View {
 
     private var profitLossText: String {
         guard let profitLoss = summary.profitLoss else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(profitLoss, currencyCode: summary.market.currencyCode)
+        return StockValueFormatter.moneyMagnitude(
+            profitLoss,
+            currencyCode: summary.market.currencyCode
+        )
+    }
+
+    private var profitRateText: String? {
+        summary.holdingProfitRate.map(StockValueFormatter.signedPercent)
     }
 
     private var profitLossColor: Color {
@@ -676,14 +734,29 @@ private struct StockMarketSummaryRow: View {
         )
     }
 
-    private func summaryMetric(_ title: String, value: String, color: Color = .primary) -> some View {
-        Text(value)
-            .appFont(.subheadline.weight(.semibold).monospacedDigit())
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.68)
-            .accessibilityLabel("\(title)，\(value)")
+    private func summaryMetric(
+        _ title: String,
+        value: String,
+        trailingValue: String? = nil,
+        color: Color = .primary
+    ) -> some View {
+        compositeSummaryText(value: value, trailingValue: trailingValue)
+        .foregroundStyle(color)
+        .lineLimit(1)
+        .minimumScaleFactor(0.68)
+        .accessibilityLabel("\(title)，\(value)\(trailingValue.map { "，\($0)" } ?? "")")
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func compositeSummaryText(value: String, trailingValue: String?) -> Text {
+        let amount = Text(value).font(
+            AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale)
+        )
+        guard let trailingValue else { return amount }
+        let rate = Text("（\(trailingValue)）").font(
+            AppFontSpec.caption.weight(.semibold).monospacedDigit().font(scale: fontScale)
+        )
+        return Text("\(amount)\(rate)")
     }
 }
 
@@ -828,13 +901,15 @@ private struct StockRow: View {
 struct StockMarketBadge: View {
     let market: StockMarket
 
-    private var color: Color {
+    static func color(for market: StockMarket) -> Color {
         switch market {
         case .aShare: return .orange
         case .hongKong: return .purple
         case .unitedStates: return .indigo
         }
     }
+
+    private var color: Color { Self.color(for: market) }
 
     var body: some View {
         Text(shortTitle)

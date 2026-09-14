@@ -311,7 +311,7 @@ struct DocumentsTests {
             documents: [original],
             attachmentStore: attachmentStore,
             notificationScheduler: scheduler,
-            moduleSettings: settings
+            isModuleVisible: settings.isVisible(.documents)
         )
         var edited = original
         edited.title = "  我的护照  "

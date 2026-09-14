@@ -88,6 +88,7 @@ private struct CredentialDocumentGroup: Identifiable {
 struct DocumentsView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: DocumentsStore
+    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var typeFilter: CredentialTypeFilter = .all
@@ -95,7 +96,6 @@ struct DocumentsView: View {
     @State private var versionStatusFilter: CredentialVersionStatusFilter = .all
     @State private var selectedTag = ""
     @State private var isUnlocked = false
-    @State private var showingSensitiveAccess = false
     @State private var editingDocument: CredentialDocument?
     @State private var pagination = AppListPagination(pageSize: DocumentsView.pageSize)
 
@@ -184,7 +184,11 @@ struct DocumentsView: View {
         }
         .appNavigationTitle(ToolModule.documents.title)
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索名称、号码、持有人或标签")
+#else
         .searchable(text: $query, prompt: "搜索名称、号码、持有人或标签")
+#endif
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
         .listStyle(.insetGrouped)
@@ -193,7 +197,7 @@ struct DocumentsView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if !canAccess {
                     Button {
-                        showingSensitiveAccess = true
+                        Task { if await auth.verifyWithBiometrics() { isUnlocked = true } }
                     } label: {
                         Image(systemName: "faceid")
                     }
@@ -206,10 +210,6 @@ struct DocumentsView: View {
                 }
                 .accessibilityLabel("添加证照")
             }
-        }
-        .sheet(isPresented: $showingSensitiveAccess) {
-            SensitiveAccessView { isUnlocked = true }
-                .iOSAuthenticationSheet()
         }
         .sheet(item: $editingDocument) { document in
             CredentialEditorView(document: document)

@@ -43,7 +43,11 @@ struct HospitalDirectoryView: View {
         }
         .appNavigationTitle("医疗机构资料库")
         .iOSLabeledBackButton("健康档案")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索机构名称或分类")
+#else
         .searchable(text: $query, prompt: "搜索机构名称或分类")
+#endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { editingProfile = HospitalProfile() } label: {

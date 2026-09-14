@@ -40,7 +40,6 @@
 		A20000000000000000000001 /* CurrencyExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* CurrencyExchange.swift */; };
 		A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* CurrencyExchangeView.swift */; };
 		A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* CurrencyExchangeEditorView.swift */; };
-		A30000000000000000000001 /* SensitiveAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000001 /* SensitiveAccessView.swift */; };
 		A40000000000000000000001 /* HealthRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000001 /* HealthRecord.swift */; };
 		A40000000000000000000002 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000002 /* AttachmentStore.swift */; };
 		A40000000000000000000003 /* HealthRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000003 /* HealthRecordsView.swift */; };
@@ -57,6 +56,7 @@
 		A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000004 /* StockRefreshCoordinator.swift */; };
 		A90000000000000000000001 /* StorageUsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000000000000000000001 /* StorageUsageService.swift */; };
 		AB0000000000000000000001 /* CurrencyCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000001 /* CurrencyCode.swift */; };
+		AB0000000000000000000007 /* AppCurrencyFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000007 /* AppCurrencyFormatter.swift */; };
 		AB0000000000000000000002 /* FileAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000002 /* FileAttachment.swift */; };
 		AB0000000000000000000003 /* VaultData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* VaultData.swift */; };
 		AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000005 /* AttachmentPresentation.swift */; };
@@ -147,6 +147,10 @@
 		AR0000000000000000000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = DR0000000000000000000001 /* InfoPlist.strings */; };
 		AT0000000000000000000001 /* StockFundamentalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BT0000000000000000000001 /* StockFundamentalService.swift */; };
 		AT0000000000000000000002 /* StockFundamentalProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BT0000000000000000000002 /* StockFundamentalProvider.swift */; };
+		AW0000000000000000000001 /* PortfolioValueHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000000000000000000001 /* PortfolioValueHistory.swift */; };
+		AW0000000000000000000002 /* PortfolioValueHistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000000000000000000002 /* PortfolioValueHistoryService.swift */; };
+		AW0000000000000000000003 /* PortfolioValueHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000000000000000000003 /* PortfolioValueHistoryView.swift */; };
+		AW0000000000000000000004 /* PortfolioChartCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = BW0000000000000000000004 /* PortfolioChartCanvas.swift */; };
 		AZ0000000000000000000001 /* ApplePasswordImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BZ0000000000000000000001 /* ApplePasswordImport.swift */; };
 		C20000000000000000000001 /* CloudSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000001 /* CloudSyncModels.swift */; };
 		C20000000000000000000002 /* CloudSyncStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* CloudSyncStateStore.swift */; };
@@ -257,7 +261,6 @@
 		B20000000000000000000001 /* CurrencyExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchange.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* CurrencyExchangeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeView.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* CurrencyExchangeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyExchangeEditorView.swift; sourceTree = "<group>"; };
-		B30000000000000000000001 /* SensitiveAccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensitiveAccessView.swift; sourceTree = "<group>"; };
 		B40000000000000000000001 /* HealthRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecord.swift; sourceTree = "<group>"; };
 		B40000000000000000000002 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
 		B40000000000000000000003 /* HealthRecordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRecordsView.swift; sourceTree = "<group>"; };
@@ -276,6 +279,7 @@
 		BA0000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		BA0000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
 		BB0000000000000000000001 /* CurrencyCode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyCode.swift; sourceTree = "<group>"; };
+		BB0000000000000000000007 /* AppCurrencyFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCurrencyFormatter.swift; sourceTree = "<group>"; };
 		BB0000000000000000000002 /* FileAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileAttachment.swift; sourceTree = "<group>"; };
 		BB0000000000000000000003 /* VaultData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultData.swift; sourceTree = "<group>"; };
 		BB0000000000000000000005 /* AttachmentPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPresentation.swift; sourceTree = "<group>"; };
@@ -369,6 +373,10 @@
 		BR0000000000000000000002 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		BT0000000000000000000001 /* StockFundamentalService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockFundamentalService.swift; sourceTree = "<group>"; };
 		BT0000000000000000000002 /* StockFundamentalProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockFundamentalProvider.swift; sourceTree = "<group>"; };
+		BW0000000000000000000001 /* PortfolioValueHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortfolioValueHistory.swift; sourceTree = "<group>"; };
+		BW0000000000000000000002 /* PortfolioValueHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortfolioValueHistoryService.swift; sourceTree = "<group>"; };
+		BW0000000000000000000003 /* PortfolioValueHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortfolioValueHistoryView.swift; sourceTree = "<group>"; };
+		BW0000000000000000000004 /* PortfolioChartCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortfolioChartCanvas.swift; sourceTree = "<group>"; };
 		BZ0000000000000000000001 /* ApplePasswordImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePasswordImport.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* CloudSyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncModels.swift; sourceTree = "<group>"; };
 		C10000000000000000000002 /* CloudSyncStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncStateStore.swift; sourceTree = "<group>"; };
@@ -599,7 +607,6 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000005 /* AuthManager.swift */,
-				B30000000000000000000001 /* SensitiveAccessView.swift */,
 				B10000000000000000000006 /* ProtectedContent.swift */,
 			);
 			path = Authentication;
@@ -631,6 +638,7 @@
 				BB0000000000000000000006 /* ExchangeRateRepository.swift */,
 				BJ0000000000000000000002 /* ExchangeRateStore.swift */,
 				BB0000000000000000000001 /* CurrencyCode.swift */,
+				BB0000000000000000000007 /* AppCurrencyFormatter.swift */,
 			);
 			path = Currency;
 			sourceTree = "<group>";
@@ -857,6 +865,7 @@
 				BC0000000000000000000004 /* StockInvestmentScoreModel.swift */,
 				BC0000000000000000000006 /* StockChartSeriesProcessor.swift */,
 				BE0000000000000000000001 /* StockQuoteModels.swift */,
+				BW0000000000000000000001 /* PortfolioValueHistory.swift */,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -872,6 +881,7 @@
 				BC0000000000000000000001 /* StockChartService.swift */,
 				BT0000000000000000000001 /* StockFundamentalService.swift */,
 				B10000000000000000000004 /* StockAppearanceSettings.swift */,
+				BW0000000000000000000002 /* PortfolioValueHistoryService.swift */,
 			);
 			path = Application;
 			sourceTree = "<group>";
@@ -927,6 +937,8 @@
 				B1000000000000000000000B /* StockEditorView.swift */,
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
 				B50000000000000000000001 /* StockDividendEditorView.swift */,
+				BW0000000000000000000003 /* PortfolioValueHistoryView.swift */,
+				BW0000000000000000000004 /* PortfolioChartCanvas.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -1436,7 +1448,6 @@
 				A40000000000000000000003 /* HealthRecordsView.swift in Sources */,
 				A40000000000000000000004 /* MedicalRecordEditorView.swift in Sources */,
 				A40000000000000000000005 /* HospitalDirectoryView.swift in Sources */,
-				A30000000000000000000001 /* SensitiveAccessView.swift in Sources */,
 				A20000000000000000000003 /* CurrencyExchangeEditorView.swift in Sources */,
 				A20000000000000000000002 /* CurrencyExchangeView.swift in Sources */,
 				A20000000000000000000001 /* CurrencyExchange.swift in Sources */,
@@ -1485,6 +1496,7 @@
 				A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */,
 				A90000000000000000000001 /* StorageUsageService.swift in Sources */,
 				AB0000000000000000000001 /* CurrencyCode.swift in Sources */,
+				AB0000000000000000000007 /* AppCurrencyFormatter.swift in Sources */,
 				AB0000000000000000000002 /* FileAttachment.swift in Sources */,
 				AB0000000000000000000003 /* VaultData.swift in Sources */,
 				AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */,
@@ -1506,6 +1518,10 @@
 				AC0000000000000000000012 /* StockQuoteRefreshReducer.swift in Sources */,
 				AT0000000000000000000001 /* StockFundamentalService.swift in Sources */,
 				AT0000000000000000000002 /* StockFundamentalProvider.swift in Sources */,
+				AW0000000000000000000001 /* PortfolioValueHistory.swift in Sources */,
+				AW0000000000000000000002 /* PortfolioValueHistoryService.swift in Sources */,
+				AW0000000000000000000003 /* PortfolioValueHistoryView.swift in Sources */,
+				AW0000000000000000000004 /* PortfolioChartCanvas.swift in Sources */,
 				AE0000000000000000000001 /* StockQuoteModels.swift in Sources */,
 				AE0000000000000000000002 /* StockQuoteProvider.swift in Sources */,
 				AE0000000000000000000003 /* TencentStockQuoteProvider.swift in Sources */,

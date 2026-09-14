@@ -92,6 +92,7 @@ private final class SecretEditorDraft: ObservableObject {
 struct SecretVaultView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: SecretStore
+    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.appFontScale) private var fontScale
@@ -99,7 +100,6 @@ struct SecretVaultView: View {
     @State private var categoryFilter: SecretCategoryFilter = .all
     @State private var selectedTag = ""
     @State private var isUnlocked = false
-    @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
     @State private var isCreating = false
     @State private var showingPasswordImportPage = false
@@ -180,13 +180,17 @@ struct SecretVaultView: View {
             pagination.reset()
         }
         .iOSLabeledBackButton("工具")
+#if os(iOS)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索名称、分类或字段名称")
+#else
         .searchable(text: $query, prompt: "搜索名称、分类或字段名称")
+#endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 SecretSortMenu(selection: $sortOrderRawValue)
                 if !canAccess {
                     Button {
-                        showingSensitiveAccess = true
+                        Task { if await auth.verifyWithBiometrics() { isUnlocked = true } }
                     } label: {
                         Image(systemName: "faceid")
                     }
@@ -217,10 +221,6 @@ struct SecretVaultView: View {
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif
-        .sheet(isPresented: $showingSensitiveAccess) {
-            SensitiveAccessView { isUnlocked = true }
-                .iOSAuthenticationSheet()
-        }
         .sheet(item: $editingItem) { item in
             SecretEditorView(item: item, isNew: isCreating)
                 .id(item.id)
@@ -588,11 +588,11 @@ private struct SecretAttachmentRow: View {
 
 struct SecretDetailView: View {
     @EnvironmentObject private var store: SecretStore
+    @EnvironmentObject private var auth: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     let itemID: UUID
     @Binding var isUnlocked: Bool
     @State private var hiddenFieldIDs: Set<UUID> = []
-    @State private var showingSensitiveAccess = false
     @State private var editingItem: SecretItem?
     @State private var previewAttachment: FileAttachment?
     @State private var showingAttachmentError = false
@@ -659,7 +659,7 @@ struct SecretDetailView: View {
                                 Label("附件已隐藏", systemImage: "lock.fill")
                                     .foregroundStyle(.secondary)
                                 Button {
-                                    showingSensitiveAccess = true
+                                    Task { if await auth.verifyWithBiometrics() { isUnlocked = true; hiddenFieldIDs = [] } }
                                 } label: {
                                     Label("验证身份后查看附件", systemImage: "faceid")
                                 }
@@ -672,7 +672,7 @@ struct SecretDetailView: View {
                     ToolbarItemGroup(placement: .primaryAction) {
                         if !canRevealSensitiveFields {
                             Button {
-                                showingSensitiveAccess = true
+                                Task { if await auth.verifyWithBiometrics() { isUnlocked = true; hiddenFieldIDs = [] } }
                             } label: {
                                 Image(systemName: "faceid")
                             }
@@ -693,13 +693,6 @@ struct SecretDetailView: View {
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
-        .sheet(isPresented: $showingSensitiveAccess) {
-            SensitiveAccessView {
-                isUnlocked = true
-                hiddenFieldIDs = []
-            }
-            .iOSAuthenticationSheet()
-        }
         .sheet(item: $editingItem) { item in
             SecretEditorView(item: item, isNew: false)
                 .id(item.id)

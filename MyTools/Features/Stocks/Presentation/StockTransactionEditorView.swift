@@ -57,7 +57,7 @@ struct StockTransactionEditorView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt)
+                    DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt, upperBound: Date())
                     decimalField("交易股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                     decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
                     decimalField("交易费用：", placeholder: "可选，默认 0", text: $draft.feesText, field: .fees)

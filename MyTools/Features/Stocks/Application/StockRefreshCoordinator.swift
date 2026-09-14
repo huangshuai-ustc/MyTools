@@ -13,7 +13,7 @@ private enum StockBackgroundTaskCallbacks {
 #endif
 
 @MainActor
-final class StockRefreshCoordinator {
+final class StockRefreshCoordinator: ObservableObject {
     static let shared = StockRefreshCoordinator()
 
 #if os(iOS)
@@ -24,13 +24,23 @@ final class StockRefreshCoordinator {
     private var isStockModuleVisible: Bool = true
     private var foregroundTask: Task<Void, Never>?
     private var lastClosingRefreshSessionEndByMarket: [StockMarket: Date] = [:]
-    private var lastClosingChartRefreshSessionEndByMarket: [StockMarket: Date] = [:]
     private var lastClosingRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
     private var lastClosingChartRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
+    // Markets whose last closing-chart refresh ended with noData are skipped
+    // until the next session boundary so a permanent "no data" state (e.g. a
+    // delisted symbol or a holiday with no data yet published) does not drive
+    // a tight retry loop.
+    private var closingChartNoDataSessionEndByMarket: [StockMarket: Date] = [:]
     private var isAutomaticRefreshRunning = false
     private var currentScenePhase: ScenePhase = .inactive
     private var isStocksPageVisible = false
     private let chartService: any StockChartServing
+
+    /// Bumped whenever an automatic refresh cycle completes, regardless of
+    /// whether it changed anything. Observers that only read disk-cached data
+    /// (e.g. the portfolio value history) use this instead of running their
+    /// own polling timer, so there is a single refresh cadence to reason about.
+    @Published private(set) var lastRefreshCompletedAt: Date?
 
     private init(chartService: any StockChartServing = StockChartService.shared) {
         self.chartService = chartService
@@ -81,6 +91,15 @@ final class StockRefreshCoordinator {
 #endif
         }
         reconcileForegroundPolling()
+    }
+
+    /// Triggers a closing-data refresh check immediately, outside the regular
+    /// polling interval. Intended for call sites that become visible after a
+    /// long absence, such as the stocks list on app launch or page entry.
+    func triggerClosingRefreshIfNeeded() {
+        Task { @MainActor [weak self] in
+            await self?.refreshAutomatically()
+        }
     }
 
     private var shouldPollInForeground: Bool {
@@ -139,7 +158,10 @@ final class StockRefreshCoordinator {
               store.isDataLoaded,
               !isAutomaticRefreshRunning else { return }
         isAutomaticRefreshRunning = true
-        defer { isAutomaticRefreshRunning = false }
+        defer {
+            isAutomaticRefreshRunning = false
+            lastRefreshCompletedAt = Date()
+        }
 
         let now = Date()
 
@@ -153,6 +175,8 @@ final class StockRefreshCoordinator {
                 sessions: closingChartSessions
             )
         }
+
+        await refreshExtendedHoursIntradayIfNeeded(in: store, now: now)
 
         guard !store.isRefreshingQuotes else { return }
         let closingQuoteSessions = closingQuoteSessionsNeedingRefresh(
@@ -193,7 +217,7 @@ final class StockRefreshCoordinator {
             // The complete source refresh is keyed to the final regular-session
             // close. For US stocks it can run during post-market while the
             // completed regular-session data is already available.
-            guard session != .regular,
+            guard session == .closed,
                   store.stocks.contains(where: {
                       $0.market == market
                           && $0.hasConfiguredSymbol
@@ -202,8 +226,13 @@ final class StockRefreshCoordinator {
                   let sessionEnd = StockMarketTradingCalendar.latestCompletedFinalSessionEnd(
                       for: market,
                       at: now
-                  ),
-                  lastClosingChartRefreshSessionEndByMarket[market] != sessionEnd else {
+                  ) else {
+                continue
+            }
+            // A previous attempt for this session ended with noData — the
+            // data source has nothing for this session yet. Skip until the
+            // next session boundary rather than retrying every 5 minutes.
+            if closingChartNoDataSessionEndByMarket[market] == sessionEnd {
                 continue
             }
             if let attemptedAt = lastClosingChartRefreshAttemptAtByMarket[market],
@@ -225,20 +254,33 @@ final class StockRefreshCoordinator {
                 && $0.hasConfiguredSymbol
                 && !$0.isArchived
         }
-        DiagnosticLogger.shared.log(
-            .stockQuote,
-            "检测到收市完整行情补刷标的：\(stocks.count)"
-        )
         for market in StockMarket.displayOrder where sessions[market] != nil {
-            var didRefreshAllStocks = true
+            var allFailedWithNoData = true
+            var stalStockCount = 0
             for stock in stocks where stock.market == market {
                 guard !Task.isCancelled else { return }
+                // Skip stocks whose on-disk chart is already up to date for
+                // this session — avoids redundant network requests after a
+                // partial run or an app restart.
+                let isStale = await chartService.isChartStale(for: stock)
+                guard isStale else {
+                    allFailedWithNoData = false
+                    continue
+                }
+                stalStockCount += 1
                 do {
                     _ = try await chartService.refreshAfterFinalSession(for: stock)
+                    allFailedWithNoData = false
                 } catch is CancellationError {
                     return
+                } catch StockChartError.noData {
+                    DiagnosticLogger.shared.log(
+                        .stockQuote,
+                        "收市完整行情补刷 \(stock.symbol)：数据源暂无数据，跳过本次收市补刷",
+                        level: .warning
+                    )
                 } catch {
-                    didRefreshAllStocks = false
+                    allFailedWithNoData = false
                     DiagnosticLogger.logError(
                         .stockQuote,
                         operation: "收市完整行情补刷 \(stock.symbol)",
@@ -246,9 +288,22 @@ final class StockRefreshCoordinator {
                     )
                 }
             }
-            if didRefreshAllStocks,
-               let sessionEnd = sessions[market] {
-                lastClosingChartRefreshSessionEndByMarket[market] = sessionEnd
+            let marketStocks = stocks.filter { $0.market == market }
+            if stalStockCount > 0 {
+                DiagnosticLogger.shared.log(
+                    .stockQuote,
+                    "收市完整行情补刷：\(market.rawValue) 待刷 \(stalStockCount)/\(marketStocks.count) 只"
+                )
+            } else {
+                DiagnosticLogger.shared.log(
+                    .stockQuote,
+                    "收市完整行情补刷：\(market.rawValue) 数据已最新，跳过"
+                )
+            }
+            if let sessionEnd = sessions[market] {
+                if allFailedWithNoData && !marketStocks.isEmpty && stalStockCount > 0 {
+                    closingChartNoDataSessionEndByMarket[market] = sessionEnd
+                }
             }
         }
     }
@@ -286,6 +341,28 @@ final class StockRefreshCoordinator {
             result[market] = sessionEnd
         }
         return result
+    }
+
+    /// Refreshes the intraday chart for US stocks during pre/post-market sessions.
+    /// shouldUseCachedChart's 20 s cacheLifetime acts as the network throttle —
+    /// no separate timer is needed here.
+    private func refreshExtendedHoursIntradayIfNeeded(in store: StockStore, now: Date) async {
+        let session = StockMarketTradingCalendar.session(for: .unitedStates, at: now)
+        guard session == .preMarket || session == .postMarket else { return }
+        let stocks = store.stocks.filter {
+            $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
+        }
+        guard !stocks.isEmpty else { return }
+        for stock in stocks {
+            guard !Task.isCancelled else { return }
+            do {
+                _ = try await chartService.fetchChart(for: stock, range: .intraday, forceRefresh: false)
+            } catch is CancellationError {
+                return
+            } catch {
+                DiagnosticLogger.logError(.stockQuote, operation: "延伸时段分时图 \(stock.symbol)", error: error)
+            }
+        }
     }
 
     private func stopForegroundPolling() {

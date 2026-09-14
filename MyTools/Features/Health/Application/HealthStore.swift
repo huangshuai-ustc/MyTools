@@ -47,6 +47,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     }
 
     func moduleVisibilityChanged(isVisible: Bool) {
+        isModuleVisible = isVisible
         guard isVisible else { return }
         synchronizeLoadedRecords()
     }

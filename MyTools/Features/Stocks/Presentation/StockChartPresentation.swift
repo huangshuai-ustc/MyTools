@@ -130,9 +130,17 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
 
     static func defaultModes(
         for range: StockChartRange,
-        session: StockMarketSession
+        session: StockMarketSession,
+        market: StockMarket? = nil
     ) -> Set<Self> {
-        [.line]
+        guard range == .intraday, market?.supportsExtendedHoursChart == true else {
+            return [.line]
+        }
+        switch session {
+        case .preMarket: return [.preMarket]
+        case .postMarket: return [.postMarket]
+        default: return [.line]
+        }
     }
 }
 
@@ -226,6 +234,30 @@ struct StockChartPresentation {
 
     static func headerPerformanceTitle(for range: StockChartRange) -> String {
         range == .intraday ? "今日涨跌" : "区间涨跌"
+    }
+
+    static func preMarketPerformance(
+        snapshot: StockChartSnapshot,
+        market: StockMarket
+    ) -> (change: Double, percent: Double)? {
+        guard let latest = snapshot.preMarketPoints.max(by: { $0.date < $1.date }) else { return nil }
+        guard let previousClose = intradayPreviousClose(
+            snapshot: snapshot,
+            market: market,
+            isPreMarketChart: true
+        ), previousClose != 0 else { return nil }
+        let change = latest.close - previousClose
+        return (change, change / previousClose)
+    }
+
+    static func postMarketPerformance(
+        snapshot: StockChartSnapshot
+    ) -> (change: Double, percent: Double)? {
+        guard let latest = snapshot.postMarketPoints.max(by: { $0.date < $1.date }) else { return nil }
+        guard let regularClose = snapshot.points.max(by: { $0.date < $1.date })?.close,
+              regularClose != 0 else { return nil }
+        let change = latest.close - regularClose
+        return (change, change / regularClose)
     }
 
     /// The most recent point in the currently displayed price series.
@@ -406,7 +438,8 @@ struct StockChartPresentation {
         if range == .intraday || range == .fiveDays {
             cachedIntradayPreviousClose = Self.intradayPreviousClose(
                 snapshot: snapshot,
-                market: stock.market
+                market: stock.market,
+                isPreMarketChart: includesPreMarket
             )
         } else {
             cachedIntradayPreviousClose = nil
@@ -850,15 +883,21 @@ struct StockChartPresentation {
         range: StockChartRange,
         market: StockMarket,
         visibleXDomain: ClosedRange<Double>? = nil,
+        isPreMarketChart: Bool = false,
         quotePreviousClose: Double? = nil,
         quoteUpdatedAt: Date? = nil
     ) -> (change: Double, percent: Double)? {
-        guard let latest = snapshot.latestPoint,
+        guard let latest = rangeEndingPoint(
+                snapshot: snapshot,
+                range: range,
+                visibleXDomain: visibleXDomain
+              ),
               let referencePrice = rangeReferencePrice(
                 snapshot: snapshot,
                 range: range,
                 market: market,
                 visibleXDomain: visibleXDomain,
+                isPreMarketChart: isPreMarketChart,
                 quotePreviousClose: quotePreviousClose,
                 quoteUpdatedAt: quoteUpdatedAt
               ) else { return nil }
@@ -872,6 +911,7 @@ struct StockChartPresentation {
         range: StockChartRange,
         market: StockMarket,
         visibleXDomain: ClosedRange<Double>? = nil,
+        isPreMarketChart: Bool = false,
         quotePreviousClose: Double? = nil,
         quoteUpdatedAt: Date? = nil
     ) -> Double? {
@@ -881,18 +921,13 @@ struct StockChartPresentation {
             return intradayPreviousClose(
                 snapshot: snapshot,
                 market: market,
+                isPreMarketChart: isPreMarketChart,
                 quotePreviousClose: quotePreviousClose,
                 quoteUpdatedAt: quoteUpdatedAt
             )
         case .fiveDays:
             let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
-            if let visibleXDomain {
-                return pointAtVisibleStart(
-                    sortedPoints,
-                    visibleXDomain: visibleXDomain
-                )?.close ?? sortedPoints.first?.close ?? first.close
-            }
-            return sortedPoints.first?.close ?? first.close
+            return sortedPoints.first.map(intervalOpeningPrice) ?? intervalOpeningPrice(first)
         case .dayK, .weekK, .monthK, .quarterK, .yearK:
             if let visibleXDomain {
                 let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
@@ -900,7 +935,7 @@ struct StockChartPresentation {
                     sortedPoints,
                     visibleXDomain: visibleXDomain
                 ) {
-                    return visibleFirst.close
+                    return intervalOpeningPrice(visibleFirst)
                 }
             }
             // Before the chart finishes its first layout pass there is no
@@ -919,8 +954,31 @@ struct StockChartPresentation {
             }
             return sortedPoints.dropFirst(
                 max(0, sortedPoints.count - defaultCount)
-            ).first?.close ?? first.close
+            ).first.map(intervalOpeningPrice) ?? intervalOpeningPrice(first)
         }
+    }
+
+    /// An interval begins at the first visible bar's opening auction and ends
+    /// at the last visible bar's close. Falling back to `close` protects
+    /// against providers that return a missing/zero opening price.
+    private static func intervalOpeningPrice(_ point: StockChartPoint) -> Double {
+        point.open.isFinite && point.open > 0 ? point.open : point.close
+    }
+
+    private static func rangeEndingPoint(
+        snapshot: StockChartSnapshot,
+        range: StockChartRange,
+        visibleXDomain: ClosedRange<Double>?
+    ) -> StockChartPoint? {
+        let sortedPoints = snapshot.points.sorted { $0.date < $1.date }
+        guard range.isKLineRange, let visibleXDomain else {
+            return sortedPoints.last
+        }
+        let index = min(
+            max(Int(visibleXDomain.upperBound.rounded(.down)), 0),
+            sortedPoints.count - 1
+        )
+        return sortedPoints[index]
     }
 
     /// Returns the first bar visible in the dense ordinal x-domain.
@@ -939,6 +997,7 @@ struct StockChartPresentation {
     static func intradayPreviousClose(
         snapshot: StockChartSnapshot,
         market: StockMarket,
+        isPreMarketChart: Bool = false,
         quotePreviousClose: Double? = nil,
         quoteUpdatedAt: Date? = nil
     ) -> Double? {
@@ -985,11 +1044,40 @@ struct StockChartPresentation {
         // that day's close as the new session's reference. A newer pre-market
         // day therefore keeps the historical close-before-visible-day rule.
         let latestRegularDay = calendar.startOfDay(for: latest.date)
-        let hasNewerPreMarketDay = snapshot.preMarketPoints.contains {
+        let hasNewerPreMarket = snapshot.preMarketPoints.contains {
             calendar.startOfDay(for: $0.date) > latestRegularDay
         }
-        if hasNewerPreMarketDay {
-            return dailyPreviousClose ?? minutePreviousClose
+        if !isPreMarketChart, hasNewerPreMarket {
+            // The regular-session chart can still represent yesterday while a
+            // newer pre-market bar is present. Prefer the settled historical
+            // close for that regular session over a provider fallback value.
+            return dailyPreviousClose
+                ?? minutePreviousClose
+                ?? snapshot.previousClose
+        }
+        if isPreMarketChart {
+            let newerPreMarketDate = snapshot.preMarketPoints
+                .filter { calendar.startOfDay(for: $0.date) > latestRegularDay }
+                .map(\.date).max()
+            if let newerPreMarketDate {
+                // During the next day's pre-market, `latest` still points to the
+                // preceding regular session. Use the pre-market bar's date as the
+                // reference so that closingPrice finds the immediately preceding
+                // regular session close (i.e. yesterday's close, not the day before).
+                let preMarketDailyClose = snapshot.dailyIndicatorPoints.flatMap {
+                    closingPrice(
+                        beforeTradingDayContaining: newerPreMarketDate,
+                        in: $0,
+                        market: market
+                    )
+                }
+                let preMarketMinuteClose = closingPrice(
+                    beforeTradingDayContaining: newerPreMarketDate,
+                    in: snapshot.indicatorPoints ?? snapshot.points,
+                    market: market
+                )
+                return preMarketDailyClose ?? preMarketMinuteClose
+            }
         }
         return dailyPreviousClose
             ?? currentQuotePreviousClose
@@ -1223,14 +1311,7 @@ struct StockChartPresentation {
         return stock.transactions.compactMap { transaction in
             guard transaction.quantity > 0,
                   transaction.unitPrice > 0 else { return nil }
-            // `tradedAt` remains a Beijing/device-calendar date in storage.
-            // US date-only entries are plotted on the preceding US calendar
-            // day, which is the trading date represented by the same Beijing
-            // date (for example, Beijing 8/22 -> US 8/21).
-            let transactionDate = chartTransactionDate(
-                for: transaction.tradedAt,
-                market: stock.market
-            )
+            let transactionDate = transaction.tradedAt
 
             let exactMatchingPoints = sourcePoints.filter { point in
                 if range == .weekK {
@@ -1306,14 +1387,6 @@ struct StockChartPresentation {
         }
     }
 
-    private static func chartTransactionDate(
-        for date: Date,
-        market: StockMarket
-    ) -> Date {
-        guard market == .unitedStates else { return date }
-        let calendar = Calendar.autoupdatingCurrent
-        return calendar.date(byAdding: .day, value: -1, to: date) ?? date
-    }
 
     private static func xValue(
         for _: StockChartPoint,

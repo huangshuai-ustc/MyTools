@@ -24,6 +24,8 @@ struct StockDetailView: View {
     @State private var showingTransactionOrderEditor = false
     @State private var transactionError = ""
     @State private var showingTransactionError = false
+    @State private var showingRenameAlert = false
+    @State private var renameText = ""
 
     private var stock: StockHolding? {
         store.stocks.first { $0.id == stockID }
@@ -63,6 +65,10 @@ struct StockDetailView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("查看\(stock.displayName)行情")
                     .help("查看股票行情")
+                    .onLongPressGesture {
+                        renameText = stock.name
+                        showingRenameAlert = true
+                    }
                 }
             }
 
@@ -112,6 +118,17 @@ struct StockDetailView: View {
             Button("确定", role: .cancel) {}
         } message: {
             Text(transactionError)
+        }
+        .alert("修改名称", isPresented: $showingRenameAlert) {
+            TextField("自定义名称", text: $renameText)
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                guard var stock else { return }
+                stock.name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                store.upsertStock(stock)
+            }
+        } message: {
+            Text("留空则显示行情同步的名称")
         }
         .onAppear {
             StockRefreshCoordinator.shared.setStocksPageVisible(false)

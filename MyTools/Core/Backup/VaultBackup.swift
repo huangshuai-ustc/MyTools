@@ -15,7 +15,7 @@ enum VaultBackupError: LocalizedError {
         case .invalidPassword:
             return "备份密码至少需要 8 位。"
         case .missingPassword:
-            return "请输入管理员密码或自定义备份密码。"
+            return "请输入备份密码。"
         case .invalidFile:
             return "文件不是有效的“\(AppMetadata.appName)”备份。"
         case .unsupportedVersion:

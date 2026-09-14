@@ -420,7 +420,7 @@ struct ModuleStoreTests {
         let store = HealthStore(
             medicalRecords: [parent],
             attachmentStore: AttachmentStore(),
-            moduleSettings: settings
+            isModuleVisible: settings.isVisible(.healthRecords)
         )
 
         store.synchronizeLoadedRecords()

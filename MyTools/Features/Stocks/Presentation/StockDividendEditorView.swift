@@ -49,7 +49,7 @@ struct StockDividendEditorView: View {
         NavigationStack {
             Form {
                 Section("分红信息") {
-                    DateFieldRow(title: "到账日期：", date: $draft.dividend.receivedAt)
+                    DateFieldRow(title: "到账日期：", date: $draft.dividend.receivedAt, upperBound: Date())
                     decimalField(
                         "分红股数：",
                         placeholder: "必填",
