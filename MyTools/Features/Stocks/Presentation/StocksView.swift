@@ -56,6 +56,7 @@ struct StocksView: View {
     @State private var editingStock: StockHolding?
     @State private var watchRoute: WatchRoute?
     @State private var showsArchivedStocks = false
+    @ObservedObject private var refreshCoordinator = StockRefreshCoordinator.shared
 
     private var configuredStocks: [StockHolding] {
         store.stocks.filter(\.hasConfiguredSymbol)
@@ -247,6 +248,7 @@ struct StocksView: View {
                 for: marketFilter.market,
                 forceRefresh: true
             )
+            await store.refreshExtendedHoursPerformance(forceRefresh: true)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -263,6 +265,7 @@ struct StocksView: View {
                             for: marketFilter.market,
                             forceRefresh: true
                         )
+                        await store.refreshExtendedHoursPerformance(forceRefresh: true)
                     }
                 } label: {
                     if store.isRefreshingQuotes {
@@ -310,6 +313,9 @@ struct StocksView: View {
                 refreshWhenEntering()
             }
         }
+        .onChange(of: refreshCoordinator.lastRefreshCompletedAt) { _, _ in
+            Task { await store.refreshExtendedHoursPerformance() }
+        }
         .onDisappear {
             StockRefreshCoordinator.shared.setStocksPageVisible(false)
             enteringRefreshTask?.cancel()
@@ -339,7 +345,8 @@ struct StocksView: View {
         } label: {
             StockRow(
                 stock: stock,
-                costShare: costAllocation.holdingShare(for: stock.id)
+                costShare: costAllocation.holdingShare(for: stock.id),
+                extendedHours: store.extendedHoursPerformance[stock.id]
             )
         }
         if stock.isArchived {
@@ -432,6 +439,7 @@ struct StocksView: View {
         enteringRefreshTask?.cancel()
         enteringRefreshTask = Task { @MainActor in
             await store.refreshQuotes(for: marketFilter.market)
+            await store.refreshExtendedHoursPerformance()
             StockRefreshCoordinator.shared.triggerClosingRefreshIfNeeded()
         }
     }
@@ -782,6 +790,7 @@ private struct StockRow: View {
     @Environment(\.appFontScale) private var fontScale
     let stock: StockHolding
     let costShare: Decimal?
+    let extendedHours: StockExtendedHoursPerformance?
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
@@ -807,28 +816,21 @@ private struct StockRow: View {
             Grid(horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
                     metric("持仓", value: holdingQuantityText)
-                    metric("成本", value: holdingCostText, leadingInset: 8)
-                    metric(
-                        "今日涨跌",
-                        value: changePercentText,
-                        color: changePercentColor,
-                        leadingInset: 8
-                    )
+                    metric("盈亏", value: profitLossText, color: profitLossColor, leadingInset: 8)
+                    metric("盈率", value: profitRateText, color: profitRateColor, leadingInset: 8)
                 }
-                GridRow {
-                    metric("市值", value: marketValueText)
-                    metric(
-                        "盈亏",
-                        value: profitLossText,
-                        color: profitLossColor,
-                        leadingInset: 8
-                    )
-                    metric(
-                        "盈率",
-                        value: profitRateText,
-                        color: profitRateColor,
-                        leadingInset: 8
-                    )
+                if stock.market == .unitedStates {
+                    GridRow {
+                        metric("盘前", value: preMarketText, color: preMarketColor)
+                        metric("涨跌", value: changePercentText, color: changePercentColor, leadingInset: 8)
+                        metric("盘后", value: postMarketText, color: postMarketColor, leadingInset: 8)
+                    }
+                } else {
+                    GridRow {
+                        metric("市值", value: marketValueText)
+                        metric("成本", value: holdingCostText, leadingInset: 8)
+                        metric("涨跌", value: changePercentText, color: changePercentColor, leadingInset: 8)
+                    }
                 }
             }
             .appFont(.caption.monospacedDigit())
@@ -894,6 +896,24 @@ private struct StockRow: View {
 
     private var profitRateColor: Color {
         guard let value = stock.holdingProfitRate else { return .secondary }
+        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
+    }
+
+    private var preMarketText: String {
+        extendedHours?.preMarketPercent.map(StockValueFormatter.signedPercent) ?? "--"
+    }
+
+    private var preMarketColor: Color {
+        guard let value = extendedHours?.preMarketPercent else { return .secondary }
+        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
+    }
+
+    private var postMarketText: String {
+        extendedHours?.postMarketPercent.map(StockValueFormatter.signedPercent) ?? "--"
+    }
+
+    private var postMarketColor: Color {
+        guard let value = extendedHours?.postMarketPercent else { return .secondary }
         return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
     }
 }

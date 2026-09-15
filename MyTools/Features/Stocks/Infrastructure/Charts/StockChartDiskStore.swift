@@ -128,10 +128,11 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
 }
 
 struct StockChartPersistedStore: Codable, Sendable {
-    // Version 6 invalidates minute caches created before Yahoo's 16:00
-    // extended-hours boundary was corrected. Those files can contain a
-    // post-market print in the regular-session series and must be rebuilt.
-    static let currentVersion = 6
+    // Version 7 invalidates minute caches that were merged through the
+    // generic US regular-session filter with an inclusive 16:00 boundary.
+    // Those files can contain the first post-market print in the regular
+    // series and must be rebuilt.
+    static let currentVersion = 7
     // Keep this separate from the file schema version. Adding a technical
     // indicator does not invalidate the raw OHLCV cache: an older file can be
     // upgraded locally once, then written back with the current indicator set.

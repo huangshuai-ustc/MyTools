@@ -341,7 +341,10 @@ actor StockChartService: StockChartServing {
             name: primary.name,
             currencyCode: primary.currencyCode,
             previousClose: primary.previousClose ?? fallback.previousClose,
-            points: denserMinuteSeries(primary.points, fallback.points),
+            points: preservingOfficialClose(
+                in: denserMinuteSeries(primary.points, fallback.points),
+                from: fallback.points
+            ),
             preMarketPoints: denserMinuteSeries(
                 primary.preMarketPoints,
                 fallback.preMarketPoints
@@ -353,7 +356,12 @@ actor StockChartService: StockChartServing {
             indicatorPoints: preferredIndicatorPoints(
                 primary.indicatorPoints,
                 fallback.indicatorPoints
-            ),
+            ).map {
+                preservingOfficialClose(
+                    in: $0,
+                    from: fallback.indicatorPoints ?? []
+                )
+            },
             dailyIndicatorPoints: primary.dailyIndicatorPoints
                 ?? fallback.dailyIndicatorPoints,
             quoteUpdatedAt: max(primary.quoteUpdatedAt, fallback.quoteUpdatedAt),
@@ -373,6 +381,34 @@ actor StockChartService: StockChartServing {
         guard let primary else { return fallback }
         guard let fallback else { return primary }
         return denserMinuteSeries(primary, fallback)
+    }
+
+    /// Tencent often has denser regular-session coverage, while Yahoo carries
+    /// the finalized exchange close. Preserve the dense series for history,
+    /// then patch only its final regular-session bar with Yahoo's authoritative
+    /// close so the chart agrees with the quote and official settlement value.
+    private func preservingOfficialClose(
+        in points: [StockChartPoint],
+        from authoritativePoints: [StockChartPoint]
+    ) -> [StockChartPoint] {
+        guard var latest = points.last,
+              let authoritative = authoritativePoints.last,
+              StockChartSeriesProcessor.marketCalendar(.unitedStates)
+                .isDate(latest.date, inSameDayAs: authoritative.date),
+              authoritative.date >= latest.date else {
+            return points
+        }
+        latest = StockChartPoint(
+            date: latest.date,
+            open: latest.open,
+            high: max(latest.high, authoritative.close),
+            low: min(latest.low, authoritative.close),
+            close: authoritative.close,
+            volume: latest.volume
+        )
+        var result = points
+        result[result.count - 1] = latest
+        return result
     }
 
     private func denserMinuteSeries(

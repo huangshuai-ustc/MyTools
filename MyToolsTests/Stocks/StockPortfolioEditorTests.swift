@@ -258,6 +258,66 @@ struct StockPortfolioEditorTests {
         #expect(unitedStatesAllocation == Decimal(70) / Decimal(71))
     }
 
+    @Test func minutePortfolioSeedsPricesForSymbolsWhoseCachesStartLater() throws {
+        let firstMinute = Self.shanghaiDate(day: 14, hour: 9, minute: 30)
+        let secondMinute = Self.shanghaiDate(day: 14, hour: 9, minute: 31)
+        var firstStock = StockHolding(market: .aShare, symbol: "600000")
+        var firstBuy = Self.transaction(type: .buy, day: 1, quantity: 1)
+        firstBuy.unitPrice = 10
+        firstStock.transactions = [firstBuy]
+        var secondStock = StockHolding(market: .aShare, symbol: "600001")
+        var secondBuy = Self.transaction(type: .buy, day: 1, quantity: 1)
+        secondBuy.unitPrice = 20
+        secondStock.transactions = [secondBuy]
+
+        let series = PortfolioValueHistoryBuilder.buildMinuteSeries(
+            for: .aShare,
+            range: .fiveDays,
+            stocks: [firstStock, secondStock],
+            minutePointsBySymbol: [
+                firstStock.symbol: [
+                    Self.chartPoint(date: firstMinute, close: 10),
+                    Self.chartPoint(date: secondMinute, close: 10)
+                ],
+                secondStock.symbol: [Self.chartPoint(date: secondMinute, close: 20)]
+            ]
+        )
+
+        #expect(try #require(series.points.first).value == 30)
+        #expect(try #require(series.points.last).value == 30)
+    }
+
+    @Test func minuteCNYSeriesSeedsEveryMarketsCostAtTimelineStart() throws {
+        let firstDate = Self.shanghaiDate(day: 14, hour: 9, minute: 30)
+        let laterDate = Self.shanghaiDate(day: 14, hour: 21, minute: 30)
+        let aShare = PortfolioValueSeries(
+            id: "a",
+            label: "A 股",
+            market: .aShare,
+            currencyCode: "CNY",
+            points: [PortfolioValuePoint(date: firstDate, value: 90)],
+            costBasis: 100,
+            costBasisPoints: [PortfolioCostBasisPoint(date: firstDate, cost: 100)]
+        )
+        let unitedStates = PortfolioValueSeries(
+            id: "us",
+            label: "美股",
+            market: .unitedStates,
+            currencyCode: "USD",
+            points: [PortfolioValuePoint(date: laterDate, value: 9)],
+            costBasis: 10,
+            costBasisPoints: [PortfolioCostBasisPoint(date: laterDate, cost: 10)]
+        )
+
+        let combined = try #require(PortfolioValueHistoryBuilder.buildMinuteCNYSeries(
+            from: [aShare, unitedStates],
+            rates: [.usd: 7]
+        ))
+
+        #expect(try #require(combined.points.first).value == 153)
+        #expect(try #require(combined.costBasisPoints.first).cost == 170)
+    }
+
     private static func transaction(
         type: StockTransactionType,
         day: Int,
@@ -282,5 +342,22 @@ struct StockPortfolioEditorTests {
             day: day,
             hour: 12
         ))!
+    }
+
+    private static func shanghaiDate(day: Int, hour: Int, minute: Int) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        return calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 9,
+            day: day,
+            hour: hour,
+            minute: minute
+        ))!
+    }
+
+    private static func chartPoint(date: Date, close: Double) -> StockChartPoint {
+        StockChartPoint(date: date, open: close, high: close, low: close, close: close, volume: 1)
     }
 }

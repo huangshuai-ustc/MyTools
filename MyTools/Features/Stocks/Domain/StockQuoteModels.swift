@@ -34,6 +34,14 @@ struct StockQuote: Sendable {
     }
 }
 
+/// Latest extended-hours performance derived from the cached intraday chart.
+/// These values are transient quote presentation data and are not persisted as
+/// part of the stock holding itself.
+struct StockExtendedHoursPerformance: Equatable, Sendable {
+    let preMarketPercent: Decimal?
+    let postMarketPercent: Decimal?
+}
+
 enum StockQuoteError: LocalizedError, Sendable {
     case invalidSymbol
     case invalidResponse

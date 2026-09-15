@@ -193,6 +193,36 @@ struct StockChartSeriesProcessorTests {
         )
     }
 
+    @Test func unitedStatesSixteenHundredBarBelongsOnlyToPostMarket() {
+        let lastRegular = StockChartFixtures.date(
+            2026, 8, 3, hour: 15, minute: 59, timeZone: "America/New_York"
+        )
+        let firstPostMarket = StockChartFixtures.date(
+            2026, 8, 3, hour: 16, timeZone: "America/New_York"
+        )
+        let postMarketEnd = StockChartFixtures.date(
+            2026, 8, 3, hour: 20, timeZone: "America/New_York"
+        )
+        let points = [
+            StockChartFixtures.point(at: lastRegular, close: 89.35),
+            StockChartFixtures.point(at: firstPostMarket, close: 89.13),
+            StockChartFixtures.point(at: postMarketEnd, close: 89.20)
+        ]
+
+        #expect(
+            StockChartSeriesProcessor.regularSessionPoints(points, market: .unitedStates)
+                .map(\.date) == [lastRegular]
+        )
+        #expect(
+            StockChartSeriesProcessor.regularUnitedStatesSessionPoints(points)
+                .map(\.date) == [lastRegular]
+        )
+        #expect(
+            StockChartSeriesProcessor.postMarketSessionPoints(points, market: .unitedStates)
+                .map(\.date) == [firstPostMarket]
+        )
+    }
+
     @Test func currentSessionSummaryAggregatesMinuteOHLCAndVolume() {
         let points = [
             StockChartFixtures.point(

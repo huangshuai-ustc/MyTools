@@ -245,34 +245,19 @@ struct YahooStockChartProvider: StockChartProvider {
         return values[index]
     }
 
-    /// Yahoo labels minute bars by their interval start. With extended-hours
-    /// data enabled, the 16:00 bar is therefore the first post-market minute,
-    /// not the final regular-session minute. Keep this provider-specific:
-    /// other chart sources can use different timestamp conventions.
+    /// Yahoo labels minute bars by their interval start. The shared session
+    /// mapper owns the market boundary; this provider only supplies the raw
+    /// timestamps after converting them to Date values.
     private func yahooUnitedStatesRegularSessionPoints(
         _ points: [StockChartPoint]
     ) -> [StockChartPoint] {
-        sessionPoints(points, minuteRange: 570..<960)
+        StockChartSeriesProcessor.regularSessionPoints(points, market: .unitedStates)
     }
 
     private func yahooUnitedStatesPostMarketPoints(
         _ points: [StockChartPoint]
     ) -> [StockChartPoint] {
-        sessionPoints(points, minuteRange: 960..<1_201)
-    }
-
-    private func sessionPoints(
-        _ points: [StockChartPoint],
-        minuteRange: Range<Int>
-    ) -> [StockChartPoint] {
-        let calendar = StockChartSeriesProcessor.marketCalendar(.unitedStates)
-        return points.filter { point in
-            let components = calendar.dateComponents([.hour, .minute], from: point.date)
-            guard let hour = components.hour, let minute = components.minute else {
-                return false
-            }
-            return minuteRange.contains(hour * 60 + minute)
-        }
+        StockChartSeriesProcessor.postMarketSessionPoints(points, market: .unitedStates)
     }
 
     /// The final 15:59 minute close can differ slightly from the exchange's

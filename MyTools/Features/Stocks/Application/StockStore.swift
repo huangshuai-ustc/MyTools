@@ -15,6 +15,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var lastRefreshAtByMarket: [StockMarket: Date] = [:]
     @Published private(set) var quoteErrors: [UUID: String] = [:]
     @Published private(set) var quoteSources: [UUID: String] = [:]
+    @Published private(set) var extendedHoursPerformance: [UUID: StockExtendedHoursPerformance] = [:]
     @Published private(set) var isDataLoaded: Bool
 
     private let quoteService: any StockQuoteRefreshing
@@ -43,6 +44,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         self.priceAlerts = priceAlerts
         self.returnAlerts = returnAlerts
         self.isDataLoaded = isDataLoaded
+        extendedHoursPerformance = [:]
         self.quoteService = quoteService
         self.alertNotifications = alertNotifications
         self.refreshInvalidator = refreshInvalidator
@@ -386,6 +388,65 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             )
             evaluatePriceAlerts()
         }
+    }
+
+    /// Loads the cached intraday snapshots used by the stocks list to show
+    /// US pre-market and post-market performance. The chart service owns the
+    /// provider/cache boundary; the list only receives derived percentages.
+    func refreshExtendedHoursPerformance(forceRefresh: Bool = false) async {
+        let candidates = stocks.filter {
+            $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
+        }
+        guard !candidates.isEmpty else {
+            extendedHoursPerformance = [:]
+            return
+        }
+
+        var values: [UUID: StockExtendedHoursPerformance] = [:]
+        await withTaskGroup(of: (UUID, StockExtendedHoursPerformance?).self) { group in
+            for stock in candidates {
+                group.addTask { [chartService] in
+                    let snapshot: StockChartSnapshot?
+                    if forceRefresh {
+                        snapshot = try? await chartService.fetchChart(
+                            for: stock,
+                            range: .intraday,
+                            forceRefresh: true
+                        )
+                    } else {
+                        snapshot = await chartService.cachedChart(
+                            for: stock,
+                            range: .intraday
+                        )
+                    }
+                    guard let snapshot else { return (stock.id, nil) }
+                    let preMarket = StockChartPresentation.preMarketPerformance(
+                        snapshot: snapshot,
+                        market: stock.market
+                    )?.percent
+                    let postMarket = StockChartPresentation.postMarketPerformance(
+                        snapshot: snapshot
+                    )?.percent
+                    return (
+                        stock.id,
+                        StockExtendedHoursPerformance(
+                            preMarketPercent: preMarket.map(Self.decimalQuoteValue),
+                            postMarketPercent: postMarket.map(Self.decimalQuoteValue)
+                        )
+                    )
+                }
+            }
+            for await (id, performance) in group {
+                if let performance { values[id] = performance }
+            }
+        }
+        guard !Task.isCancelled else { return }
+        extendedHoursPerformance = values
+    }
+
+    nonisolated private static func decimalQuoteValue(_ value: Double) -> Decimal {
+        Decimal(string: String(value), locale: Locale(identifier: "en_US_POSIX"))
+            ?? Decimal(value)
     }
 
     func lastRefreshAt(for market: StockMarket?) -> Date? {

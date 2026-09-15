@@ -274,7 +274,14 @@ enum PortfolioValueHistoryBuilder {
             barsBySymbol[sym] = bars
         }
 
-        var carryForwardPrices: [String: Decimal] = [:]
+        // Symbols can have minute caches with different starting dates. Seed
+        // each held symbol from its first available point in this window so it
+        // does not contribute zero until its own cache begins.
+        var carryForwardPrices = scopedBySymbol.reduce(into: [String: Decimal]()) { result, entry in
+            if let first = entry.value.min(by: { $0.date < $1.date }) {
+                result[entry.key] = decimalPrice(first.close)
+            }
+        }
         let transactionsByStock = Dictionary(uniqueKeysWithValues: marketStocks.map { stock in
             (stock.id, stock.transactions.sorted { $0.tradedAt < $1.tradedAt })
         })
@@ -358,6 +365,17 @@ enum PortfolioValueHistoryBuilder {
         var pointOffsets: [String: Int] = [:]
         var result: [PortfolioValuePoint] = []
 
+        // Markets in an aggregate portfolio do not open at the same time.
+        // Seed each series with its first point in the selected window so a
+        // market that has not produced a minute bar yet is carried forward
+        // instead of contributing zero and causing an artificial jump when
+        // its session opens.
+        for series in convertibleSeries {
+            if let first = series.points.min(by: { $0.date < $1.date }) {
+                lastPoints[series.id] = first
+            }
+        }
+
         for ts in sortedTimestamps {
             var cnyTotal: Decimal = 0
             var cnyOpen: Decimal = 0
@@ -435,8 +453,14 @@ enum PortfolioValueHistoryBuilder {
         }
         let sortedDates = allDates.sorted()
 
-        // Build last-known value per market for carry-forward on CNY series
+        // Build sorted lookup tables once. The previous implementation used
+        // first(where:) for every market/date pair, which made daily history
+        // reconstruction quadratic in the number of bars.
+        let pointsBySeries = Dictionary(uniqueKeysWithValues: convertibleSeries.map { series in
+            (series.id, series.points.sorted { $0.date < $1.date })
+        })
         var lastPoints: [String: PortfolioValuePoint] = [:]
+        var pointOffsets: [String: Int] = [:]
         var result: [PortfolioValuePoint] = []
 
         for date in sortedDates {
@@ -457,9 +481,13 @@ enum PortfolioValueHistoryBuilder {
                     continue
                 }
 
-                if let point = series.points.first(where: { $0.date == date }) {
-                    lastPoints[series.id] = point
+                let points = pointsBySeries[series.id] ?? []
+                var offset = pointOffsets[series.id, default: 0]
+                while offset < points.count, points[offset].date <= date {
+                    lastPoints[series.id] = points[offset]
+                    offset += 1
                 }
+                pointOffsets[series.id] = offset
                 if let point = lastPoints[series.id] {
                     cnyTotal += point.value * rate
                     cnyOpen += point.candleOpen * rate
@@ -537,9 +565,55 @@ enum PortfolioValueHistoryBuilder {
         _ stocks: [StockHolding],
         dates: [Date]
     ) -> [PortfolioCostBasisPoint] {
-        dates.compactMap { date in
-            totalHoldingCost(stocks, on: date).map { PortfolioCostBasisPoint(date: date, cost: $0) }
+        let transactionsByStock = Dictionary(uniqueKeysWithValues: stocks.map { stock in
+            (stock.id, StockHolding.orderedTransactions(stock.transactions))
+        })
+        var offsets: [UUID: Int] = [:]
+        var sharesByStock: [UUID: Decimal] = [:]
+        var costByStock: [UUID: Decimal] = [:]
+        var result: [PortfolioCostBasisPoint] = []
+
+        for date in dates.sorted() {
+            var total = Decimal.zero
+            var hasAny = false
+            for stock in stocks {
+                let transactions = transactionsByStock[stock.id] ?? []
+                var offset = offsets[stock.id, default: 0]
+                var shares = sharesByStock[stock.id, default: .zero]
+                var cost = costByStock[stock.id, default: .zero]
+                while offset < transactions.count, transactions[offset].tradedAt <= date {
+                    let transaction = transactions[offset]
+                    if transaction.quantity > 0 {
+                        switch transaction.type {
+                        case .buy:
+                            shares += transaction.quantity
+                            cost += transaction.grossAmount + transaction.fees
+                        case .sell:
+                            guard shares > 0 else {
+                                offset += 1
+                                continue
+                            }
+                            let soldShares = min(transaction.quantity, shares)
+                            cost -= (cost / shares) * soldShares
+                            shares -= soldShares
+                            if shares == 0 { cost = 0 }
+                        }
+                    }
+                    offset += 1
+                }
+                offsets[stock.id] = offset
+                sharesByStock[stock.id] = shares
+                costByStock[stock.id] = cost
+                if shares > 0 {
+                    total += cost
+                    hasAny = true
+                }
+            }
+            if hasAny {
+                result.append(PortfolioCostBasisPoint(date: date, cost: total))
+            }
         }
+        return result
     }
 
     private static func currencyCode(for market: StockMarket) -> CurrencyCode {
@@ -599,6 +673,16 @@ enum PortfolioValueHistoryBuilder {
         var lastCosts: [String: Decimal] = [:]
         var offsets: [String: Int] = [:]
         var result: [PortfolioCostBasisPoint] = []
+
+        // Keep cost composition aligned with the minute value composition.
+        // A market may not have emitted a bar at the beginning of the merged
+        // timeline, but its holding cost still exists and must be carried
+        // forward from the first available point.
+        for item in series {
+            if let first = item.costBasisPoints.min(by: { $0.date < $1.date }) {
+                lastCosts[item.id] = first.cost
+            }
+        }
         for date in dates {
             var total: Decimal = 0
             var hasAny = false

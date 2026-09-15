@@ -47,6 +47,9 @@ struct PortfolioValueHistoryView: View {
     @State private var allSeries: [PortfolioValueSeries] = []
     @State private var isLoading = false
     @State private var didApplyDefaultTarget = false
+    @State private var loadTask: Task<Void, Never>?
+    @State private var loadGeneration = 0
+    @State private var chartDataRevision = 0
 
     @ObservedObject private var refreshCoordinator = StockRefreshCoordinator.shared
     private let service = PortfolioValueHistoryService()
@@ -77,7 +80,8 @@ struct PortfolioValueHistoryView: View {
                     PortfolioChartCanvas(
                         series: displayedSeries,
                         range: selectedRange,
-                        style: chartStyle
+                        style: chartStyle,
+                        dataRevision: chartDataRevision
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
@@ -91,20 +95,28 @@ struct PortfolioValueHistoryView: View {
 #endif
         .task {
             applyDefaultTargetIfNeeded()
-            await loadSeries()
+            if selectedRange.isMinuteRange { refreshCoordinator.triggerClosingRefreshIfNeeded() }
+            requestLoadSeries()
         }
         .onChange(of: market) { _, _ in
             selectedTarget = PortfolioHistoryTarget(market: market)
             selectedStockID = nil
-            Task { await loadSeries() }
+            requestLoadSeries()
         }
         .onChange(of: selectedRange) { _, _ in
-            Task { await loadSeries() }
+            if selectedRange.isMinuteRange { refreshCoordinator.triggerClosingRefreshIfNeeded() }
+            allSeries = []
+            requestLoadSeries()
         }
         .onChange(of: refreshCoordinator.lastRefreshCompletedAt) { _, _ in
             guard selectedRange == .intraday || selectedRange == .fiveDays || selectedRange.isKLineRange else { return }
             guard anyMarketIsLive else { return }
-            Task { await loadSeries() }
+            requestLoadSeries()
+        }
+        .onDisappear {
+            loadTask?.cancel()
+            loadTask = nil
+            loadGeneration += 1
         }
     }
 
@@ -133,7 +145,7 @@ struct PortfolioValueHistoryView: View {
         .pickerStyle(.segmented)
         .onChange(of: selectedTarget) { _, _ in
             selectedStockID = nil
-            Task { await loadSeries() }
+            requestLoadSeries()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -192,7 +204,7 @@ struct PortfolioValueHistoryView: View {
             }
         }
         .pickerStyle(.menu)
-        .onChange(of: selectedStockID) { _, _ in Task { await loadSeries() } }
+        .onChange(of: selectedStockID) { _, _ in requestLoadSeries() }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
@@ -217,11 +229,19 @@ struct PortfolioValueHistoryView: View {
         selectedTarget = PortfolioHistoryTarget(market: openMarket)
     }
 
-    private func loadSeries() async {
+    private func requestLoadSeries() {
+        loadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
+        loadTask = Task { await loadSeries(generation: generation) }
+    }
+
+    private func loadSeries(generation: Int) async {
         isLoading = allSeries.isEmpty
         let selectedIDs = selectedStockID.map { Set([$0]) }
+        let loadedSeries: [PortfolioValueSeries]
         if selectedRange.isMinuteRange {
-            allSeries = await service.buildMinuteSeries(
+            loadedSeries = await service.buildMinuteSeries(
                 for: selectedMarket,
                 range: selectedRange,
                 stocks: store.stocks,
@@ -229,7 +249,7 @@ struct PortfolioValueHistoryView: View {
                 selectedStockIDs: selectedIDs
             )
         } else {
-            allSeries = await service.buildSeries(
+            loadedSeries = await service.buildSeries(
                 for: selectedMarket,
                 stocks: store.stocks,
                 rates: exchangeRateStore.renminbiBuyingRates,
@@ -237,6 +257,8 @@ struct PortfolioValueHistoryView: View {
                 selectedStockIDs: selectedIDs
             )
         }
+        guard generation == loadGeneration, !Task.isCancelled else { return }
+        allSeries = loadedSeries
         if let selectedStockID,
            let stock = store.stocks.first(where: { $0.id == selectedStockID }) {
             allSeries = allSeries.map {
@@ -255,7 +277,9 @@ struct PortfolioValueHistoryView: View {
                 )
             }
         }
+        guard generation == loadGeneration, !Task.isCancelled else { return }
         isLoading = false
+        chartDataRevision &+= 1
     }
 
     private func liveOverrides() -> [String: Decimal] {

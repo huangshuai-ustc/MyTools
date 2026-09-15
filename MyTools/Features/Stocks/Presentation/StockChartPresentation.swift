@@ -424,7 +424,6 @@ struct StockChartPresentation {
         }
         xDomain = Self.xDomain(for: allPricePlotPoints)
         yDomain = Self.yDomain(
-            snapshot: snapshot,
             displayModes: displayModes,
             technicalPlotPoints: technicalPlotPoints,
             transactionMarkers: transactionMarkers,
@@ -1571,7 +1570,6 @@ struct StockChartPresentation {
             return yDomain
         }
         return Self.yDomain(
-            snapshot: snapshot,
             displayModes: displayModes,
             technicalPlotPoints: visibleData.technicalPlotPoints,
             transactionMarkers: visibleData.transactionMarkers,
@@ -1582,7 +1580,6 @@ struct StockChartPresentation {
     }
 
     private static func yDomain(
-        snapshot: StockChartSnapshot,
         displayModes: Set<StockChartDisplayMode>,
         technicalPlotPoints: [StockTechnicalPlotPoint],
         transactionMarkers: [StockTransactionMarker],

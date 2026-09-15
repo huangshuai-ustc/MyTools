@@ -177,6 +177,7 @@ final class StockRefreshCoordinator: ObservableObject {
         }
 
         await refreshExtendedHoursIntradayIfNeeded(in: store, now: now)
+        await refreshIntradayDuringSessionIfNeeded(in: store, now: now)
 
         guard !store.isRefreshingQuotes else { return }
         let closingQuoteSessions = closingQuoteSessionsNeedingRefresh(
@@ -361,6 +362,29 @@ final class StockRefreshCoordinator: ObservableObject {
                 return
             } catch {
                 DiagnosticLogger.logError(.stockQuote, operation: "延伸时段分时图 \(stock.symbol)", error: error)
+            }
+        }
+    }
+
+    /// Keeps the local minute chart cache current while a regular market is
+    /// open. Portfolio history consumes this same cache for intraday and
+    /// five-day ranges, so quote-only polling would otherwise leave it on the
+    /// previous trading day's data.
+    private func refreshIntradayDuringSessionIfNeeded(in store: StockStore, now: Date) async {
+        let activeMarkets = Set(StockMarket.allCases.filter {
+            StockMarketTradingCalendar.session(for: $0, at: now) == .regular
+        })
+        let stocks = store.stocks.filter {
+            activeMarkets.contains($0.market) && $0.hasConfiguredSymbol && !$0.isArchived
+        }
+        for stock in stocks {
+            guard !Task.isCancelled else { return }
+            do {
+                _ = try await chartService.fetchChart(for: stock, range: .intraday, forceRefresh: false)
+            } catch is CancellationError {
+                return
+            } catch {
+                DiagnosticLogger.logError(.stockQuote, operation: "盘中分时图 \(stock.symbol)", error: error)
             }
         }
     }

@@ -74,7 +74,23 @@ private struct PortfolioChartData {
     let totalCostBasis: Double?
     let costLookupBySeries: [String: (Date) -> Decimal?]
 
-    init(series: [PortfolioValueSeries], range: StockChartRange) {
+    init() {
+        points = []
+        renderedPoints = []
+        renderedCandles = []
+        dates = []
+        values = []
+        pointsBySeries = [:]
+        renderedProfitPoints = []
+        profitPointsBySeries = [:]
+        profitPercents = []
+        profitSegments = []
+        costBasisSegments = []
+        totalCostBasis = nil
+        costLookupBySeries = [:]
+    }
+
+    init(series: [PortfolioValueSeries], range: StockChartRange, style: PortfolioChartStyle = .line) {
         let preparedSeries = Dictionary(uniqueKeysWithValues: series.map { item in
             (item.id, PortfolioChartData.aggregatedPoints(item.points, market: item.market, range: range))
         })
@@ -99,13 +115,19 @@ private struct PortfolioChartData {
         let allPoints = series.flatMap { item in
             indexedPoints[item.id] ?? []
         }
-        let budgetPerSeries = max(120, 1_200 / max(series.count, 1))
+        // Keep the rendered mark count bounded for minute based ranges. The
+        // full-resolution points remain available for nearest-point lookup,
+        // while Swift Charts only receives a compact visual sample.
+        let renderingBudget: Int = range == .fiveDays ? 360 : 1_200
+        let budgetPerSeries = max(120, renderingBudget / max(series.count, 1))
         let displayPoints = series.flatMap { item in
             Self.downsample(indexedPoints[item.id] ?? [], maximumCount: budgetPerSeries)
         }
-        let candlePoints = series.flatMap { item in
-            Self.aggregateCandles(indexedPoints[item.id] ?? [], maximumCount: 320)
-        }
+        let candlePoints = style == .candlestick
+            ? series.flatMap { item in
+                Self.aggregateCandles(indexedPoints[item.id] ?? [], maximumCount: 320)
+            }
+            : []
         self.pointsBySeries = indexedPoints
         self.points = allPoints
         self.renderedPoints = displayPoints
@@ -160,11 +182,17 @@ private struct PortfolioChartData {
         let sorted = costBasisPoints.sorted { $0.date < $1.date }
         guard !sorted.isEmpty else { return { _ in nil } }
         return { date in
-            var result: Decimal?
-            for point in sorted {
-                if point.date <= date { result = point.cost } else { break }
+            var low = 0
+            var high = sorted.count
+            while low < high {
+                let middle = (low + high) / 2
+                if sorted[middle].date <= date {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
             }
-            return result ?? sorted.first?.cost
+            return sorted[max(0, low - 1)].cost
         }
     }
 
@@ -212,9 +240,9 @@ private struct PortfolioChartData {
     }
 
     /// Builds the cost-basis reference line for one series over the visible
-    /// range: for `.fiveDays` (and similar short ranges) each transaction-driven
-    /// change in holding cost becomes its own flat horizontal run so it can
-    /// carry its own value label; for `.dayK` the cost is drawn as a
+    /// range: for `.fiveDays` each transaction-driven change in holding cost
+    /// becomes its own flat horizontal run at the actual event timestamp so it
+    /// can carry its own value label; for `.dayK` the cost is drawn as a
     /// continuous polyline since the holding cost can change daily; for
     /// week-K and coarser, one point per aggregated bucket mirrors
     /// `aggregatedPoints`' own bucketing so the two lines share x positions.
@@ -227,7 +255,27 @@ private struct PortfolioChartData {
         let sortedDates = xByDate.keys.sorted()
         guard !sortedDates.isEmpty else { return [] }
         let lookup = costLookup(for: item.costBasisPoints)
-        let chartPoints: [PortfolioCostBasisChartPoint] = sortedDates.compactMap { date in
+        var datesToRender = sortedDates
+        if range == .fiveDays {
+            // Cost changes are transaction events, not market-day events. Keep
+            // the first visible point, every actual cost transition, and the
+            // final visible point. This places an add-on at its true minute
+            // instead of moving it to the start of that calendar day.
+            var transitionDates: [Date] = [sortedDates[0]]
+            var previousCost = lookup(sortedDates[0])
+            for date in sortedDates.dropFirst() {
+                let cost = lookup(date)
+                if cost != previousCost {
+                    transitionDates.append(date)
+                    previousCost = cost
+                }
+            }
+            if transitionDates.last != sortedDates.last {
+                transitionDates.append(sortedDates.last!)
+            }
+            datesToRender = transitionDates
+        }
+        let chartPoints: [PortfolioCostBasisChartPoint] = datesToRender.compactMap { date in
             guard let x = xByDate[date], let cost = lookup(date) else { return nil }
             return PortfolioCostBasisChartPoint(date: date, cost: NSDecimalNumber(decimal: cost).doubleValue, x: x)
         }
@@ -392,16 +440,27 @@ struct PortfolioChartCanvas: View {
     let series: [PortfolioValueSeries]
     let range: StockChartRange
     let style: PortfolioChartStyle
+    let dataRevision: Int
 
     @EnvironmentObject private var appearance: StockAppearanceSettings
     @State private var selectedDate: Date?
-    private let data: PortfolioChartData
+    @State private var lastSelectionUpdateTime: TimeInterval = 0
+    @State private var data: PortfolioChartData
 
-    init(series: [PortfolioValueSeries], range: StockChartRange, style: PortfolioChartStyle) {
+    init(
+        series: [PortfolioValueSeries],
+        range: StockChartRange,
+        style: PortfolioChartStyle,
+        dataRevision: Int = 0
+    ) {
         self.series = series
         self.range = range
         self.style = style
-        self.data = PortfolioChartData(series: series, range: range)
+        self.dataRevision = dataRevision
+        // Keep View initialization cheap. SwiftUI may recreate this value
+        // repeatedly while dragging; the expensive chart preparation is done
+        // only when the input series actually arrives or changes.
+        _data = State(initialValue: PortfolioChartData())
     }
 
     private var chartXDomain: ClosedRange<Double> {
@@ -516,7 +575,11 @@ struct PortfolioChartCanvas: View {
                             let x = value.location.x - rect.minX
                             if let plotX: Double = proxy.value(atX: x) {
                                 let index = min(max(Int(plotX.rounded()), 0), data.dates.count - 1)
-                                if data.dates.indices.contains(index), selectedDate != data.dates[index] {
+                                let now = Date.timeIntervalSinceReferenceDate
+                                if data.dates.indices.contains(index),
+                                   selectedDate != data.dates[index],
+                                   now - lastSelectionUpdateTime >= (1.0 / 30.0) {
+                                    lastSelectionUpdateTime = now
                                     selectedDate = data.dates[index]
                                 }
                             }
@@ -533,8 +596,23 @@ struct PortfolioChartCanvas: View {
                     .padding(.bottom, 8)
             }
         }
-        .onChange(of: range) { _, _ in selectedDate = nil }
-        .onChange(of: series.map(\.id)) { _, _ in selectedDate = nil }
+        .onChange(of: range) { _, newRange in
+            data = PortfolioChartData()
+            selectedDate = nil
+        }
+        .onChange(of: dataRevision) { _, _ in
+            guard !series.isEmpty else { return }
+            data = PortfolioChartData(series: series, range: range, style: style)
+            selectedDate = nil
+        }
+        .onChange(of: style) { _, newStyle in
+            data = PortfolioChartData(series: series, range: range, style: newStyle)
+        }
+        .onAppear {
+            if data.dates.isEmpty, !series.isEmpty {
+                data = PortfolioChartData(series: series, range: range, style: style)
+            }
+        }
     }
 
     private var selectionSummary: some View {

@@ -274,13 +274,7 @@ enum StockChartSeriesProcessor {
     static func regularUnitedStatesSessionPoints(
         _ points: [StockChartPoint]
     ) -> [StockChartPoint] {
-        let calendar = marketCalendar(.unitedStates)
-        return points.filter { point in
-            let components = calendar.dateComponents([.hour, .minute], from: point.date)
-            guard let hour = components.hour, let minute = components.minute else { return false }
-            let localMinutes = hour * 60 + minute
-            return localMinutes >= 570 && localMinutes <= 960
-        }
+        regularSessionPoints(points, market: .unitedStates)
     }
 
     static func regularSessionPoints(
@@ -294,16 +288,10 @@ enum StockChartSeriesProcessor {
                 return false
             }
             let localMinutes = hour * 60 + minute
-            switch market {
-            case .aShare:
-                return (570...690).contains(localMinutes)
-                    || (780...900).contains(localMinutes)
-            case .hongKong:
-                return (570...720).contains(localMinutes)
-                    || (780...960).contains(localMinutes)
-            case .unitedStates:
-                return (570...960).contains(localMinutes)
-            }
+            return StockMarketTradingCalendar.containsMinute(
+                localMinutes,
+                in: StockMarketTradingCalendar.regularMinuteRanges(for: market)
+            )
         }
     }
 
@@ -377,7 +365,10 @@ enum StockChartSeriesProcessor {
                 return false
             }
             let localMinutes = hour * 60 + minute
-            return (240..<570).contains(localMinutes)
+            guard let range = StockMarketTradingCalendar.preMarketMinuteRange(for: .unitedStates) else {
+                return false
+            }
+            return localMinutes >= range.start && localMinutes < range.end
         }
     }
 
@@ -405,7 +396,10 @@ enum StockChartSeriesProcessor {
                 return false
             }
             let localMinutes = hour * 60 + minute
-            return (960...1200).contains(localMinutes) && localMinutes > 960
+            guard let range = StockMarketTradingCalendar.postMarketMinuteRange(for: market) else {
+                return false
+            }
+            return localMinutes >= range.start && localMinutes < range.end
         }
     }
 

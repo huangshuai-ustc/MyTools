@@ -105,6 +105,7 @@
 		AE0000000000000000000008 /* YahooStockQuoteProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000008 /* YahooStockQuoteProvider.swift */; };
 		AE0000000000000000000009 /* StockChartPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000009 /* StockChartPresentation.swift */; };
 		AE000000000000000000000A /* StockChartCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000A /* StockChartCanvas.swift */; };
+		A70000000000000000000002 /* StockChartSummaryFlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000002 /* StockChartSummaryFlowLayout.swift */; };
 		AE000000000000000000000B /* MedicalRecordsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000B /* MedicalRecordsPresentation.swift */; };
 		AE000000000000000000000C /* MedicalRecordRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000C /* MedicalRecordRow.swift */; };
 		AE000000000000000000000D /* MedicalRecordDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000D /* MedicalRecordDetailView.swift */; };
@@ -329,6 +330,7 @@
 		BE0000000000000000000008 /* YahooStockQuoteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YahooStockQuoteProvider.swift; sourceTree = "<group>"; };
 		BE0000000000000000000009 /* StockChartPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartPresentation.swift; sourceTree = "<group>"; };
 		BE000000000000000000000A /* StockChartCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartCanvas.swift; sourceTree = "<group>"; };
+		B70000000000000000000002 /* StockChartSummaryFlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartSummaryFlowLayout.swift; sourceTree = "<group>"; };
 		BE000000000000000000000B /* MedicalRecordsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordsPresentation.swift; sourceTree = "<group>"; };
 		BE000000000000000000000C /* MedicalRecordRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordRow.swift; sourceTree = "<group>"; };
 		BE000000000000000000000D /* MedicalRecordDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicalRecordDetailView.swift; sourceTree = "<group>"; };
@@ -933,6 +935,7 @@
 				BC0000000000000000000002 /* StockWatchView.swift */,
 				BE0000000000000000000009 /* StockChartPresentation.swift */,
 				BE000000000000000000000A /* StockChartCanvas.swift */,
+				B70000000000000000000002 /* StockChartSummaryFlowLayout.swift */,
 				BH0000000000000000000001 /* StockTrendColor.swift */,
 				B1000000000000000000000B /* StockEditorView.swift */,
 				B1000000000000000000000C /* StockTransactionEditorView.swift */,
@@ -1532,6 +1535,7 @@
 				AE0000000000000000000008 /* YahooStockQuoteProvider.swift in Sources */,
 				AE0000000000000000000009 /* StockChartPresentation.swift in Sources */,
 				AE000000000000000000000A /* StockChartCanvas.swift in Sources */,
+				A70000000000000000000002 /* StockChartSummaryFlowLayout.swift in Sources */,
 				AH0000000000000000000001 /* StockTrendColor.swift in Sources */,
 				AH0000000000000000000002 /* ToolModuleDestination.swift in Sources */,
 				AE000000000000000000000B /* MedicalRecordsPresentation.swift in Sources */,

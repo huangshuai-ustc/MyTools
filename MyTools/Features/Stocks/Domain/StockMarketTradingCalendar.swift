@@ -16,6 +16,34 @@ enum StockMarketTradingCalendar {
         2026: [102, 406]
     ]
 
+    /// Minute ranges use half-open intervals because provider timestamps mark
+    /// the start of each minute bar. Chart filtering and live-session checks
+    /// should therefore share these ranges.
+    static func regularMinuteRanges(
+        for market: StockMarket
+    ) -> [(start: Int, end: Int)] {
+        switch market {
+        case .aShare: return [(570, 690), (780, 900)]
+        case .hongKong: return [(570, 720), (780, 960)]
+        case .unitedStates: return [(570, 960)]
+        }
+    }
+
+    static func preMarketMinuteRange(for market: StockMarket) -> (start: Int, end: Int)? {
+        market == .unitedStates ? (240, 570) : nil
+    }
+
+    static func postMarketMinuteRange(for market: StockMarket) -> (start: Int, end: Int)? {
+        market == .unitedStates ? (960, 1200) : nil
+    }
+
+    static func containsMinute(
+        _ minute: Int,
+        in ranges: [(start: Int, end: Int)]
+    ) -> Bool {
+        ranges.contains { minute >= $0.start && minute < $0.end }
+    }
+
     static func isOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
         switch market {
         case .aShare:
@@ -24,19 +52,19 @@ enum StockMarketTradingCalendar {
             let components = cal.dateComponents([.hour, .minute], from: date)
             guard let hour = components.hour, let minute = components.minute else { return false }
             let localMinutes = hour * 60 + minute
-            return [(570, 690), (780, 900)].contains { localMinutes >= $0.0 && localMinutes < $0.1 }
+            return containsMinute(localMinutes, in: regularMinuteRanges(for: .aShare))
         case .hongKong:
             return isOpen(
                 date,
                 timeZone: "Asia/Hong_Kong",
-                sessions: [(570, 720), (780, 960)],
+                sessions: regularMinuteRanges(for: .hongKong),
                 holiday: isHongKongHoliday
             )
         case .unitedStates:
             return isOpen(
                 date,
                 timeZone: "America/New_York",
-                sessions: [(570, 960)],
+                sessions: regularMinuteRanges(for: .unitedStates),
                 holiday: isUnitedStatesHoliday
             )
         }
@@ -65,7 +93,7 @@ enum StockMarketTradingCalendar {
             return isOpen(
                 date,
                 timeZone: "America/New_York",
-                sessions: [(240, 570)],
+                sessions: [preMarketMinuteRange(for: .unitedStates)!],
                 holiday: isUnitedStatesHoliday
             )
         }
@@ -81,7 +109,7 @@ enum StockMarketTradingCalendar {
             return isOpen(
                 date,
                 timeZone: "America/New_York",
-                sessions: [(960, 1200)],
+                sessions: [postMarketMinuteRange(for: .unitedStates)!],
                 holiday: isUnitedStatesHoliday
             )
         }
@@ -153,7 +181,7 @@ enum StockMarketTradingCalendar {
             return aShareFinalSessionEnded(
                 between: startDate,
                 and: endDate,
-                sessions: [(570, 690), (780, 900)],
+                sessions: regularMinuteRanges(for: .aShare),
                 calendar: cal
             )
         case .hongKong:
@@ -161,7 +189,7 @@ enum StockMarketTradingCalendar {
                 between: startDate,
                 and: endDate,
                 timeZone: "Asia/Hong_Kong",
-                sessions: [(570, 720), (780, 960)],
+                sessions: regularMinuteRanges(for: .hongKong),
                 holiday: isHongKongHoliday
             )
         case .unitedStates:
@@ -169,7 +197,7 @@ enum StockMarketTradingCalendar {
                 between: startDate,
                 and: endDate,
                 timeZone: "America/New_York",
-                sessions: [(570, 960)],
+                sessions: regularMinuteRanges(for: .unitedStates),
                 holiday: isUnitedStatesHoliday
             )
         }
@@ -219,7 +247,7 @@ enum StockMarketTradingCalendar {
             return aShareSessionEnded(
                 between: startDate,
                 and: endDate,
-                sessions: [(570, 690), (780, 900)],
+                sessions: regularMinuteRanges(for: .aShare),
                 calendar: cal
             )
         case .hongKong:
@@ -227,7 +255,7 @@ enum StockMarketTradingCalendar {
                 between: startDate,
                 and: endDate,
                 timeZone: "Asia/Hong_Kong",
-                sessions: [(570, 720), (780, 960)],
+                sessions: regularMinuteRanges(for: .hongKong),
                 holiday: isHongKongHoliday
             )
         case .unitedStates:
@@ -235,7 +263,7 @@ enum StockMarketTradingCalendar {
                 between: startDate,
                 and: endDate,
                 timeZone: "America/New_York",
-                sessions: [(570, 960)],
+                sessions: regularMinuteRanges(for: .unitedStates),
                 holiday: isUnitedStatesHoliday
             )
         }
