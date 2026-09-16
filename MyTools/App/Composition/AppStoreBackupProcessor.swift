@@ -139,6 +139,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         if !includedModules.contains(.documents) {
             snapshot.credentialDocuments = []
         }
+        if !includedModules.contains(.partnership) { snapshot.partnershipBooks = [] }
         if !includedModules.contains(.bills) {
             snapshot.billRecords = []
         }

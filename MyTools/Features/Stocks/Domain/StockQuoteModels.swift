@@ -38,7 +38,9 @@ struct StockQuote: Sendable {
 /// These values are transient quote presentation data and are not persisted as
 /// part of the stock holding itself.
 struct StockExtendedHoursPerformance: Equatable, Sendable {
+    let preMarketPrice: Decimal?
     let preMarketPercent: Decimal?
+    let postMarketPrice: Decimal?
     let postMarketPercent: Decimal?
 }
 

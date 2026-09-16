@@ -127,6 +127,12 @@ typealias BillRecordVaultValue = BillRecord
 typealias BillRecordVaultValue = OpaqueModuleValue
 #endif
 
+#if MYTOOLS_FEATURE_PARTNERSHIP
+typealias PartnershipBookVaultValue = PartnershipBook
+#else
+typealias PartnershipBookVaultValue = OpaqueModuleValue
+#endif
+
 struct VaultData: Codable, @unchecked Sendable {
     var accounts: [BankAccountVaultValue] = []
     var cards: [BankCardVaultValue] = []
@@ -140,6 +146,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var credentialDocuments: [CredentialDocumentVaultValue] = []
     var credentialFieldTemplates: [CredentialFieldTemplateVaultValue] = []
     var billRecords: [BillRecordVaultValue] = []
+    var partnershipBooks: [PartnershipBookVaultValue] = []
     var medicalRecordTags: [String] = []
     var foodPlaceTags: [String] = []
     var credentialTags: [String] = []
@@ -163,6 +170,7 @@ struct VaultData: Codable, @unchecked Sendable {
         credentialDocuments: [CredentialDocumentVaultValue] = [],
         credentialFieldTemplates: [CredentialFieldTemplateVaultValue] = [],
         billRecords: [BillRecordVaultValue] = [],
+        partnershipBooks: [PartnershipBookVaultValue] = [],
         medicalRecordTags: [String] = [],
         foodPlaceTags: [String] = [],
         credentialTags: [String] = [],
@@ -185,6 +193,7 @@ struct VaultData: Codable, @unchecked Sendable {
         self.credentialDocuments = credentialDocuments
         self.credentialFieldTemplates = credentialFieldTemplates
         self.billRecords = billRecords
+        self.partnershipBooks = partnershipBooks
         self.medicalRecordTags = medicalRecordTags
         self.foodPlaceTags = foodPlaceTags
         self.credentialTags = credentialTags
@@ -209,6 +218,7 @@ struct VaultData: Codable, @unchecked Sendable {
         case credentialDocuments
         case credentialFieldTemplates
         case billRecords
+        case partnershipBooks
         case medicalRecordTags
         case foodPlaceTags
         case credentialTags
@@ -249,6 +259,7 @@ struct VaultData: Codable, @unchecked Sendable {
             forKey: .credentialFieldTemplates
         ) ?? []
         billRecords = try container.decodeIfPresent([BillRecordVaultValue].self, forKey: .billRecords) ?? []
+        partnershipBooks = try container.decodeIfPresent([PartnershipBookVaultValue].self, forKey: .partnershipBooks) ?? []
         medicalRecordTags = try container.decodeIfPresent([String].self, forKey: .medicalRecordTags) ?? []
         foodPlaceTags = try container.decodeIfPresent([String].self, forKey: .foodPlaceTags) ?? []
         credentialTags = try container.decodeIfPresent([String].self, forKey: .credentialTags) ?? []

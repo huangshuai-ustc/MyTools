@@ -251,6 +251,38 @@ struct StockPortfolioEditorTests {
         #expect(summary.holdingProfitRate == 0.5)
     }
 
+    @Test func todayProfitLossUsesRegularSessionMoveAndCurrentShares() {
+        var stock = StockHolding(market: .unitedStates, symbol: "AAPL")
+        stock.transactions = [Self.transaction(type: .buy, day: 1, quantity: 3)]
+        stock.latestPrice = 12
+        stock.previousClose = 10
+
+        #expect(stock.todayProfitLoss == 6)
+        #expect(StockPortfolioSummary(market: .unitedStates, stocks: [stock]).todayProfitLoss == 6)
+    }
+
+    @Test func convertedPortfolioSummaryKeepsFourHeadlineMetricsAligned() {
+        var aShare = StockHolding(market: .aShare, symbol: "600000")
+        aShare.transactions = [Self.transaction(type: .buy, day: 1, quantity: 1)]
+        aShare.latestPrice = 12
+        aShare.previousClose = 11
+
+        var unitedStates = StockHolding(market: .unitedStates, symbol: "AAPL")
+        unitedStates.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
+        unitedStates.latestPrice = 12
+        unitedStates.previousClose = 11
+
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [aShare, unitedStates],
+            multipliers: [.aShare: 1, .unitedStates: 7]
+        )
+
+        #expect(summary.marketValue == 180)
+        #expect(summary.todayProfitLoss == 15)
+        #expect(summary.holdingProfitLoss == 30)
+        #expect(summary.totalProfitLoss == 30)
+    }
+
     @Test func stockMetricsFormatOnlyAtDisplayBoundary() {
         #expect(StockValueFormatter.integerQuantity(1200) == "1,200")
         #expect(StockValueFormatter.signedPercent(Decimal(string: "-0.03456")!) == "-3.46%")

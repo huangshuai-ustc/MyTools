@@ -180,7 +180,7 @@ struct ProfileSettingsView: View {
         case .bills:
             EmptyView()
 #endif
-        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery:
+        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery, .partnership:
             EmptyView()
         }
     }

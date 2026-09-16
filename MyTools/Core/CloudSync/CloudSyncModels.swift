@@ -14,6 +14,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
     case secretItem
     case credentialDocument
     case billRecord
+    case partnershipBook
     case financeMetadata
     case healthMetadata
     case foodMapMetadata
@@ -39,6 +40,8 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
             .secrets
         case .credentialDocument:
             .documents
+        case .partnershipBook:
+            .partnership
         case .billRecord:
             .bills
         case .financeMetadata:
@@ -335,6 +338,11 @@ enum CloudSyncSnapshotBuilder {
         }
 #endif
 
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        if enabledModules.contains(.partnership) {
+            try append(vault.partnershipBooks, kind: .partnershipBook, encoder: encoder, to: &items)
+        }
+#endif
         if let appPreferences {
             items.append(
                 CloudSyncItem(
@@ -630,6 +638,11 @@ enum CloudSyncMerger {
                     )
 #endif
                     break
+                case .partnershipBook:
+#if MYTOOLS_FEATURE_PARTNERSHIP
+                    try upsert(decoder.decode(PartnershipBook.self, from: payload), in: &vault.partnershipBooks)
+#endif
+                    break
                 case .billRecord:
 #if MYTOOLS_FEATURE_BILLS
                     try upsert(decoder.decode(BillRecord.self, from: payload), in: &vault.billRecords)
@@ -749,6 +762,11 @@ enum CloudSyncMerger {
                 case .credentialDocument:
 #if MYTOOLS_FEATURE_DOCUMENTS
                     vault.credentialDocuments.removeAll { $0.id == id }
+#endif
+                    break
+                case .partnershipBook:
+#if MYTOOLS_FEATURE_PARTNERSHIP
+                    vault.partnershipBooks.removeAll { $0.id == id }
 #endif
                     break
                 case .billRecord:

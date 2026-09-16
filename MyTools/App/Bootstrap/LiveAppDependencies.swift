@@ -39,7 +39,7 @@ private struct LiveModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
             ExchangeRateRepository.clearCachedSnapshot()
             break
         case .personalFinance, .healthRecords, .foodMap,
-             .secrets, .documents, .bills:
+             .secrets, .documents, .bills, .partnership:
             break
         }
     }

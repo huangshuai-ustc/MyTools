@@ -357,6 +357,32 @@ struct AppStoreFacadeTests {
         #expect(persistence.scheduleCount == 1)
     }
 
+#if MYTOOLS_FEATURE_PARTNERSHIP
+    @Test func partnershipPersistsWhileHiddenAndDeletionCanBeUndone() async throws {
+        let defaults = Self.makeDefaults()
+        let persistence = RecordingVaultPersistence()
+        let settings = ToolModuleSettings(defaults: defaults)
+        let store = AppStore(initialVault: VaultData(), moduleSettings: settings,
+                             dependencies: Self.dependencies(defaults: defaults, persistence: persistence))
+        try store.partnershipStore.create(name: "合伙", manager: "我", partner: "对方",
+                                          amounts: [9000, 1500], rate: Decimal(5) / 100)
+        let book = try #require(store.partnershipStore.books.first)
+        #expect(persistence.scheduleCount == 1)
+        #expect(!settings.isVisible(.partnership))
+        let cloud = try await store.makeCloudSyncSnapshot()
+        #expect(cloud.items.contains { $0.kind == .partnershipBook && $0.id == book.id })
+        let document = try await store.makeBackupDocument(password: "test-password")
+        let payload = try VaultBackupCrypto.restorePayload(from: document.data, password: "test-password")
+        #expect(payload.vault.partnershipBooks.isEmpty)
+        let deletion = try #require(store.beginModuleLocalDataDeletion(for: .partnership, undoWindow: 60))
+        #expect(store.partnershipStore.books.isEmpty)
+        let pending = try await store.makeCloudSyncSnapshot()
+        #expect(!pending.participatingModules.contains(.partnership))
+        #expect(store.undoModuleLocalDataDeletion(id: deletion.id))
+        #expect(store.partnershipStore.books == [book])
+    }
+#endif
+
     private static func dependencies(
         defaults: UserDefaults,
         persistence: RecordingVaultPersistence,

@@ -39,7 +39,7 @@ struct ModuleAttachmentReferenceIndex {
 #else
             return []
 #endif
-        case .myStocks, .currencyExchange, .bills, .sportsLottery:
+        case .myStocks, .currencyExchange, .bills, .sportsLottery, .partnership:
             return []
         }
     }

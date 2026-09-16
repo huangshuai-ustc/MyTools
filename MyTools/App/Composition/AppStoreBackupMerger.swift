@@ -11,6 +11,11 @@ enum AppStoreBackupMerger {
             CompiledToolModules.available(from: enabledModules)
         ).intersection(ToolModuleCatalog.backupModules)
         var merged = localVault
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        if modules.contains(.partnership) {
+            merged.partnershipBooks = mergeByID(local: localVault.partnershipBooks, imported: imported.vault.partnershipBooks)
+        }
+#endif
 
 #if MYTOOLS_FEATURE_FINANCE
         if modules.contains(.personalFinance) {

@@ -9,6 +9,7 @@ struct StockPortfolioSummary {
     let netDividendIncome: Decimal
     let realizedProfitLoss: Decimal
     let knownMarketValue: Decimal
+    let todayProfitLoss: Decimal?
     let profitLoss: Decimal?
     let hasMissingQuotes: Bool
 
@@ -35,8 +36,58 @@ struct StockPortfolioSummary {
         knownMarketValue = marketStocks.reduce(Decimal.zero) { result, stock in
             result + (stock.marketValue ?? 0)
         }
+        let hasMissingDailyChange = marketStocks.contains {
+            $0.currentShares > 0 && $0.todayProfitLoss == nil
+        }
+        todayProfitLoss = hasMissingDailyChange
+            ? nil
+            : marketStocks.reduce(Decimal.zero) { $0 + ($1.todayProfitLoss ?? 0) }
         hasMissingQuotes = marketStocks.contains { $0.currentShares > 0 && $0.latestPrice == nil }
         profitLoss = hasMissingQuotes ? nil : knownMarketValue - holdingCost
+    }
+}
+
+struct StockConvertedPortfolioSummary {
+    let marketValue: Decimal?
+    let todayProfitLoss: Decimal?
+    let holdingProfitLoss: Decimal?
+    let totalProfitLoss: Decimal?
+
+    init(stocks: [StockHolding], multipliers: [StockMarket: Decimal]) {
+        var value = Decimal.zero
+        var daily = Decimal.zero
+        var holding = Decimal.zero
+        var realized = Decimal.zero
+        var canCalculateValue = true
+        var canCalculateDaily = true
+
+        for stock in stocks where stock.hasPurchaseRecord {
+            guard let multiplier = multipliers[stock.market] else {
+                canCalculateValue = false
+                canCalculateDaily = false
+                continue
+            }
+            realized += stock.realizedProfitLoss * multiplier
+            if stock.currentShares > 0 {
+                if let marketValue = stock.marketValue,
+                   let holdingProfitLoss = stock.holdingProfitLoss {
+                    value += marketValue * multiplier
+                    holding += holdingProfitLoss * multiplier
+                } else {
+                    canCalculateValue = false
+                }
+                if let todayProfitLoss = stock.todayProfitLoss {
+                    daily += todayProfitLoss * multiplier
+                } else {
+                    canCalculateDaily = false
+                }
+            }
+        }
+
+        marketValue = canCalculateValue ? value : nil
+        todayProfitLoss = canCalculateDaily ? daily : nil
+        holdingProfitLoss = canCalculateValue ? holding : nil
+        totalProfitLoss = canCalculateValue ? holding + realized : nil
     }
 }
 

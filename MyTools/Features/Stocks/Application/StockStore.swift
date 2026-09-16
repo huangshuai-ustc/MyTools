@@ -423,15 +423,21 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
                     let preMarket = StockChartPresentation.preMarketPerformance(
                         snapshot: snapshot,
                         market: stock.market
-                    )?.percent
+                    )
                     let postMarket = StockChartPresentation.postMarketPerformance(
                         snapshot: snapshot
-                    )?.percent
+                    )
                     return (
                         stock.id,
                         StockExtendedHoursPerformance(
-                            preMarketPercent: preMarket.map(Self.decimalQuoteValue),
-                            postMarketPercent: postMarket.map(Self.decimalQuoteValue)
+                            preMarketPrice: snapshot.preMarketPoints.max(by: { $0.date < $1.date }).map {
+                                Self.decimalQuoteValue($0.close)
+                            },
+                            preMarketPercent: preMarket.map { Self.decimalQuoteValue($0.percent) },
+                            postMarketPrice: snapshot.postMarketPoints.max(by: { $0.date < $1.date }).map {
+                                Self.decimalQuoteValue($0.close)
+                            },
+                            postMarketPercent: postMarket.map { Self.decimalQuoteValue($0.percent) }
                         )
                     )
                 }

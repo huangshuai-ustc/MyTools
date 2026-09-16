@@ -1,6 +1,6 @@
 # MyTools 开发指令
 
-更新日期：2026-09-13
+更新日期：2026-09-16
 
 本文件记录会影响实现决策的项目约束、授权边界和复用入口。`README.md` 负责产品说明；源码和测试是 API、数据格式及线程行为的最终依据。路径清单以 `git ls-files` 为准，新增或移动文件时同步更新受影响的文档入口。
 
@@ -48,8 +48,9 @@
 
 ## 关键业务模块
 
-模块注册以 `ToolModule.swift` 为准，当前包括 Finance、Stocks、CurrencyExchange、Health、FoodMap、Secrets、Documents、Bills、SportsLottery。各模块详细行为在对应 Store、Domain 和 Presentation 文件中维护，不在本文件复制完整产品功能清单。
+模块注册以 `ToolModule.swift` 为准，当前包括 Finance、Stocks、CurrencyExchange、Health、FoodMap、Secrets、Documents、Bills、SportsLottery、Partnership。各模块详细行为在对应 Store、Domain 和 Presentation 文件中维护，不在本文件复制完整产品功能清单。
 
+- Partnership：`Features/Partnership/Domain/PartnershipLedger.swift`（Codable 账本与确定性计算）、`Application/PartnershipStore.swift`（原子校验和资金用例）、`Presentation/PartnershipView.swift` / `PartnershipEditorViews.swift`。默认编译但首页关闭，复用 Vault/备份/CloudKit 和 Core 输入认证，不依赖 Stocks。CloudKit 以完整账本为原子实体；未来跨账户共享需独立设计，不能把当前私有同步称为 Sharing。
 - Finance：`FinanceStore.swift`、`BankCard.swift`；附件与敏感字段复用 Core。
 - Stocks：`StockStore.swift`、`Stock.swift`、`StockPortfolioAnalytics.swift`、`StockChartService.swift`、`StockTechnicalAnalysis.swift`、`PortfolioValueHistory.swift`、`PortfolioChartCanvas.swift`；行情走 Provider 和缓存，页面不得直接请求第三方接口；持仓总价值图按真实日期对齐系列，统一使用市场时区和 Decimal 价值计算，分时与五日支持拖动选点，并可选择人民币合计、单一市场合计或该市场内的单只股票，折线与组合 K 线始终只绘制当前唯一目标。
 - CurrencyExchange：`CurrencyExchangeStore.swift`、`CurrencyExchange.swift`；汇率复用 `Core/Currency`。

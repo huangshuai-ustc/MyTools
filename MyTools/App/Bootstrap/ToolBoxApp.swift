@@ -110,6 +110,9 @@ private struct ConfiguredRootView: View {
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
             .environmentObject(store.currencyExchangeStore)
 #endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+            .environmentObject(store.partnershipStore)
+#endif
             .environmentObject(store.cloudSync)
             .environmentObject(auth)
             .environmentObject(moduleSettings)

@@ -519,7 +519,7 @@ private extension ToolModule {
         switch self {
         case .myStocks, .currencyExchange, .sportsLottery:
             true
-        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills, .partnership:
             false
         }
     }
@@ -532,7 +532,7 @@ private extension ToolModule {
             return "共享中国银行汇率牌价缓存"
         case .sportsLottery:
             return "体彩赛事赛果缓存"
-        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills, .partnership:
             return "暂无可单独清理的模块缓存"
         }
     }
@@ -546,6 +546,7 @@ private extension ToolModule {
         case .foodMap: return "美食记录和照片"
         case .secrets: return "保密条目、字段模板和附件"
         case .documents: return "证照、到期提醒和附件"
+        case .partnership: return "全部合伙账本、成员、资金流水及结算记录"
         case .bills: return "全部收支账单记录"
         case .sportsLottery: return "赛事选择和本机赛果缓存"
         }

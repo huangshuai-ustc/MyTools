@@ -57,6 +57,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
     let currencyExchangeStore: CurrencyExchangeStore
 #endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+    let partnershipStore: PartnershipStore
+#endif
     let cloudSync: CloudSyncCoordinator
     private let persistence: any VaultPersisting
     private let backupProcessor: any VaultBackupProcessing
@@ -111,6 +114,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             defaults: dependencies.defaults,
             attachmentStore: attachmentStore
         )
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        partnershipStore = PartnershipStore(books: initialVault?.partnershipBooks ?? [])
+#endif
         let exchangeRateStore = ExchangeRateStore(
             repository: dependencies.exchangeRateRepository,
             initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks].filter { moduleSettings.isVisible($0) })
@@ -240,6 +246,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
         currencyExchangeStore.attach(mutationNotifier: self)
         exchangeRateStore.attach(updateObserver: currencyExchangeStore)
+#endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        partnershipStore.attach(mutationNotifier: self)
 #endif
         cloudSync.attach(
             snapshotProvider: { [weak self] in
@@ -435,6 +444,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_BILLS
         billsStore.replace(records: vault.billRecords, knownTags: vault.billTags)
+#endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        partnershipStore.replace(books: vault.partnershipBooks)
 #endif
     }
 
@@ -650,7 +662,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         case .currencyExchange:
             exchangeRateStore.clearLocalCache()
         case .personalFinance, .healthRecords, .foodMap, .secrets,
-             .documents, .bills, .sportsLottery:
+             .documents, .bills, .sportsLottery, .partnership:
             break
         }
         await moduleLocalDataCacheCleaner.clearLocalCache(for: module)
@@ -705,6 +717,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_BILLS
         vault.billRecords = billsStore.records
         vault.billTags = billsStore.knownTags
+#endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        vault.partnershipBooks = partnershipStore.books
 #endif
 #if MYTOOLS_FEATURE_SECRETS
         vault.secretFieldTemplates = secretStore.fieldTemplates
@@ -862,6 +877,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             vault.billTags = []
 #endif
             break
+        case .partnership:
+#if MYTOOLS_FEATURE_PARTNERSHIP
+            vault.partnershipBooks = []
+#endif
+            break
         case .sportsLottery:
             break
         }
@@ -979,6 +999,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             )
 #endif
             break
+        case .partnership:
+#if MYTOOLS_FEATURE_PARTNERSHIP
+            vault.partnershipBooks = mergingRestored(snapshot.vault.partnershipBooks, into: vault.partnershipBooks)
+#endif
+            break
         case .sportsLottery:
             break
         }
@@ -1030,7 +1055,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             defaults.removeObject(forKey: SportsLotteryLeaguePreferences.key)
 #endif
             break
-        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills:
+        case .personalFinance, .healthRecords, .foodMap, .secrets, .documents, .bills, .partnership:
             break
         }
     }

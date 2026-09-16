@@ -10,6 +10,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
     case documents
     case bills
     case sportsLottery
+    case partnership
 
     var id: Self { self }
 
@@ -23,6 +24,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "保密资料"
         case .documents: return "证照资料"
         case .bills: return "收支账单"
+        case .partnership: return "合伙净值"
         case .sportsLottery: return "体彩开奖"
         }
     }
@@ -37,6 +39,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "账号、Token、密钥与授权"
         case .documents: return "证件、证书与重要文书"
         case .bills: return "记录、识别与导入付款明细"
+        case .partnership: return "多人出资、净值与盈亏分配"
         case .sportsLottery: return "按赛事查看比赛开奖结果"
         }
     }
@@ -51,6 +54,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "lock.shield.fill"
         case .documents: return "person.text.rectangle.fill"
         case .bills: return "receipt.fill"
+        case .partnership: return "chart.pie.fill"
         case .sportsLottery: return "soccerball"
         }
     }
@@ -65,6 +69,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return .orange
         case .documents: return .teal
         case .bills: return .cyan
+        case .partnership: return .indigo
         case .sportsLottery: return .purple
         }
     }
@@ -73,6 +78,12 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
 
     var defaultIsVisible: Bool {
         switch self {
+        case .partnership:
+#if MYTOOLS_DEFAULT_HIDDEN_PARTNERSHIP
+            return false
+#else
+            return true
+#endif
         case .personalFinance:
 #if MYTOOLS_DEFAULT_HIDDEN_FINANCE
             return false
@@ -134,7 +145,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         switch self {
         case .myStocks:
             return true
-        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery:
+        case .personalFinance, .currencyExchange, .healthRecords, .foodMap, .secrets, .documents, .sportsLottery, .partnership:
             return false
         case .bills:
             return true
@@ -168,6 +179,7 @@ struct ToolModuleDefinition: Sendable, Equatable {
 
 enum ToolModuleCatalog {
     static let definitions: [ToolModuleDefinition] = [
+        ToolModuleDefinition(module: .partnership, capabilities: [.localVault], participatesInBackup: true, participatesInCloudSync: true),
         ToolModuleDefinition(
             module: .personalFinance,
             capabilities: [.localVault, .attachments],
@@ -279,6 +291,9 @@ enum CompiledToolModules {
 #endif
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
         modules.append(.sportsLottery)
+#endif
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        modules.append(.partnership)
 #endif
         return modules
     }()
