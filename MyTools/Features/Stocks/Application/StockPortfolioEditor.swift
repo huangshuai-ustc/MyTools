@@ -161,10 +161,12 @@ enum StockPortfolioEditor {
 
     static func upserting(_ dividend: StockDividend, in stock: StockHolding) -> StockHolding {
         var candidate = stock
-        if let index = candidate.dividends.firstIndex(where: { $0.id == dividend.id }) {
-            candidate.dividends[index] = dividend
+        var normalizedDividend = dividend
+        normalizedDividend.receivedAt = StockTransaction.normalizedDate(dividend.receivedAt)
+        if let index = candidate.dividends.firstIndex(where: { $0.id == normalizedDividend.id }) {
+            candidate.dividends[index] = normalizedDividend
         } else {
-            candidate.dividends.append(dividend)
+            candidate.dividends.append(normalizedDividend)
         }
         return candidate
     }

@@ -151,6 +151,16 @@ struct StockDividend: Identifiable, Codable, Equatable, Sendable {
     var netAmount: Decimal {
         grossAmount - totalDeductions
     }
+
+    /// Dividend dates are day-level business dates. A payment scheduled for
+    /// today is effective for the whole local calendar day, regardless of the
+    /// time component retained by DatePicker or an older payload.
+    func isReceived(
+        asOf date: Date,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Bool {
+        calendar.startOfDay(for: receivedAt) <= calendar.startOfDay(for: date)
+    }
 }
 
 struct StockHolding: Identifiable, Codable, Equatable, Sendable {
@@ -217,8 +227,15 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     var netDividendIncome: Decimal {
+        netDividendIncome(asOf: Date())
+    }
+
+    func netDividendIncome(
+        asOf date: Date,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Decimal {
         dividends.lazy
-            .filter { $0.receivedAt <= Date() }
+            .filter { $0.isReceived(asOf: date, calendar: calendar) }
             .reduce(Decimal.zero) { $0 + $1.netAmount }
     }
 

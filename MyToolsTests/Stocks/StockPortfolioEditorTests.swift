@@ -171,6 +171,59 @@ struct StockPortfolioEditorTests {
         #expect(stock.dividends.isEmpty)
     }
 
+    @Test func dividendCountsForItsWholeReceivedDayButNotEarlierDays() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let receivedAt = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 16,
+            hour: 23,
+            minute: 59
+        ))!
+        let sameDayMorning = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 16,
+            hour: 8
+        ))!
+        let previousDay = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 15,
+            hour: 23,
+            minute: 59
+        ))!
+        var dividend = StockDividend()
+        dividend.receivedAt = receivedAt
+        dividend.grossAmount = 10
+        dividend.withholdingTax = 2
+        var stock = StockHolding()
+        stock.dividends = [dividend]
+
+        #expect(stock.netDividendIncome(asOf: previousDay, calendar: calendar) == 0)
+        #expect(stock.netDividendIncome(asOf: sameDayMorning, calendar: calendar) == 8)
+    }
+
+    @Test func savingDividendNormalizesItsDayLevelDate() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        var dividend = StockDividend()
+        dividend.receivedAt = calendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 16,
+            hour: 23,
+            minute: 45
+        ))!
+
+        let stock = StockPortfolioEditor.upserting(dividend, in: StockHolding())
+        let saved = try #require(stock.dividends.first)
+
+        #expect(calendar.component(.hour, from: saved.receivedAt) == 12)
+        #expect(calendar.isDate(saved.receivedAt, inSameDayAs: dividend.receivedAt))
+    }
+
     @Test func holdingProfitRateUsesUnroundedDecimalValues() {
         var stock = StockHolding()
         var transaction = Self.transaction(type: .buy, day: 1, quantity: 3)
