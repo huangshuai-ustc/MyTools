@@ -1,7 +1,7 @@
 #if MYTOOLS_FEATURE_STOCKS
 import SwiftUI
 
-private enum StockMarketFilter: Hashable, Identifiable {
+enum StockMarketFilter: Hashable, Identifiable {
     case all
     case market(StockMarket)
 
@@ -41,20 +41,36 @@ private enum StockMarketFilter: Hashable, Identifiable {
     }
 }
 
+/// Push route for the full chart page. A top-level type so both home pages can
+/// hand it back to the container that owns the navigation destination.
+struct StockWatchRoute: Hashable {
+    let stockID: UUID
+}
+
+/// 股票投资首页容器。
+///
+/// 页面本身只做三件事：用系统 `TabView` 在持仓页与看盘页之间切换、组合筛选结果、
+/// 持有全部导航与生命周期钩子。底部栏交给 `TabView` + `Tab` 由系统绘制，和「合伙
+/// 记账」一致，这样 iOS 26 的 Liquid Glass 标签栏样式、macOS 的顶部标签样式都不用
+/// 自己维护。`navigationTitle`、`.searchable`、`.refreshable`、`.toolbar`、
+/// `.onAppear`/`.onDisappear` 和刷新协调器的可见性登记都挂在 `TabView` 之外，只生效
+/// 一次，否则切页会打乱后台刷新状态。
 struct StocksView: View {
-    private struct WatchRoute: Hashable {
-        let stockID: UUID
+    private struct ValueHistoryRoute: Hashable {
+        let market: StockMarket?
     }
 
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @State private var query = ""
     @State private var marketFilter: StockMarketFilter = .all
+    @State private var selectedPage: StocksHomePage = .positions
     @State private var didAutoSelectMarket = false
     @State private var didRefreshOnCurrentAppearance = false
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
-    @State private var watchRoute: WatchRoute?
+    @State private var watchRoute: StockWatchRoute?
+    @State private var valueHistoryRoute: ValueHistoryRoute?
     @State private var showsArchivedStocks = false
     @ObservedObject private var refreshCoordinator = StockRefreshCoordinator.shared
 
@@ -66,35 +82,55 @@ struct StocksView: View {
         configuredStocks.filter { !$0.isArchived }
     }
 
+    /// 只有一个市场有买入记录时不再给出「全部」——它与那个市场的结果完全一样，
+    /// 白占一格分段控件。没有任何股票时仍留一个「全部」，分段控件不会空掉。
     private var availableMarketFilters: [StockMarketFilter] {
         let availableMarkets = Set(configuredStocks.map(\.market))
         let marketFilters = StockMarketFilter.marketCases.filter { filter in
             filter.market.map(availableMarkets.contains) ?? false
         }
+        guard marketFilters.count > 1 else {
+            return marketFilters.isEmpty ? [.all] : marketFilters
+        }
         return [.all] + marketFilters
+    }
+
+    /// 一支持仓都没有时只剩看盘页，底部标签栏也就没必要出现。
+    private var hasAnyPosition: Bool {
+        configuredStocks.contains { $0.currentShares > 0 }
+    }
+
+    /// 只有持仓页存在时 `selectedPage` 才有意义；否则一律按看盘页解释，工具栏才不会
+    /// 因为残留的选中值显示成持仓页的按钮。
+    private var effectivePage: StocksHomePage {
+        hasAnyPosition ? selectedPage : .watchlist
     }
 
     private var stocksInSelectedMarket: [StockHolding] {
         marketFilter.filtered(configuredStocks)
     }
 
+    private var searchTerm: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var searchFilteredStocks: [StockHolding] {
-        let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let searchTerm = searchTerm
         return stocksInSelectedMarket.filter { stock in
-                searchTerm.isEmpty
-                    || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
-                    || stock.displayName.localizedCaseInsensitiveContains(searchTerm)
-            }
+            searchTerm.isEmpty
+                || stock.symbol.localizedCaseInsensitiveContains(searchTerm)
+                || stock.displayName.localizedCaseInsensitiveContains(searchTerm)
+        }
     }
 
     private var displayedStocks: [StockHolding] {
         alphabeticallySorted(searchFilteredStocks.filter { $0.currentShares > 0 })
     }
 
-    private var noPositionStocks: [StockHolding] {
-        alphabeticallySorted(searchFilteredStocks.filter {
-            $0.currentShares <= 0 && !$0.isArchived
-        })
+    /// The watchlist covers every active stock, holdings included, so a position
+    /// can be watched without leaving the positions table.
+    private var watchlistStocks: [StockHolding] {
+        alphabeticallySorted(searchFilteredStocks.filter { !$0.isArchived })
     }
 
     private var archivedStocks: [StockHolding] {
@@ -148,94 +184,71 @@ struct StocksView: View {
         )
     }
 
-    var body: some View {
-        let allocations = allocationSnapshot
-        let costAllocations = costAllocationSnapshot
+    /// Recomputes the watchlist sparklines when the visible set or the last
+    /// quote refresh changes. Cache-only, so this never causes a network call.
+    private var sparklineRefreshKey: String {
+        let ids = (watchlistStocks + archivedStocks)
+            .map(\.id.uuidString)
+            .joined(separator: ",")
+        let latestRefresh = store.lastRefreshAtByMarket.values.max()
+        return "\(ids)|\(latestRefresh?.timeIntervalSince1970 ?? 0)"
+    }
 
-        return List {
-            Section {
-                Picker("股票市场", selection: $marketFilter) {
-                    ForEach(availableMarketFilters) { filter in
-                        Text(filter.title).tag(filter)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
+    private var positionsPage: some View {
+        StockPositionsPage(
+            marketFilter: $marketFilter,
+            watchRoute: $watchRoute,
+            availableMarketFilters: availableMarketFilters,
+            positions: displayedStocks,
+            summaryStocks: stocksInSelectedMarket,
+            summaryMarkets: summaryMarkets,
+            allocations: allocationSnapshot,
+            costAllocations: costAllocationSnapshot,
+            searchTerm: searchTerm,
+            hasConfiguredStocks: !activeConfiguredStocks.isEmpty
+        )
+    }
 
-            Section("组合总览") {
-                RenminbiPortfolioSummaryRow(marketFilter: marketFilter)
-                    .appListRowStyle()
-                NavigationLink {
-                    PortfolioValueHistoryView(market: marketFilter.market)
-                        .environmentObject(store)
-                        .environmentObject(exchangeRateStore)
-                } label: {
-                    Label("持仓总价值走势", systemImage: "chart.line.uptrend.xyaxis")
-                }
-                .appListRowStyle()
-            }
+    private var watchlistPage: some View {
+        StockWatchlistPage(
+            marketFilter: $marketFilter,
+            watchRoute: $watchRoute,
+            availableMarketFilters: availableMarketFilters,
+            watchlist: watchlistStocks,
+            archivedStocks: archivedStocks,
+            showsArchivedStocks: showsArchivedStocks,
+            searchTerm: searchTerm,
+            hasConfiguredStocks: !activeConfiguredStocks.isEmpty
+        )
+    }
 
-            if !summaryMarkets.isEmpty {
-                Section("市场概况") {
-                    ForEach(summaryMarkets) { market in
-                        StockMarketSummaryRow(
-                            summary: StockPortfolioSummary(
-                                market: market,
-                                stocks: stocksInSelectedMarket
-                            ),
-                            allocation: allocations.marketShare(for: market),
-                            showsAllocation: marketFilter.market == nil
-                        )
-                        .appListRowStyle()
-                    }
+    @ViewBuilder
+    private var pages: some View {
+        if hasAnyPosition {
+            TabView(selection: $selectedPage) {
+                Tab(
+                    StocksHomePage.positions.title,
+                    systemImage: StocksHomePage.positions.systemImage,
+                    value: StocksHomePage.positions
+                ) {
+                    positionsPage
+                }
+                Tab(
+                    StocksHomePage.watchlist.title,
+                    systemImage: StocksHomePage.watchlist.systemImage,
+                    value: StocksHomePage.watchlist
+                ) {
+                    watchlistPage
                 }
             }
-
-            if displayedStocks.isEmpty && noPositionStocks.isEmpty && archivedStocks.isEmpty {
-                Section("当前持仓（\(displayedStocks.count)）") {
-                    ContentUnavailableView(
-                        emptyStocksTitle,
-                        systemImage: emptyStocksSystemImage
-                    )
-                }
-            } else if !displayedStocks.isEmpty {
-                Section("当前持仓（\(displayedStocks.count)）") {
-                    stockLinks(displayedStocks, costAllocation: costAllocations)
-                }
-            }
-            if !noPositionStocks.isEmpty {
-                Section("看盘（\(noPositionStocks.count)）") {
-                    stockLinks(noPositionStocks, costAllocation: costAllocations)
-                }
-            }
-            if showsArchivedStocks && !archivedStocks.isEmpty {
-                Section("历史股票（\(archivedStocks.count)）") {
-                    stockLinks(archivedStocks, costAllocation: costAllocations)
-                }
-            }
-
-            Section {
-                if store.isRefreshingQuotes {
-                    Label("正在刷新行情", systemImage: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                }
-                if let error = store.quoteRefreshError {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-                AppLabeledContentRow("最新数据获取时间") {
-                    if let updatedAt = store.lastRefreshAt(for: marketFilter.market) {
-                        Text(AppDateFormatter.dateTimeString(from: updatedAt))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("暂无")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } footer: {
-                Text("股票行情通过腾讯证券批量获取，并由新浪财经按时间校验；缺失时按市场使用交易所、东方财富、Nasdaq 或 Yahoo Finance。公开行情可能存在延迟，请以交易所和券商数据为准。")
-            }
+        } else {
+            watchlistPage
         }
+    }
+
+    var body: some View {
+        pages
+
         .appNavigationTitle(ToolModule.myStocks.title)
         .iOSLabeledBackButton("工具")
 #if os(iOS)
@@ -248,33 +261,49 @@ struct StocksView: View {
                 for: marketFilter.market,
                 forceRefresh: true
             )
-            await store.refreshExtendedHoursPerformance(forceRefresh: true)
+            // 分时缓存要一起强刷，否则迷你图和盘前盘后派生值仍是轮询时的旧数据。
+            await store.refreshIntradayCharts(for: marketFilter.market)
+            await store.refreshExtendedHoursPerformance()
+            await store.refreshSparklines()
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    showsArchivedStocks.toggle()
-                } label: {
-                    Image(systemName: showsArchivedStocks ? "archivebox.fill" : "archivebox")
+                if effectivePage == .positions {
+                    Button {
+                        valueHistoryRoute = ValueHistoryRoute(market: marketFilter.market)
+                    } label: {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                    }
+                    .accessibilityLabel("持仓总价值走势")
+                    .help("持仓总价值走势")
                 }
-                .accessibilityLabel(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
-                .help(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
+                if effectivePage == .watchlist {
+                    Button {
+                        showsArchivedStocks.toggle()
+                    } label: {
+                        Image(systemName: showsArchivedStocks ? "archivebox.fill" : "archivebox")
+                    }
+                    .accessibilityLabel(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
+                    .help(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
+                }
                 Button {
                     Task {
                         await store.refreshQuotes(
                             for: marketFilter.market,
                             forceRefresh: true
                         )
-                        await store.refreshExtendedHoursPerformance(forceRefresh: true)
+                        await store.refreshIntradayCharts(for: marketFilter.market)
+                        await store.refreshExtendedHoursPerformance()
+                        await store.refreshSparklines()
                     }
                 } label: {
-                    if store.isRefreshingQuotes {
+                    if store.isRefreshingQuotes || store.isRefreshingCharts {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(store.isRefreshingQuotes)
+                .disabled(store.isRefreshingQuotes || store.isRefreshingCharts)
                 .accessibilityLabel("刷新股票行情")
 
                 Button { editingStock = StockHolding() } label: {
@@ -283,10 +312,9 @@ struct StocksView: View {
                 .accessibilityLabel("添加股票")
             }
         }
+
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()
-        .listStyle(.insetGrouped)
-        .scrollDismissesKeyboard(.interactively)
 #endif
         .sheet(item: $editingStock) { stock in
             StockEditorView(stock: stock, isNew: true)
@@ -296,9 +324,17 @@ struct StocksView: View {
         .navigationDestination(item: $watchRoute) { route in
             StockWatchView(stockID: route.stockID)
         }
+        .navigationDestination(item: $valueHistoryRoute) { route in
+            PortfolioValueHistoryView(market: route.market)
+                .environmentObject(store)
+                .environmentObject(exchangeRateStore)
+        }
+        .task(id: sparklineRefreshKey) {
+            await store.refreshSparklines()
+        }
         .onChange(of: availableMarketFilters) { _, filters in
             if !filters.contains(marketFilter) {
-                marketFilter = .all
+                marketFilter = filters.first ?? .all
             }
         }
         .onAppear {
@@ -314,7 +350,10 @@ struct StocksView: View {
             }
         }
         .onChange(of: refreshCoordinator.lastRefreshCompletedAt) { _, _ in
-            Task { await store.refreshExtendedHoursPerformance() }
+            Task {
+                await store.refreshExtendedHoursPerformance()
+                await store.refreshSparklines()
+            }
         }
         .onDisappear {
             StockRefreshCoordinator.shared.setStocksPageVisible(false)
@@ -333,77 +372,6 @@ struct StocksView: View {
                 rhsTieBreaker: "\(rhs.symbol)|\(rhs.id.uuidString)"
             )
         }
-    }
-
-    @ViewBuilder
-    private func stockLink(
-        _ stock: StockHolding,
-        costAllocation: StockCostAllocationSnapshot
-    ) -> some View {
-        let link = NavigationLink {
-            StockDetailView(stockID: stock.id)
-        } label: {
-            StockRow(
-                stock: stock,
-                costShare: costAllocation.holdingShare(for: stock.id),
-                extendedHours: store.extendedHoursPerformance[stock.id]
-            )
-        }
-        if stock.isArchived {
-            link
-                .modifier(StockCompactListRowStyle())
-                .appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
-                    Button {
-                        _ = store.restoreArchivedStock(id: stock.id)
-                    } label: {
-                        Label("恢复看盘", systemImage: "arrow.uturn.backward")
-                    }
-                }
-                .appDeleteSwipeAction(isEnabled: true) {
-                    store.deleteStocks(ids: [stock.id])
-                }
-        } else {
-            link
-                .modifier(StockCompactListRowStyle())
-                .modifier(StockListRemovalActions(
-                    stock: stock,
-                    isEnabled: true,
-                    onArchive: { _ = store.archiveStock(id: stock.id) },
-                    onDelete: { store.deleteStocks(ids: [stock.id]) }
-                ))
-                .appSwipeActions(edge: .leading, style: AppSwipeActions.primary) {
-                    Button {
-                        watchRoute = WatchRoute(stockID: stock.id)
-                    } label: {
-                        Label("看盘", systemImage: "chart.xyaxis.line")
-                    }
-                }
-        }
-    }
-
-    @ViewBuilder
-    private func stockLinks(
-        _ stocks: [StockHolding],
-        costAllocation: StockCostAllocationSnapshot
-    ) -> some View {
-        ForEach(stocks) { stock in
-            stockLink(stock, costAllocation: costAllocation)
-        }
-    }
-
-    private var emptyStocksTitle: String {
-        if activeConfiguredStocks.isEmpty {
-            if !configuredStocks.isEmpty {
-                return showsArchivedStocks ? "暂无可显示的股票" : "暂无股票"
-            }
-            return "暂无股票"
-        }
-        let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return searchTerm.isEmpty ? "暂无持仓股票" : "没有匹配的持仓股票"
-    }
-
-    private var emptyStocksSystemImage: String {
-        configuredStocks.isEmpty ? "chart.line.uptrend.xyaxis" : "magnifyingglass"
     }
 
     private func autoSelectMarketIfNeeded() {
@@ -428,7 +396,8 @@ struct StocksView: View {
         if let market = regularMarket ?? extendedMarket {
             marketFilter = StockMarketFilter(market)
         } else {
-            marketFilter = .all
+            // 只有一个市场时 `availableMarketFilters` 里没有「全部」，回落到首项。
+            marketFilter = availableMarketFilters.first ?? .all
         }
         didAutoSelectMarket = true
     }
@@ -440,12 +409,13 @@ struct StocksView: View {
         enteringRefreshTask = Task { @MainActor in
             await store.refreshQuotes(for: marketFilter.market)
             await store.refreshExtendedHoursPerformance()
+            await store.refreshSparklines()
             StockRefreshCoordinator.shared.triggerClosingRefreshIfNeeded()
         }
     }
 }
 
-private struct StockListRemovalActions: ViewModifier {
+struct StockListRemovalActions: ViewModifier {
     let stock: StockHolding
     let isEnabled: Bool
     let onArchive: () -> Void
@@ -475,477 +445,7 @@ private struct StockListRemovalActions: ViewModifier {
     }
 }
 
-private struct RenminbiPortfolioSummaryRow: View {
-    @EnvironmentObject private var store: StockStore
-    @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
-    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
-    @Environment(\.appFontScale) private var fontScale
-    let marketFilter: StockMarketFilter
-    @State private var showingConversionInfo = false
-
-    private var selectedStocks: [StockHolding] {
-        store.stocks.filter {
-            $0.hasPurchaseRecord && marketFilter.includes($0)
-        }
-    }
-
-    private var convertedSummary: StockConvertedPortfolioSummary {
-        StockConvertedPortfolioSummary(
-            stocks: selectedStocks,
-            multipliers: renminbiMultipliers
-        )
-    }
-
-    private var renminbiMultipliers: [StockMarket: Decimal] {
-        var result: [StockMarket: Decimal] = [.aShare: 1]
-        if let rate = exchangeRateStore.renminbiBuyingRates[.hkd] {
-            result[.hongKong] = rate
-        }
-        if let rate = exchangeRateStore.renminbiBuyingRates[.usd] {
-            result[.unitedStates] = rate
-        }
-        return result
-    }
-
-    private var requiredForeignCurrencies: [CurrencyCode] {
-        var result: [CurrencyCode] = []
-        if marketFilter.market == .hongKong || selectedStocks.contains(where: { $0.market == .hongKong }) {
-            result.append(.hkd)
-        }
-        if marketFilter.market == .unitedStates || selectedStocks.contains(where: { $0.market == .unitedStates }) {
-            result.append(.usd)
-        }
-        return result
-    }
-
-    private var missingRateText: String {
-        let missing = requiredForeignCurrencies.filter {
-            exchangeRateStore.renminbiBuyingRates[$0] == nil
-        }
-        guard !missing.isEmpty else { return "外币买入价待同步" }
-        return "中国银行\(missing.map(\.title).joined(separator: "、"))现汇买入价待同步"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
-            HStack(spacing: 6) {
-                Label("人民币总览", systemImage: "yensign.circle.fill")
-                    .appFont(.headline)
-                    .foregroundStyle(.blue)
-                Button {
-                    showingConversionInfo = true
-                } label: {
-                    Image(systemName: "exclamationmark.circle")
-                }
-                .appFont(.subheadline)
-                .foregroundStyle(.secondary)
-                .buttonStyle(.plain)
-                .accessibilityLabel("人民币合计说明")
-                .help("人民币合计说明")
-                Spacer()
-                Text("CNY")
-                    .appFont(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            if requiredForeignCurrencies.contains(where: { exchangeRateStore.renminbiBuyingRates[$0] == nil }) {
-                Label(missingRateText, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            } else {
-                Grid(horizontalSpacing: 18, verticalSpacing: 12) {
-                    GridRow {
-                        overviewMetric("总资产", value: moneyText(convertedSummary.marketValue))
-                        overviewMetric(
-                            "今日盈亏",
-                            value: moneyText(convertedSummary.todayProfitLoss),
-                            color: profitLossColor(convertedSummary.todayProfitLoss)
-                        )
-                    }
-                    GridRow {
-                        overviewMetric(
-                            "持仓盈亏",
-                            value: moneyText(convertedSummary.holdingProfitLoss),
-                            color: profitLossColor(convertedSummary.holdingProfitLoss)
-                        )
-                        overviewMetric(
-                            "累计总收益",
-                            value: moneyText(convertedSummary.totalProfitLoss),
-                            color: profitLossColor(convertedSummary.totalProfitLoss)
-                        )
-                    }
-                }
-            }
-        }
-        .alert("人民币合计说明", isPresented: $showingConversionInfo) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            Text(conversionInfoText)
-        }
-    }
-
-    private var conversionInfoText: String {
-        if marketFilter.market == .aShare {
-            return "A 股资产无需换汇。"
-        }
-        if requiredForeignCurrencies.isEmpty {
-            return "当前没有需要折算的外币资产。"
-        }
-
-        var lines = requiredForeignCurrencies.compactMap { currency -> String? in
-            guard let rate = exchangeRateStore.renminbiBuyingRates[currency] else { return nil }
-            return "按中国银行\(currency.title)现汇买入价换算：1 \(currency.rawValue) = \(StockValueFormatter.exchangeRate(rate)) CNY"
-        }
-        let missingCurrencies = requiredForeignCurrencies.filter {
-            exchangeRateStore.renminbiBuyingRates[$0] == nil
-        }
-        if !missingCurrencies.isEmpty {
-            lines.append("\(missingCurrencies.map(\.title).joined(separator: "、"))牌价待同步。")
-        }
-        if let updatedAt = exchangeRateStore.updatedAt {
-            lines.append("牌价时间：\(AppDateFormatter.dateTimeString(from: updatedAt))")
-        }
-        if let error = exchangeRateStore.error, !missingCurrencies.isEmpty {
-            lines.append(error)
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func overviewMetric(
-        _ title: String,
-        value: String,
-        color: Color = .primary
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func moneyText(_ value: Decimal?) -> String {
-        guard let value else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(value, currencyCode: "CNY")
-    }
-
-    private func profitLossColor(_ value: Decimal?) -> Color {
-        guard let value else { return .secondary }
-        return aggregateProfitLossColor(value)
-    }
-
-    private func aggregateProfitLossColor(_ value: Decimal) -> Color {
-        let market = marketFilter.market ?? .aShare
-        return StockTrendColor.color(
-            for: value,
-            market: market,
-            settings: stockAppearanceSettings
-        )
-    }
-}
-
-private struct StockMarketSummaryRow: View {
-    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
-    @Environment(\.appFontScale) private var fontScale
-    let summary: StockPortfolioSummary
-    let allocation: Decimal?
-    let showsAllocation: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
-            HStack {
-                StockMarketBadge(market: summary.market)
-                Text(positionSummaryText)
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer()
-                Text(summary.market.currencyCode)
-                    .appFont(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-
-            Grid(horizontalSpacing: 12) {
-                GridRow {
-                    summaryMetric("市值", value: marketValueText)
-                    summaryMetric("今日盈亏", value: todayProfitLossText, color: todayProfitLossColor)
-                    summaryMetric("持仓盈亏", value: profitLossText, color: profitLossColor)
-                }
-            }
-        }
-    }
-
-    private var positionSummaryText: String {
-        let positionCount = "\(summary.openPositionCount) 只持仓"
-        guard showsAllocation else { return positionCount }
-        let allocationText = allocation.map(StockValueFormatter.allocationPercent) ?? "待同步"
-        return "\(positionCount) · 占比 \(allocationText)"
-    }
-
-    private var marketValueText: String {
-        guard !summary.hasMissingQuotes else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(
-            summary.knownMarketValue,
-            currencyCode: summary.market.currencyCode
-        )
-    }
-
-    private var todayProfitLossText: String {
-        guard let value = summary.todayProfitLoss else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(value, currencyCode: summary.market.currencyCode)
-    }
-
-    private var todayProfitLossColor: Color {
-        guard let value = summary.todayProfitLoss else { return .secondary }
-        return StockTrendColor.color(
-            for: value,
-            market: summary.market,
-            settings: stockAppearanceSettings
-        )
-    }
-
-    private var profitLossText: String {
-        guard let profitLoss = summary.profitLoss else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(
-            profitLoss,
-            currencyCode: summary.market.currencyCode
-        )
-    }
-
-    private var profitLossColor: Color {
-        guard let profitLoss = summary.profitLoss else { return .secondary }
-        return StockTrendColor.color(
-            for: profitLoss,
-            market: summary.market,
-            settings: stockAppearanceSettings
-        )
-    }
-
-    private func summaryMetric(
-        _ title: String,
-        value: String,
-        color: Color = .primary
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.62)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct StockRow: View {
-    @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
-    @Environment(\.appFontScale) private var fontScale
-    let stock: StockHolding
-    let costShare: Decimal?
-    let extendedHours: StockExtendedHoursPerformance?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
-            HStack(alignment: .top, spacing: 8) {
-                StockMarketBadge(market: stock.market)
-                Text(stock.displayName)
-                    .appFont(.headline)
-                    .lineLimit(1)
-                Text(stock.symbol)
-                    .appFont(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                if stock.isArchived {
-                    Text("已存档")
-                        .appFont(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
-                }
-                Spacer(minLength: 4)
-                quoteSummary
-            }
-
-            if stock.currentShares > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    primaryMetric
-                    Spacer(minLength: 4)
-                    dailyMetric
-                }
-
-                Text(positionSummaryText)
-                    .appFont(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            } else {
-                Text(stock.isArchived ? "历史记录" : "暂无持仓")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var quoteSummary: some View {
-        let quote = activeQuote
-        let color = quoteColor(quote.percent)
-        let priceText = quote.price.map {
-                StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
-            } ?? "--"
-        let percentText = quote.percent.map(StockValueFormatter.signedPercent) ?? "--"
-        return HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text("\(quote.label) \(priceText)")
-            Text("(\(percentText))")
-        }
-            .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(quote.label)，\(priceText)，\(percentText)")
-    }
-
-    private var activeQuote: (label: String, price: Decimal?, percent: Decimal?) {
-        guard stock.market == .unitedStates else {
-            return ("涨跌", stock.latestPrice, stock.changePercent)
-        }
-        switch StockMarketTradingCalendar.session(for: stock.market) {
-        case .preMarket:
-            return (
-                "盘前",
-                extendedHours?.preMarketPrice ?? stock.latestPrice,
-                extendedHours?.preMarketPercent ?? stock.changePercent
-            )
-        case .postMarket:
-            return (
-                "盘后",
-                extendedHours?.postMarketPrice ?? stock.latestPrice,
-                extendedHours?.postMarketPercent ?? stock.changePercent
-            )
-        case .regular, .closed:
-            return ("涨跌", stock.latestPrice, stock.changePercent)
-        }
-    }
-
-    private func quoteColor(_ value: Decimal?) -> Color {
-        guard let value else { return .secondary }
-        return StockTrendColor.color(
-            for: value,
-            market: stock.market,
-            settings: stockAppearanceSettings,
-            neutral: .secondary
-        )
-    }
-
-    private var primaryMetric: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(displayHoldingProfitLossText)
-                .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
-            Text("(\(displayHoldingProfitRateText))")
-                .appFont(.caption.monospacedDigit())
-        }
-        .foregroundStyle(displayHoldingProfitColor)
-        .lineLimit(1)
-        .minimumScaleFactor(0.68)
-        .accessibilityLabel("持仓盈亏，\(displayHoldingProfitLossText)，\(displayHoldingProfitRateText)")
-        .accessibilityElement(children: .combine)
-    }
-
-    private var dailyMetric: some View {
-        Text(todayProfitLossText)
-            .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
-            .foregroundStyle(todayProfitLossColor)
-            .lineLimit(1)
-            .minimumScaleFactor(0.68)
-            .accessibilityLabel("\(dailyMetricAccessibilityTitle)，\(todayProfitLossText)")
-        .accessibilityElement(children: .combine)
-    }
-
-    private var displayPrice: Decimal? {
-        activeQuote.price
-    }
-
-    private var displayMarketValue: Decimal? {
-        guard let displayPrice else { return nil }
-        return stock.currentShares * displayPrice
-    }
-
-    private var displayHoldingProfitLoss: Decimal? {
-        guard let displayMarketValue else { return nil }
-        return displayMarketValue - stock.holdingCost
-    }
-
-    private var displayHoldingProfitRate: Decimal? {
-        guard stock.holdingCost > 0, let displayHoldingProfitLoss else { return nil }
-        return displayHoldingProfitLoss / stock.holdingCost
-    }
-
-    private var marketValueText: String {
-        guard let value = displayMarketValue else { return "待同步" }
-        return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
-    }
-
-    private var positionSummaryText: String {
-        var text = "\(StockValueFormatter.integerQuantity(stock.currentShares))股·\(marketValueText)"
-        if let costShare {
-            text += "(\(StockValueFormatter.allocationPercent(costShare)))"
-        }
-        return text
-    }
-
-    private var todayProfitLossText: String {
-        guard let value = stock.todayProfitLoss else { return "待同步" }
-        return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
-    }
-
-    private var todayProfitLossColor: Color {
-        quoteColor(stock.todayProfitLoss)
-    }
-
-    private var isExtendedHoursQuote: Bool {
-        guard stock.market == .unitedStates else { return false }
-        switch StockMarketTradingCalendar.session(for: stock.market) {
-        case .preMarket: return extendedHours?.preMarketPrice != nil
-        case .postMarket: return extendedHours?.postMarketPrice != nil
-        case .regular, .closed: return false
-        }
-    }
-
-    private var dailyMetricAccessibilityTitle: String {
-        guard stock.market == .unitedStates else { return "今日" }
-        switch StockMarketTradingCalendar.session(for: stock.market) {
-        case .preMarket: return "昨日"
-        case .regular, .postMarket, .closed: return "今日"
-        }
-    }
-
-    private var displayHoldingProfitLossText: String {
-        guard let value = displayHoldingProfitLoss else { return "待同步" }
-        return StockValueFormatter.money(value, currencyCode: stock.market.currencyCode)
-    }
-
-    private var displayHoldingProfitColor: Color {
-        guard let value = displayHoldingProfitLoss else { return .secondary }
-        return StockTrendColor.color(for: value, market: stock.market, settings: stockAppearanceSettings, neutral: .secondary)
-    }
-
-    private var displayHoldingProfitRateText: String {
-        displayHoldingProfitRate.map(StockValueFormatter.signedPercent) ?? "--"
-    }
-
-}
-
-private struct StockCompactListRowStyle: ViewModifier {
+struct StockCompactListRowStyle: ViewModifier {
     @Environment(\.appFontScale) private var fontScale
 
     func body(content: Content) -> some View {
@@ -988,6 +488,37 @@ struct StockMarketBadge: View {
         case .aShare: return "A"
         case .hongKong: return "港"
         case .unitedStates: return "美"
+        }
+    }
+}
+
+struct StockMarketSessionLabel: View {
+    let market: StockMarket
+    var usesCompactIcon = false
+
+    var body: some View {
+        let presentation = presentation
+        HStack(spacing: usesCompactIcon ? 3 : 4) {
+            Image(systemName: presentation.icon)
+                .font(usesCompactIcon ? .caption2 : .caption)
+            Text(presentation.title)
+                .appFont(.caption)
+        }
+        .foregroundStyle(presentation.color)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var presentation: (title: String, icon: String, color: Color) {
+        switch StockMarketTradingCalendar.session(for: market) {
+        case .regular:
+            return ("交易中", "circle.fill", .green)
+        case .preMarket where market.supportsExtendedHoursChart:
+            return ("盘前交易", "clock.arrow.2.circlepath", .orange)
+        case .postMarket where market.supportsExtendedHoursChart:
+            return ("盘后交易", "clock", .blue)
+        case .preMarket, .postMarket, .closed:
+            return ("已休市", "moon.zzz", .secondary)
         }
     }
 }

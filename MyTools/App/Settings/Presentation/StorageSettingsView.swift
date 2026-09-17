@@ -546,7 +546,7 @@ private extension ToolModule {
         case .foodMap: return "美食记录和照片"
         case .secrets: return "保密条目、字段模板和附件"
         case .documents: return "证照、到期提醒和附件"
-        case .partnership: return "全部合伙账本、成员、资金流水及结算记录"
+        case .partnership: return "全部合伙账本、成员、注资及股票交易记录"
         case .bills: return "全部收支账单记录"
         case .sportsLottery: return "赛事选择和本机赛果缓存"
         }

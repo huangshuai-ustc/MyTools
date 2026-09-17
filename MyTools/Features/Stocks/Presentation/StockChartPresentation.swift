@@ -236,11 +236,19 @@ struct StockChartPresentation {
         range == .intraday ? "今日涨跌" : "区间涨跌"
     }
 
+    /// 盘前涨跌只在盘前数据属于「当前交易日」时成立。
+    ///
+    /// 缓存里可能留着上一交易日的盘前（行情源当天还没发布），此时必须返回 nil：否则
+    /// 行内会把昨天的盘前价当成现在的报价，而按当天判定的迷你图画的是另一段，色块、
+    /// 虚线零轴和折线必然三方矛盾。返回 nil 后行内自然回退到常规报价。
     static func preMarketPerformance(
         snapshot: StockChartSnapshot,
-        market: StockMarket
+        market: StockMarket,
+        at now: Date = Date()
     ) -> (change: Double, percent: Double)? {
-        guard let latest = snapshot.preMarketPoints.max(by: { $0.date < $1.date }) else { return nil }
+        guard let latest = snapshot.preMarketPoints.max(by: { $0.date < $1.date }),
+              StockChartSeriesProcessor.marketCalendar(market)
+                  .isDate(latest.date, inSameDayAs: now) else { return nil }
         guard let previousClose = intradayPreviousClose(
             snapshot: snapshot,
             market: market,
@@ -250,14 +258,21 @@ struct StockChartPresentation {
         return (change, change / previousClose)
     }
 
+    /// 盘后涨跌同样要求盘后数据是当天的，且参照的盘中收盘与盘后数据同属一天——
+    /// 拿昨天的盘中收盘去减今天的盘后价会得到一个跨日的涨跌额。
     static func postMarketPerformance(
-        snapshot: StockChartSnapshot
+        snapshot: StockChartSnapshot,
+        market: StockMarket,
+        at now: Date = Date()
     ) -> (change: Double, percent: Double)? {
-        guard let latest = snapshot.postMarketPoints.max(by: { $0.date < $1.date }) else { return nil }
-        guard let regularClose = snapshot.points.max(by: { $0.date < $1.date })?.close,
-              regularClose != 0 else { return nil }
-        let change = latest.close - regularClose
-        return (change, change / regularClose)
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        guard let latest = snapshot.postMarketPoints.max(by: { $0.date < $1.date }),
+              calendar.isDate(latest.date, inSameDayAs: now),
+              let regular = snapshot.points.max(by: { $0.date < $1.date }),
+              calendar.isDate(regular.date, inSameDayAs: latest.date),
+              regular.close != 0 else { return nil }
+        let change = latest.close - regular.close
+        return (change, change / regular.close)
     }
 
     /// The most recent point in the currently displayed price series.

@@ -37,10 +37,19 @@ struct StockQuote: Sendable {
 /// Latest extended-hours performance derived from the cached intraday chart.
 /// These values are transient quote presentation data and are not persisted as
 /// part of the stock holding itself.
+///
+/// The change amount travels with the percentage on purpose. Both are derived
+/// from the same reference price inside `StockChartPresentation`, and that
+/// reference is not the quote provider's `previousClose` — for pre-market it is
+/// the specially resolved previous settled close. Re-deriving the amount at the
+/// view layer from `previousClose` used to make the sign disagree with the
+/// percentage (e.g. 「-$1.59（+0.45%）」).
 struct StockExtendedHoursPerformance: Equatable, Sendable {
     let preMarketPrice: Decimal?
+    let preMarketChange: Decimal?
     let preMarketPercent: Decimal?
     let postMarketPrice: Decimal?
+    let postMarketChange: Decimal?
     let postMarketPercent: Decimal?
 }
 

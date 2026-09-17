@@ -123,6 +123,13 @@
 		AG0000000000000000000002 /* StockMarketTradingCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000002 /* StockMarketTradingCalendar.swift */; };
 		AG0000000000000000000003 /* StockPortfolioAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000003 /* StockPortfolioAnalytics.swift */; };
 		AG0000000000000000000004 /* StockValueFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000004 /* StockValueFormatter.swift */; };
+		AX0000000000000000000001 /* StockSparkline.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000001 /* StockSparkline.swift */; };
+		AX0000000000000000000002 /* StockSparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000002 /* StockSparklineView.swift */; };
+		AX0000000000000000000003 /* StocksHomePages.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000003 /* StocksHomePages.swift */; };
+		AX0000000000000000000004 /* StockHomeRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000004 /* StockHomeRows.swift */; };
+		AX0000000000000000000005 /* StockPortfolioOverviewRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000005 /* StockPortfolioOverviewRow.swift */; };
+		AX0000000000000000000006 /* StockSparklineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000006 /* StockSparklineTests.swift */; };
+		AX0000000000000000000007 /* StockActiveQuoteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000007 /* StockActiveQuoteTests.swift */; };
 		AG0000000000000000000005 /* ToolModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000005 /* ToolModule.swift */; };
 		AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */; };
 		AG0000000000000000000007 /* LiveAppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000007 /* LiveAppDependencies.swift */; };
@@ -353,6 +360,13 @@
 		BG0000000000000000000002 /* StockMarketTradingCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockMarketTradingCalendar.swift; sourceTree = "<group>"; };
 		BG0000000000000000000003 /* StockPortfolioAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioAnalytics.swift; sourceTree = "<group>"; };
 		BG0000000000000000000004 /* StockValueFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockValueFormatter.swift; sourceTree = "<group>"; };
+		BX0000000000000000000001 /* StockSparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockSparkline.swift; sourceTree = "<group>"; };
+		BX0000000000000000000002 /* StockSparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockSparklineView.swift; sourceTree = "<group>"; };
+		BX0000000000000000000003 /* StocksHomePages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StocksHomePages.swift; sourceTree = "<group>"; };
+		BX0000000000000000000004 /* StockHomeRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockHomeRows.swift; sourceTree = "<group>"; };
+		BX0000000000000000000005 /* StockPortfolioOverviewRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioOverviewRow.swift; sourceTree = "<group>"; };
+		BX0000000000000000000006 /* StockSparklineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockSparklineTests.swift; sourceTree = "<group>"; };
+		BX0000000000000000000007 /* StockActiveQuoteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockActiveQuoteTests.swift; sourceTree = "<group>"; };
 		BG0000000000000000000005 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
 		BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupProcessorTests.swift; sourceTree = "<group>"; };
 		BG0000000000000000000007 /* LiveAppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAppDependencies.swift; sourceTree = "<group>"; };
@@ -733,6 +747,8 @@
 				BF0000000000000000000002 /* StockQuoteProviderParsingTests.swift */,
 				BF0000000000000000000003 /* StockQuoteServiceTests.swift */,
 				BF0000000000000000000004 /* StockChartPresentationTests.swift */,
+				BX0000000000000000000006 /* StockSparklineTests.swift */,
+				BX0000000000000000000007 /* StockActiveQuoteTests.swift */,
 			);
 			path = Stocks;
 			sourceTree = "<group>";
@@ -887,6 +903,7 @@
 				BC0000000000000000000006 /* StockChartSeriesProcessor.swift */,
 				BE0000000000000000000001 /* StockQuoteModels.swift */,
 				BW0000000000000000000001 /* PortfolioValueHistory.swift */,
+				BX0000000000000000000001 /* StockSparkline.swift */,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -961,6 +978,10 @@
 				B50000000000000000000001 /* StockDividendEditorView.swift */,
 				BW0000000000000000000003 /* PortfolioValueHistoryView.swift */,
 				BW0000000000000000000004 /* PortfolioChartCanvas.swift */,
+				BX0000000000000000000002 /* StockSparklineView.swift */,
+				BX0000000000000000000003 /* StocksHomePages.swift */,
+				BX0000000000000000000004 /* StockHomeRows.swift */,
+				BX0000000000000000000005 /* StockPortfolioOverviewRow.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -1568,6 +1589,11 @@
 				AG0000000000000000000002 /* StockMarketTradingCalendar.swift in Sources */,
 				AG0000000000000000000003 /* StockPortfolioAnalytics.swift in Sources */,
 				AG0000000000000000000004 /* StockValueFormatter.swift in Sources */,
+				AX0000000000000000000001 /* StockSparkline.swift in Sources */,
+				AX0000000000000000000002 /* StockSparklineView.swift in Sources */,
+				AX0000000000000000000003 /* StocksHomePages.swift in Sources */,
+				AX0000000000000000000004 /* StockHomeRows.swift in Sources */,
+				AX0000000000000000000005 /* StockPortfolioOverviewRow.swift in Sources */,
 				AG0000000000000000000005 /* ToolModule.swift in Sources */,
 				AG0000000000000000000007 /* LiveAppDependencies.swift in Sources */,
 				AI0000000000000000000001 /* AttachmentEditSession.swift in Sources */,
@@ -1649,6 +1675,8 @@
 				AF0000000000000000000002 /* StockQuoteProviderParsingTests.swift in Sources */,
 				AF0000000000000000000003 /* StockQuoteServiceTests.swift in Sources */,
 				AF0000000000000000000004 /* StockChartPresentationTests.swift in Sources */,
+				AX0000000000000000000006 /* StockSparklineTests.swift in Sources */,
+				AX0000000000000000000007 /* StockActiveQuoteTests.swift in Sources */,
 				AF0000000000000000000005 /* MedicalRecordsPresentationTests.swift in Sources */,
 				AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */,
 				AH0000000000000000000003 /* ExchangeRateRepositoryTests.swift in Sources */,

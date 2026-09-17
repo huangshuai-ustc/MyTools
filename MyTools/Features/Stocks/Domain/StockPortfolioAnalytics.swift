@@ -52,10 +52,23 @@ struct StockConvertedPortfolioSummary {
     let todayProfitLoss: Decimal?
     let holdingProfitLoss: Decimal?
     let totalProfitLoss: Decimal?
+    /// Yesterday's closing value of the shares still held, converted with the
+    /// same multipliers. This is the denominator `todayChangeRate` needs; it is
+    /// nil whenever any held position is missing a quote or an exchange rate.
+    let previousMarketValue: Decimal?
+
+    /// Today's move as a rate of yesterday's closing value.
+    var todayChangeRate: Decimal? {
+        guard let todayProfitLoss,
+              let previousMarketValue,
+              previousMarketValue > 0 else { return nil }
+        return todayProfitLoss / previousMarketValue
+    }
 
     init(stocks: [StockHolding], multipliers: [StockMarket: Decimal]) {
         var value = Decimal.zero
         var daily = Decimal.zero
+        var previousValue = Decimal.zero
         var holding = Decimal.zero
         var realized = Decimal.zero
         var canCalculateValue = true
@@ -76,8 +89,10 @@ struct StockConvertedPortfolioSummary {
                 } else {
                     canCalculateValue = false
                 }
-                if let todayProfitLoss = stock.todayProfitLoss {
+                if let todayProfitLoss = stock.todayProfitLoss,
+                   let previousClose = stock.previousClose {
                     daily += todayProfitLoss * multiplier
+                    previousValue += stock.currentShares * previousClose * multiplier
                 } else {
                     canCalculateDaily = false
                 }
@@ -86,6 +101,7 @@ struct StockConvertedPortfolioSummary {
 
         marketValue = canCalculateValue ? value : nil
         todayProfitLoss = canCalculateDaily ? daily : nil
+        previousMarketValue = canCalculateDaily ? previousValue : nil
         holdingProfitLoss = canCalculateValue ? holding : nil
         totalProfitLoss = canCalculateValue ? holding + realized : nil
     }

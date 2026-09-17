@@ -26,6 +26,15 @@ enum StockValueFormatter {
         money(value < 0 ? -value : value, currencyCode: currencyCode)
     }
 
+    /// Money with an explicit sign on both directions, matching how brokerage
+    /// apps present gains and losses. `money(_:currencyCode:)` only renders the
+    /// minus sign, and `moneyMagnitude(_:currencyCode:)` strips the sign
+    /// entirely, so neither can produce `+2.01`.
+    static func signedMoney(_ value: Decimal, currencyCode: String) -> String {
+        let magnitude = moneyMagnitude(value, currencyCode: currencyCode)
+        return (value < 0 ? "-" : "+") + magnitude
+    }
+
     static func price(_ value: Decimal, currencyCode: String) -> String {
         guard let currency = CurrencyCode(rawValue: currencyCode.uppercased()) else {
             let formatter = NumberFormatter()

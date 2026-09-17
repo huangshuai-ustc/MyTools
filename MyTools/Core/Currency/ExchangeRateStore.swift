@@ -16,7 +16,7 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
 
     init(
         repository: any ExchangeRateProviding,
-        initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks]
+        initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks, .partnership]
     ) {
         self.repository = repository
         self.enabledModules = initialEnabledModules
@@ -32,7 +32,7 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         apply(snapshot)
     }
 
-    var observedModules: Set<ToolModule> { [.currencyExchange, .myStocks] }
+    var observedModules: Set<ToolModule> { [.currencyExchange, .myStocks, .partnership] }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
         let wasNeeded = isCapabilityNeeded

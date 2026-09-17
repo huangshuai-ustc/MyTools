@@ -14,6 +14,33 @@ private struct SendableUserDefaults: @unchecked Sendable {
     let value: UserDefaults
 }
 
+#if MYTOOLS_FEATURE_STOCKS && MYTOOLS_FEATURE_PARTNERSHIP
+extension StockStore: PartnershipStockImportProviding {
+    var partnershipImportRecords: [PartnershipStockImportRecord] {
+        stocks.flatMap { stock in
+            let market: PartnershipStockMarket = switch stock.market {
+            case .unitedStates: .unitedStates
+            case .aShare: .aShare
+            case .hongKong: .hongKong
+            }
+            return stock.transactions.map { transaction in
+                PartnershipStockImportRecord(
+                    id: transaction.id,
+                    market: market,
+                    symbol: stock.symbol,
+                    name: stock.displayName,
+                    side: transaction.type == .buy ? .buy : .sell,
+                    date: transaction.tradedAt,
+                    shares: transaction.quantity,
+                    price: transaction.unitPrice,
+                    fee: transaction.fees
+                )
+            }
+        }
+    }
+}
+#endif
+
 struct PendingModuleLocalDataDeletion: Identifiable, Equatable, Sendable {
     let id: UUID
     let module: ToolModule
@@ -119,7 +146,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
         let exchangeRateStore = ExchangeRateStore(
             repository: dependencies.exchangeRateRepository,
-            initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks].filter { moduleSettings.isVisible($0) })
+            initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks, .partnership].filter { moduleSettings.isVisible($0) })
         )
         self.exchangeRateStore = exchangeRateStore
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -144,6 +171,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             isModuleVisible: moduleSettings.isVisible(.myStocks),
             exchangeRateStore: exchangeRateStore
         )
+#if MYTOOLS_FEATURE_PARTNERSHIP
+        partnershipStore.attach(stockImportProvider: stockStore)
+#endif
 #endif
 #if MYTOOLS_FEATURE_HEALTH
         healthStore = HealthStore(

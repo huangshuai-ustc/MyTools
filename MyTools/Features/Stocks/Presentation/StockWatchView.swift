@@ -539,29 +539,6 @@ struct StockWatchView: View {
     }
 
     private func quoteHeader(for stock: StockHolding) -> some View {
-        let isRegularSession = StockMarketTradingCalendar.isOpen(stock.market)
-        let isPreMarketSession = StockMarketTradingCalendar.isPreMarketOpen(stock.market)
-        let isPostMarketSession = StockMarketTradingCalendar.isPostMarketOpen(stock.market)
-        let sessionTitle: String
-        let sessionIcon: String
-        let sessionColor: Color
-        if isRegularSession {
-            sessionTitle = "交易中"
-            sessionIcon = "circle.fill"
-            sessionColor = .green
-        } else if isPreMarketSession && stock.market.supportsExtendedHoursChart {
-            sessionTitle = "盘前交易"
-            sessionIcon = "clock.arrow.2.circlepath"
-            sessionColor = .orange
-        } else if isPostMarketSession && stock.market.supportsExtendedHoursChart {
-            sessionTitle = "盘后交易"
-            sessionIcon = "clock"
-            sessionColor = .blue
-        } else {
-            sessionTitle = "已休市"
-            sessionIcon = "moon.zzz"
-            sessionColor = .secondary
-        }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 StockMarketBadge(market: stock.market)
@@ -572,9 +549,7 @@ struct StockWatchView: View {
                     .appFont(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                Label(sessionTitle, systemImage: sessionIcon)
-                .appFont(.caption)
-                .foregroundStyle(sessionColor)
+                StockMarketSessionLabel(market: stock.market)
             }
 
             if let latestPrice = stock.latestPrice {
@@ -639,7 +614,8 @@ struct StockWatchView: View {
             if selectedRange == .intraday, modes.contains(.postMarket),
                !modes.contains(.line), !modes.contains(.preMarket),
                let performance = StockChartPresentation.postMarketPerformance(
-                    snapshot: snapshot
+                    snapshot: snapshot,
+                    market: stock.market
                ) {
                 return ("盘后涨跌", performance.change, performance.percent)
             }

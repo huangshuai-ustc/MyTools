@@ -24,7 +24,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "保密资料"
         case .documents: return "证照资料"
         case .bills: return "收支账单"
-        case .partnership: return "合伙净值"
+        case .partnership: return "合伙记账"
         case .sportsLottery: return "体彩开奖"
         }
     }
@@ -39,7 +39,7 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
         case .secrets: return "账号、Token、密钥与授权"
         case .documents: return "证件、证书与重要文书"
         case .bills: return "记录、识别与导入付款明细"
-        case .partnership: return "多人出资、净值与盈亏分配"
+        case .partnership: return "多人合资股票投资记账"
         case .sportsLottery: return "按赛事查看比赛开奖结果"
         }
     }

@@ -11,11 +11,15 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var priceAlerts: [StockPriceAlert]
     @Published private(set) var returnAlerts: [StockReturnAlert]
     @Published private(set) var isRefreshingQuotes = false
+    /// 分时缓存强刷中。与报价刷新分开记录：报价先回来，迷你图和盘前盘后派生值要等
+    /// 分时请求结束，刷新指示器必须覆盖到那时候。
+    @Published private(set) var isRefreshingCharts = false
     @Published private(set) var quoteRefreshError: String?
     @Published private(set) var lastRefreshAtByMarket: [StockMarket: Date] = [:]
     @Published private(set) var quoteErrors: [UUID: String] = [:]
     @Published private(set) var quoteSources: [UUID: String] = [:]
     @Published private(set) var extendedHoursPerformance: [UUID: StockExtendedHoursPerformance] = [:]
+    @Published private(set) var intradaySparklines: [UUID: StockSparklineSeries] = [:]
     @Published private(set) var isDataLoaded: Bool
 
     private let quoteService: any StockQuoteRefreshing
@@ -403,6 +407,8 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         }
 
         var values: [UUID: StockExtendedHoursPerformance] = [:]
+        // 同一个 `now` 决定盘前/盘后数据是否属于当前交易日，与迷你图的时段判定同源。
+        let now = Date()
         await withTaskGroup(of: (UUID, StockExtendedHoursPerformance?).self) { group in
             for stock in candidates {
                 group.addTask { [chartService] in
@@ -422,21 +428,39 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
                     guard let snapshot else { return (stock.id, nil) }
                     let preMarket = StockChartPresentation.preMarketPerformance(
                         snapshot: snapshot,
-                        market: stock.market
+                        market: stock.market,
+                        at: now
                     )
                     let postMarket = StockChartPresentation.postMarketPerformance(
-                        snapshot: snapshot
+                        snapshot: snapshot,
+                        market: stock.market,
+                        at: now
                     )
+                    // 金额与百分比都取自同一个 `(change, percent)`，不在展示层用
+                    // 报价源的 `previousClose` 另算一次，否则两者基准不同会出现
+                    // 「金额跌、百分比涨」这种自相矛盾的行。
+                    //
+                    // 价格也跟着这对派生值走：`preMarketPerformance` 只在数据属于当前
+                    // 交易日时返回值，价格若单独放行，行内就会显示昨天的盘前价而涨跌
+                    // 为「--」，迷你图又按当天判定画另一段。
+                    let preMarketPrice = preMarket == nil
+                        ? nil
+                        : snapshot.preMarketPoints.max(by: { $0.date < $1.date })
+                    let postMarketPrice = postMarket == nil
+                        ? nil
+                        : snapshot.postMarketPoints.max(by: { $0.date < $1.date })
                     return (
                         stock.id,
                         StockExtendedHoursPerformance(
-                            preMarketPrice: snapshot.preMarketPoints.max(by: { $0.date < $1.date }).map {
+                            preMarketPrice: preMarketPrice.map {
                                 Self.decimalQuoteValue($0.close)
                             },
+                            preMarketChange: preMarket.map { Self.decimalQuoteValue($0.change) },
                             preMarketPercent: preMarket.map { Self.decimalQuoteValue($0.percent) },
-                            postMarketPrice: snapshot.postMarketPoints.max(by: { $0.date < $1.date }).map {
+                            postMarketPrice: postMarketPrice.map {
                                 Self.decimalQuoteValue($0.close)
                             },
+                            postMarketChange: postMarket.map { Self.decimalQuoteValue($0.change) },
                             postMarketPercent: postMarket.map { Self.decimalQuoteValue($0.percent) }
                         )
                     )
@@ -453,6 +477,89 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     nonisolated private static func decimalQuoteValue(_ value: Double) -> Decimal {
         Decimal(string: String(value), locale: Locale(identifier: "en_US_POSIX"))
             ?? Decimal(value)
+    }
+
+    /// 强制刷新分时缓存，供手动刷新按钮和下拉刷新使用。
+    ///
+    /// 报价接口只更新价格，而迷你图、盘前盘后派生值和持仓总价值走势都读分时缓存。
+    /// 在此之前手动刷新只会通过 `refreshExtendedHoursPerformance(forceRefresh:)`
+    /// 顺带刷新美股的分时，A 股和港股的迷你图只能等 `StockRefreshCoordinator` 的
+    /// 60 秒轮询，按钮对图形形同无效。
+    func refreshIntradayCharts(for market: StockMarket? = nil) async {
+        let candidates = stocks.filter { stock in
+            guard stock.hasConfiguredSymbol, !stock.isArchived else { return false }
+            guard let market else { return true }
+            return stock.market == market
+        }
+        guard !candidates.isEmpty, !isRefreshingCharts else { return }
+        isRefreshingCharts = true
+        defer { isRefreshingCharts = false }
+        await withTaskGroup(of: Void.self) { group in
+            for stock in candidates {
+                group.addTask { [chartService] in
+                    // 缺数据的标的不该打断其余标的，错误由行情状态区和诊断日志体现。
+                    _ = try? await chartService.fetchChart(
+                        for: stock,
+                        range: .intraday,
+                        forceRefresh: true
+                    )
+                }
+            }
+        }
+    }
+
+    /// Derives the inline watchlist sparklines from whatever intraday snapshots
+    /// are already on disk. Unlike `refreshExtendedHoursPerformance` this covers
+    /// every market, and it never calls `fetchChart` — a missing cache entry just
+    /// leaves the row without a sparkline until a real chart visit populates it.
+    ///
+    /// That cache is not stale while the page is open: `StockRefreshCoordinator`
+    /// already refetches the intraday chart every polling cycle during a regular
+    /// session and during US pre/post-market, so re-deriving after each cycle is
+    /// what keeps the sparklines live.
+    func refreshSparklines() async {
+        let candidates = stocks.filter { $0.hasConfiguredSymbol && !$0.isArchived }
+        guard !candidates.isEmpty else {
+            intradaySparklines = [:]
+            return
+        }
+
+        var values: [UUID: StockSparklineSeries] = [:]
+        // 一次刷新内所有行共用同一个 `now`，与 `refreshExtendedHoursPerformance` 的当天
+        // 校验用的是同一套判定。
+        let now = Date()
+        await withTaskGroup(of: (UUID, StockSparklineSeries?).self) { group in
+            for stock in candidates {
+                group.addTask { [chartService] in
+                    guard let snapshot = await chartService.cachedChart(
+                        for: stock,
+                        range: .intraday
+                    ) else { return (stock.id, nil) }
+                    // 同一个 `now` 同时决定画哪一段和横坐标域，避免跨时段瞬间两者不
+                    // 一致，也避免把上一交易日的盘前当成今天的。虚线零轴不在这里定，
+                    // 由行内报价给出，虚线和色块因此不可能对不上。
+                    let selection = StockSparklineSeries.resolve(
+                        regular: snapshot.points,
+                        preMarket: snapshot.preMarketPoints,
+                        postMarket: snapshot.postMarketPoints,
+                        market: stock.market,
+                        at: now
+                    )
+                    return (
+                        stock.id,
+                        StockSparklineSeries.make(
+                            points: selection.points,
+                            domain: selection.domain
+                        )
+                    )
+                }
+            }
+            for await (id, series) in group {
+                if let series { values[id] = series }
+            }
+        }
+        guard !Task.isCancelled else { return }
+        intradaySparklines = values
     }
 
     func lastRefreshAt(for market: StockMarket?) -> Date? {

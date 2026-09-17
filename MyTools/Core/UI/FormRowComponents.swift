@@ -190,7 +190,22 @@ struct PickerFieldRow<Selection: Hashable, Content: View>: View {
                 content()
             }
             .labelsHidden()
+            .tint(Color.accentColor)
             .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+        }
+    }
+}
+
+/// 编辑表单中的不可修改键值。标题和值统一弱化，避免与可编辑输入和蓝色选择器混淆。
+struct ReadOnlyFieldRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        AppLabeledContentRow(title) {
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
         }
     }
 }
