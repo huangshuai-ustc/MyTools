@@ -222,7 +222,7 @@ struct PartnershipActionView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text("\(record.side == .buy ? "买入" : "卖出") · \(record.name) \(record.symbol)")
-                                    Text("\(record.date.formatted(date: .numeric, time: .omitted)) · \(record.shares) 股")
+                                    Text("\(record.date.formatted(date: .numeric, time: .omitted)) · \(PartnershipFormat.shares(record.shares)) 股")
                                         .appFont(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -245,14 +245,14 @@ struct PartnershipActionView: View {
                 PickerFieldRow(title: "持仓股票", selection: $holdingSymbol) {
                     Text("请选择").tag(Optional<String>.none)
                     ForEach(availableHoldings) { holding in
-                        Text("\(holding.name) · \(holding.shares) 股").tag(Optional(holding.symbol))
+                        Text("\(holding.name) · \(PartnershipFormat.shares(holding.shares)) 股").tag(Optional(holding.symbol))
                     }
                 }
                 if holdingSymbol != nil {
                     PickerFieldRow(title: "买入记录", selection: $purchaseID) {
                         Text("自动（先进先出）").tag(Optional<UUID>.none)
                         ForEach(purchasesForSelectedHolding) { purchase in
-                            Text("\(purchase.date.formatted(date: .numeric, time: .omitted)) · 剩余 \(remainingShares(of: purchase, in: book)) 股")
+                            Text("\(purchase.date.formatted(date: .numeric, time: .omitted)) · 剩余 \(PartnershipFormat.shares(remainingShares(of: purchase, in: book))) 股")
                                 .tag(Optional(purchase.id))
                         }
                     }
@@ -262,7 +262,7 @@ struct PartnershipActionView: View {
                 PickerFieldRow(title: "持仓股票", selection: $holdingSymbol) {
                     Text("请选择").tag(Optional<String>.none)
                     ForEach(availableHoldings) { holding in
-                        Text("\(holding.name) · \(holding.shares) 股").tag(Optional(holding.symbol))
+                        Text("\(holding.name) · \(PartnershipFormat.shares(holding.shares)) 股").tag(Optional(holding.symbol))
                     }
                 }
             }
@@ -540,7 +540,7 @@ private struct PartnershipImportRecordList: View {
                     set: { isOn in if isOn { selected.insert(record.id) } else { selected.remove(record.id) } }
                 )) {
                     VStack(alignment: .leading) {
-                        Text("\(record.side == .buy ? "买入" : "卖出") · \(record.shares) 股 @ \(PartnershipFormat.money(record.price))")
+                        Text("\(record.side == .buy ? "买入" : "卖出") · \(PartnershipFormat.shares(record.shares)) 股 @ \(PartnershipFormat.money(record.price))")
                         Text(record.date.formatted(date: .numeric, time: .omitted))
                             .appFont(.caption).foregroundStyle(.secondary)
                     }

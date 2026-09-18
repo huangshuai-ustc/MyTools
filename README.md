@@ -2,7 +2,7 @@
 
 “方寸”（英文名 `Fangcun`）是一个使用 SwiftUI 编写的本地优先多平台应用，界面语言为中文。应用把金融账户、股票、换汇、健康资料、美食地点、保密资料、证照资料和收支账单集中保存在本机，并提供独立的体彩赛果查询工具，适合个人长期记录、查询和备份。
 
-隐私政策：<https://huangshuai-ustc.github.io/MyTools/privacy.html>
+官网（营销网址）：<https://huangshuai-ustc.github.io/MyTools/marketing.html>  ·  技术支持：<https://huangshuai-ustc.github.io/MyTools/support.html>  ·  隐私政策：<https://huangshuai-ustc.github.io/MyTools/privacy.html>
 
 当前包含十个工具模块（合伙记账默认关闭）：
 
@@ -314,10 +314,12 @@ MyTools/
 │   └── TestSupport/                     # 可复用 Fake、Stub 和 Fixture
 ├── TestFlight/
 │   └── WhatToTest.zh-Hans.txt           # Xcode Cloud 自动上传的简体中文测试说明
-├── docs/                                # 隐私政策与工程审查报告
+├── docs/                                # 营销页、技术支持、隐私政策与工程审查报告
+│   ├── marketing.html
+│   ├── support.html
+│   ├── privacy.html
 │   ├── engineering-design-review-2026-09.md
 │   ├── feature-implementation-review-2026-09.md
-│   └── privacy.html
 ├── AGENTS.md                            # 开发准则、授权边界和复用入口
 ├── ARCHITECTURE_REVIEW.md               # 历史架构审查记录
 └── README.md                            # 产品说明、运行方式和快速代码导航

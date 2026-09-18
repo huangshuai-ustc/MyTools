@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="方寸 App 技术支持、常见问题和反馈入口">
+  <title>方寸技术支持 | Fangcun Support</title>
+  <style>
+    :root { --bg:#f6f7f8; --surface:#fff; --text:#202124; --muted:#5f6368; --border:#dfe3e7; --accent:#176b5b; --soft:#e6f2ef; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#111315; --surface:#191c1f; --text:#eef0f2; --muted:#b5bbc1; --border:#343a40; --accent:#73d3bf; --soft:#173b34; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:var(--accent); text-underline-offset:3px; } header, footer { background:var(--surface); border-bottom:1px solid var(--border); }
+    footer { border-top:1px solid var(--border); border-bottom:0; } .inner, main { width:min(calc(100% - 32px),860px); margin:0 auto; }
+    header .inner { padding:48px 0 32px; } main { padding:32px 0 64px; } footer .inner { padding:24px 0 38px; color:var(--muted); font-size:14px; }
+    h1,h2 { line-height:1.3; } h1 { margin:0 0 8px; font-size:42px; } h2 { margin:0 0 12px; font-size:24px; }
+    .subtitle,.muted { color:var(--muted); } .subtitle { margin:0; font-size:19px; } nav { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:22px; } nav a { font-weight:650; text-decoration:none; }
+    section { padding:26px 0; border-bottom:1px solid var(--border); } section:last-child { border-bottom:0; } .card { padding:18px 20px; border:1px solid var(--border); border-radius:10px; background:var(--surface); } li { margin:6px 0; }
+  </style>
+</head>
+<body>
+  <header><div class="inner">
+    <h1>方寸技术支持</h1>
+    <p class="subtitle">Fangcun Support</p>
+    <p class="muted">帮助你管理个人资料、投资记录和日常信息。</p>
+    <nav><a href="marketing.html">产品介绍</a><a href="privacy.html">隐私政策</a><a href="https://github.com/huangshuai-ustc/MyTools/issues">提交反馈</a></nav>
+  </div></header>
+  <main>
+    <section><h2>常见问题</h2><div class="card">
+      <h3>数据保存在哪里？</h3><p>方寸优先在本机保存业务档案。你可以在“我的”中导出加密备份；开启 iCloud 后，支持同步的数据可在同一 Apple 账户的设备间同步。</p>
+      <h3>忘记备份密码怎么办？</h3><p>备份密码由你单独设置，方寸不会保存。遗失密码后无法解密对应备份，请妥善保管。</p>
+      <h3>为什么行情暂时没有更新？</h3><p>公开行情可能延迟、缺失或暂时不可用。请检查网络、交易时段和数据源状态，并尝试手动刷新；业务记录不会因行情失败而被删除。</p>
+      <h3>如何查看银行卡、密码或证照中的敏感信息？</h3><p>在详情页点击敏感字段，使用设备密码、Face ID 或 Touch ID 临时验证。方寸没有独立的管理员密码。</p>
+    </div></section>
+    <section><h2>使用帮助</h2><ul>
+      <li>在“我的 &gt; 首页功能”中显示、隐藏或调整模块顺序。</li>
+      <li>股票页支持持仓、看盘、分时与 K 线图表、组合走势、分红和盈亏提醒。</li>
+      <li>账单、健康档案、美食地图、证照和保密资料支持搜索、标签与附件。</li>
+      <li>合伙记账默认关闭，可手动开启后记录成员注资、美股交易、股息和清账。</li>
+    </ul></section>
+    <section><h2>问题反馈</h2><p>请通过 <a href="https://github.com/huangshuai-ustc/MyTools/issues">GitHub Issues</a> 提交问题。请附上设备型号、系统版本、App 版本、所在模块、复现步骤和发生时间。请先遮盖卡号、医疗信息、密钥、账本和其他敏感内容。</p><p class="muted">方寸不提供电话客服；公开 Issue 适合反馈可复现的问题，敏感资料请勿直接上传。</p></section>
+  </main>
+  <footer><div class="inner"><p>方寸（Fangcun）· <a href="privacy.html">隐私政策</a></p></div></footer>
+</body>
+</html>

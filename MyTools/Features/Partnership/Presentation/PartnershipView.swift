@@ -6,6 +6,11 @@ enum PartnershipFormat {
     static func money(_ value: Decimal, currency: CurrencyCode = partnershipCurrency) -> String {
         value.formatted(.currency(code: currency.rawValue))
     }
+    /// Shares can be fractional (up to 6 dp); format as a plain String so it does
+    /// not trip SwiftUI's deprecated Decimal localized-interpolation path.
+    static func shares(_ value: Decimal) -> String {
+        value.formatted(.number.precision(.fractionLength(0...6)))
+    }
 }
 
 struct PartnershipView: View {
@@ -211,7 +216,7 @@ private struct PartnershipDetailView: View {
                             }
                             Spacer()
                             if item.shares > 0 {
-                                Text("\(item.shares) 股").monospacedDigit()
+                                Text("\(PartnershipFormat.shares(item.shares)) 股").monospacedDigit()
                             } else {
                                 Text("已清仓").foregroundStyle(.secondary)
                             }
@@ -555,7 +560,7 @@ private struct PartnershipStockRecordDetailView: View {
                             PartnershipKindIcon(kind: .buy)
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Text("买入 \(purchase.shares) 股 @ \(PartnershipFormat.money(purchase.price))")
+                                    Text("买入 \(PartnershipFormat.shares(purchase.shares)) 股 @ \(PartnershipFormat.money(purchase.price))")
                                         .fontWeight(.medium)
                                     Spacer()
                                     Text(PartnershipFormat.money(purchase.cashAmount)).monospacedDigit()
@@ -573,7 +578,7 @@ private struct PartnershipStockRecordDetailView: View {
                                 PartnershipKindIcon(kind: .sell, size: 26)
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack {
-                                        Text("卖出 \(shares) 股 @ \(PartnershipFormat.money(sale.price))")
+                                        Text("卖出 \(PartnershipFormat.shares(shares)) 股 @ \(PartnershipFormat.money(sale.price))")
                                         Spacer()
                                         Text(PartnershipFormat.money(profit))
                                             .monospacedDigit()
@@ -612,7 +617,7 @@ private struct PartnershipStockRecordDetailView: View {
 
     /// Buy caption: remaining shares + date, plus the buy fee folded into cost when present.
     private func buySubtitle(purchase: PartnershipRecord, remaining: Decimal) -> String {
-        var parts = ["剩余 \(remaining > 0 ? "\(remaining) 股" : "已清仓")",
+        var parts = ["剩余 \(remaining > 0 ? "\(PartnershipFormat.shares(remaining)) 股" : "已清仓")",
                      purchase.date.formatted(date: .abbreviated, time: .omitted)]
         if purchase.fee > 0 { parts.append("含手续费 \(PartnershipFormat.money(purchase.fee))") }
         return parts.joined(separator: " · ")
