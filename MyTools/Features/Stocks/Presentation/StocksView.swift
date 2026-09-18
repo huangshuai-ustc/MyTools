@@ -166,7 +166,11 @@ struct StocksView: View {
         } else {
             multipliers = [:]
         }
-        return StockAllocationSnapshot(stocks: stocks, marketValueMultipliers: multipliers)
+        return StockAllocationSnapshot(
+            stocks: stocks,
+            marketValueMultipliers: multipliers,
+            extendedHours: store.extendedHoursPerformance
+        )
     }
 
     private var costAllocationSnapshot: StockCostAllocationSnapshot {

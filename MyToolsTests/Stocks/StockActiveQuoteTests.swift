@@ -158,3 +158,174 @@ struct StockActiveQuoteTests {
         )
     }
 }
+
+/// 「总览 = 各行之和」必须是构造上成立的，而不是两条链路碰巧一致。
+///
+/// 顶部大字、市场概况、资产占比和持仓行都经过 `StockHoldingValuation`，它只从
+/// `StockActiveQuote` 取价格与涨跌额，所以美股盘前/盘后不会再出现「上面按昨收、
+/// 下面按盘前」。代价是盘前流动性稀薄时大字会跟着跳，这是刻意接受的。
+struct StockHoldingValuationTests {
+    /// 盘前的「当日盈亏」必须是股数 × 盘前涨跌额。
+    ///
+    /// 行情源在盘前给的是 T−1 收盘价，它的 `previousClose` 是 T−2 收盘，所以
+    /// `StockHolding.todayProfitLoss` 在盘前描述的是**前一个交易日**的涨跌，
+    /// 挂在「当日盈亏」下面就是错的标签。
+    @Test func preMarketValuationUsesThePreMarketChangeNotYesterdaysMove() throws {
+        let stock = Self.usStock(quantity: 100, cost: 90, latestPrice: 98, previousClose: 100)
+        let valuation = StockHoldingValuation(
+            stock: stock,
+            extendedHours: Self.preMarket(price: 99, change: 1, percent: Decimal(string: "0.0102")),
+            at: Self.usDate(hour: 7)
+        )
+
+        #expect(valuation.marketValue == 9_900)
+        #expect(valuation.todayProfitLoss == 100)
+        // 分母跟着报价走：99 − 1 = 98 才是本次百分比的基准，不是行情源的 100。
+        #expect(valuation.previousMarketValue == 9_800)
+        #expect(valuation.holdingProfitLoss == 900)
+        // 若沿用常规报价，当日盈亏会是 100 × (98 − 100) = −200，方向都相反。
+        #expect(stock.todayProfitLoss == -200)
+    }
+
+    @Test func overviewTotalsEqualTheSumOfRowsDuringPreMarket() throws {
+        let now = Self.usDate(hour: 7)
+        let extendedHours = Self.preMarket(price: 99, change: 1, percent: Decimal(string: "0.0102"))
+        let first = Self.usStock(quantity: 100, cost: 90, latestPrice: 98, previousClose: 100)
+        let second = Self.usStock(
+            symbol: "BIDU",
+            quantity: 50,
+            cost: 80,
+            latestPrice: 98,
+            previousClose: 100
+        )
+        let map = [first.id: extendedHours, second.id: extendedHours]
+        let rows = [first, second].map {
+            StockHoldingValuation(stock: $0, extendedHours: extendedHours, at: now)
+        }
+
+        let converted = StockConvertedPortfolioSummary(
+            stocks: [first, second],
+            multipliers: [.unitedStates: 1],
+            extendedHours: map,
+            at: now
+        )
+        let market = StockPortfolioSummary(
+            market: .unitedStates,
+            stocks: [first, second],
+            extendedHours: map,
+            at: now
+        )
+
+        let expectedValue = rows.reduce(Decimal.zero) { $0 + ($1.marketValue ?? 0) }
+        let expectedDaily = rows.reduce(Decimal.zero) { $0 + ($1.todayProfitLoss ?? 0) }
+        #expect(converted.marketValue == expectedValue)
+        #expect(converted.todayProfitLoss == expectedDaily)
+        #expect(market.knownMarketValue == expectedValue)
+        #expect(market.todayProfitLoss == expectedDaily)
+        // 150 股 × 盘前涨 1。
+        #expect(expectedDaily == 150)
+    }
+
+    /// 分母也同源，否则百分比会拿盘前的分子去除昨收的分母。缺百分比时整组回退。
+    @Test func todayChangeRateFallsBackWholesaleWhenAPieceIsMissing() throws {
+        let now = Self.usDate(hour: 7)
+        let stock = Self.usStock(quantity: 100, cost: 90, latestPrice: 98, previousClose: 100)
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [stock],
+            multipliers: [.unitedStates: 1],
+            extendedHours: [stock.id: Self.preMarket(price: 99, change: 1, percent: nil)],
+            at: now
+        )
+
+        // 缺百分比时整组回退到常规报价：100 × (98 − 100) = −200，基准是昨收 10 000。
+        #expect(summary.todayProfitLoss == -200)
+        #expect(summary.previousMarketValue == 10_000)
+        #expect(summary.todayChangeRate == Decimal(string: "-0.02"))
+    }
+
+    /// A 股与港股没有盘前盘后，即使表里塞了扩展时段数据也必须走常规报价。
+    @Test func nonUnitedStatesMarketsIgnoreExtendedHours() throws {
+        var stock = Self.usStock(quantity: 100, cost: 9, latestPrice: 10, previousClose: 9)
+        stock.market = .aShare
+        let valuation = StockHoldingValuation(
+            stock: stock,
+            extendedHours: Self.preMarket(price: 99, change: 1, percent: Decimal(string: "0.01")),
+            at: Self.usDate(hour: 7)
+        )
+
+        #expect(valuation.marketValue == 1_000)
+        #expect(valuation.todayProfitLoss == 100)
+    }
+
+    /// 与 `StockHolding` 的同名属性对齐：清仓后市值确定为 0，当日盈亏为 nil。
+    @Test func closedPositionKeepsHoldingSemantics() throws {
+        var stock = StockHolding(symbol: "BABA")
+        stock.market = .unitedStates
+        let valuation = StockHoldingValuation(stock: stock, extendedHours: nil)
+
+        #expect(valuation.marketValue == 0)
+        #expect(valuation.previousMarketValue == 0)
+        #expect(valuation.todayProfitLoss == nil)
+        #expect(valuation.holdingProfitLoss == 0)
+    }
+
+    /// 缺价格时整只股票的派生金额都是 nil，聚合方要据此把整列标成「待同步」。
+    @Test func missingPriceMakesEveryDerivedAmountNil() throws {
+        var stock = Self.usStock(quantity: 100, cost: 90, latestPrice: 98, previousClose: 100)
+        stock.latestPrice = nil
+        stock.previousClose = nil
+        let valuation = StockHoldingValuation(stock: stock, extendedHours: nil)
+
+        #expect(valuation.marketValue == nil)
+        #expect(valuation.previousMarketValue == nil)
+        #expect(valuation.todayProfitLoss == nil)
+        #expect(valuation.holdingProfitLoss == nil)
+    }
+
+    private static func usStock(
+        symbol: String = "BABA",
+        quantity: Decimal,
+        cost: Decimal,
+        latestPrice: Decimal?,
+        previousClose: Decimal?
+    ) -> StockHolding {
+        var stock = StockHolding(symbol: symbol)
+        stock.market = .unitedStates
+        var transaction = StockTransaction()
+        transaction.type = .buy
+        transaction.tradedAt = Date().addingTimeInterval(-86_400)
+        transaction.quantity = quantity
+        transaction.unitPrice = cost
+        stock.transactions = [transaction]
+        stock.latestPrice = latestPrice
+        stock.previousClose = previousClose
+        if let latestPrice, let previousClose, previousClose > 0 {
+            stock.changePercent = (latestPrice - previousClose) / previousClose
+        }
+        return stock
+    }
+
+    private static func preMarket(
+        price: Decimal?,
+        change: Decimal?,
+        percent: Decimal?
+    ) -> StockExtendedHoursPerformance {
+        StockExtendedHoursPerformance(
+            preMarketPrice: price,
+            preMarketChange: change,
+            preMarketPercent: percent,
+            postMarketPrice: nil,
+            postMarketChange: nil,
+            postMarketPercent: nil
+        )
+    }
+
+    private static func usDate(hour: Int, minute: Int = 0) -> Date {
+        StockChartFixtures.date(
+            2026, 9, 17,
+            hour: hour,
+            minute: minute,
+            timeZone: "America/New_York"
+        )
+    }
+}

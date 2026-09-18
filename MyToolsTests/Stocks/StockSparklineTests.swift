@@ -467,6 +467,67 @@ struct StockConvertedPortfolioSummaryTests {
         #expect(summary.todayChangeRate == nil)
     }
 
+    /// 已实现收益只依赖汇率，不依赖行情：卖出盈亏和净分红都是已经落袋的金额。
+    /// 总览里它是「持仓总盈亏 + 已实现收益 = 累计总收益」这一行的中间列，缺行情时
+    /// 另外两列显示待同步，它仍应给出数字。
+    @Test func realizedProfitLossSurvivesAMissingQuote() {
+        var stock = StockHolding(symbol: "600000")
+        stock.transactions = [
+            Self.buy(quantity: 100, unitPrice: 10),
+            Self.sell(quantity: 40, unitPrice: 15)
+        ]
+        stock.dividends = [Self.dividend(gross: 30, tax: 5)]
+
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [stock],
+            multipliers: [.aShare: 1]
+        )
+
+        // 卖出实现 40 × (15 − 10) = 200，净分红 30 − 5 = 25。
+        #expect(summary.realizedProfitLoss == 225)
+        #expect(summary.holdingProfitLoss == nil)
+        #expect(summary.totalProfitLoss == nil)
+    }
+
+    @Test func realizedProfitLossIsNilWhenExchangeRateIsMissing() {
+        var stock = StockHolding(symbol: "AAPL")
+        stock.market = .unitedStates
+        stock.transactions = [
+            Self.buy(quantity: 10, unitPrice: 100),
+            Self.sell(quantity: 10, unitPrice: 120)
+        ]
+
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [stock],
+            multipliers: [.aShare: 1]
+        )
+
+        #expect(summary.realizedProfitLoss == nil)
+    }
+
+    @Test func realizedProfitLossConvertsEachMarketWithItsOwnRate() {
+        var aShare = StockHolding(symbol: "600000")
+        aShare.transactions = [
+            Self.buy(quantity: 100, unitPrice: 10),
+            Self.sell(quantity: 100, unitPrice: 11)
+        ]
+
+        var usStock = StockHolding(symbol: "AAPL")
+        usStock.market = .unitedStates
+        usStock.transactions = [
+            Self.buy(quantity: 10, unitPrice: 100),
+            Self.sell(quantity: 10, unitPrice: 110)
+        ]
+
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [aShare, usStock],
+            multipliers: [.aShare: 1, .unitedStates: 7]
+        )
+
+        // A 股 100 + 美股 100 × 7。
+        #expect(summary.realizedProfitLoss == 800)
+    }
+
     private static func buy(quantity: Decimal, unitPrice: Decimal) -> StockTransaction {
         var transaction = StockTransaction()
         transaction.type = .buy
@@ -474,5 +535,22 @@ struct StockConvertedPortfolioSummaryTests {
         transaction.quantity = quantity
         transaction.unitPrice = unitPrice
         return transaction
+    }
+
+    private static func sell(quantity: Decimal, unitPrice: Decimal) -> StockTransaction {
+        var transaction = StockTransaction()
+        transaction.type = .sell
+        transaction.tradedAt = Date().addingTimeInterval(-43_200)
+        transaction.quantity = quantity
+        transaction.unitPrice = unitPrice
+        return transaction
+    }
+
+    private static func dividend(gross: Decimal, tax: Decimal) -> StockDividend {
+        var dividend = StockDividend()
+        dividend.receivedAt = Date().addingTimeInterval(-43_200)
+        dividend.grossAmount = gross
+        dividend.withholdingTax = tax
+        return dividend
     }
 }

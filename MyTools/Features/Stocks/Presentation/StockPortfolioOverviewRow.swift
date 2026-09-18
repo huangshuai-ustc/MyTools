@@ -29,7 +29,8 @@ struct StockPortfolioOverviewRow: View {
     private var convertedSummary: StockConvertedPortfolioSummary {
         StockConvertedPortfolioSummary(
             stocks: selectedStocks,
-            multipliers: renminbiMultipliers
+            multipliers: renminbiMultipliers,
+            extendedHours: store.extendedHoursPerformance
         )
     }
 
@@ -92,7 +93,8 @@ struct StockPortfolioOverviewRow: View {
                         StockMarketSummaryRow(
                             summary: StockPortfolioSummary(
                                 market: market,
-                                stocks: summaryStocks
+                                stocks: summaryStocks,
+                                extendedHours: store.extendedHoursPerformance
                             ),
                             allocation: allocations.marketShare(for: market),
                             showsAllocation: marketFilter.market == nil
@@ -164,15 +166,24 @@ struct StockPortfolioOverviewRow: View {
         return "净清算价值 \(moneyText(convertedSummary.marketValue)) 人民币，当日盈亏 \(today)，\(rate)"
     }
 
-    /// 折叠态的大字已经给出总资产（净清算价值）和今日盈亏，所以展开区只补两项它
-    /// 没有的累计指标，避免同一个数字出现两次。
+    /// 常驻的大字已经给出净清算价值和当日盈亏，所以这一格只补三项累计指标，避免同一
+    /// 个数字出现两次。三列与下方每个市场的概况块同宽同形，「持仓总盈亏」的「总」也
+    /// 是用来区分它和分市场那一列的：这里是全部市场折算后的合计。
+    ///
+    /// 三项之间是加法关系：持仓总盈亏（未落袋）+ 已实现收益（卖出盈亏与净分红）
+    /// = 累计总收益。
     private var metricsGrid: some View {
-        Grid(horizontalSpacing: 18, verticalSpacing: 12) {
+        Grid(horizontalSpacing: 12, verticalSpacing: 12) {
             GridRow {
                 overviewMetric(
-                    "持仓盈亏",
+                    "持仓总盈亏",
                     value: moneyText(convertedSummary.holdingProfitLoss),
                     color: profitLossColor(convertedSummary.holdingProfitLoss)
+                )
+                overviewMetric(
+                    "已实现收益",
+                    value: moneyText(convertedSummary.realizedProfitLoss),
+                    color: profitLossColor(convertedSummary.realizedProfitLoss)
                 )
                 overviewMetric(
                     "累计总收益",
@@ -223,7 +234,7 @@ struct StockPortfolioOverviewRow: View {
                 .font(AppFontSpec.subheadline.weight(.semibold).monospacedDigit().font(scale: fontScale))
                 .foregroundStyle(color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.68)
+                .minimumScaleFactor(0.62)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)

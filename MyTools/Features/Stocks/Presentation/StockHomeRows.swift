@@ -24,74 +24,6 @@ enum StockPositionColumnMetrics {
 /// `caption2` so the value on the first line stays the thing you read first.
 private let stockRowPercentFont = AppFontSpec.system(size: 10).monospacedDigit()
 
-/// The quote actually shown for a holding right now.
-///
-/// Only US stocks have extended-hours quotes. Price, change amount and change
-/// percent always come from one source: the regular quote carries the provider's
-/// `latestPrice`/`previousClose`/`changePercent`, while the pre-market and
-/// post-market branches take all three from `StockExtendedHoursPerformance`,
-/// whose amount and percentage were derived from the same reference inside
-/// `StockChartPresentation`. Mixing the two (provider `previousClose` for the
-/// amount, chart reference for the percentage) is what used to render
-/// 「-$1.59（+0.45%）」. A missing extended-hours value therefore falls all the
-/// way back to the regular quote rather than being filled in piecemeal.
-struct StockActiveQuote {
-    /// 这组数字属于哪个时段。行内不再画角标——看盘页顶部的时段条和持仓页总览已经
-    /// 说明了当前时段——所以它只用于无障碍朗读。
-    let sessionTitle: String
-    let price: Decimal?
-    let changeAmount: Decimal?
-    let percent: Decimal?
-
-    static func make(
-        stock: StockHolding,
-        extendedHours: StockExtendedHoursPerformance?,
-        at now: Date = Date()
-    ) -> StockActiveQuote {
-        let regular = StockActiveQuote(
-            sessionTitle: "当前价格",
-            price: stock.latestPrice,
-            changeAmount: difference(stock.latestPrice, stock.previousClose),
-            percent: stock.changePercent
-        )
-        guard stock.market == .unitedStates else { return regular }
-        switch StockMarketTradingCalendar.session(for: stock.market, at: now) {
-        case .preMarket:
-            // 价格、涨跌额、涨跌幅必须整套齐备才切到盘前：缺一个就说明这份缓存不属于
-            // 当前交易日（`StockChartPresentation.preMarketPerformance` 会按当天校验），
-            // 此时整行回退到常规报价，迷你图也跟着画同一段。
-            guard let extendedHours,
-                  let price = extendedHours.preMarketPrice,
-                  let change = extendedHours.preMarketChange,
-                  let percent = extendedHours.preMarketPercent else { return regular }
-            return StockActiveQuote(
-                sessionTitle: "盘前",
-                price: price,
-                changeAmount: change,
-                percent: percent
-            )
-        case .postMarket:
-            guard let extendedHours,
-                  let price = extendedHours.postMarketPrice,
-                  let change = extendedHours.postMarketChange,
-                  let percent = extendedHours.postMarketPercent else { return regular }
-            return StockActiveQuote(
-                sessionTitle: "盘后",
-                price: price,
-                changeAmount: change,
-                percent: percent
-            )
-        case .regular, .closed:
-            return regular
-        }
-    }
-
-    private static func difference(_ price: Decimal?, _ reference: Decimal?) -> Decimal? {
-        guard let price, let reference else { return nil }
-        return price - reference
-    }
-}
-
 /// 持仓表表头。列宽与 `StockPositionRow` 共用 `StockPositionColumnMetrics`。
 struct StockPositionColumnHeader: View {
     @Environment(\.appFontScale) private var fontScale
@@ -244,9 +176,11 @@ struct StockPositionRow: View {
 
     /// Holding profit measured against the price actually shown, so extended
     /// hours moves are reflected in the same row.
+    ///
+    /// 由 `StockHoldingValuation` 从 `quote` 派生，与顶部总览、市场概况共用同一个类型：
+    /// 行内不再自己写 `currentShares * price - holdingCost`，否则改口径时会漏掉一处。
     private var holdingProfitLoss: Decimal? {
-        guard let price = quote.price else { return nil }
-        return stock.currentShares * price - stock.holdingCost
+        StockHoldingValuation(stock: stock, quote: quote).holdingProfitLoss
     }
 
     private var holdingProfitRate: Decimal? {
