@@ -254,12 +254,15 @@ struct StockChartSeriesProcessorTests {
                 close: 90,
                 volume: 250
             ),
+            // 美股分钟柱按区间起点标注，16:00 那一根已经属于盘后，常规时段的最后
+            // 一分钟是 15:59。
             StockChartFixtures.point(
                 at: StockChartFixtures.date(
                     2026,
                     8,
                     7,
-                    hour: 16,
+                    hour: 15,
+                    minute: 59,
                     timeZone: "America/New_York"
                 ),
                 open: 90,
@@ -658,8 +661,9 @@ struct StockChartSeriesProcessorTests {
         let midday = StockChartFixtures.date(
             2026, 8, 7, hour: 12, minute: 0, timeZone: "America/New_York"
         )
+        // 美股常规时段的最后一分钟是 15:59，16:00 起归盘后。
         let close = StockChartFixtures.date(
-            2026, 8, 7, hour: 16, minute: 0, timeZone: "America/New_York"
+            2026, 8, 7, hour: 15, minute: 59, timeZone: "America/New_York"
         )
         let points = [
             StockChartFixtures.point(at: open, open: 200, close: 200.5),
@@ -804,5 +808,98 @@ struct StockChartSeriesProcessorTests {
         #expect(year.first?.low == 9)
         #expect(year.first?.close == 14)
         #expect(year.first?.volume == 650)
+    }
+}
+
+/// 收盘集合竞价那根 bar（A 股 15:00、港股 16:00）必须留在常规时段里：它就是定盘价，
+/// 丢掉它分时图末点会停在 14:59 / 15:59，和报价里的收盘价对不上。
+struct StockClosingAuctionBarTests {
+    @Test func hongKongKeepsTheSixteenHundredClosingBar() throws {
+        let points = [
+            Self.point(hour: 15, minute: 58, close: 4.324, timeZone: "Asia/Hong_Kong"),
+            Self.point(hour: 15, minute: 59, close: 4.324, timeZone: "Asia/Hong_Kong"),
+            Self.point(hour: 16, minute: 0, close: 4.320, timeZone: "Asia/Hong_Kong"),
+            Self.point(hour: 16, minute: 1, close: 4.310, timeZone: "Asia/Hong_Kong")
+        ]
+
+        let session = StockChartSeriesProcessor.regularSessionPoints(points, market: .hongKong)
+
+        #expect(session.count == 3)
+        #expect(try #require(session.last).close == 4.320)
+    }
+
+    @Test func aShareKeepsBothSessionClosingBars() throws {
+        let points = [
+            Self.point(hour: 11, minute: 30, close: 10.5),
+            Self.point(hour: 12, minute: 0, close: 10.6),
+            Self.point(hour: 15, minute: 0, close: 10.7),
+            Self.point(hour: 15, minute: 1, close: 10.8)
+        ]
+
+        let session = StockChartSeriesProcessor.regularSessionPoints(points, market: .aShare)
+
+        #expect(session.map(\.close) == [10.5, 10.7])
+    }
+
+    /// 美股 16:00 起就是盘后，那一分钟不能并进常规时段，否则同一根 bar 会被两个时段
+    /// 同时计入。
+    @Test func unitedStatesLeavesSixteenHundredToThePostMarketSession() {
+        let points = [
+            Self.point(hour: 15, minute: 59, close: 200, timeZone: "America/New_York"),
+            Self.point(hour: 16, minute: 0, close: 201, timeZone: "America/New_York")
+        ]
+
+        let regular = StockChartSeriesProcessor.regularSessionPoints(points, market: .unitedStates)
+        let post = StockChartSeriesProcessor.postMarketSessionPoints(points, market: .unitedStates)
+
+        #expect(regular.map(\.close) == [200])
+        #expect(post.map(\.close) == [201])
+    }
+
+    /// 用户报的那条：1,200 股 03033，收盘价 4.32，持仓页市值 5,184，走势图末点却是
+    /// 1,200 × 4.324 = 5,188.80。定盘 bar 补回来之后两处必须相等。
+    @Test func minutePortfolioSeriesEndsOnTheClosingAuctionPrice() throws {
+        var stock = StockHolding(market: .hongKong, symbol: "03033")
+        var buy = StockTransaction()
+        buy.type = .buy
+        buy.tradedAt = StockChartFixtures.date(2026, 8, 17, timeZone: "Asia/Hong_Kong")
+        buy.quantity = 1_200
+        buy.unitPrice = Decimal(string: "4.3316")!
+        stock.transactions = [buy]
+
+        let series = PortfolioValueHistoryBuilder.buildMinuteSeries(
+            for: .hongKong,
+            range: .fiveDays,
+            stocks: [stock],
+            minutePointsBySymbol: [
+                stock.symbol: [
+                    Self.point(hour: 15, minute: 59, close: 4.324, timeZone: "Asia/Hong_Kong"),
+                    Self.point(hour: 16, minute: 0, close: 4.320, timeZone: "Asia/Hong_Kong")
+                ]
+            ]
+        )
+
+        #expect(try #require(series.points.last).value == 5_184)
+    }
+
+    private static func point(
+        hour: Int,
+        minute: Int,
+        close: Double,
+        timeZone: String = "Asia/Shanghai"
+    ) -> StockChartPoint {
+        StockChartFixtures.point(
+            at: StockChartFixtures.date(
+                2026, 9, 17,
+                hour: hour,
+                minute: minute,
+                timeZone: timeZone
+            ),
+            open: close,
+            high: close,
+            low: close,
+            close: close,
+            volume: 1
+        )
     }
 }

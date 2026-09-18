@@ -29,6 +29,25 @@ enum StockMarketTradingCalendar {
         }
     }
 
+    /// 给分时 bar 分档用的区间，比 `regularMinuteRanges` 多收盘那一分钟。
+    ///
+    /// 数据源会把「某一分钟的成交」标成这一分钟的结束时刻，收盘集合竞价因此正好落在
+    /// 收盘时刻本身（东方财富 A 股 15:00、港股 16:00 那根 bar 就是定盘价），而
+    /// `regularMinuteRanges` 右开，按它过滤会把这根 bar 丢掉：分时图末点停在 14:59 /
+    /// 15:59，于是「当期数据」的收盘价、分时的今日涨跌、持仓总价值走势的末点全都和报价
+    /// 里的收盘价对不上（03033 差 0.004，600519 能差 3.78）。午休前那根（A 股 11:30、
+    /// 港股 12:00）同理，也是上半场的最后一分钟。
+    ///
+    /// 美股不能这样放宽：16:00 起就是盘后时段（`postMarketMinuteRange`），那一分钟必须
+    /// 留给盘后，否则同一根 bar 会既算盘中又算盘后。因此只对没有盘后时段的市场生效。
+    static func regularChartMinuteRanges(
+        for market: StockMarket
+    ) -> [(start: Int, end: Int)] {
+        let ranges = regularMinuteRanges(for: market)
+        guard postMarketMinuteRange(for: market) == nil else { return ranges }
+        return ranges.map { (start: $0.start, end: $0.end + 1) }
+    }
+
     static func preMarketMinuteRange(for market: StockMarket) -> (start: Int, end: Int)? {
         market == .unitedStates ? (240, 570) : nil
     }

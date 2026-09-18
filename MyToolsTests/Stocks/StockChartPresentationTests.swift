@@ -226,9 +226,12 @@ struct StockChartPresentationTests {
                 close: 101,
                 timeZone: "America/New_York"
             ),
+            // 15:59 才是美股常规时段的最后一分钟：Yahoo 的美股分钟柱按区间起点标注，
+            // 16:00 那一根属于盘后（`postMarketMinuteRange` 从 960 起），不能当收盘柱。
             point(
                 day: 7,
-                hour: 16,
+                hour: 15,
+                minute: 59,
                 close: 102,
                 timeZone: "America/New_York"
             )
@@ -487,7 +490,8 @@ struct StockChartPresentationTests {
                 2026,
                 8,
                 21,
-                hour: 16,
+                hour: 15,
+                minute: 59,
                 timeZone: "America/New_York"
             ),
             open: 117,

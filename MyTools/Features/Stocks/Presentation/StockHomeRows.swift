@@ -29,6 +29,21 @@ struct StockPositionColumnHeader: View {
     @Environment(\.appFontScale) private var fontScale
 
     var body: some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            GeometryReader { proxy in
+                iPadHeader(width: proxy.size.width)
+            }
+            .frame(minHeight: 24)
+        } else {
+            standardHeader
+        }
+#else
+        standardHeader
+#endif
+    }
+
+    private var standardHeader: some View {
         HStack(spacing: StockPositionColumnMetrics.spacing) {
             Text("投资产品")
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -48,6 +63,26 @@ struct StockPositionColumnHeader: View {
         .minimumScaleFactor(0.8)
         .accessibilityHidden(true)
     }
+
+    private func iPadHeader(width: CGFloat) -> some View {
+        HStack(spacing: StockPositionColumnMetrics.spacing) {
+            Text("投资产品")
+                .frame(width: width * 0.34, alignment: .leading)
+            Text("最新价")
+                .frame(width: width * 0.13, alignment: .leading)
+            Text("涨跌")
+                .frame(width: width * 0.18, alignment: .leading)
+            Text("持仓")
+                .frame(width: width * 0.14, alignment: .leading)
+            Text("盈亏")
+                .frame(width: width * 0.16, alignment: .leading)
+        }
+        .appFont(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .accessibilityHidden(true)
+    }
 }
 
 /// 持仓行：代码/名称 · 最新价 · 涨跌 · 持仓 · 盈亏。
@@ -59,6 +94,21 @@ struct StockPositionRow: View {
     let extendedHours: StockExtendedHoursPerformance?
 
     var body: some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            GeometryReader { proxy in
+                iPadBody(width: proxy.size.width)
+            }
+            .frame(minHeight: 42)
+        } else {
+            standardBody
+        }
+#else
+        standardBody
+#endif
+    }
+
+    private var standardBody: some View {
         HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
             identityColumn
             priceColumn
@@ -79,6 +129,18 @@ struct StockPositionRow: View {
                 secondary: holdingProfitRateText,
                 color: holdingProfitColor
             )
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func iPadBody(width: CGFloat) -> some View {
+        HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
+            identityColumn.frame(width: width * 0.34, alignment: .leading)
+            priceColumn.frame(width: width * 0.13, alignment: .leading)
+            valueColumn(width: width * 0.18, primary: changeAmountText, secondary: changePercentText, color: quoteColor)
+            valueColumn(width: width * 0.14, primary: StockValueFormatter.integerQuantity(stock.currentShares), secondary: costShare.map(StockValueFormatter.allocationPercent))
+            valueColumn(width: width * 0.16, primary: holdingProfitLossText, secondary: holdingProfitRateText, color: holdingProfitColor)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
@@ -245,11 +307,37 @@ struct StockWatchlistRow: View {
     private var quoteWidth: CGFloat { 96 * max(fontScale ?? 1, 1) }
 
     var body: some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            GeometryReader { proxy in
+                iPadBody(width: proxy.size.width)
+            }
+            .frame(minHeight: 52)
+        } else {
+            standardBody
+        }
+#else
+        standardBody
+#endif
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 8) {
             identityColumn
                 .frame(maxWidth: identityMaxWidth, alignment: .leading)
             sparklineView
             quoteColumn
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func iPadBody(width: CGFloat) -> some View {
+        HStack(spacing: 8) {
+            identityColumn.frame(width: width * 0.32, alignment: .leading)
+            sparklineView.frame(width: width * 0.22, alignment: .leading)
+            quoteColumn.frame(width: width * 0.28, alignment: .leading)
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .ignore)

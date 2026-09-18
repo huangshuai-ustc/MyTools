@@ -54,7 +54,10 @@ struct StockHomeRowLink<Content: View>: View {
                         Label("恢复看盘", systemImage: "arrow.uturn.backward")
                     }
                 }
-                .appDeleteSwipeAction(isEnabled: true) {
+                // 历史股票必然有过交易或分红（存档的前提），所以默认不给删除，
+                // 与 `StockListRemovalActions` 同一条规则：删除会抹掉全部记录。
+                // 只有在详情页把记录删净之后才允许彻底删掉这只股票。
+                .appDeleteSwipeAction(isEnabled: !stock.hasHistoricalActivity) {
                     store.deleteStocks(ids: [stock.id])
                 }
         } else {
@@ -201,7 +204,7 @@ struct StockPositionsPage: View {
                 .appListRowStyle()
             }
 
-            Section("当前持仓（\(positions.count)）") {
+            Section("持仓（\(positions.count)）") {
                 if positions.isEmpty {
                     ContentUnavailableView(emptyTitle, systemImage: emptySystemImage)
                 } else {

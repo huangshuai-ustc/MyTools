@@ -229,6 +229,13 @@ struct StocksView: View {
     @ViewBuilder
     private var pages: some View {
         if hasAnyPosition {
+            stockTabView
+        } else {
+            watchlistPage
+        }
+    }
+
+    private var stockTabView: some View {
             TabView(selection: $selectedPage) {
                 Tab(
                     StocksHomePage.positions.title,
@@ -245,10 +252,8 @@ struct StocksView: View {
                     watchlistPage
                 }
             }
-        } else {
-            watchlistPage
-        }
     }
+
 
     var body: some View {
         pages
@@ -419,6 +424,15 @@ struct StocksView: View {
     }
 }
 
+/// 列表行的移除操作。规则只有一条：**有交易或分红记录的股票不给删除**——
+/// 删除会连同全部交易与分红一起抹掉，没有撤销，还会同步到 iCloud。
+///
+/// 清仓后想让它从看盘列表里消失，用「存档」：记录留在 App 里，只是不再盯盘。
+/// 仍在持仓的股票连存档也不给（`StockPortfolioEditor.archiving` 只接受零持仓，
+/// 否则总览的合计里会藏着一只列表上看不到的股票），先去详情页卖出。
+///
+/// 真要彻底删掉一只误录的股票，先在详情页删净它的交易与分红，记录清空后
+/// 删除操作会自己回来。
 struct StockListRemovalActions: ViewModifier {
     let stock: StockHolding
     let isEnabled: Bool
@@ -429,19 +443,16 @@ struct StockListRemovalActions: ViewModifier {
     func body(content: Content) -> some View {
         if !isEnabled {
             content
-        } else if stock.currentShares <= 0 && stock.hasHistoricalActivity {
-            // SwiftUI places the first trailing action closest to the row edge.
-            // Keep delete first so full-swipe deletion remains unchanged, with
-            // archive rendered immediately to its left.
-            content.appSwipeActions(edge: .trailing, style: AppSwipeActions.delete) {
-                Button(role: .destructive, action: onDelete) {
-                    Label("删除", systemImage: "trash")
+        } else if stock.hasHistoricalActivity {
+            if stock.currentShares <= 0 {
+                content.appSwipeActions(edge: .trailing, style: AppSwipeActions.secondary) {
+                    Button(action: onArchive) {
+                        Label("存档", systemImage: "archivebox")
+                    }
+                    .tint(AppSwipeActions.secondary.tint)
                 }
-                .tint(AppSwipeActions.delete.tint)
-                Button(action: onArchive) {
-                    Label("存档", systemImage: "archivebox")
-                }
-                .tint(AppSwipeActions.secondary.tint)
+            } else {
+                content
             }
         } else {
             content.appDeleteSwipeAction(action: onDelete)

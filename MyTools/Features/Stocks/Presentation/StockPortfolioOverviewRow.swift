@@ -70,14 +70,7 @@ struct StockPortfolioOverviewRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
-            } label: {
-                headline
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(headlineAccessibilityLabel)
-            .accessibilityHint(isExpanded ? "收起明细" : "展开明细")
+            headline
 
             if hasMissingRates {
                 Label(missingRateText, systemImage: "exclamationmark.triangle")
@@ -101,15 +94,6 @@ struct StockPortfolioOverviewRow: View {
                         )
                     }
                 }
-                Button {
-                    showingConversionInfo = true
-                } label: {
-                    Label("人民币折算说明", systemImage: "exclamationmark.circle")
-                        .appFont(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("人民币合计说明")
             }
         }
         .alert("人民币合计说明", isPresented: $showingConversionInfo) {
@@ -119,6 +103,8 @@ struct StockPortfolioOverviewRow: View {
         }
     }
 
+    /// 标题行不放进展开按钮里：折算说明是独立按钮，嵌套在另一个按钮里点击判定不可靠。
+    /// 展开/收起由 chevron 按钮和下面那行大字各自触发。
     private var headline: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -128,34 +114,71 @@ struct StockPortfolioOverviewRow: View {
                 Text("CNY")
                     .appFont(.caption2.monospaced())
                     .foregroundStyle(.secondary)
+                conversionInfoButton
                 Spacer(minLength: 4)
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(alignment: .lastTextBaseline, spacing: 10) {
-                Text(moneyText(convertedSummary.marketValue))
-                    .font(AppFontSpec.largeTitle.weight(.semibold).monospacedDigit().font(scale: fontScale))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Spacer(minLength: 4)
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text("当日盈亏")
-                        .appFont(.caption2)
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 5) {
-                        Text(signedMoneyText(convertedSummary.todayProfitLoss))
-                            .font(AppFontSpec.headline.monospacedDigit().font(scale: fontScale))
-                        Text(convertedSummary.todayChangeRate.map(StockValueFormatter.signedPercent) ?? "--")
-                            .font(AppFontSpec.caption.monospacedDigit().font(scale: fontScale))
-                            .opacity(0.75)
-                    }
-                    .foregroundStyle(profitLossColor(convertedSummary.todayProfitLoss))
+                        .contentShape(Rectangle())
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "收起明细" : "展开明细")
             }
+
+            Button {
+                isExpanded.toggle()
+            } label: {
+                valueRow
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(headlineAccessibilityLabel)
+            .accessibilityHint(isExpanded ? "收起明细" : "展开明细")
+        }
+    }
+
+    /// `Label` 会在图标和文字之间塞一段固定间距，这里要紧挨着，所以手写 `HStack`。
+    private var conversionInfoButton: some View {
+        Button {
+            showingConversionInfo = true
+        } label: {
+            HStack(spacing: 1) {
+                Image(systemName: "exclamationmark.circle")
+                Text("人民币折算说明")
+            }
+            .appFont(.caption2)
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("人民币合计说明")
+    }
+
+    private var valueRow: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 10) {
+            Text(moneyText(convertedSummary.marketValue))
+                .font(AppFontSpec.largeTitle.weight(.semibold).monospacedDigit().font(scale: fontScale))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("当日盈亏")
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(signedMoneyText(convertedSummary.todayProfitLoss))
+                        .font(AppFontSpec.headline.monospacedDigit().font(scale: fontScale))
+                    Text(convertedSummary.todayChangeRate.map(StockValueFormatter.signedPercent) ?? "--")
+                        .font(AppFontSpec.caption.monospacedDigit().font(scale: fontScale))
+                        .opacity(0.75)
+                }
+                .foregroundStyle(profitLossColor(convertedSummary.todayProfitLoss))
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
         }
         .contentShape(Rectangle())
     }
@@ -177,17 +200,17 @@ struct StockPortfolioOverviewRow: View {
             GridRow {
                 overviewMetric(
                     "持仓总盈亏",
-                    value: moneyText(convertedSummary.holdingProfitLoss),
+                    value: signedMoneyText(convertedSummary.holdingProfitLoss),
                     color: profitLossColor(convertedSummary.holdingProfitLoss)
                 )
                 overviewMetric(
                     "已实现收益",
-                    value: moneyText(convertedSummary.realizedProfitLoss),
+                    value: signedMoneyText(convertedSummary.realizedProfitLoss),
                     color: profitLossColor(convertedSummary.realizedProfitLoss)
                 )
                 overviewMetric(
                     "累计总收益",
-                    value: moneyText(convertedSummary.totalProfitLoss),
+                    value: signedMoneyText(convertedSummary.totalProfitLoss),
                     color: profitLossColor(convertedSummary.totalProfitLoss)
                 )
             }
@@ -315,7 +338,7 @@ struct StockMarketSummaryRow: View {
 
     private var todayProfitLossText: String {
         guard let value = summary.todayProfitLoss else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(value, currencyCode: summary.market.currencyCode)
+        return StockValueFormatter.signedMoney(value, currencyCode: summary.market.currencyCode)
     }
 
     private var todayProfitLossColor: Color {
@@ -329,7 +352,7 @@ struct StockMarketSummaryRow: View {
 
     private var profitLossText: String {
         guard let profitLoss = summary.profitLoss else { return "待同步" }
-        return StockValueFormatter.moneyMagnitude(
+        return StockValueFormatter.signedMoney(
             profitLoss,
             currencyCode: summary.market.currencyCode
         )

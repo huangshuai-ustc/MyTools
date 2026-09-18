@@ -51,12 +51,19 @@ private struct PortfolioCostBasisChartPoint: Identifiable {
 /// changes (or, for day-K, a single point in a stepped/linear polyline), so
 /// the cost reference redraws per period instead of a single flat "today"
 /// value once the visible range spans more than one holding-cost snapshot.
+///
+/// `cost` 是这一段水平线自己的高度，`points` 末尾可能额外带一个「下一段成本」的点，
+/// 只为了让 `.stepEnd` 画出那条竖直跳变，不参与标签取值。`id` 必须把 `cost` 算进去：
+/// 相邻两段会共享同一个首点，只用首点日期生成 id 会撞车，`ForEach` 里后一段的标签
+/// 会顶掉前一段，最左边那段于是显示成下一段的成本。
 private struct PortfolioCostBasisSegment: Identifiable {
     let seriesID: String
     let cost: Double
     let points: [PortfolioCostBasisChartPoint]
-    var id: String { "\(seriesID)-\(points.first?.id ?? "")" }
-    var labelX: Double { points.last?.x ?? 0 }
+    /// 标签挂在水平段的中点，而不是端点：挂端点时最左边那段会贴着绘图区边缘，
+    /// 标签被裁掉一半。
+    let labelX: Double
+    var id: String { "\(seriesID)-\(points.first?.id ?? "")-\(cost)" }
 }
 
 private struct PortfolioChartData {
@@ -281,24 +288,39 @@ private struct PortfolioChartData {
         }
         guard !chartPoints.isEmpty else { return [] }
         guard range == .fiveDays else {
-            return [PortfolioCostBasisSegment(seriesID: item.id, cost: chartPoints.last?.cost ?? 0, points: chartPoints)]
+            return [
+                PortfolioCostBasisSegment(
+                    seriesID: item.id,
+                    cost: chartPoints.last?.cost ?? 0,
+                    points: chartPoints,
+                    labelX: chartPoints.last?.x ?? 0
+                )
+            ]
         }
-        // Split into runs of equal cost so each run can carry its own label,
-        // keeping the join point shared between adjacent runs (stepEnd draws
-        // the vertical transition using that shared point).
-        var runs: [[PortfolioCostBasisChartPoint]] = []
-        var current: [PortfolioCostBasisChartPoint] = [chartPoints[0]]
-        for point in chartPoints.dropFirst() {
-            if point.cost == current.last?.cost {
-                current.append(point)
+        // 先切成「成本相同」的极大段，段与段之间不共享点，这样每段的高度、标签和 id
+        // 一一对应。旧实现让后一段以前一段的末点开头（为了共享那个点画竖直跳变），
+        // 于是首段和次段的首点相同、id 相同，最左边那段的标签会显示成下一段的成本。
+        var levels: [[PortfolioCostBasisChartPoint]] = []
+        for point in chartPoints {
+            if point.cost == levels.last?.last?.cost {
+                levels[levels.count - 1].append(point)
             } else {
-                runs.append(current)
-                current = [current.last!, point]
+                levels.append([point])
             }
         }
-        runs.append(current)
-        return runs.map { run in
-            PortfolioCostBasisSegment(seriesID: item.id, cost: run.last?.cost ?? 0, points: run)
+        return levels.indices.compactMap { index in
+            let level = levels[index]
+            guard let first = level.first, let last = level.last else { return nil }
+            // 水平段右端延到下一段的起点，并把下一段的首点接在后面，`.stepEnd`
+            // 就能在那个 x 上画出竖直跳变；标签仍用本段自己的高度。
+            let next = index + 1 < levels.count ? levels[index + 1].first : nil
+            let points = level + (next.map { [$0] } ?? [])
+            return PortfolioCostBasisSegment(
+                seriesID: item.id,
+                cost: first.cost,
+                points: points,
+                labelX: ((next?.x ?? last.x) + first.x) / 2
+            )
         }
     }
 
@@ -495,11 +517,14 @@ struct PortfolioChartCanvas: View {
                             .interpolationMethod(range == .dayK ? .linear : .stepEnd)
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         }
-                        if range == .fiveDays, let last = segment.points.last {
-                            PointMark(x: .value("行情序号", last.x), y: .value("成本", clampedCost(last.cost)))
+                        if range == .fiveDays {
+                            PointMark(
+                                x: .value("行情序号", segment.labelX),
+                                y: .value("成本", clampedCost(segment.cost))
+                            )
                                 .foregroundStyle(.blue.opacity(0.35))
                                 .symbolSize(1)
-                                .annotation(position: .top, alignment: .trailing, spacing: 2) {
+                                .annotation(position: .top, alignment: .center, spacing: 2) {
                                     Text(yLabel(segment.cost))
                                         .appFont(.caption2.monospacedDigit())
                                         .foregroundStyle(.secondary)

@@ -147,7 +147,7 @@ private struct DesktopRootView: View {
                 }
 
                 Section {
-                    Label("我的", systemImage: "person.crop.circle")
+                    Label("设置", systemImage: "gearshape")
                         .appFont(.body)
                         .tag(RootDestination.profile)
                 }
@@ -179,7 +179,7 @@ private struct DesktopRootView: View {
             }
             .environment(\.isSidebarCollapsed, columnVisibility == .detailOnly)
         case .profile:
-            ProfileView()
+            ProfileSettingsView()
                 .environment(\.isSidebarCollapsed, columnVisibility == .detailOnly)
         case nil:
             ContentUnavailableView("选择一个功能", systemImage: "square.grid.2x2")

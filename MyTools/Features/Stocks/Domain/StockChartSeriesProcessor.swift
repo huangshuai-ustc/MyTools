@@ -277,6 +277,8 @@ enum StockChartSeriesProcessor {
         regularSessionPoints(points, market: .unitedStates)
     }
 
+    /// 按 `regularChartMinuteRanges` 分档，所以收盘集合竞价那根 bar（A 股 15:00、
+    /// 港股 16:00）留在常规时段里，分时图的末点就是真正的收盘价。
     static func regularSessionPoints(
         _ points: [StockChartPoint],
         market: StockMarket
@@ -290,7 +292,7 @@ enum StockChartSeriesProcessor {
             let localMinutes = hour * 60 + minute
             return StockMarketTradingCalendar.containsMinute(
                 localMinutes,
-                in: StockMarketTradingCalendar.regularMinuteRanges(for: market)
+                in: StockMarketTradingCalendar.regularChartMinuteRanges(for: market)
             )
         }
     }

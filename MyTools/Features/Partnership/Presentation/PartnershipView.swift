@@ -128,6 +128,10 @@ private struct PartnershipDetailView: View {
     }
 
     private func content(_ book: PartnershipBook) -> some View {
+        standardTabView(book)
+    }
+
+    private func standardTabView(_ book: PartnershipBook) -> some View {
         TabView(selection: $selectedTab) {
             overviewTab(book)
                 .tag(PartnershipTab.overview)
@@ -140,6 +144,7 @@ private struct PartnershipDetailView: View {
                 .tabItem { Label("流水", systemImage: "list.bullet.rectangle") }
         }
     }
+
 
     private func overviewTab(_ book: PartnershipBook) -> some View {
         let stockSummary = PartnershipCalculator.stockSummary(book)
@@ -270,6 +275,7 @@ private struct PartnershipDetailView: View {
         return colors[index % colors.count]
     }
 }
+
 private struct PartnershipKindTag: View {
     let kind: PartnershipRecordKind
 
