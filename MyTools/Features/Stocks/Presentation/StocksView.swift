@@ -229,29 +229,57 @@ struct StocksView: View {
     @ViewBuilder
     private var pages: some View {
         if hasAnyPosition {
+#if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                iPadPages
+            } else {
+                stockTabView
+            }
+#else
             stockTabView
+#endif
         } else {
             watchlistPage
         }
     }
 
-    private var stockTabView: some View {
-            TabView(selection: $selectedPage) {
-                Tab(
-                    StocksHomePage.positions.title,
-                    systemImage: StocksHomePage.positions.systemImage,
-                    value: StocksHomePage.positions
-                ) {
-                    positionsPage
-                }
-                Tab(
-                    StocksHomePage.watchlist.title,
-                    systemImage: StocksHomePage.watchlist.systemImage,
-                    value: StocksHomePage.watchlist
-                ) {
-                    watchlistPage
-                }
+#if os(iOS)
+    private var iPadPages: some View {
+        Group {
+            switch selectedPage {
+            case .positions:
+                positionsPage
+            case .watchlist:
+                watchlistPage
             }
+        }
+        .appIPadInternalTabBar(selection: $selectedPage, items: stockTabItems)
+    }
+
+    private var stockTabItems: [AppInternalTabItem<StocksHomePage>] {
+        StocksHomePage.allCases.map { page in
+            AppInternalTabItem(page, title: page.title, systemImage: page.systemImage)
+        }
+    }
+#endif
+
+    private var stockTabView: some View {
+        TabView(selection: $selectedPage) {
+            Tab(
+                StocksHomePage.positions.title,
+                systemImage: StocksHomePage.positions.systemImage,
+                value: StocksHomePage.positions
+            ) {
+                positionsPage
+            }
+            Tab(
+                StocksHomePage.watchlist.title,
+                systemImage: StocksHomePage.watchlist.systemImage,
+                value: StocksHomePage.watchlist
+            ) {
+                watchlistPage
+            }
+        }
     }
 
 

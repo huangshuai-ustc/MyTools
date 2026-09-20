@@ -157,10 +157,23 @@ private struct DesktopRootView: View {
             .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
         } detail: {
             detailView
-                .appReadableContent(maxWidth: 960)
+                .appReadableContent(
+                    maxWidth: 960,
+                    fillsAvailableWidth: columnVisibility == .detailOnly
+                )
                 .frame(maxHeight: .infinity, alignment: .top)
         }
         .navigationSplitViewStyle(.balanced)
+#if os(iOS)
+        // `NavigationSplitView` otherwise exposes a second, transient sidebar
+        // presentation from the leading-edge gesture. That overlay differs from
+        // the toolbar button's balanced two-column layout and leaves floating
+        // margins around the sidebar. Keep one predictable presentation model.
+        .background {
+            SplitViewEdgeGestureConfigurator(allowsPresentationGesture: false)
+                .frame(width: 0, height: 0)
+        }
+#endif
         .onAppear(perform: normalizeSelection)
         .onChange(of: moduleSettings.orderedModules) { _, _ in
             normalizeSelection()
@@ -196,6 +209,82 @@ private struct DesktopRootView: View {
         selection = visibleModules.first.map(RootDestination.module) ?? .profile
     }
 }
+
+#if os(iOS)
+private struct SplitViewEdgeGestureConfigurator: UIViewControllerRepresentable {
+    let allowsPresentationGesture: Bool
+
+    func makeUIViewController(context: Context) -> ConfiguratorViewController {
+        ConfiguratorViewController(allowsPresentationGesture: allowsPresentationGesture)
+    }
+
+    func updateUIViewController(
+        _ viewController: ConfiguratorViewController,
+        context: Context
+    ) {
+        viewController.allowsPresentationGesture = allowsPresentationGesture
+        viewController.applyConfigurationWhenAttached()
+    }
+
+    final class ConfiguratorViewController: UIViewController {
+        var allowsPresentationGesture: Bool
+
+        init(allowsPresentationGesture: Bool) {
+            self.allowsPresentationGesture = allowsPresentationGesture
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            applyConfigurationWhenAttached()
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyConfiguration()
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyConfiguration()
+        }
+
+        func applyConfigurationWhenAttached() {
+            // SwiftUI can attach this representable one run-loop turn before its
+            // hosting controller is parented into UISplitViewController.
+            DispatchQueue.main.async { [weak self] in
+                self?.applyConfiguration()
+            }
+        }
+
+        private func applyConfiguration() {
+            guard let rootViewController = view.window?.rootViewController else { return }
+            configureSplitViewControllers(in: rootViewController)
+        }
+
+        private func configureSplitViewControllers(in viewController: UIViewController) {
+            if let splitViewController = viewController as? UISplitViewController {
+                splitViewController.presentsWithGesture = allowsPresentationGesture
+                // UIKit's automatic policy hides the display-mode button when
+                // presentsWithGesture is false. Keep the explicit button usable.
+                splitViewController.displayModeButtonVisibility = .always
+            }
+
+            for child in viewController.children {
+                configureSplitViewControllers(in: child)
+            }
+            if let presentedViewController = viewController.presentedViewController {
+                configureSplitViewControllers(in: presentedViewController)
+            }
+        }
+    }
+}
+#endif
 
 private struct InitialDataLoadingView: View {
     var body: some View {

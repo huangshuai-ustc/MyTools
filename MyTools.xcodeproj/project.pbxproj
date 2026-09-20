@@ -129,6 +129,7 @@
 		AX0000000000000000000004 /* StockHomeRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000004 /* StockHomeRows.swift */; };
 		AX0000000000000000000005 /* StockPortfolioOverviewRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000005 /* StockPortfolioOverviewRow.swift */; };
 		AX0000000000000000000006 /* StockSparklineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000006 /* StockSparklineTests.swift */; };
+		AX0000000000000000000008 /* StockTradingCalendarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000008 /* StockTradingCalendarTests.swift */; };
 		AX0000000000000000000007 /* StockActiveQuoteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BX0000000000000000000007 /* StockActiveQuoteTests.swift */; };
 		AG0000000000000000000005 /* ToolModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000005 /* ToolModule.swift */; };
 		AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */; };
@@ -366,6 +367,7 @@
 		BX0000000000000000000004 /* StockHomeRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockHomeRows.swift; sourceTree = "<group>"; };
 		BX0000000000000000000005 /* StockPortfolioOverviewRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockPortfolioOverviewRow.swift; sourceTree = "<group>"; };
 		BX0000000000000000000006 /* StockSparklineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockSparklineTests.swift; sourceTree = "<group>"; };
+		BX0000000000000000000008 /* StockTradingCalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTradingCalendarTests.swift; sourceTree = "<group>"; };
 		BX0000000000000000000007 /* StockActiveQuoteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockActiveQuoteTests.swift; sourceTree = "<group>"; };
 		BG0000000000000000000005 /* ToolModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModule.swift; sourceTree = "<group>"; };
 		BG0000000000000000000006 /* AppStoreBackupProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBackupProcessorTests.swift; sourceTree = "<group>"; };
@@ -482,13 +484,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-        D90000000000000000000001 = {
-            isa = PBXGroup;
-            name = Partnership;
-            path = MyTools/Features/Partnership;
-            sourceTree = "<group>";
-            children = (B91F00000000000000000001, B90000000000000000000002, B90000000000000000000003, B90000000000000000000004);
-        };
+		D90000000000000000000001 = {
+			isa = PBXGroup;
+			name = Partnership;
+			path = Partnership;
+			sourceTree = "<group>";
+			children = (B91F00000000000000000001, B90000000000000000000002, B90000000000000000000003, B90000000000000000000004);
+		};
 		C30000000000000000000001 /* CloudSync */ = {
 			isa = PBXGroup;
 			children = (
@@ -504,7 +506,6 @@
 		D00000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				D90000000000000000000001 /* Partnership */,
 				B90000000000000000000005 /* PartnershipTests.swift */,
 				D00000000000000000000006 /* MyTools */,
 				DD0000000000000000000001 /* MyToolsTests */,
@@ -527,6 +528,7 @@
 				XF1000000000000000000001 /* Documents */,
 				Y30000000000000000000001 /* Bills */,
 				SL10000000000000000000001 /* SportsLottery */,
+				D90000000000000000000001 /* Partnership */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -748,6 +750,7 @@
 				BF0000000000000000000003 /* StockQuoteServiceTests.swift */,
 				BF0000000000000000000004 /* StockChartPresentationTests.swift */,
 				BX0000000000000000000006 /* StockSparklineTests.swift */,
+				BX0000000000000000000008 /* StockTradingCalendarTests.swift */,
 				BX0000000000000000000007 /* StockActiveQuoteTests.swift */,
 			);
 			path = Stocks;
@@ -1676,6 +1679,7 @@
 				AF0000000000000000000003 /* StockQuoteServiceTests.swift in Sources */,
 				AF0000000000000000000004 /* StockChartPresentationTests.swift in Sources */,
 				AX0000000000000000000006 /* StockSparklineTests.swift in Sources */,
+				AX0000000000000000000008 /* StockTradingCalendarTests.swift in Sources */,
 				AX0000000000000000000007 /* StockActiveQuoteTests.swift in Sources */,
 				AF0000000000000000000005 /* MedicalRecordsPresentationTests.swift in Sources */,
 				AG0000000000000000000006 /* AppStoreBackupProcessorTests.swift in Sources */,

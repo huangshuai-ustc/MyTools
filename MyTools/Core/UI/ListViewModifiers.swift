@@ -679,6 +679,28 @@ struct HiddenItemsVisibilityButton: View {
 }
 
 extension View {
+    /// Places an app-internal page switcher at the bottom on iPad. Use this for
+    /// feature-level navigation (for example overview/list/history), rather than
+    /// relying on `TabView`, whose regular-width adaptation moves tabs to the top.
+    @ViewBuilder
+    func appIPadInternalTabBar<Selection: Hashable>(
+        selection: Binding<Selection>,
+        items: [AppInternalTabItem<Selection>]
+    ) -> some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            safeAreaInset(edge: .bottom, spacing: 0) {
+                AppInternalTabBar(selection: selection, items: items)
+                    .padding(.vertical, 12)
+            }
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
+
     func appAdaptiveLargeNavigationTitle() -> some View {
         modifier(AdaptiveLargeNavigationTitleModifier())
     }
@@ -794,13 +816,16 @@ extension View {
     }
 
     @ViewBuilder
-    func appReadableContent(maxWidth: CGFloat = 960) -> some View {
+    func appReadableContent(
+        maxWidth: CGFloat = 960,
+        fillsAvailableWidth: Bool = false
+    ) -> some View {
 #if os(macOS)
-        frame(maxWidth: maxWidth)
+        frame(maxWidth: fillsAvailableWidth ? .infinity : maxWidth)
             .frame(maxWidth: .infinity, alignment: .center)
 #elseif os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
-            frame(maxWidth: maxWidth)
+            frame(maxWidth: fillsAvailableWidth ? .infinity : maxWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
         } else {
             self
@@ -808,6 +833,56 @@ extension View {
 #else
         self
 #endif
+    }
+}
+
+struct AppInternalTabItem<Selection: Hashable> {
+    let value: Selection
+    let title: String
+    let systemImage: String
+
+    init(_ value: Selection, title: String, systemImage: String) {
+        self.value = value
+        self.title = title
+        self.systemImage = systemImage
+    }
+}
+
+private struct AppInternalTabBar<Selection: Hashable>: View {
+    @Binding var selection: Selection
+    let items: [AppInternalTabItem<Selection>]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                Button {
+                    withAnimation(.snappy) {
+                        selection = item.value
+                    }
+                } label: {
+                    Label(item.title, systemImage: item.systemImage)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selection == item.value ? Color.accentColor : Color.primary)
+                .background {
+                    if selection == item.value {
+                        Capsule().fill(Color.accentColor.opacity(0.14))
+                    }
+                }
+                .accessibilityAddTraits(selection == item.value ? .isSelected : [])
+            }
+        }
+        .padding(5)
+        .frame(width: max(CGFloat(items.count) * 124, 270))
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule().stroke(.separator.opacity(0.35), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
     }
 }
 

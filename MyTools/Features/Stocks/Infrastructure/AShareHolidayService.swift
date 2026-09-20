@@ -23,45 +23,41 @@ private struct HolidayCNFile: Codable, Sendable {
 
 // MARK: - Thread-safe snapshot (for synchronous reads from TradingCalendar)
 
-/// A read-only snapshot of the service's override tables, published to a
+/// A read-only snapshot of the service's holiday table, published to a
 /// reference type that `StockMarketTradingCalendar` can query synchronously
 /// without needing `await`.
 final class AShareHolidaySnapshot: @unchecked Sendable {
     // Protected by the nonisolated(unsafe) annotation: mutations happen only
     // from within the actor before the value is published here.
-    nonisolated(unsafe) private(set) var workDayOverrides: [Int: Set<Int>] = [:]
     nonisolated(unsafe) private(set) var holidayOverrides: [Int: Set<Int>] = [:]
 
-    fileprivate func update(
-        workDayOverrides: [Int: Set<Int>],
-        holidayOverrides: [Int: Set<Int>]
-    ) {
-        self.workDayOverrides = workDayOverrides
+    /// 填充休市表。生产路径只由 `AShareHolidayService` 在解析完数据后调用；
+    /// 测试用它注入一份确定的休市表。
+    func update(holidayOverrides: [Int: Set<Int>]) {
         self.holidayOverrides = holidayOverrides
     }
 
-    /// Synchronously returns a trading-day override for `date`.
+    /// 同步查询 `date` 是不是法定休市日（含调休放出来的假日）。
     ///
-    /// - Returns `true`  → compensatory work day (补班); trades even on weekends.
-    /// - Returns `false` → mandated holiday; does not trade even on weekdays.
-    /// - Returns `nil`   → no override available; fall back to built-in algorithm.
-    func tradingDayOverride(for date: Date, calendar: Calendar) -> Bool? {
+    /// 只回答「休市」这一半。holiday-cn 里 `isOffDay == false` 的补班日被刻意丢弃：
+    /// 调休上班日证券市场并不交易，理由见 `StockMarketTradingCalendar`
+    /// 的 `tradingDayPredicate`。
+    func isMandatedHoliday(for date: Date, calendar: Calendar) -> Bool {
         let year = calendar.component(.year, from: date)
         let components = calendar.dateComponents([.month, .day], from: date)
-        guard let month = components.month, let day = components.day else { return nil }
-        let key = month * 100 + day
-        if workDayOverrides[year]?.contains(key) == true { return true }
-        if holidayOverrides[year]?.contains(key) == true { return false }
-        return nil
+        guard let month = components.month, let day = components.day else { return false }
+        return holidayOverrides[year]?.contains(month * 100 + day) == true
     }
 }
 
 // MARK: - Service
 
-/// Fetches and caches the A-share trading calendar for any given year from the
-/// holiday-cn open-data repository. Results are merged with the built-in
-/// algorithm in `StockMarketTradingCalendar` to provide accurate closures and
-/// compensatory-work-day (补班) information without manual annual maintenance.
+/// Fetches and caches the A-share holiday calendar for any given year from the
+/// holiday-cn open-data repository, so the built-in fixed-holiday table in
+/// `StockMarketTradingCalendar` doesn't need manual annual maintenance.
+///
+/// 只消费数据源里的休市日。补班日（`isOffDay == false`）被丢掉：调休上班的
+/// 周末证券市场不交易，见 `StockMarketTradingCalendar.tradingDayPredicate`。
 ///
 /// - Thread safety: All async methods are actor-isolated. Synchronous reads for
 ///   the trading calendar go through `snapshot`, a separately published value.
@@ -81,8 +77,6 @@ actor AShareHolidayService {
         static func fetchedAt(_ year: Int) -> String { "ashare-holiday-cn-fetched-at-\(year)" }
     }
 
-    /// Days that are mandated working days (补班) in the given year.
-    private var workDayOverrides: [Int: Set<Int>] = [:]
     /// Days that are mandated rest days / non-trading days beyond weekends.
     private var holidayOverrides: [Int: Set<Int>] = [:]
     /// Years whose data has been loaded (from cache or network).
@@ -157,7 +151,6 @@ actor AShareHolidayService {
     // MARK: - Parsing
 
     private func applyFile(_ file: HolidayCNFile, year: Int) {
-        var workDays = Set<Int>()
         var holidays = Set<Int>()
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -165,22 +158,18 @@ actor AShareHolidayService {
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .gmt
 
         for entry in file.days {
-            guard let date = formatter.date(from: entry.date) else { continue }
+            // 只收休市日。`isOffDay == false` 的补班日对证券市场没有意义：
+            // 调休上班的周末照旧不交易。
+            guard entry.isOffDay, let date = formatter.date(from: entry.date) else { continue }
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .gmt
             let comps = cal.dateComponents([.month, .day], from: date)
             guard let m = comps.month, let d = comps.day else { continue }
-            let key = m * 100 + d
-            if entry.isOffDay {
-                holidays.insert(key)
-            } else {
-                workDays.insert(key)
-            }
+            holidays.insert(m * 100 + d)
         }
-        workDayOverrides[year] = workDays
         holidayOverrides[year] = holidays
         // Publish to the snapshot so synchronous readers see the update.
-        snapshot.update(workDayOverrides: workDayOverrides, holidayOverrides: holidayOverrides)
+        snapshot.update(holidayOverrides: holidayOverrides)
     }
 
     // MARK: - Persistence

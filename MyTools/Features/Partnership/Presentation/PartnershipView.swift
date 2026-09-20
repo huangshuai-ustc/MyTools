@@ -127,9 +127,43 @@ private struct PartnershipDetailView: View {
         }
     }
 
+    @ViewBuilder
     private func content(_ book: PartnershipBook) -> some View {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            iPadTabContent(book)
+        } else {
+            standardTabView(book)
+        }
+#else
         standardTabView(book)
+#endif
     }
+
+#if os(iOS)
+    @ViewBuilder
+    private func iPadTabContent(_ book: PartnershipBook) -> some View {
+        Group {
+            switch selectedTab {
+            case .overview:
+                overviewTab(book)
+            case .trades:
+                tradesTab(book)
+            case .flow:
+                flowTab(book)
+            }
+        }
+        .appIPadInternalTabBar(selection: $selectedTab, items: partnershipTabItems)
+    }
+
+    private var partnershipTabItems: [AppInternalTabItem<PartnershipTab>] {
+        [
+            AppInternalTabItem(.overview, title: "总览", systemImage: "chart.pie"),
+            AppInternalTabItem(.trades, title: "交易", systemImage: "chart.line.uptrend.xyaxis"),
+            AppInternalTabItem(.flow, title: "流水", systemImage: "list.bullet.rectangle")
+        ]
+    }
+#endif
 
     private func standardTabView(_ book: PartnershipBook) -> some View {
         TabView(selection: $selectedTab) {

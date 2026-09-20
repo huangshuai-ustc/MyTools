@@ -6,6 +6,7 @@ import SwiftUI
 /// the widths have to be explicit. They scale with the macOS font setting.
 enum StockPositionColumnMetrics {
     static let spacing: CGFloat = 6
+    static let wideLayoutThreshold: CGFloat = 600
     /// Approximate width of the list disclosure indicator, applied to the header
     /// so its labels line up with the data rows beneath it.
     static let disclosureAllowance: CGFloat = 12
@@ -18,6 +19,14 @@ enum StockPositionColumnMetrics {
     static func change(_ fontScale: CGFloat?) -> CGFloat { scaled(60, fontScale) }
     static func shares(_ fontScale: CGFloat?) -> CGFloat { scaled(46, fontScale) }
     static func profit(_ fontScale: CGFloat?) -> CGFloat { scaled(66, fontScale) }
+
+    static func usesEqualColumns(at width: CGFloat) -> Bool {
+        width >= wideLayoutThreshold
+    }
+
+    static func equalColumnWidth(for width: CGFloat) -> CGFloat {
+        max((width - spacing * 4) / 5, 0)
+    }
 }
 
 /// Secondary percentages in the dense home rows. Deliberately smaller than
@@ -29,18 +38,14 @@ struct StockPositionColumnHeader: View {
     @Environment(\.appFontScale) private var fontScale
 
     var body: some View {
-#if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            GeometryReader { proxy in
-                iPadHeader(width: proxy.size.width)
+        GeometryReader { proxy in
+            if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
+                equalColumnHeader(width: proxy.size.width)
+            } else {
+                standardHeader
             }
-            .frame(minHeight: 24)
-        } else {
-            standardHeader
         }
-#else
-        standardHeader
-#endif
+        .frame(minHeight: 24)
     }
 
     private var standardHeader: some View {
@@ -64,18 +69,19 @@ struct StockPositionColumnHeader: View {
         .accessibilityHidden(true)
     }
 
-    private func iPadHeader(width: CGFloat) -> some View {
-        HStack(spacing: StockPositionColumnMetrics.spacing) {
+    private func equalColumnHeader(width: CGFloat) -> some View {
+        let columnWidth = StockPositionColumnMetrics.equalColumnWidth(for: width)
+        return HStack(spacing: StockPositionColumnMetrics.spacing) {
             Text("投资产品")
-                .frame(width: width * 0.34, alignment: .leading)
+                .frame(width: columnWidth, alignment: .leading)
             Text("最新价")
-                .frame(width: width * 0.13, alignment: .leading)
+                .frame(width: columnWidth, alignment: .leading)
             Text("涨跌")
-                .frame(width: width * 0.18, alignment: .leading)
+                .frame(width: columnWidth, alignment: .leading)
             Text("持仓")
-                .frame(width: width * 0.14, alignment: .leading)
+                .frame(width: columnWidth, alignment: .leading)
             Text("盈亏")
-                .frame(width: width * 0.16, alignment: .leading)
+                .frame(width: columnWidth, alignment: .leading)
         }
         .appFont(.caption2)
         .foregroundStyle(.secondary)
@@ -94,18 +100,14 @@ struct StockPositionRow: View {
     let extendedHours: StockExtendedHoursPerformance?
 
     var body: some View {
-#if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            GeometryReader { proxy in
-                iPadBody(width: proxy.size.width)
+        GeometryReader { proxy in
+            if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
+                equalColumnBody(width: proxy.size.width)
+            } else {
+                standardBody
             }
-            .frame(minHeight: 42)
-        } else {
-            standardBody
         }
-#else
-        standardBody
-#endif
+        .frame(minHeight: 42)
     }
 
     private var standardBody: some View {
@@ -134,13 +136,14 @@ struct StockPositionRow: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private func iPadBody(width: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
-            identityColumn.frame(width: width * 0.34, alignment: .leading)
-            priceColumn.frame(width: width * 0.13, alignment: .leading)
-            valueColumn(width: width * 0.18, primary: changeAmountText, secondary: changePercentText, color: quoteColor)
-            valueColumn(width: width * 0.14, primary: StockValueFormatter.integerQuantity(stock.currentShares), secondary: costShare.map(StockValueFormatter.allocationPercent))
-            valueColumn(width: width * 0.16, primary: holdingProfitLossText, secondary: holdingProfitRateText, color: holdingProfitColor)
+    private func equalColumnBody(width: CGFloat) -> some View {
+        let columnWidth = StockPositionColumnMetrics.equalColumnWidth(for: width)
+        return HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
+            identityColumn.frame(width: columnWidth, alignment: .leading)
+            priceColumn.frame(width: columnWidth, alignment: .leading)
+            valueColumn(width: columnWidth, primary: changeAmountText, secondary: changePercentText, color: quoteColor)
+            valueColumn(width: columnWidth, primary: StockValueFormatter.integerQuantity(stock.currentShares), secondary: costShare.map(StockValueFormatter.allocationPercent))
+            valueColumn(width: columnWidth, primary: holdingProfitLossText, secondary: holdingProfitRateText, color: holdingProfitColor)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)

@@ -9,8 +9,8 @@ enum StockMarketSession: String, Sendable {
 }
 
 enum StockMarketTradingCalendar {
-    // Kept as a last-resort fallback for years whose data has not been fetched
-    // yet. `AShareHolidayService` supersedes these entries when data is loaded.
+    /// 内置休市表之外的零散休市日，用于还没抓到 `AShareHolidayService` 数据的年份。
+    /// 数据到位后这里的条目只是多一层保险：两张表都只说「这天休市」，取并集即可。
     private static let additionalAShareClosures: [Int: Set<Int>] = [
         2025: [602, 1008],
         2026: [102, 406]
@@ -63,97 +63,75 @@ enum StockMarketTradingCalendar {
         ranges.contains { minute >= $0.start && minute < $0.end }
     }
 
-    static func isOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
-        switch market {
-        case .aShare:
-            let cal = calendar(timeZone: "Asia/Shanghai")
-            guard isAShareTradingDay(date, calendar: cal) else { return false }
-            let components = cal.dateComponents([.hour, .minute], from: date)
-            guard let hour = components.hour, let minute = components.minute else { return false }
-            let localMinutes = hour * 60 + minute
-            return containsMinute(localMinutes, in: regularMinuteRanges(for: .aShare))
-        case .hongKong:
-            return isOpen(
-                date,
-                timeZone: "Asia/Hong_Kong",
-                sessions: regularMinuteRanges(for: .hongKong),
-                holiday: isHongKongHoliday
-            )
-        case .unitedStates:
-            return isOpen(
-                date,
-                timeZone: "America/New_York",
-                sessions: regularMinuteRanges(for: .unitedStates),
-                holiday: isUnitedStatesHoliday
-            )
-        }
+    static func isOpen(
+        _ market: StockMarket,
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        let rules = rules(for: market, snapshot: snapshot)
+        return isActive(at: date, in: rules.regularRanges, rules: rules)
     }
 
     /// Whether a market is currently publishing an active session, including
     /// pre-market/auction data where the provider supports it.
-    static func isSessionActive(_ market: StockMarket, at date: Date = Date()) -> Bool {
-        session(for: market, at: date) != .closed
+    static func isSessionActive(
+        _ market: StockMarket,
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        session(for: market, at: date, snapshot: snapshot) != .closed
     }
 
-    static func session(for market: StockMarket, at date: Date = Date()) -> StockMarketSession {
-        if isOpen(market, at: date) { return .regular }
-        if isPreMarketOpen(market, at: date) { return .preMarket }
-        if isPostMarketOpen(market, at: date) { return .postMarket }
+    /// 当前所处时段。三个候选区间共用同一份规则，所以市场时区的 `Calendar` 和
+    /// 交易日判定各只算一次——这是全模块最热的日历入口（刷新协调、图表分档、
+    /// 行内报价都走它）。
+    static func session(
+        for market: StockMarket,
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> StockMarketSession {
+        let rules = rules(for: market, snapshot: snapshot)
+        if isActive(at: date, in: rules.regularRanges, rules: rules) { return .regular }
+        if let range = rules.preMarketRange, isActive(at: date, in: [range], rules: rules) {
+            return .preMarket
+        }
+        if let range = rules.postMarketRange, isActive(at: date, in: [range], rules: rules) {
+            return .postMarket
+        }
         return .closed
     }
 
-    static func isPreMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
-        switch market {
-        case .aShare:
-            return false
-        case .hongKong:
-            return false
-        case .unitedStates:
-            return isOpen(
-                date,
-                timeZone: "America/New_York",
-                sessions: [preMarketMinuteRange(for: .unitedStates)!],
-                holiday: isUnitedStatesHoliday
-            )
-        }
+    /// 只有美股有盘前/盘后区间，A 股与港股的 `preMarketRange`/`postMarketRange`
+    /// 为 nil，于是这两个入口自然为假，不需要按市场写分支。
+    static func isPreMarketOpen(
+        _ market: StockMarket,
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        let rules = rules(for: market, snapshot: snapshot)
+        guard let range = rules.preMarketRange else { return false }
+        return isActive(at: date, in: [range], rules: rules)
     }
 
-    static func isPostMarketOpen(_ market: StockMarket, at date: Date = Date()) -> Bool {
-        switch market {
-        case .aShare:
-            return false
-        case .hongKong:
-            return false
-        case .unitedStates:
-            return isOpen(
-                date,
-                timeZone: "America/New_York",
-                sessions: [postMarketMinuteRange(for: .unitedStates)!],
-                holiday: isUnitedStatesHoliday
-            )
-        }
+    static func isPostMarketOpen(
+        _ market: StockMarket,
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        let rules = rules(for: market, snapshot: snapshot)
+        guard let range = rules.postMarketRange else { return false }
+        return isActive(at: date, in: [range], rules: rules)
     }
 
     /// Returns whether the date is a weekday on which this market has a session.
     /// This deliberately does not require the current time to be inside a session.
-    static func isTradingDay(_ market: StockMarket, on date: Date) -> Bool {
-        switch market {
-        case .aShare:
-            let cal = calendar(timeZone: "Asia/Shanghai")
-            return isAShareTradingDay(date, calendar: cal)
-        case .hongKong:
-            return isTradingDay(
-                date,
-                timeZone: "Asia/Hong_Kong",
-                holiday: isHongKongHoliday
-            )
-        case .unitedStates:
-            return isTradingDay(
-                date,
-                timeZone: "America/New_York",
-                holiday: isUnitedStatesHoliday
-            )
-        }
+    static func isTradingDay(
+        _ market: StockMarket,
+        on date: Date,
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        let rules = rules(for: market, snapshot: snapshot)
+        return rules.isTradingDay(date, rules.calendar)
     }
 
     /// Returns the market-local start of the trading day immediately before
@@ -162,9 +140,11 @@ enum StockMarketTradingCalendar {
     /// treating an older close as the previous session's close.
     static func previousTradingDay(
         for market: StockMarket,
-        before date: Date
+        before date: Date,
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
     ) -> Date? {
-        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let rules = rules(for: market, snapshot: snapshot)
+        let calendar = rules.calendar
         let containingDay = calendar.startOfDay(for: date)
         guard var currentDay = calendar.date(
             byAdding: .day,
@@ -173,7 +153,7 @@ enum StockMarketTradingCalendar {
         ) else { return nil }
 
         for _ in 0..<370 {
-            if isTradingDay(market, on: currentDay) {
+            if rules.isTradingDay(currentDay, calendar) {
                 return calendar.startOfDay(for: currentDay)
             }
             guard let previousDay = calendar.date(
@@ -190,306 +170,183 @@ enum StockMarketTradingCalendar {
     static func finalSessionEnded(
         for market: StockMarket,
         between startDate: Date,
-        and endDate: Date
+        and endDate: Date,
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
     ) -> Bool {
-        guard endDate > startDate else { return false }
+        let rules = rules(for: market, snapshot: snapshot)
+        guard let finalRange = rules.regularRanges.last else { return false }
+        return didAnySessionEnd(
+            in: [finalRange],
+            rules: rules,
+            between: startDate,
+            and: endDate
+        )
+    }
 
-        switch market {
-        case .aShare:
-            let cal = calendar(timeZone: "Asia/Shanghai")
-            return aShareFinalSessionEnded(
-                between: startDate,
-                and: endDate,
-                sessions: regularMinuteRanges(for: .aShare),
-                calendar: cal
-            )
-        case .hongKong:
-            return finalSessionEnded(
-                between: startDate,
-                and: endDate,
-                timeZone: "Asia/Hong_Kong",
-                sessions: regularMinuteRanges(for: .hongKong),
-                holiday: isHongKongHoliday
-            )
-        case .unitedStates:
-            return finalSessionEnded(
-                between: startDate,
-                and: endDate,
-                timeZone: "America/New_York",
-                sessions: regularMinuteRanges(for: .unitedStates),
-                holiday: isUnitedStatesHoliday
-            )
-        }
+    /// 任意一个常规时段（含 A 股/港股午休前那半场）在区间内收盘。
+    static func sessionEnded(
+        for market: StockMarket,
+        between startDate: Date,
+        and endDate: Date,
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Bool {
+        let rules = rules(for: market, snapshot: snapshot)
+        return didAnySessionEnd(
+            in: rules.regularRanges,
+            rules: rules,
+            between: startDate,
+            and: endDate
+        )
     }
 
     /// Identifies the most recent completed trading day, so a refresh attempt
     /// can be de-duplicated by session rather than by an arbitrary time window.
+    ///
+    /// 收盘时刻取自 `regularRanges.last.end`，不再由调用方手写分钟数——原先
+    /// A 股 900、港股/美股 960 分三处传参，改一处时段就得同步改三处。
     static func latestCompletedFinalSessionEnd(
         for market: StockMarket,
-        at date: Date = Date()
+        at date: Date = Date(),
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
     ) -> Date? {
+        let rules = rules(for: market, snapshot: snapshot)
+        guard let finalMinute = rules.regularRanges.last?.end else { return nil }
+        let calendar = rules.calendar
+        var currentDay = calendar.startOfDay(for: date)
+
+        for _ in 0..<370 {
+            if rules.isTradingDay(currentDay, calendar),
+               let sessionEnd = calendar.date(
+                   byAdding: .minute,
+                   value: finalMinute,
+                   to: currentDay
+               ),
+               sessionEnd <= date {
+                return sessionEnd
+            }
+
+            guard let previousDay = calendar.date(
+                byAdding: .day,
+                value: -1,
+                to: currentDay
+            ) else { break }
+            currentDay = previousDay
+        }
+        return nil
+    }
+
+    // MARK: - 每个市场一份规则，每种算法只有一份实现
+
+    /// 一个市场的交易日历规则：时区、时段区间，以及**这一天是否开市**。
+    ///
+    /// 关键在最后一项问的是「交易日」而不是「节假日」。上一版的通用算法收
+    /// `holiday: (Date, Calendar) -> Bool`，而 A 股的开市与否还得查
+    /// `AShareHolidayService` 联网抓来的休市表，闭包表达不了，于是每个算法都被
+    /// 复制出一个 `aShare*` 版本（`isOpen` 里还内联了第三份）。更糟的是「节假日」
+    /// 和「非交易日」被当成同一件事——周末不是节假日，却同样不开市；调休补班日
+    /// 被判成交易日正是这个混淆的产物。
+    ///
+    /// 现在市场差异全部收进这个结构，时段算法各只有一份实现。
+    private struct Rules {
+        let calendar: Calendar
+        let regularRanges: [(start: Int, end: Int)]
+        let preMarketRange: (start: Int, end: Int)?
+        let postMarketRange: (start: Int, end: Int)?
+        /// 这一天该市场是否开市。周末判定包含在内，没有市场能绕过它。
+        let isTradingDay: (Date, Calendar) -> Bool
+    }
+
+    private static func rules(
+        for market: StockMarket,
+        snapshot: AShareHolidaySnapshot = AShareHolidayService.shared.snapshot
+    ) -> Rules {
+        Rules(
+            calendar: calendar(for: market),
+            regularRanges: regularMinuteRanges(for: market),
+            preMarketRange: preMarketMinuteRange(for: market),
+            postMarketRange: postMarketMinuteRange(for: market),
+            isTradingDay: tradingDayPredicate(for: market, snapshot: snapshot)
+        )
+    }
+
+    /// 每个市场「这一天是否开市」的判定。三者都以周一至周五为第一道闸，
+    /// 差别只在休市日的来源。
+    private static func tradingDayPredicate(
+        for market: StockMarket,
+        snapshot: AShareHolidaySnapshot
+    ) -> (Date, Calendar) -> Bool {
         switch market {
         case .aShare:
-            let cal = calendar(timeZone: "Asia/Shanghai")
-            return aShareLatestCompletedFinalSessionEnd(
-                at: date,
-                finalSessionEndMinute: 900,
-                calendar: cal
-            )
+            // 沪深交易所的交易日只有周一至周五里不休市的那些天。**调休补班日不交易**：
+            // 国务院把某个周末调成上班日时，证券市场照旧休市。2025 年全部 5 个补班日
+            // （01-26、02-08、04-27、09-28、10-11）在上证指数日 K 里都没有任何一根
+            // 柱子，腾讯行情在这些天也不推新数据。所以 `AShareHolidayService` 只补
+            // 「法定节假日落在周一至周五」这一半，它的补班标记在解析时就被丢弃——
+            // 当成交易日会让页面一边显示「交易中」、一边永远刷不出新数据。
+            //
+            // snapshot 是引用类型，其内容只在 actor 内部发布前写入，因此这里的同步
+            // 读取在任意线程都安全。
+            return { date, calendar in
+                isWeekday(date, calendar)
+                    && !snapshot.isMandatedHoliday(for: date, calendar: calendar)
+                    && !isAShareHoliday(date, calendar)
+            }
         case .hongKong:
-            return latestCompletedFinalSessionEnd(
-                at: date,
-                timeZone: "Asia/Hong_Kong",
-                finalSessionEndMinute: 960,
-                holiday: isHongKongHoliday
-            )
+            return { date, calendar in
+                isWeekday(date, calendar) && !isHongKongHoliday(date, calendar)
+            }
         case .unitedStates:
-            return latestCompletedFinalSessionEnd(
-                at: date,
-                timeZone: "America/New_York",
-                finalSessionEndMinute: 960,
-                holiday: isUnitedStatesHoliday
-            )
+            return { date, calendar in
+                isWeekday(date, calendar) && !isUnitedStatesHoliday(date, calendar)
+            }
         }
     }
 
-    static func sessionEnded(
-        for market: StockMarket,
+    /// 周一至周五。`Calendar` 的 `weekday` 里 1 是周日、7 是周六。
+    private static func isWeekday(_ date: Date, _ calendar: Calendar) -> Bool {
+        (2...6).contains(calendar.component(.weekday, from: date))
+    }
+
+    /// `date` 是否落在给定的某个时段内。区间右开，理由见 `regularMinuteRanges`。
+    private static func isActive(
+        at date: Date,
+        in ranges: [(start: Int, end: Int)],
+        rules: Rules
+    ) -> Bool {
+        guard rules.isTradingDay(date, rules.calendar),
+              let minute = localMinute(of: date, calendar: rules.calendar) else {
+            return false
+        }
+        return containsMinute(minute, in: ranges)
+    }
+
+    private static func localMinute(of date: Date, calendar: Calendar) -> Int? {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return nil }
+        return hour * 60 + minute
+    }
+
+    /// `ranges` 里是否有任意一个时段的收盘时刻落在 `(startDate, endDate]` 内。
+    ///
+    /// 左开右闭：收盘那一刻算「刚刚收过盘」，不算「上一次已经处理过」。
+    /// `finalSessionEnded` 传最后一个时段（跳过午休），`sessionEnded` 传全部。
+    private static func didAnySessionEnd(
+        in ranges: [(start: Int, end: Int)],
+        rules: Rules,
         between startDate: Date,
         and endDate: Date
     ) -> Bool {
-        guard endDate > startDate else { return false }
-
-        switch market {
-        case .aShare:
-            let cal = calendar(timeZone: "Asia/Shanghai")
-            return aShareSessionEnded(
-                between: startDate,
-                and: endDate,
-                sessions: regularMinuteRanges(for: .aShare),
-                calendar: cal
-            )
-        case .hongKong:
-            return sessionEnded(
-                between: startDate,
-                and: endDate,
-                timeZone: "Asia/Hong_Kong",
-                sessions: regularMinuteRanges(for: .hongKong),
-                holiday: isHongKongHoliday
-            )
-        case .unitedStates:
-            return sessionEnded(
-                between: startDate,
-                and: endDate,
-                timeZone: "America/New_York",
-                sessions: regularMinuteRanges(for: .unitedStates),
-                holiday: isUnitedStatesHoliday
-            )
-        }
-    }
-
-    private static func isOpen(
-        _ date: Date,
-        timeZone identifier: String,
-        sessions: [(start: Int, end: Int)],
-        holiday: (Date, Calendar) -> Bool
-    ) -> Bool {
-        let calendar = calendar(timeZone: identifier)
-        let components = calendar.dateComponents([.hour, .minute], from: date)
-        guard isTradingDay(date, calendar: calendar, holiday: holiday),
-              let hour = components.hour,
-              let minute = components.minute else {
-            return false
-        }
-        let localMinutes = hour * 60 + minute
-        return sessions.contains { localMinutes >= $0.start && localMinutes < $0.end }
-    }
-
-    private static func isTradingDay(
-        _ date: Date,
-        timeZone identifier: String,
-        holiday: (Date, Calendar) -> Bool
-    ) -> Bool {
-        isTradingDay(date, calendar: calendar(timeZone: identifier), holiday: holiday)
-    }
-
-    private static func isTradingDay(
-        _ date: Date,
-        calendar: Calendar,
-        holiday: (Date, Calendar) -> Bool
-    ) -> Bool {
-        let weekday = calendar.component(.weekday, from: date)
-        let isWeekend = !(2...6).contains(weekday)
-        // For A-share, consult AShareHolidayService for live overrides:
-        //   - Compensatory work days (补班) trade even on weekends.
-        //   - Mandated rest-day overrides apply even on weekdays.
-        // The service stores its results in memory after loading, so this
-        // synchronous read is safe to call from any thread.
-        // For HK and US markets this path falls through to the standard check.
-        return !isWeekend && !holiday(date, calendar)
-    }
-
-    // MARK: - A-share specific: integrate AShareHolidayService
-
-    /// Returns `true` when `date` is a confirmed A-share trading day, taking
-    /// both weekend status and live holiday overrides into account.
-    ///
-    /// This is the authoritative method for A-share trading-day queries; it
-    /// supersedes the generic `isTradingDay(_:calendar:holiday:)` for A-shares
-    /// by incorporating `AShareHolidayService` compensatory-work-day data.
-    private static func isAShareTradingDay(_ date: Date, calendar: Calendar) -> Bool {
-        let weekday = calendar.component(.weekday, from: date)
-        let isWeekend = !(2...6).contains(weekday)
-        // Query the published snapshot from AShareHolidayService. The snapshot
-        // is a reference type whose properties are only mutated from within the
-        // actor (before being published), so this synchronous read is safe.
-        switch AShareHolidayService.shared.snapshot.tradingDayOverride(
-            for: date,
-            calendar: calendar
-        ) {
-        case .some(true):
-            // Compensatory work day (补班): trades even if it is a weekend.
-            // Still exclude built-in fixed holidays (New Year's Day, etc.) to
-            // avoid a data-source error enabling trading on a clear holiday.
-            return !isAShareHoliday(date, calendar)
-        case .some(false):
-            // Mandated holiday: does not trade even if it falls on a weekday.
-            return false
-        case .none:
-            // No override available yet: apply normal weekend + built-in algorithm.
-            return !isWeekend && !isAShareHoliday(date, calendar)
-        }
-    }
-
-    private static func finalSessionEnded(
-        between startDate: Date,
-        and endDate: Date,
-        timeZone identifier: String,
-        sessions: [(start: Int, end: Int)],
-        holiday: (Date, Calendar) -> Bool
-    ) -> Bool {
-        let calendar = calendar(timeZone: identifier)
-        var currentDay = calendar.startOfDay(for: startDate)
-        let finalDay = calendar.startOfDay(for: endDate)
-        guard let finalSession = sessions.last else { return false }
-
-        while currentDay <= finalDay {
-            if isTradingDay(currentDay, calendar: calendar, holiday: holiday),
-               let sessionEnd = calendar.date(
-                   byAdding: .minute,
-                   value: finalSession.end,
-                   to: currentDay
-               ),
-               sessionEnd > startDate,
-               sessionEnd <= endDate {
-                return true
-            }
-
-            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else {
-                break
-            }
-            currentDay = nextDay
-        }
-        return false
-    }
-
-    /// A-share variant that routes through `isAShareTradingDay`.
-    private static func aShareFinalSessionEnded(
-        between startDate: Date,
-        and endDate: Date,
-        sessions: [(start: Int, end: Int)],
-        calendar: Calendar
-    ) -> Bool {
-        var currentDay = calendar.startOfDay(for: startDate)
-        let finalDay = calendar.startOfDay(for: endDate)
-        guard let finalSession = sessions.last else { return false }
-
-        while currentDay <= finalDay {
-            if isAShareTradingDay(currentDay, calendar: calendar),
-               let sessionEnd = calendar.date(
-                   byAdding: .minute,
-                   value: finalSession.end,
-                   to: currentDay
-               ),
-               sessionEnd > startDate,
-               sessionEnd <= endDate {
-                return true
-            }
-            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else { break }
-            currentDay = nextDay
-        }
-        return false
-    }
-
-    private static func latestCompletedFinalSessionEnd(
-        at date: Date,
-        timeZone identifier: String,
-        finalSessionEndMinute: Int,
-        holiday: (Date, Calendar) -> Bool
-    ) -> Date? {
-        let calendar = calendar(timeZone: identifier)
-        var currentDay = calendar.startOfDay(for: date)
-
-        for _ in 0..<370 {
-            if isTradingDay(currentDay, calendar: calendar, holiday: holiday),
-               let sessionEnd = calendar.date(
-                   byAdding: .minute,
-                   value: finalSessionEndMinute,
-                   to: currentDay
-               ),
-               sessionEnd <= date {
-                return sessionEnd
-            }
-
-            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else {
-                break
-            }
-            currentDay = previousDay
-        }
-        return nil
-    }
-
-    /// A-share variant that routes through `isAShareTradingDay`.
-    private static func aShareLatestCompletedFinalSessionEnd(
-        at date: Date,
-        finalSessionEndMinute: Int,
-        calendar: Calendar
-    ) -> Date? {
-        var currentDay = calendar.startOfDay(for: date)
-        for _ in 0..<370 {
-            if isAShareTradingDay(currentDay, calendar: calendar),
-               let sessionEnd = calendar.date(
-                   byAdding: .minute,
-                   value: finalSessionEndMinute,
-                   to: currentDay
-               ),
-               sessionEnd <= date {
-                return sessionEnd
-            }
-            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: currentDay) else { break }
-            currentDay = previousDay
-        }
-        return nil
-    }
-
-    private static func sessionEnded(
-        between startDate: Date,
-        and endDate: Date,
-        timeZone identifier: String,
-        sessions: [(start: Int, end: Int)],
-        holiday: (Date, Calendar) -> Bool
-    ) -> Bool {
-        let calendar = calendar(timeZone: identifier)
+        guard endDate > startDate, !ranges.isEmpty else { return false }
+        let calendar = rules.calendar
         var currentDay = calendar.startOfDay(for: startDate)
         let finalDay = calendar.startOfDay(for: endDate)
 
         while currentDay <= finalDay {
-            let weekday = calendar.component(.weekday, from: currentDay)
-            if (2...6).contains(weekday), !holiday(currentDay, calendar) {
-                for session in sessions {
+            if rules.isTradingDay(currentDay, calendar) {
+                for range in ranges {
                     guard let sessionEnd = calendar.date(
                         byAdding: .minute,
-                        value: session.end,
+                        value: range.end,
                         to: currentDay
                     ) else { continue }
                     if sessionEnd > startDate, sessionEnd <= endDate {
@@ -498,46 +355,21 @@ enum StockMarketTradingCalendar {
                 }
             }
 
-            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else {
-                break
-            }
+            guard let nextDay = calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: currentDay
+            ) else { break }
             currentDay = nextDay
         }
         return false
     }
 
-    /// A-share variant of `sessionEnded` that routes through `isAShareTradingDay`.
-    private static func aShareSessionEnded(
-        between startDate: Date,
-        and endDate: Date,
-        sessions: [(start: Int, end: Int)],
-        calendar: Calendar
-    ) -> Bool {
-        var currentDay = calendar.startOfDay(for: startDate)
-        let finalDay = calendar.startOfDay(for: endDate)
-
-        while currentDay <= finalDay {
-            if isAShareTradingDay(currentDay, calendar: calendar) {
-                for session in sessions {
-                    guard let sessionEnd = calendar.date(
-                        byAdding: .minute,
-                        value: session.end,
-                        to: currentDay
-                    ) else { continue }
-                    if sessionEnd > startDate, sessionEnd <= endDate {
-                        return true
-                    }
-                }
-            }
-            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: currentDay) else { break }
-            currentDay = nextDay
-        }
-        return false
-    }
-
-    private static func calendar(timeZone identifier: String) -> Calendar {
+    /// 市场时区的公历。时区映射只有 `StockChartSeriesProcessor.marketTimeZone`
+    /// 一份，本文件不再重复硬编码时区字符串。
+    private static func calendar(for market: StockMarket) -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: identifier) ?? .gmt
+        calendar.timeZone = StockChartSeriesProcessor.marketTimeZone(market)
         return calendar
     }
 
