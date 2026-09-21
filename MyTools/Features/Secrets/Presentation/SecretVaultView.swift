@@ -433,6 +433,8 @@ private struct SecretFieldTemplateEditorView: View {
                                 }
                             }
                             .pickerStyle(.menu)
+                            .foregroundStyle(.secondary)
+                            .tint(.blue)
                             .labelsHidden()
                             .fixedSize()
                             .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))

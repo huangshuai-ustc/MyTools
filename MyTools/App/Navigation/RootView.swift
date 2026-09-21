@@ -29,6 +29,9 @@ struct RootView: View {
                 if !isPresented { store.dismissVaultLoadFailure() }
             }
         )) {
+            Button("重新读取") {
+                store.retryVaultLoadAfterFailure()
+            }
             Button("知道了", role: .cancel) {
                 store.dismissVaultLoadFailure()
             }

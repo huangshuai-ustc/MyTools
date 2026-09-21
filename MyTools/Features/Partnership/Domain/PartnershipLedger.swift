@@ -24,8 +24,18 @@ enum PartnershipStockMarket: String, Codable, CaseIterable, Identifiable, Sendab
     static var selectableCases: [Self] { [.unitedStates] }
 }
 
-/// Every monetary value in a book is recorded in this single currency.
+/// Default used when decoding ledgers created before currency became a stored setting.
 let partnershipCurrency: CurrencyCode = .usd
+
+enum PartnershipImportSourceKind: String, Codable, Sendable {
+    case stockTransaction, stockDividend
+}
+
+enum PartnershipSettlementRateSource: String, Codable, Sendable {
+    case bankOfChina, custom
+
+    var title: String { self == .bankOfChina ? "中国银行结汇汇率" : "自定义汇率" }
+}
 
 struct PartnershipMember: Codable, Equatable, Identifiable, Sendable {
     var id = UUID()
@@ -38,6 +48,14 @@ struct PartnershipAllocation: Codable, Equatable, Sendable {
     var base: Decimal
     var adjustment: Decimal
     var actual: Decimal
+}
+
+/// A member's exact capital weight at the instant a purchase is made. These
+/// values are deliberately not normalized or rounded: 1,500 / 9,000 remains
+/// an auditable 1:6 snapshot rather than a displayed percentage.
+struct PartnershipCapitalWeight: Codable, Equatable, Sendable {
+    var memberID: UUID
+    var amount: Decimal
 }
 
 /// Cash direction of a record, used for list presentation (点1: 收入 / 支出).
@@ -110,6 +128,9 @@ struct PartnershipRecord: Codable, Equatable, Identifiable, Sendable {
     var recordedAt: Date? = Date()
     /// Records created by one user action share an operation ID so undo is atomic.
     var operationID: UUID? = nil
+    /// Stable source identity used to prevent the same Stocks record being imported twice.
+    var sourceRecordID: UUID? = nil
+    var sourceKind: PartnershipImportSourceKind? = nil
     /// Headline amount (contribution/withdrawal amount; unused for computed trades).
     var amount: Decimal = 0
     var note = ""
@@ -137,9 +158,17 @@ struct PartnershipRecord: Codable, Equatable, Identifiable, Sendable {
     ///  - sell: profit-pool shares after the manager 5% adjustment
     ///  - dividend: net ownership shares
     var allocations: [PartnershipAllocation] = []
+    /// Frozen on buy records. Later contributions never rewrite this snapshot.
+    /// Optional for backward compatibility: records written before capital
+    /// snapshots existed do not contain this JSON key.
+    var capitalWeightSnapshot: [PartnershipCapitalWeight]? = nil
+    var frozenCapitalWeights: [PartnershipCapitalWeight] { capitalWeightSnapshot ?? [] }
 
     // Settlement (清账) records.
     var settlementChoices: [PartnershipSettlementChoice] = []
+    /// CNY per one unit of the ledger currency. Frozen when settlement is created.
+    var settlementRenminbiRate: Decimal? = nil
+    var settlementRateSource: PartnershipSettlementRateSource? = nil
 
     var effectiveMarket: PartnershipStockMarket { market ?? .unitedStates }
     var isPurchase: Bool { kind == .buy && parentRecordID == nil }
@@ -159,21 +188,21 @@ struct PartnershipBook: Codable, Equatable, Identifiable, Sendable {
     var id = UUID()
     var name: String
     var type: PartnershipBookType = .stockInvestment
+    var currency: CurrencyCode = .usd
     var adjustmentRate: Decimal = Decimal(5) / 100
     var members: [PartnershipMember]
     var records: [PartnershipRecord] = []
     var auditLog: [PartnershipAuditEntry] = []
 
-    var currency: CurrencyCode { partnershipCurrency }
-
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, adjustmentRate, members, records, auditLog
+        case id, name, type, currency, adjustmentRate, members, records, auditLog
     }
 
     init(
         id: UUID = UUID(),
         name: String,
         type: PartnershipBookType = .stockInvestment,
+        currency: CurrencyCode = .usd,
         adjustmentRate: Decimal = Decimal(5) / 100,
         members: [PartnershipMember],
         records: [PartnershipRecord] = [],
@@ -182,6 +211,7 @@ struct PartnershipBook: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.name = name
         self.type = type
+        self.currency = currency
         self.adjustmentRate = adjustmentRate
         self.members = members
         self.records = records
@@ -193,6 +223,7 @@ struct PartnershipBook: Codable, Equatable, Identifiable, Sendable {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try container.decode(String.self, forKey: .name)
         type = try container.decodeIfPresent(PartnershipBookType.self, forKey: .type) ?? .stockInvestment
+        currency = try container.decodeIfPresent(CurrencyCode.self, forKey: .currency) ?? .usd
         adjustmentRate = try container.decodeIfPresent(Decimal.self, forKey: .adjustmentRate) ?? Decimal(5) / 100
         members = try container.decode([PartnershipMember].self, forKey: .members)
         auditLog = try container.decodeIfPresent([PartnershipAuditEntry].self, forKey: .auditLog) ?? []
@@ -365,6 +396,16 @@ enum PartnershipError: LocalizedError {
     }
 }
 enum PartnershipCalculator {
+    /// Internal ledger precision. User-entered and externally paid money stays
+    /// at cent precision, while ownership math keeps twelve decimal places so
+    /// fractions are carried forward instead of being lost on every trade.
+    static func precise(_ value: Decimal) -> Decimal {
+        var source = value
+        var result = Decimal()
+        NSDecimalRound(&result, &source, 12, .bankers)
+        return result
+    }
+
     static func money(_ value: Decimal) -> Decimal {
         var source = value
         var result = Decimal()
@@ -376,9 +417,14 @@ enum PartnershipCalculator {
     /// withdrawals subtract; buys freeze cost by available-cash ratio; sells
     /// return only the matched purchase **principal** (profit goes to the pool);
     /// settlement reinvestment moves pool money into available cash.
-    static func memberAvailableCash(_ book: PartnershipBook) -> [PartnershipAllocation] {
+    static func memberAvailableCash(_ book: PartnershipBook, through cutoff: Date? = nil) -> [PartnershipAllocation] {
         var balances = Dictionary(uniqueKeysWithValues: book.members.map { ($0.id, Decimal.zero) })
-        for record in book.records {
+        let records = book.records
+            .filter { record in
+                cutoff == nil || record.date <= cutoff! || (record.kind == .contribution && record.note == "初始出资")
+            }
+            .sorted { $0.date == $1.date ? ($0.recordedAt ?? $0.date) < ($1.recordedAt ?? $1.date) : $0.date < $1.date }
+        for record in records {
             switch record.kind {
             case .contribution:
                 if let memberID = record.memberID { balances[memberID, default: 0] += record.amount }
@@ -407,9 +453,35 @@ enum PartnershipCalculator {
             }
         }
         return book.members.map { member in
-            let amount = money(balances[member.id, default: 0])
+            let amount = precise(balances[member.id, default: 0])
             return PartnershipAllocation(memberID: member.id, base: amount, adjustment: 0, actual: amount)
         }
+    }
+
+    /// Capital events define ownership weights. Buying and selling merely move
+    /// value between cash and securities and therefore must not change them.
+    static func memberCapitalWeights(_ book: PartnershipBook, through cutoff: Date? = nil) -> [PartnershipCapitalWeight] {
+        var weights = Dictionary(uniqueKeysWithValues: book.members.map { ($0.id, Decimal.zero) })
+        let records = book.records
+            .filter { record in
+                cutoff == nil || record.date <= cutoff! || (record.kind == .contribution && record.note == "初始出资")
+            }
+            .sorted { $0.date == $1.date ? ($0.recordedAt ?? $0.date) < ($1.recordedAt ?? $1.date) : $0.date < $1.date }
+        for record in records {
+            switch record.kind {
+            case .contribution:
+                if let memberID = record.memberID { weights[memberID, default: 0] += record.amount }
+            case .withdrawal:
+                if let memberID = record.memberID { weights[memberID, default: 0] -= record.amount }
+            case .settlement:
+                for choice in record.settlementChoices where choice.reinvest {
+                    weights[choice.memberID, default: 0] += choice.amount
+                }
+            case .buy, .sell, .dividend:
+                break
+            }
+        }
+        return book.members.map { .init(memberID: $0.id, amount: weights[$0.id, default: 0]) }
     }
 
     /// Undistributed realized profit by member: realized sale profit + net
@@ -427,7 +499,7 @@ enum PartnershipCalculator {
             }
         }
         return book.members.map { member in
-            let amount = money(pool[member.id, default: 0])
+            let amount = precise(pool[member.id, default: 0])
             return PartnershipAllocation(memberID: member.id, base: amount, adjustment: 0, actual: amount)
         }
     }
@@ -443,8 +515,8 @@ enum PartnershipCalculator {
                 profit: pool.first { $0.memberID == member.id }?.actual ?? 0
             )
         }
-        let contributed = book.records.lazy.filter { $0.kind == .contribution }.reduce(Decimal.zero) { $0 + $1.amount }
-        let withdrawn = book.records.lazy.filter { $0.kind == .withdrawal }.reduce(Decimal.zero) { $0 + $1.amount }
+        let contributed = precise(book.records.lazy.filter { $0.kind == .contribution }.reduce(Decimal.zero) { $0 + $1.amount })
+        let withdrawn = precise(book.records.lazy.filter { $0.kind == .withdrawal }.reduce(Decimal.zero) { $0 + $1.amount })
         return PartnershipSummary(positions: positions, contributed: contributed, withdrawn: withdrawn)
     }
 
@@ -488,34 +560,32 @@ enum PartnershipCalculator {
     /// Splits `total` across members by their current available-cash ratio,
     /// rounding each share down and assigning the residual to the manager so
     /// the parts always sum to `total`. Used for proportional contributions.
-    static func split(_ total: Decimal, book: PartnershipBook) throws -> [PartnershipAllocation] {
-        try allocateByAvailableCash(total, book: book, message: "没有有效出资比例，请先注资。")
+    static func split(_ total: Decimal, book: PartnershipBook, date: Date? = nil) throws -> [PartnershipAllocation] {
+        try allocateByCapitalWeight(total, book: book, date: date, message: "没有有效出资比例，请先注资。")
     }
 
-    static func stockCostAllocations(_ total: Decimal, book: PartnershipBook) throws -> [PartnershipAllocation] {
-        try allocateByAvailableCash(total, book: book, message: "没有有效资金比例，请先注资。")
+    static func stockCostAllocations(_ total: Decimal, book: PartnershipBook, date: Date) throws -> [PartnershipAllocation] {
+        try allocateByCapitalWeight(total, book: book, date: date, message: "交易时间之前没有有效资金比例，请先记录注资。")
     }
 
-    private static func allocateByAvailableCash(_ total: Decimal, book: PartnershipBook, message: String) throws -> [PartnershipAllocation] {
-        let availableCash = memberAvailableCash(book)
-        let totalAvailableCash = availableCash.reduce(Decimal.zero) { $0 + $1.actual }
-        guard totalAvailableCash > 0, let investor = book.members.first(where: \.isManager) else {
+    private static func allocateByCapitalWeight(_ total: Decimal, book: PartnershipBook, date: Date?, message: String) throws -> [PartnershipAllocation] {
+        let weights = memberCapitalWeights(book, through: date)
+        let positiveWeights = weights.filter { $0.amount > 0 }
+        let totalWeight = positiveWeights.reduce(Decimal.zero) { $0 + $1.amount }
+        guard totalWeight > 0 else {
             throw PartnershipError.invalid(message)
         }
         var result: [PartnershipAllocation] = []
         var allocated: Decimal = 0
-        for member in book.members where member.id != investor.id {
-            let cash = availableCash.first { $0.memberID == member.id }?.actual ?? 0
-            let raw = total * cash / totalAvailableCash
-            var cents = raw * 100
-            var whole = Decimal()
-            NSDecimalRound(&whole, &cents, 0, .down)
-            let amount = whole / 100
-            result.append(.init(memberID: member.id, base: amount, adjustment: 0, actual: amount))
+        for (index, weight) in positiveWeights.enumerated() {
+            // Preserve the full Decimal precision. The final member receives the
+            // arithmetic residual so allocations equal the transaction exactly.
+            let amount = index == positiveWeights.indices.last
+                ? precise(total - allocated)
+                : precise(total * weight.amount / totalWeight)
+            result.append(.init(memberID: weight.memberID, base: amount, adjustment: 0, actual: amount))
             allocated += amount
         }
-        let investorAmount = total - allocated
-        result.append(.init(memberID: investor.id, base: investorAmount, adjustment: 0, actual: investorAmount))
         return result
     }
     static func dividendAllocations(
@@ -552,11 +622,15 @@ enum PartnershipCalculator {
         var result: [PartnershipAllocation] = []
         for (index, member) in recipients.enumerated() {
             let isLast = index == recipients.indices.last
-            let gross = isLast ? grossAmount - allocatedGross : money(grossAmount * ownedShares[member.id, default: 0] / total)
-            let deduction = isLast ? deductions - allocatedDeductions : money(deductions * ownedShares[member.id, default: 0] / total)
+            let gross = isLast
+                ? precise(grossAmount - allocatedGross)
+                : precise(grossAmount * ownedShares[member.id, default: 0] / total)
+            let deduction = isLast
+                ? precise(deductions - allocatedDeductions)
+                : precise(deductions * ownedShares[member.id, default: 0] / total)
             allocatedGross += gross
             allocatedDeductions += deduction
-            result.append(.init(memberID: member.id, base: gross, adjustment: deduction, actual: gross - deduction))
+            result.append(.init(memberID: member.id, base: gross, adjustment: deduction, actual: precise(gross - deduction)))
         }
         return result
     }
@@ -575,10 +649,3 @@ enum PartnershipCalculator {
     }
 }
 #endif
-
-
-
-
-
-
-

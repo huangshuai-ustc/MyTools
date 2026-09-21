@@ -204,6 +204,8 @@ struct PortfolioValueHistoryView: View {
             }
         }
         .pickerStyle(.menu)
+        .foregroundStyle(.secondary)
+        .tint(.blue)
         .onChange(of: selectedStockID) { _, _ in requestLoadSeries() }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)

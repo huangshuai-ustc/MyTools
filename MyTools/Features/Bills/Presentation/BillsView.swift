@@ -158,6 +158,8 @@ struct BillsView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                        .foregroundStyle(.secondary)
+                        .tint(.blue)
                     }
 
                     if !availableCategories.isEmpty {
@@ -173,6 +175,8 @@ struct BillsView: View {
                             }
                             .labelsHidden()
                             .pickerStyle(.menu)
+                            .foregroundStyle(.secondary)
+                            .tint(.blue)
                         }
                     }
                     if !availableTags.isEmpty {

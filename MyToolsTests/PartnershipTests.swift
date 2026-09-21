@@ -31,6 +31,33 @@ struct PartnershipTests {
         #expect(PartnershipCalculator.stockSummary(store.books[0]).cash == 3500)
     }
 
+    @Test func repeatedNonDivisiblePurchasesKeepTheSameExactCapitalSnapshot() throws {
+        let store = try makeStore()
+        let bookID = store.books[0].id
+        let investor = store.books[0].members[0].id
+        let partner = store.books[0].members[1].id
+        let firstDate = Date(timeIntervalSince1970: 1)
+        let secondDate = Date(timeIntervalSince1970: 2)
+
+        try store.recordStockPurchase(bookID: bookID, date: firstDate, symbol: "ONE", name: "第一只",
+                                      shares: 1, price: Decimal(string: "100.01")!, fee: 0)
+        try store.recordStockPurchase(bookID: bookID, date: secondDate, symbol: "TWO", name: "第二只",
+                                      shares: 1, price: Decimal(string: "200.02")!, fee: 0)
+
+        let purchases = store.books[0].records.filter(\.isPurchase)
+        #expect(purchases.count == 2)
+        for purchase in purchases {
+            #expect(purchase.frozenCapitalWeights.first { $0.memberID == investor }?.amount == 9000)
+            #expect(purchase.frozenCapitalWeights.first { $0.memberID == partner }?.amount == 1500)
+            #expect(purchase.allocations.reduce(Decimal.zero) { $0 + $1.actual } == purchase.cashAmount)
+        }
+        // Buying only moves value from cash to securities. It must not mutate
+        // the authoritative 1:6 ownership weights used by the next purchase.
+        let currentWeights = PartnershipCalculator.memberCapitalWeights(store.books[0])
+        #expect(currentWeights.first { $0.memberID == investor }?.amount == 9000)
+        #expect(currentWeights.first { $0.memberID == partner }?.amount == 1500)
+    }
+
     @Test func proportionalContributionKeepsRatioThenSingleContributionShiftsIt() throws {
         let store = try makeStore()
         let bookID = store.books[0].id
@@ -296,6 +323,45 @@ struct PartnershipTests {
         #expect(store.books[0].records.filter(\.isPurchase).count == 2)
         try store.undoLatestChange(bookID: bookID)
         #expect(store.books[0].records.filter(\.isPurchase).isEmpty)
+    }
+
+    @Test func batchImportFreezesEachPurchaseSnapshotAndSourceIdentity() throws {
+        let store = try makeStore()
+        let bookID = store.books[0].id
+        let investor = store.books[0].members[0].id
+        let partner = store.books[0].members[1].id
+        let records = [
+            PartnershipStockImportRecord(id: UUID(), market: .unitedStates, symbol: "ONE", name: "第一只", side: .buy,
+                                         date: Date(timeIntervalSince1970: 1), shares: 1,
+                                         price: Decimal(string: "100.01")!, fee: 0),
+            PartnershipStockImportRecord(id: UUID(), market: .unitedStates, symbol: "TWO", name: "第二只", side: .buy,
+                                         date: Date(timeIntervalSince1970: 2), shares: 1,
+                                         price: Decimal(string: "200.02")!, fee: 0)
+        ]
+        let provider = ImportProvider(records)
+        store.attach(stockImportProvider: provider)
+        try store.importStockRecords(bookID: bookID, ids: Set(records.map(\.id)))
+
+        let purchases = store.books[0].records.filter(\.isPurchase)
+        #expect(Set(purchases.compactMap(\.sourceRecordID)) == Set(records.map(\.id)))
+        #expect(store.importCandidates(bookID: bookID).isEmpty)
+        for purchase in purchases {
+            #expect(purchase.frozenCapitalWeights.first { $0.memberID == investor }?.amount == 9000)
+            #expect(purchase.frozenCapitalWeights.first { $0.memberID == partner }?.amount == 1500)
+            #expect(purchase.allocations.reduce(Decimal.zero) { $0 + $1.actual } == purchase.cashAmount)
+        }
+    }
+
+    @Test func recordWithoutCapitalSnapshotStillDecodes() throws {
+        let record = PartnershipRecord(kind: .buy, symbol: "LEGACY", name: "旧记录", shares: 1, price: 1)
+        let encoded = try JSONEncoder().encode(record)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "capitalWeightSnapshot")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(PartnershipRecord.self, from: legacyData)
+        #expect(decoded.symbol == "LEGACY")
+        #expect(decoded.frozenCapitalWeights.isEmpty)
     }
 
     @Test func cancellingUndoRestoresTheLatestChange() throws {

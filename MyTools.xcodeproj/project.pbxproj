@@ -416,7 +416,7 @@
 		C63564043010C59600EBCA46 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C6DBE01C3026389E00025797 /* MyToolsRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsRelease.entitlements; sourceTree = SOURCE_ROOT; };
 		C6DBE01C3026389E00025798 /* MyToolsMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyToolsMacRelease.entitlements; sourceTree = SOURCE_ROOT; };
-		E19E9F2D301499DA0018B621 /* MyTools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyTools.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E19E9F2D301499DA0018B621 /* Fangcun.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fangcun.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ML1000000000000000000001 /* MapLocationSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLocationSearchService.swift; sourceTree = "<group>"; };
 		R10000000000000000000001 /* OCRModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRModels.swift; sourceTree = "<group>"; };
 		R10000000000000000000002 /* OCRDocumentLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRDocumentLoader.swift; sourceTree = "<group>"; };
@@ -511,7 +511,7 @@
 				DD0000000000000000000001 /* MyToolsTests */,
 				DA0000000000000000000001 /* Config */,
 				TF2000000000000000000001 /* TestFlight */,
-				E19E9F2D301499DA0018B621 /* MyTools.app */,
+				E19E9F2D301499DA0018B621 /* Fangcun.app */,
 				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
 			sourceTree = "<group>";
@@ -1379,7 +1379,7 @@
 			);
 			name = MyTools;
 			productName = MyTools;
-			productReference = E19E9F2D301499DA0018B621 /* MyTools.app */;
+			productReference = E19E9F2D301499DA0018B621 /* Fangcun.app */;
 			productType = "com.apple.product-type.application";
 		};
 		ED0000000000000000000001 /* MyToolsTests */ = {
@@ -1772,7 +1772,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
 				PRODUCT_MODULE_NAME = MyTools;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Fangcun;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1837,7 +1837,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_PACKAGE_TYPE = APPL;
 				PRODUCT_MODULE_NAME = MyTools;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Fangcun;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1868,7 +1868,7 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MyTools.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MyTools";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Fangcun.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Fangcun";
 				TEST_TARGET_NAME = MyTools;
 			};
 			name = Debug;
@@ -1890,7 +1890,7 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(MYTOOLS_COMPILED_FEATURES) $(MYTOOLS_DEFAULT_HIDDEN_FEATURES)";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MyTools.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MyTools";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Fangcun.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Fangcun";
 				TEST_TARGET_NAME = MyTools;
 			};
 			name = Release;

@@ -34,10 +34,55 @@ struct AppStoreFacadeTests {
         #expect(store.stockStore.stocks.map(\.symbol) == ["LOADED"])
         #expect(store.isVaultLoadFailurePresented)
 
+        do {
+            _ = try await store.makeCloudSyncSnapshot()
+            Issue.record("本地档案读取失败时不应生成云同步快照")
+        } catch {
+            // Expected: an empty in-memory fallback must never become a cloud
+            // deletion snapshot while the original file is protected.
+        }
+
         loadedStock.name = "Must not persist"
         store.stockStore.upsertStock(loadedStock)
 
         #expect(persistence.scheduleCount == 0)
+    }
+
+    @Test func failedVaultLoadCanRetryAndRestoreOriginalData() async throws {
+        let defaults = Self.makeDefaults()
+        let failed = LocalVaultLoadResult(
+            vault: VaultData(), secrets: [], byteCount: 311_255,
+            source: "存档读取失败（原文件已保留）", canPersist: false,
+            readMilliseconds: 1, decodeMilliseconds: 0, totalMilliseconds: 2,
+            failure: .unrecoverable
+        )
+        var recoveredStock = StockHolding()
+        recoveredStock.symbol = "RECOVERED"
+        let recovered = LocalVaultLoadResult(
+            vault: VaultData(stocks: [recoveredStock]), secrets: [], byteCount: 311_255,
+            source: "Application Support（已加密）", canPersist: true,
+            readMilliseconds: 1, decodeMilliseconds: 2, totalMilliseconds: 3
+        )
+        let loader = SequencedVaultInitialLoader(results: [failed, recovered])
+        let store = AppStore(dependencies: Self.dependencies(
+            defaults: defaults,
+            persistence: RecordingVaultPersistence(),
+            initialLoader: loader
+        ))
+
+        while !store.isInitialDataLoaded { await Task.yield() }
+        #expect(store.isVaultLoadFailurePresented)
+
+        store.retryVaultLoadAfterFailure()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while store.stockStore.stocks.isEmpty, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(store.stockStore.stocks.map(\.symbol) == ["RECOVERED"])
+        #expect(!store.isVaultLoadFailurePresented)
+        #expect(loader.loadCount >= 2)
     }
 
     @Test func protectedDataDelayRetriesWithoutPublishingAnEmptyVault() async throws {

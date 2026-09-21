@@ -1,6 +1,7 @@
 #if MYTOOLS_FEATURE_PARTNERSHIP
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
 
 enum PartnershipFormat {
     static func money(_ value: Decimal, currency: CurrencyCode = partnershipCurrency) -> String {
@@ -45,8 +46,17 @@ struct PartnershipView: View {
         .iOSLabeledBackButton("工具")
         .toolbar { Button { creating = true } label: { Label("新建账本", systemImage: "plus") } }
         .sheet(isPresented: $creating) { PartnershipCreateView().iOSLargeSheet() }
-        .confirmationDialog("删除账本及其全部记录？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("删除", role: .destructive) { if let deleting { store.delete(id: deleting.id) }; deleting = nil }
+        .alert("删除账本？", isPresented: Binding(
+            get: { deleting != nil },
+            set: { if !$0 { deleting = nil } }
+        )) {
+            Button("取消", role: .cancel) { deleting = nil }
+            Button("删除", role: .destructive) {
+                if let deleting { store.delete(id: deleting.id) }
+                deleting = nil
+            }
+        } message: {
+            Text("将永久删除账本“\(deleting?.name ?? "")”及其中的全部记录，此操作无法撤销。")
         }
     }
 }
@@ -54,6 +64,7 @@ private enum PartnershipTab: Hashable { case overview, trades, flow }
 
 private struct PartnershipDetailView: View {
     @EnvironmentObject private var store: PartnershipStore
+    @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     let bookID: UUID
     @State private var action: PartnershipAction?
     @State private var pagination = AppListPagination(pageSize: 30)
@@ -117,7 +128,7 @@ private struct PartnershipDetailView: View {
                 Menu {
                     NavigationLink("操作记录") { PartnershipAuditLogView(bookID: bookID) }
                     Button("撤销最近一次修改", role: .destructive) { undo = true }
-                        .disabled(book.records.count <= 2)
+                        .disabled(book.records.isEmpty)
                     Button("取消撤回") {
                         do { try store.cancelUndoLatestChange(bookID: bookID) } catch { self.error = error.localizedDescription }
                     }
@@ -224,8 +235,11 @@ private struct PartnershipDetailView: View {
                     .foregroundStyle(.secondary)
 
                     HStack(alignment: .top, spacing: 16) {
-                        PartnershipDistributionChart(title: "可用资金占比", items: availableCashItems)
-                        PartnershipDistributionChart(title: "当前盈利分成", items: profitItems)
+                        PartnershipDistributionChart(title: "可用资金占比", items: availableCashItems,
+                                                     currency: book.currency)
+                        PartnershipDistributionChart(title: "当前盈利分成", items: profitItems,
+                                                     currency: book.currency,
+                                                     renminbiRate: exchangeRateStore.renminbiBuyingRates[book.currency])
                     }
                 }
                 .padding(.vertical, 4)
@@ -272,7 +286,7 @@ private struct PartnershipDetailView: View {
         }
         let records = pagination.visibleItems(from: sorted)
         return List {
-            Section("资金流水（最新在前）") {
+            Section("流水") {
                 if records.isEmpty {
                     Text("暂无流水").foregroundStyle(.secondary)
                 }
@@ -301,7 +315,10 @@ private struct PartnershipDetailView: View {
                 purchaseCount: records.count,
                 latestDate: records.map(\.date).max() ?? .distantPast
             )
-        }.sorted { $0.latestDate > $1.latestDate }
+        }.sorted {
+            if ($0.shares > 0) != ($1.shares > 0) { return $0.shares > 0 }
+            return $0.latestDate > $1.latestDate
+        }
     }
 
     private func equityColor(at index: Int) -> Color {
@@ -418,13 +435,16 @@ private struct PartnershipRecordRow: View {
         let parts = allocations.map { allocation -> String in
             let name = book.members.first { $0.id == allocation.memberID }?.name ?? "成员"
             let ratio = abs(allocation.actual) / total
-            return "\(name) \(ratio.formatted(.percent.precision(.fractionLength(0))))"
+            let preciseAmount = abs(allocation.actual).formatted(
+                .number.precision(.fractionLength(2...6))
+            )
+            return "\(name) \(book.currency.rawValue) \(preciseAmount)（\(ratio.formatted(.percent.precision(.fractionLength(4))))）"
         }
         return parts.isEmpty ? nil : parts.joined(separator: " / ")
     }
 
     private var detailParts: [String] {
-        var parts: [String] = [record.date.formatted(date: .abbreviated, time: .omitted)]
+        var parts: [String] = [record.date.formatted(date: .abbreviated, time: .shortened)]
         switch record.kind {
         case .buy:
             parts.append("\(record.shares) 股")
@@ -441,7 +461,9 @@ private struct PartnershipRecordRow: View {
                 return "\(name) \(choice.reinvest ? "重投" : "取回")"
             }
             if !choices.isEmpty { parts.append(choices.joined(separator: " / ")) }
-            parts.append("抽成/补偿 \(book.adjustmentRate.formatted(.percent))")
+            if let rate = record.settlementRenminbiRate {
+                parts.append("汇率 \(NSDecimalNumber(decimal: rate).stringValue)（\(record.settlementRateSource?.title ?? "已固定")）")
+            }
         case .contribution, .withdrawal:
             if !record.note.isEmpty { parts.append(record.note) }
         }
@@ -481,6 +503,8 @@ private struct PartnershipEquityChartItem: Identifiable {
 private struct PartnershipDistributionChart: View {
     let title: String
     let items: [PartnershipEquityChartItem]
+    var currency: CurrencyCode = .usd
+    var renminbiRate: Decimal? = nil
 
     private var hasValues: Bool { items.contains { $0.amount != 0 } }
 
@@ -514,7 +538,7 @@ private struct PartnershipDistributionChart: View {
                     HStack(spacing: 5) {
                         Circle().fill(item.color).frame(width: 8, height: 8)
                         Text(item.name)
-                        Text(PartnershipFormat.money(item.amount))
+                        Text(amountText(item.amount))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -525,6 +549,12 @@ private struct PartnershipDistributionChart: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func amountText(_ amount: Decimal) -> String {
+        let primary = PartnershipFormat.money(amount, currency: currency)
+        guard currency != .cny, let renminbiRate else { return primary }
+        return "\(primary) · \(PartnershipFormat.money(PartnershipCalculator.money(amount * renminbiRate), currency: .cny))"
     }
 }
 
@@ -541,6 +571,7 @@ private struct PartnershipStockListItem: Identifiable {
 private struct PartnershipAuditLogView: View {
     @EnvironmentObject private var store: PartnershipStore
     let bookID: UUID
+    @State private var exporting = false
 
     var body: some View {
         Group {
@@ -558,11 +589,49 @@ private struct PartnershipAuditLogView: View {
                     }
                 }
                 .appNavigationTitle("操作记录")
+                .toolbar {
+                    Button { exporting = true } label: { Label("导出 XML", systemImage: "square.and.arrow.up") }
+                        .disabled(book.auditLog.isEmpty)
+                }
+                .fileExporter(isPresented: $exporting,
+                              document: PartnershipAuditXMLDocument(book: book),
+                              contentType: .xml,
+                              defaultFilename: "\(book.name)-操作记录") { _ in }
             } else {
                 ContentUnavailableView("账本已删除", systemImage: "book.closed")
             }
         }
     }
+}
+
+private struct PartnershipAuditXMLDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.xml] }
+    let data: Data
+
+    init(book: PartnershipBook) {
+        func escaped(_ value: String) -> String {
+            value.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "'", with: "&apos;")
+        }
+        let formatter = ISO8601DateFormatter()
+        let entries = book.auditLog.map { entry in
+            let record = entry.affectedRecordID.map { " record-id=\"\($0.uuidString)\"" } ?? ""
+            return "  <entry id=\"\(entry.id.uuidString)\" timestamp=\"\(formatter.string(from: entry.timestamp))\"\(record)>\(escaped(entry.action))</entry>"
+        }.joined(separator: "\n")
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <partnership-audit book-id="\(book.id.uuidString)" book-name="\(escaped(book.name))" currency="\(book.currency.rawValue)">
+        \(entries)
+        </partnership-audit>
+        """
+        data = Data(xml.utf8)
+    }
+
+    init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
 private struct PartnershipStockRecordDetailView: View {
     @EnvironmentObject private var store: PartnershipStore

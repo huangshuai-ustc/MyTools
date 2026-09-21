@@ -1,5 +1,5 @@
 PRODUCT_BUNDLE_IDENTIFIER = com.fjwyz.PersonalToolBox
-APP_DISPLAY_NAME = 方寸
+APP_DISPLAY_NAME = Fangcun
 DEVELOPMENT_TEAM =
 
 // Comment out one MYTOOLS_ENABLE_* line to omit only that feature module.

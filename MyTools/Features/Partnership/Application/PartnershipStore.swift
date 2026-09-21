@@ -3,15 +3,50 @@ import Foundation
 import Combine
 
 struct PartnershipStockImportRecord: Identifiable, Equatable, Sendable {
+    enum Kind: String, Sendable {
+        case buy, sell, dividend
+        var title: String {
+            switch self { case .buy: "买入"; case .sell: "卖出"; case .dividend: "股息" }
+        }
+    }
     var id: UUID
     var market: PartnershipStockMarket
     var symbol: String
     var name: String
-    var side: PartnershipStockTradeSide
+    var kind: Kind
     var date: Date
     var shares: Decimal
     var price: Decimal
     var fee: Decimal
+    var grossAmount: Decimal = 0
+    var withholdingTax: Decimal = 0
+
+    init(id: UUID, market: PartnershipStockMarket, symbol: String, name: String, kind: Kind,
+         date: Date, shares: Decimal, price: Decimal, fee: Decimal,
+         grossAmount: Decimal = 0, withholdingTax: Decimal = 0) {
+        self.id = id
+        self.market = market
+        self.symbol = symbol
+        self.name = name
+        self.kind = kind
+        self.date = date
+        self.shares = shares
+        self.price = price
+        self.fee = fee
+        self.grossAmount = grossAmount
+        self.withholdingTax = withholdingTax
+    }
+
+    /// Source-compatible initializer for existing tests and callers.
+    init(id: UUID, market: PartnershipStockMarket, symbol: String, name: String,
+         side: PartnershipStockTradeSide, date: Date, shares: Decimal, price: Decimal, fee: Decimal) {
+        self.init(id: id, market: market, symbol: symbol, name: name,
+                  kind: side == .buy ? .buy : .sell, date: date, shares: shares, price: price, fee: fee)
+    }
+
+    var title: String {
+        switch kind { case .buy: "买入"; case .sell: "卖出"; case .dividend: "股息" }
+    }
 }
 
 @MainActor
@@ -37,8 +72,16 @@ final class PartnershipStore: ObservableObject {
     }
     var stockImportRecords: [PartnershipStockImportRecord] { stockImportProvider?.partnershipImportRecords ?? [] }
 
+    func importCandidates(bookID: UUID) -> [PartnershipStockImportRecord] {
+        guard let book = books.first(where: { $0.id == bookID }) else { return [] }
+        let imported = Set(book.records.compactMap(\.sourceRecordID))
+        return stockImportRecords.filter { !imported.contains($0.id) }
+    }
+
     func importStockRecords(bookID: UUID, ids: Set<UUID>, adjustmentRate: Decimal = Decimal(5) / 100) throws {
         guard let book = books.first(where: { $0.id == bookID }) else { throw PartnershipError.invalid("账本已不存在。") }
+        let alreadyImported = Set(book.records.compactMap(\.sourceRecordID))
+        guard ids.isDisjoint(with: alreadyImported) else { throw PartnershipError.invalid("所选记录中包含已经导入的项目。") }
         let selected = stockImportRecords.filter { ids.contains($0.id) }
         let records = selected.sorted { $0.date < $1.date }
         let operationID = UUID()
@@ -46,27 +89,40 @@ final class PartnershipStore: ObservableObject {
         // the real book. A failed row must never leave a partial import behind.
         let staged = PartnershipStore(books: [book])
         for record in records {
-            switch record.side {
+            switch record.kind {
             case .buy:
                 try staged.recordStockPurchase(bookID: bookID, date: record.date, market: record.market,
                                                symbol: record.symbol, name: record.name, shares: record.shares,
                                                price: record.price, fee: record.fee, operationID: operationID,
-                                               note: "从股票投资导入")
+                                               note: "从股票投资导入", sourceRecordID: record.id)
             case .sell:
                 try staged.recordStockSale(bookID: bookID, date: record.date, market: record.market,
                                            symbol: record.symbol, name: record.name, shares: record.shares,
                                            price: record.price, fee: record.fee, adjustmentRate: adjustmentRate,
-                                           operationID: operationID, note: "从股票投资导入")
+                                           operationID: operationID, note: "从股票投资导入", sourceRecordID: record.id)
+            case .dividend:
+                try staged.recordDividend(bookID: bookID, date: record.date, market: record.market,
+                                          symbol: record.symbol, name: record.name, grossAmount: record.grossAmount,
+                                          withholdingTax: record.withholdingTax, fee: record.fee,
+                                          note: "从股票投资导入", sourceRecordID: record.id)
             }
         }
         guard let importedBook = staged.books.first else { return }
         try update(bookID) { book in
             let originalAudit = book.auditLog
-            let added = importedBook.records.count - book.records.count
             book = importedBook
             book.auditLog = originalAudit // discard the disposable draft's audit entries
-            log("导入股票交易 \(max(0, added)) 条", into: &book)
+            for record in records {
+                log("从股票投资导入：\(record.title) \(record.name) \(record.symbol)，业务时间 \(record.date.formatted(date: .numeric, time: .shortened))", into: &book, recordID: record.id)
+            }
         }
+    }
+    func create(name: String, type: PartnershipBookType = .stockInvestment, currency: CurrencyCode = .usd) throws {
+        var book = PartnershipBook(name: try checkedName(name), type: type, currency: currency, members: [])
+        log("创建账本「\(book.name)」，类型：\(type.title)，币种：\(currency.rawValue)", into: &book)
+        books.append(book)
+        undoneBooks[book.id] = nil
+        didMutate()
     }
     func create(
         name: String,
@@ -108,48 +164,51 @@ final class PartnershipStore: ObservableObject {
         didMutate()
     }
 
-    func addMember(bookID: UUID, name: String, amount: Decimal) throws {
+    func addMember(bookID: UUID, name: String, amount: Decimal, date: Date = Date()) throws {
         let name = try checkedName(name)
         try update(bookID) { book in
             try requireAmount(amount)
+            try requireCapitalEventDate(date, in: book)
             guard !book.members.contains(where: { $0.name == name }) else { throw PartnershipError.invalid("成员姓名不能重复。") }
-            let member = PartnershipMember(name: name)
+            let member = PartnershipMember(name: name, isManager: book.members.isEmpty)
             book.members.append(member)
-            let record = PartnershipRecord(kind: .contribution, amount: amount, note: "新成员加入", memberID: member.id)
+            let record = PartnershipRecord(kind: .contribution, date: date, amount: amount, note: "新成员加入", memberID: member.id)
             book.records.append(record)
             log("新成员「\(name)」加入并注资 \(money(amount))", into: &book, recordID: record.id)
         }
     }
 
-    func contribute(bookID: UUID, amount: Decimal, memberID: UUID?, proportional: Bool = false, note: String = "") throws {
+    func contribute(bookID: UUID, amount: Decimal, memberID: UUID?, proportional: Bool = false, note: String = "", date: Date = Date()) throws {
         try update(bookID) { book in
             try requireAmount(amount)
+            try requireCapitalEventDate(date, in: book)
             if proportional {
-                let allocations = try PartnershipCalculator.split(amount, book: book)
+                let allocations = try PartnershipCalculator.split(amount, book: book, date: date)
                 for allocation in allocations where allocation.actual > 0 {
-                    book.records.append(.init(kind: .contribution, amount: allocation.actual,
+                    book.records.append(.init(kind: .contribution, date: date, amount: allocation.actual,
                                               note: note.isEmpty ? "按当前比例注资" : note, memberID: allocation.memberID))
                 }
                 log("按当前比例注资 \(money(amount))", into: &book)
                 return
             }
             try requireMember(memberID, in: book)
-            let record = PartnershipRecord(kind: .contribution, amount: amount, note: note, memberID: memberID)
+            let record = PartnershipRecord(kind: .contribution, date: date, amount: amount, note: note, memberID: memberID)
             book.records.append(record)
             log("注资 \(money(amount))", into: &book, recordID: record.id)
         }
     }
 
-    func withdraw(bookID: UUID, amount: Decimal, memberID: UUID?, note: String = "") throws {
+    func withdraw(bookID: UUID, amount: Decimal, memberID: UUID?, note: String = "", date: Date = Date()) throws {
         try update(bookID) { book in
             try requireAmount(amount)
+            try requireCapitalEventDate(date, in: book)
             try requireMember(memberID, in: book)
-            let availableCash = PartnershipCalculator.memberAvailableCash(book)
+            let availableCash = PartnershipCalculator.memberAvailableCash(book, through: date)
                 .first { $0.memberID == memberID }?.actual ?? 0
             guard amount <= availableCash else {
                 throw PartnershipError.invalid("取出金额不能超过该成员当前可用现金；收益需先清账才能取出。")
             }
-            let record = PartnershipRecord(kind: .withdrawal, amount: amount, note: note, memberID: memberID)
+            let record = PartnershipRecord(kind: .withdrawal, date: date, amount: amount, note: note, memberID: memberID)
             book.records.append(record)
             log("取出可用现金 \(money(amount))", into: &book, recordID: record.id)
         }
@@ -164,21 +223,27 @@ final class PartnershipStore: ObservableObject {
         price: Decimal,
         fee: Decimal,
         operationID: UUID? = nil,
-        note: String = ""
+        note: String = "",
+        sourceRecordID: UUID? = nil
     ) throws {
         try update(bookID) { book in
             let symbol = try checkedName(symbol).uppercased()
             let name = try checkedName(name)
             try requireTradeValues(shares: shares, price: price, fee: fee)
             let total = PartnershipCalculator.money(shares * price + fee)
-            guard PartnershipCalculator.stockSummary(book).cash >= total else {
+            let availableAtTrade = PartnershipCalculator.memberAvailableCash(book, through: date)
+                .reduce(Decimal.zero) { $0 + $1.actual }
+            guard availableAtTrade >= total else {
                 throw PartnershipError.invalid("可用资金不足，请先注资或清账。")
             }
-            let allocations = try PartnershipCalculator.stockCostAllocations(total, book: book)
+            let allocations = try PartnershipCalculator.stockCostAllocations(total, book: book, date: date)
+            let weightSnapshot = PartnershipCalculator.memberCapitalWeights(book, through: date)
+                .filter { $0.amount > 0 }
             let record = PartnershipRecord(
-                kind: .buy, date: date, operationID: operationID, note: note,
+                kind: .buy, date: date, operationID: operationID, sourceRecordID: sourceRecordID,
+                sourceKind: sourceRecordID == nil ? nil : .stockTransaction, note: note,
                 market: market, symbol: symbol, name: name, shares: shares, price: price, fee: fee,
-                allocations: allocations
+                allocations: allocations, capitalWeightSnapshot: weightSnapshot
             )
             book.records.append(record)
             log("买入 \(name) \(symbol) \(shares) 股", into: &book, recordID: record.id)
@@ -197,7 +262,8 @@ final class PartnershipStore: ObservableObject {
         adjustmentRate: Decimal? = nil,
         purchaseID: UUID? = nil,
         operationID: UUID? = nil,
-        note: String = ""
+        note: String = "",
+        sourceRecordID: UUID? = nil
     ) throws {
         try update(bookID) { book in
             let symbol = try checkedName(symbol).uppercased()
@@ -254,7 +320,8 @@ final class PartnershipStore: ObservableObject {
                     book: book
                 )
                 book.records.append(.init(
-                    kind: .sell, date: date, recordedAt: recordedAt, operationID: operationID, note: note,
+                    kind: .sell, date: date, recordedAt: recordedAt, operationID: operationID,
+                    sourceRecordID: sourceRecordID, sourceKind: sourceRecordID == nil ? nil : .stockTransaction, note: note,
                     parentRecordID: purchase.id, market: market, symbol: symbol, name: name,
                     shares: match.shares, price: price, fee: matchedFee,
                     saleMatches: [match], allocations: allocations
@@ -273,7 +340,8 @@ final class PartnershipStore: ObservableObject {
         grossAmount: Decimal,
         withholdingTax: Decimal,
         fee: Decimal,
-        note: String = ""
+        note: String = "",
+        sourceRecordID: UUID? = nil
     ) throws {
         try update(bookID) { book in
             let symbol = try checkedName(symbol).uppercased()
@@ -289,7 +357,8 @@ final class PartnershipStore: ObservableObject {
                 book: book, market: market, symbol: symbol, date: date
             )
             let record = PartnershipRecord(
-                kind: .dividend, date: date, note: note, market: market, symbol: symbol, name: name,
+                kind: .dividend, date: date, sourceRecordID: sourceRecordID,
+                sourceKind: sourceRecordID == nil ? nil : .stockDividend, note: note, market: market, symbol: symbol, name: name,
                 fee: fee, grossAmount: grossAmount, withholdingTax: withholdingTax, allocations: allocations
             )
             book.records.append(record)
@@ -300,15 +369,29 @@ final class PartnershipStore: ObservableObject {
     /// 清账：distributes each member's current profit pool. `reinvest[memberID]`
     /// picks 重投 (true, pool → available cash) or 取回 (false, withdrawn);
     /// members omitted default to reinvest.
-    func settle(bookID: UUID, reinvest: [UUID: Bool]) throws {
+    func settle(bookID: UUID, reinvest: [UUID: Bool], date: Date = Date(), renminbiRate: Decimal? = nil,
+                rateSource: PartnershipSettlementRateSource? = nil) throws {
         try update(bookID) { book in
+            try requireCapitalEventDate(date, in: book)
             let pool = PartnershipCalculator.memberProfitPool(book).filter { $0.actual != 0 }
             guard !pool.isEmpty else { throw PartnershipError.invalid("当前没有可清账的收益。") }
             let choices = pool.map {
-                PartnershipSettlementChoice(memberID: $0.memberID, amount: $0.actual, reinvest: reinvest[$0.memberID] ?? true)
+                let shouldReinvest = reinvest[$0.memberID] ?? true
+                // Reinvestment stays inside the ledger and therefore keeps the
+                // exact internal amount. A take-back is an external cash payment:
+                // pay only whole cents and leave any sub-cent carry in the pool.
+                let settledAmount = shouldReinvest ? $0.actual : PartnershipCalculator.money($0.actual)
+                return PartnershipSettlementChoice(
+                    memberID: $0.memberID,
+                    amount: settledAmount,
+                    reinvest: shouldReinvest
+                )
             }
             let total = choices.reduce(Decimal.zero) { $0 + $1.amount }
-            let record = PartnershipRecord(kind: .settlement, amount: total, note: "清账收益池", settlementChoices: choices)
+            if let renminbiRate, renminbiRate <= 0 { throw PartnershipError.invalid("清账汇率必须大于零。") }
+            let record = PartnershipRecord(kind: .settlement, date: date, amount: total, note: "清账收益池",
+                                           settlementChoices: choices, settlementRenminbiRate: renminbiRate,
+                                           settlementRateSource: rateSource)
             book.records.append(record)
             log("清账收益池 \(choices.count) 人", into: &book, recordID: record.id)
         }
@@ -318,9 +401,7 @@ final class PartnershipStore: ObservableObject {
     /// together.
     func undoLatestChange(bookID: UUID) throws {
         try undo(bookID) { book in
-            guard book.records.count > 2, let last = book.records.last else {
-                throw PartnershipError.invalid("初始出资不能撤销；可删除整个账本。")
-            }
+            guard let last = book.records.last else { throw PartnershipError.invalid("当前没有可撤销的记录。") }
             let description: String
             if let operationID = last.operationID {
                 let removed = book.records.filter { $0.operationID == operationID }
@@ -330,7 +411,6 @@ final class PartnershipStore: ObservableObject {
                 book.records.removeLast()
                 description = last.kind.title
             }
-            guard book.records.count >= 2 else { throw PartnershipError.invalid("初始出资不能撤销；可删除整个账本。") }
             log("撤销\(description)", into: &book)
         }
     }
@@ -342,11 +422,12 @@ final class PartnershipStore: ObservableObject {
             throw PartnershipError.invalid("账本已不存在。")
         }
         var snapshots = undoneBooks[bookID] ?? []
-        guard let restored = snapshots.popLast() else {
+        guard var restoredBook = snapshots.popLast() else {
             throw PartnershipError.invalid("当前没有可取消的撤回。")
         }
         undoneBooks[bookID] = snapshots.isEmpty ? nil : snapshots
-        books[index] = restored
+        log("取消撤回，恢复最近一次修改", into: &restoredBook)
+        books[index] = restoredBook
         didMutate()
     }
 
@@ -397,6 +478,11 @@ final class PartnershipStore: ObservableObject {
             throw PartnershipError.invalid("股数须大于零且最多六位小数；股价和手续费须为最多两位小数的有效金额。")
         }
     }
+    private func requireCapitalEventDate(_ date: Date, in book: PartnershipBook) throws {
+        guard !book.records.contains(where: { $0.isPurchase && $0.date > date }) else {
+            throw PartnershipError.invalid("为保持已冻结的买入比例，注资、取现或清账时间不能早于现有买入记录。请先撤销较晚的交易再补录。")
+        }
+    }
     private func adjustedProfitAllocations(
         bases: [UUID: Decimal],
         rate: Decimal,
@@ -407,16 +493,22 @@ final class PartnershipStore: ObservableObject {
         }
         guard let investor = book.members.first(where: \.isManager) else { return [] }
         var result: [PartnershipAllocation] = []
-        var transferred: Decimal = 0
+        var allocatedToOthers: Decimal = 0
         for member in book.members where member.id != investor.id {
-            let base = PartnershipCalculator.money(bases[member.id, default: 0])
-            let adjustment = PartnershipCalculator.money(base * rate)
-            transferred += adjustment
-            result.append(.init(memberID: member.id, base: base, adjustment: adjustment, actual: base - adjustment))
+            let base = PartnershipCalculator.precise(bases[member.id, default: 0])
+            let adjustment = PartnershipCalculator.precise(base * rate)
+            let actual = PartnershipCalculator.precise(base - adjustment)
+            allocatedToOthers += actual
+            result.append(.init(memberID: member.id, base: base, adjustment: adjustment, actual: actual))
         }
-        let investorBase = PartnershipCalculator.money(bases[investor.id, default: 0])
+        let investorBase = PartnershipCalculator.precise(bases[investor.id, default: 0])
+        let totalProfit = PartnershipCalculator.precise(bases.values.reduce(Decimal.zero, +))
+        let investorActual = PartnershipCalculator.precise(totalProfit - allocatedToOthers)
         result.append(.init(
-            memberID: investor.id, base: investorBase, adjustment: -transferred, actual: investorBase + transferred
+            memberID: investor.id,
+            base: investorBase,
+            adjustment: PartnershipCalculator.precise(investorBase - investorActual),
+            actual: investorActual
         ))
         return result
     }

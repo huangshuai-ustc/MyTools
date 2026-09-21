@@ -23,19 +23,28 @@ extension StockStore: PartnershipStockImportProviding {
             case .aShare: .aShare
             case .hongKong: .hongKong
             }
-            return stock.transactions.map { transaction in
+            let transactions = stock.transactions.map { transaction in
                 PartnershipStockImportRecord(
                     id: transaction.id,
                     market: market,
                     symbol: stock.symbol,
                     name: stock.displayName,
-                    side: transaction.type == .buy ? .buy : .sell,
+                    kind: transaction.type == .buy ? .buy : .sell,
                     date: transaction.tradedAt,
                     shares: transaction.quantity,
                     price: transaction.unitPrice,
                     fee: transaction.fees
                 )
             }
+            let dividends = stock.dividends.map { dividend in
+                PartnershipStockImportRecord(
+                    id: dividend.id, market: market, symbol: stock.symbol, name: stock.displayName,
+                    kind: .dividend, date: dividend.receivedAt, shares: dividend.quantity,
+                    price: dividend.dividendPerShare, fee: dividend.fees,
+                    grossAmount: dividend.grossAmount, withholdingTax: dividend.withholdingTax
+                )
+            }
+            return transactions + dividends
         }
     }
 }
@@ -322,16 +331,18 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     /// Retries a startup load that was deferred because iOS protected data was unavailable.
     /// Calls are idempotent so scene activation and protected-data notifications can both use it.
     func retryInitialVaultLoadIfNeeded() {
-        guard !isInitialDataLoaded, initialVaultLoadTask == nil else { return }
+        guard (!isInitialDataLoaded || !canPersistVault), initialVaultLoadTask == nil else { return }
         DiagnosticLogger.shared.log(
             .persistence,
-            "受保护数据已可访问，重新尝试载入本地档案"
+            canPersistVault
+                ? "受保护数据已可访问，重新尝试载入本地档案"
+                : "本地档案上次读取失败，重新尝试读取原文件"
         )
         startInitialVaultLoad()
     }
 
     private func startInitialVaultLoad() {
-        guard !isInitialDataLoaded, initialVaultLoadTask == nil else { return }
+        guard (!isInitialDataLoaded || !canPersistVault), initialVaultLoadTask == nil else { return }
 #if os(iOS)
         guard UIApplication.shared.isProtectedDataAvailable else {
             DiagnosticLogger.shared.log(
@@ -414,7 +425,15 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         isVaultLoadFailurePresented = !snapshot.canPersist
         didLogPersistenceBlocked = false
         isInitialDataLoaded = true
-        cloudSync.localDataDidLoad()
+        if snapshot.canPersist {
+            cloudSync.localDataDidLoad()
+        } else {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "本地档案未成功读取，云同步保持暂停以避免把空状态当作删除上传",
+                level: .warning
+            )
+        }
         let loadSummary = "Local vault loaded from \(snapshot.source): \(snapshot.byteCount) bytes; read \(snapshot.readMilliseconds) ms, decode \(snapshot.decodeMilliseconds) ms, total \(snapshot.totalMilliseconds) ms"
         startupLogger.info("\(loadSummary, privacy: .public)")
         DiagnosticLogger.shared.log(.startup, loadSummary)
@@ -574,6 +593,12 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     func dismissVaultLoadFailure() {
         isVaultLoadFailurePresented = false
+    }
+
+    func retryVaultLoadAfterFailure() {
+        guard !canPersistVault else { return }
+        isVaultLoadFailurePresented = false
+        retryInitialVaultLoadIfNeeded()
     }
 
     func dismissPersistenceError() {
@@ -767,6 +792,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     func makeCloudSyncSnapshot() async throws -> CloudSyncSnapshot {
+        guard canPersistVault else {
+            throw CloudSyncApplyError.localVaultUnavailable
+        }
         let vault = currentVaultData()
         let secrets = currentSecrets
         let attachmentStore = self.attachmentStore

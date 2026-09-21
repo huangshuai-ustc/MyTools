@@ -294,12 +294,13 @@ struct StocksView: View {
         .searchable(text: $query, prompt: "搜索股票名称或代码")
 #endif
         .refreshable {
+            // 先刷分时，再刷报价：港股报价源延迟约 15 分钟，`StockQuoteService`
+            // 用实时分时末点择优覆盖，必须拿到本轮分时才能生效。
+            await store.refreshIntradayCharts(for: marketFilter.market)
             await store.refreshQuotes(
                 for: marketFilter.market,
                 forceRefresh: true
             )
-            // 分时缓存要一起强刷，否则迷你图和盘前盘后派生值仍是轮询时的旧数据。
-            await store.refreshIntradayCharts(for: marketFilter.market)
             await store.refreshExtendedHoursPerformance()
             await store.refreshSparklines()
         }
@@ -325,11 +326,12 @@ struct StocksView: View {
                 }
                 Button {
                     Task {
+                        // 顺序同下拉刷新：分时先行，港股报价才能用上本轮分时末点。
+                        await store.refreshIntradayCharts(for: marketFilter.market)
                         await store.refreshQuotes(
                             for: marketFilter.market,
                             forceRefresh: true
                         )
-                        await store.refreshIntradayCharts(for: marketFilter.market)
                         await store.refreshExtendedHoursPerformance()
                         await store.refreshSparklines()
                     }

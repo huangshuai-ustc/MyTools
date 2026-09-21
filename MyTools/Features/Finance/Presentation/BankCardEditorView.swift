@@ -649,6 +649,7 @@ private struct YearMonthPicker: View {
                     ForEach(Array(years), id: \.self) { Text(String($0)).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.menu)
+                .tint(.blue)
                 .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                 .fixedSize(horizontal: true, vertical: false)
                 Text("年")
@@ -657,6 +658,7 @@ private struct YearMonthPicker: View {
                     ForEach(1...12, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.menu)
+                .tint(.blue)
                 .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
                 .fixedSize(horizontal: true, vertical: false)
                 Text("月")

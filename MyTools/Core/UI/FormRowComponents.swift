@@ -190,7 +190,7 @@ struct PickerFieldRow<Selection: Hashable, Content: View>: View {
                 content()
             }
             .labelsHidden()
-            .tint(Color.accentColor)
+            .tint(.blue)
             .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
         }
     }

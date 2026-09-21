@@ -569,6 +569,8 @@ struct MedicalRecordEditorView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
+            .foregroundStyle(.secondary)
+            .tint(.blue)
         }
         .padding(.vertical, 2)
     }

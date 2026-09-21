@@ -50,7 +50,13 @@ extension AppStoreDependencies {
     static var live: Self {
         let attachmentStore = AttachmentStore()
 #if MYTOOLS_FEATURE_STOCKS
-        let quoteService: any StockQuoteRefreshing = StockQuoteService()
+        // 港股报价源延迟约 15 分钟，`StockQuoteService` 用实时分时末点择优覆盖。
+        // `cachedChart` 只读本地缓存、不发请求，不越过 Provider 边界。
+        let quoteService: any StockQuoteRefreshing = StockQuoteService(
+            intradayChart: { stock in
+                await StockChartService.shared.cachedChart(for: stock, range: .intraday)
+            }
+        )
         let stockRefreshInvalidator: any StockRefreshInvalidating = StockRefreshCoordinator.shared
 #else
         let quoteService: any StockQuoteRefreshing = DisabledStockQuoteService()

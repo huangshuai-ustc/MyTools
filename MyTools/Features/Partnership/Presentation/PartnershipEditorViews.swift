@@ -23,10 +23,8 @@ struct PartnershipCreateView: View {
     @EnvironmentObject private var store: PartnershipStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var manager = ""
-    @State private var partner = ""
-    @State private var managerAmount = ""
-    @State private var partnerAmount = ""
+    @State private var type: PartnershipBookType = .stockInvestment
+    @State private var currency: CurrencyCode = .usd
     @State private var error: String?
 
     var body: some View {
@@ -34,17 +32,15 @@ struct PartnershipCreateView: View {
             Form {
                 Section("账本") {
                     FieldEditorRow(title: "名称", prompt: "账本名称", text: $name)
-                    ReadOnlyFieldRow(title: "账本类型", value: PartnershipBookType.stockInvestment.title)
-                    ReadOnlyFieldRow(title: "账本币种", value: partnershipCurrency.title)
-                }
-                Section("初始出资") {
-                    FieldEditorRow(title: "投资人", prompt: "姓名", text: $manager)
-                    NumericFieldRow(title: "投资人出资", prompt: "9000", text: $managerAmount)
-                    FieldEditorRow(title: "合伙人", prompt: "姓名", text: $partner)
-                    NumericFieldRow(title: "合伙人出资", prompt: "1500", text: $partnerAmount)
+                    PickerFieldRow(title: "账本类型", selection: $type) {
+                        ForEach(PartnershipBookType.allCases) { Text($0.title).tag($0) }
+                    }
+                    PickerFieldRow(title: "账本币种", selection: $currency) {
+                        Text(CurrencyCode.usd.title).tag(CurrencyCode.usd)
+                    }
                 }
                 Section("规则") {
-                    Text("账本以美元记账；分成比例在每笔卖出时确认，默认带入 5%。").foregroundStyle(.secondary)
+                    Text("创建后可随时新增成员和注资；分成比例在每笔卖出时确认，默认带入 5%。").foregroundStyle(.secondary)
                 }
             }
             .appNavigationTitle("新建合伙账本")
@@ -61,22 +57,19 @@ struct PartnershipCreateView: View {
     }
     private func save() {
         do {
-            guard let first = DecimalTextParser.decimal(from: managerAmount),
-                  let second = DecimalTextParser.decimal(from: partnerAmount) else {
-                throw PartnershipError.invalid("请输入有效的金额。")
-            }
-            try store.create(name: name, manager: manager, partner: partner, amounts: [first, second],
-                             rate: Decimal(5) / 100)
+            try store.create(name: name, type: type, currency: currency)
             dismiss()
         } catch { self.error = error.localizedDescription }
     }
 }
 struct PartnershipActionView: View {
     @EnvironmentObject private var store: PartnershipStore
+    @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     let bookID: UUID
     let action: PartnershipAction
     private let locksPurchase: Bool
     private let showsCancel: Bool
+    private let importKind: PartnershipStockImportRecord.Kind?
     private let finish: () -> Void
     @State private var amount = ""
     @State private var name = ""
@@ -94,6 +87,9 @@ struct PartnershipActionView: View {
     @State private var withholdingTax = ""
     @State private var selectedImportIDs: Set<UUID> = []
     @State private var reinvestChoices: [UUID: Bool] = [:]
+    @State private var addingMember = false
+    @State private var usesCustomRate = false
+    @State private var settlementRate = ""
     @State private var error: String?
 
     // The book is USD-only for now; every trade is a US-market record.
@@ -102,7 +98,9 @@ struct PartnershipActionView: View {
     private var book: PartnershipBook? { store.books.first { $0.id == bookID } }
     /// Only US-market transactions can enter a USD book.
     private var importCandidates: [PartnershipStockImportRecord] {
-        store.stockImportRecords.filter { $0.market == .unitedStates }
+        store.importCandidates(bookID: bookID).filter {
+            $0.market == .unitedStates && (importKind == nil || $0.kind == importKind)
+        }
     }
     private var availablePurchases: [PartnershipRecord] {
         guard let book else { return [] }
@@ -132,10 +130,13 @@ struct PartnershipActionView: View {
         return PartnershipCalculator.memberProfitPool(book).filter { $0.actual != 0 }
     }
 
-    init(bookID: UUID, action: PartnershipAction, purchaseID: UUID? = nil, showsCancel: Bool = true, finish: @escaping () -> Void) {
+    init(bookID: UUID, action: PartnershipAction, purchaseID: UUID? = nil,
+         importKind: PartnershipStockImportRecord.Kind? = nil,
+         showsCancel: Bool = true, finish: @escaping () -> Void) {
         self.bookID = bookID
         self.action = action
         locksPurchase = purchaseID != nil
+        self.importKind = importKind
         self.showsCancel = showsCancel
         self.finish = finish
         _purchaseID = State(initialValue: purchaseID)
@@ -195,8 +196,12 @@ struct PartnershipActionView: View {
     private func configureInitialState() {
         memberID = book?.members.first?.id
         if action == .rename { name = book?.name ?? "" }
+        if action == .contribution, book?.members.isEmpty == true { addingMember = true }
         if action == .settle {
             reinvestChoices = Dictionary(uniqueKeysWithValues: profitPool.map { ($0.memberID, true) })
+            if let rate = book.flatMap({ exchangeRateStore.renminbiBuyingRates[$0.currency] }) {
+                settlementRate = NSDecimalNumber(decimal: rate).stringValue
+            }
         }
         if action == .sell, let purchaseID,
            let purchase = book?.records.first(where: { $0.id == purchaseID }) {
@@ -221,8 +226,10 @@ struct PartnershipActionView: View {
                         Button(role: .destructive) { selectedImportIDs.remove(record.id) } label: {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text("\(record.side == .buy ? "买入" : "卖出") · \(record.name) \(record.symbol)")
-                                    Text("\(record.date.formatted(date: .numeric, time: .omitted)) · \(PartnershipFormat.shares(record.shares)) 股")
+                                Text("\(record.title) · \(record.name) \(record.symbol)")
+                                    Text(record.kind == .dividend
+                                         ? "\(record.date.formatted(date: .numeric, time: .shortened)) · \(PartnershipFormat.money(record.grossAmount))"
+                                         : "\(record.date.formatted(date: .numeric, time: .shortened)) · \(PartnershipFormat.shares(record.shares)) 股")
                                         .appFont(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -267,8 +274,8 @@ struct PartnershipActionView: View {
                 }
             }
             if action == .buy || holdingSymbol != nil {
-                DatePicker("交易日期", selection: $tradeDate, displayedComponents: .date)
-                ReadOnlyFieldRow(title: "交易币种", value: partnershipCurrency.title)
+                DatePicker("交易时间", selection: $tradeDate, displayedComponents: [.date, .hourAndMinute])
+                ReadOnlyFieldRow(title: "交易币种", value: book.currency.title)
                 if action == .buy {
                     FieldEditorRow(title: "股票代码", prompt: "例如 AAPL", text: $symbol)
                     FieldEditorRow(title: "股票名称", prompt: "例如 苹果", text: $stockName)
@@ -295,11 +302,32 @@ struct PartnershipActionView: View {
         } footer: {
             Text("买入会冻结当时的可用资金比例；卖出只把本金返还可用资金，盈利按冻结比例计入收益池，待清账再分配。")
         }
+        if let kind = importKind(for: action) {
+            Section {
+                NavigationLink("从股票投资导入\(kind.title)记录") {
+                    PartnershipActionView(bookID: bookID, action: .importStocks,
+                                          importKind: kind, showsCancel: false, finish: finish)
+                }
+            } header: {
+                Text("股票投资")
+            } footer: {
+                Text("这里只显示尚未导入的\(kind.title)记录。")
+            }
+        }
     }
     @ViewBuilder private func settleForm(_ book: PartnershipBook) -> some View {
         if profitPool.isEmpty {
             Section { ContentUnavailableView("暂无可清账收益", systemImage: "tray") }
         } else {
+            Section("清账设置") {
+                DatePicker("清账时间", selection: $tradeDate, displayedComponents: [.date, .hourAndMinute])
+                Toggle("自定义人民币汇率", isOn: $usesCustomRate)
+                NumericFieldRow(title: usesCustomRate ? "自定义汇率" : "中国银行结汇汇率",
+                                prompt: "人民币 / 1 \(book.currency.rawValue)", text: $settlementRate)
+                    .disabled(!usesCustomRate)
+                Text("清账生成后汇率会固定，不再随市场汇率变化。")
+                    .appFont(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 ForEach(profitPool, id: \.memberID) { allocation in
                     let name = book.members.first { $0.id == allocation.memberID }?.name ?? "成员"
@@ -332,22 +360,46 @@ struct PartnershipActionView: View {
             FieldEditorRow(title: action == .member ? "姓名" : "名称", prompt: "必填", text: $name)
             if action == .member {
                 NumericFieldRow(title: "注资金额", prompt: "0.00", text: $amount)
+                DatePicker("发生时间", selection: $tradeDate, displayedComponents: [.date, .hourAndMinute])
             }
         }
     }
 
     @ViewBuilder private func memberAmountForm(_ book: PartnershipBook) -> some View {
         Section {
-            PickerFieldRow(title: "成员", selection: $memberID) {
-                ForEach(book.members) { Text($0.name).tag(Optional($0.id)) }
+            if action == .contribution {
+                PickerFieldRow(title: "注资对象", selection: $addingMember) {
+                    if !book.members.isEmpty { Text("现有成员").tag(false) }
+                    Text("新增成员").tag(true)
+                }
+                if addingMember {
+                    FieldEditorRow(title: "成员姓名", prompt: "必填", text: $name)
+                } else {
+                    PickerFieldRow(title: "成员", selection: $memberID) {
+                        ForEach(book.members) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                }
+            } else {
+                PickerFieldRow(title: "成员", selection: $memberID) {
+                    ForEach(book.members) { Text($0.name).tag(Optional($0.id)) }
+                }
             }
-            ReadOnlyFieldRow(title: "币种", value: partnershipCurrency.title)
+            ReadOnlyFieldRow(title: "币种", value: book.currency.title)
             NumericFieldRow(title: "金额", prompt: "0.00", text: $amount)
+            DatePicker("发生时间", selection: $tradeDate, displayedComponents: [.date, .hourAndMinute])
             FieldEditorRow(title: "备注", prompt: "选填", text: $note)
         } footer: {
             if action == .withdrawal {
                 Text("取出金额不能超过该成员当前可用现金；收益需先清账才能取出。")
             }
+        }
+    }
+    private func importKind(for action: PartnershipAction) -> PartnershipStockImportRecord.Kind? {
+        switch action {
+        case .buy: .buy
+        case .sell: .sell
+        case .dividend: .dividend
+        default: nil
         }
     }
     private func remainingShares(of purchase: PartnershipRecord, in book: PartnershipBook) -> Decimal {
@@ -367,7 +419,11 @@ struct PartnershipActionView: View {
             case .importStocks:
                 try store.importStockRecords(bookID: bookID, ids: selectedImportIDs)
             case .settle:
-                try store.settle(bookID: bookID, reinvest: reinvestChoices)
+                guard let rate = DecimalTextParser.decimal(from: settlementRate) else {
+                    throw PartnershipError.invalid("请输入有效的人民币汇率。")
+                }
+                try store.settle(bookID: bookID, reinvest: reinvestChoices, date: tradeDate,
+                                 renminbiRate: rate, rateSource: usesCustomRate ? .custom : .bankOfChina)
             case .dividend:
                 guard let gross = DecimalTextParser.decimal(from: amount),
                       let tax = optionalAmount(withholdingTax),
@@ -395,13 +451,17 @@ struct PartnershipActionView: View {
                 }
             case .member:
                 guard let value = DecimalTextParser.decimal(from: amount) else { throw PartnershipError.invalid("请输入有效金额。") }
-                try store.addMember(bookID: bookID, name: name, amount: value)
+                try store.addMember(bookID: bookID, name: name, amount: value, date: tradeDate)
             case .contribution:
                 guard let value = DecimalTextParser.decimal(from: amount) else { throw PartnershipError.invalid("请输入有效金额。") }
-                try store.contribute(bookID: bookID, amount: value, memberID: memberID, note: note)
+                if addingMember {
+                    try store.addMember(bookID: bookID, name: name, amount: value, date: tradeDate)
+                } else {
+                    try store.contribute(bookID: bookID, amount: value, memberID: memberID, note: note, date: tradeDate)
+                }
             case .withdrawal:
                 guard let value = DecimalTextParser.decimal(from: amount) else { throw PartnershipError.invalid("请输入有效金额。") }
-                try store.withdraw(bookID: bookID, amount: value, memberID: memberID, note: note)
+                try store.withdraw(bookID: bookID, amount: value, memberID: memberID, note: note, date: tradeDate)
             }
             finish()
         } catch { self.error = error.localizedDescription }
@@ -419,22 +479,31 @@ struct PartnershipActionView: View {
 struct PartnershipAddRecordView: View {
     let bookID: UUID
     let finish: () -> Void
+    @State private var selectedAction: PartnershipAction = .buy
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("交易") {
-                    NavigationLink("记录买入") { form(.buy) }
-                    NavigationLink("记录卖出") { form(.sell) }
-                    NavigationLink("记录股息") { form(.dividend) }
-                    NavigationLink("从股票投资导入") { form(.importStocks) }
-                }
-                Section("资金") {
-                    NavigationLink("注资") {
-                        PartnershipContributionChoiceView(bookID: bookID, finish: finish)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("记录类型").foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("记录类型", selection: $selectedAction) {
+                        Text("买入").tag(PartnershipAction.buy)
+                        Text("卖出").tag(PartnershipAction.sell)
+                        Text("股息（分红）").tag(PartnershipAction.dividend)
+                        Text("注资").tag(PartnershipAction.contribution)
+                        Text("取现").tag(PartnershipAction.withdrawal)
                     }
-                    NavigationLink("取出可用现金") { form(.withdrawal) }
+                    .labelsHidden()
+                    .tint(.blue)
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.background)
+
+                Divider()
+                form(selectedAction)
+                    .id(selectedAction)
             }
             .appNavigationTitle("新增记录")
             .toolbar {
@@ -445,23 +514,6 @@ struct PartnershipAddRecordView: View {
 
     private func form(_ action: PartnershipAction) -> some View {
         PartnershipActionView(bookID: bookID, action: action, showsCancel: false, finish: finish)
-    }
-}
-
-private struct PartnershipContributionChoiceView: View {
-    let bookID: UUID
-    let finish: () -> Void
-
-    var body: some View {
-        List {
-            NavigationLink("单人注资") {
-                PartnershipActionView(bookID: bookID, action: .contribution, showsCancel: false, finish: finish)
-            }
-            NavigationLink("新成员加入") {
-                PartnershipActionView(bookID: bookID, action: .member, showsCancel: false, finish: finish)
-            }
-        }
-        .appNavigationTitle("注资")
     }
 }
 
@@ -540,8 +592,10 @@ private struct PartnershipImportRecordList: View {
                     set: { isOn in if isOn { selected.insert(record.id) } else { selected.remove(record.id) } }
                 )) {
                     VStack(alignment: .leading) {
-                        Text("\(record.side == .buy ? "买入" : "卖出") · \(PartnershipFormat.shares(record.shares)) 股 @ \(PartnershipFormat.money(record.price))")
-                        Text(record.date.formatted(date: .numeric, time: .omitted))
+                        Text(record.kind == .dividend
+                             ? "股息（分红） · \(PartnershipFormat.money(record.grossAmount))"
+                             : "\(record.title) · \(PartnershipFormat.shares(record.shares)) 股 @ \(PartnershipFormat.money(record.price))")
+                        Text(record.date.formatted(date: .numeric, time: .shortened))
                             .appFont(.caption).foregroundStyle(.secondary)
                     }
                 }

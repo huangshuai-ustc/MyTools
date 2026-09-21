@@ -254,6 +254,20 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         let activatedModules = activeModules.subtracting(previouslyActiveModules)
         guard !activatedModules.isEmpty else { return false }
 
+        // On process startup `activeModules` begins empty. Cached entries may
+        // contain tombstones produced by an earlier interrupted/failed local
+        // load, so they must never be replayed before the first server fetch.
+        // Reconciliation below will turn valid non-empty local items back into
+        // saves when the cache contains stale deletion markers. A genuine
+        // in-process module re-enable still follows the cached-record path.
+        guard hasStarted || !previouslyActiveModules.isEmpty else {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "云同步首次启动：跳过本地缓存变更回放，先拉取服务器状态"
+            )
+            return false
+        }
+
         // Apply records first. Attachment downloads are independent of the
         // metadata merge and must not block the first usable screen.
         attachmentRestoreTask?.cancel()

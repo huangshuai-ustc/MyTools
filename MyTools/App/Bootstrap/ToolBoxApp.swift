@@ -84,6 +84,10 @@ private struct ConfiguredRootView: View {
 
     var body: some View {
         RootView(desktopSelection: $desktopSelection)
+            // One semantic interaction color across iOS, iPadOS and macOS:
+            // pickers, menus, toggles and other selectable controls are blue.
+            // Local destructive/semantic tints still override this value.
+            .tint(.blue)
             .environmentObject(store)
 #if MYTOOLS_FEATURE_STOCKS
             .environmentObject(store.stockStore)

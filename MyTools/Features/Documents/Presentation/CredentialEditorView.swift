@@ -321,6 +321,8 @@ struct CredentialEditorView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .foregroundStyle(.secondary)
+                    .tint(.blue)
                     HStack(spacing: 18) {
                         Button {
                             ocrAttachment = binding.wrappedValue
