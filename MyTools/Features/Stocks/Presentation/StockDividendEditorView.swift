@@ -48,7 +48,7 @@ struct StockDividendEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("分红信息") {
+                Section("分红收入") {
                     DateFieldRow(title: "到账日期：", date: $draft.dividend.receivedAt, upperBound: Date())
                     decimalField(
                         "分红股数：",
@@ -63,23 +63,23 @@ struct StockDividendEditorView: View {
                         field: .dividendPerShare
                     )
                     DetailValueRow(title: "税前分红", value: grossAmountText)
+                }
+
+                Section("税费与结算") {
                     decimalField(
-                        "预扣税：",
+                        "分红预扣税：",
                         placeholder: "可选",
                         text: $draft.withholdingTaxText,
                         field: .withholdingTax
                     )
                     decimalField(
-                        "其他费用：",
+                        "分红其他费用：",
                         placeholder: "可选",
                         text: $draft.feesText,
                         field: .fees
                     )
-                }
-
-                Section("结算") {
                     DetailValueRow(title: "结算币种", value: stock.market.currencyCode)
-                    DetailValueRow(title: "净到账", value: netAmountText)
+                    DetailValueRow(title: "净分红收入", value: netAmountText)
                 }
 
                 Section("备注") {

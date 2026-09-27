@@ -24,8 +24,9 @@ struct StockDetailView: View {
     @State private var showingTransactionOrderEditor = false
     @State private var transactionError = ""
     @State private var showingTransactionError = false
-    @State private var showingRenameAlert = false
+    @State private var editingName = false
     @State private var renameText = ""
+    @State private var refreshVisibilityToken = UUID()
 
     private var stock: StockHolding? {
         store.stocks.first { $0.id == stockID }
@@ -40,55 +41,75 @@ struct StockDetailView: View {
             }
         }
         .appNavigationTitle(
-            stock?.displayName ?? "股票详情",
-            displaysMacToolbarTitle: false
+            stock?.displayName ?? "股票详情"
         )
+        // 页面名固定写「股票详情」而不是股票名：卡顿日志要能按页面聚合，
+        // 换成股票名后每只股票都是一个新名字，反而看不出是哪一类页面在卡。
+        .diagnosticScreen("股票详情")
+        .toolbarTitleMenu {
+            Button("修改名称", systemImage: "pencil") {
+                renameText = stock?.name ?? ""
+                editingName = true
+            }
+        }
+        .sheet(isPresented: $editingName) {
+            NavigationStack {
+                Form {
+                    IMESafeTextField(prompt: "自定义名称（留空使用行情名称）", text: $renameText)
+                }
+                .navigationTitle("修改名称")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { editingName = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("保存") {
+                            commitPendingTextInput {
+                                if let stock { saveName(stock) }
+                            }
+                        }
+                    }
+                }
+                .diagnosticScreen("股票名称编辑")
+            }
+        }
         .iOSLabeledBackButton(ToolModule.myStocks.title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                if let stock {
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                if stock != nil {
                     Button {
                         showingStockWatch = true
                     } label: {
-                        HStack(spacing: 5) {
-                            Text(stock.displayName)
-                                .lineLimit(1)
-                            Image(systemName: "chart.xyaxis.line")
-                                .appFont(.caption2.weight(.semibold))
-                        }
-                        .appFont(.headline)
-                        .foregroundStyle(Color.accentColor)
+                        Image(systemName: "chart.xyaxis.line")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("查看\(stock.displayName)行情")
+                    .accessibilityLabel("查看股票行情")
                     .help("查看股票行情")
-                    .onLongPressGesture {
-                        renameText = stock.name
-                        showingRenameAlert = true
-                    }
                 }
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     Task {
-                        await store.refreshQuotes(
+                        await StockRefreshCoordinator.shared.refreshManually(
                             for: stock?.market,
-                            forceRefresh: true
+                            prioritizedStockID: stock?.id
                         )
                     }
                 } label: {
-                    if store.isRefreshingQuotes {
+                    if store.isRefreshingQuotes || store.isRefreshingCharts {
                         ProgressView()
                     } else {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(store.isRefreshingQuotes)
+                .disabled(
+                    store.isRefreshingQuotes
+                        || store.isRefreshingCharts
+                        || stock == nil
+                )
                 .accessibilityLabel("刷新股票行情")
+
             }
         }
         .navigationDestination(isPresented: $showingStockWatch) {
@@ -119,19 +140,11 @@ struct StockDetailView: View {
         } message: {
             Text(transactionError)
         }
-        .alert("修改名称", isPresented: $showingRenameAlert) {
-            TextField("自定义名称", text: $renameText)
-            Button("取消", role: .cancel) {}
-            Button("保存") {
-                guard var stock else { return }
-                stock.name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                store.upsertStock(stock)
-            }
-        } message: {
-            Text("留空则显示行情同步的名称")
-        }
         .onAppear {
-            StockRefreshCoordinator.shared.setStocksPageVisible(false)
+            StockRefreshCoordinator.shared.setStockScreen(refreshVisibilityToken, isVisible: true)
+        }
+        .onDisappear {
+            StockRefreshCoordinator.shared.setStockScreen(refreshVisibilityToken, isVisible: false)
         }
     }
 
@@ -154,6 +167,7 @@ struct StockDetailView: View {
                 Section("持仓总览") {
                     StockHoldingOverview(
                         stock: stock,
+                        performance: store.performance(for: stock),
                         appearanceSettings: stockAppearanceSettings
                     )
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
@@ -163,7 +177,10 @@ struct StockDetailView: View {
             Section("交易记录") {
                 ForEach(sortedTransactions) { transaction in
                     Button { editorRoute = .transaction(transaction) } label: {
-                        StockTransactionRow(transaction: transaction, market: stock.market)
+                        StockTransactionRow(
+                            transaction: transaction,
+                            market: stock.market
+                        )
                     }
                     .buttonStyle(.plain)
                     .appListRowStyle()
@@ -200,6 +217,13 @@ struct StockDetailView: View {
 #if os(iOS)
         .listStyle(.insetGrouped)
 #endif
+    }
+
+    private func saveName(_ current: StockHolding) {
+        var updated = current
+        updated.name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.upsertStock(updated)
+        editingName = false
     }
 
     private func deleteTransactions(ids: Set<UUID>) {
@@ -323,9 +347,17 @@ private struct StockQuoteOverview: View {
 
 private struct StockHoldingOverview: View {
     let stock: StockHolding
+    let performance: StockHolding.Performance
     let appearanceSettings: StockAppearanceSettings
 
     var body: some View {
+        // 九格里原本逐个读 `currentShares`/`holdingCost`/`marketValue`/`totalProfitLoss`
+        // 等属性，每一次读取都会把这只股票的交易完整回放一遍——一次 body 14 次。这里改成
+        // 取一份快照，全部数字都从它里面来。
+        let metrics = stock.metrics(performance: performance)
+        let performance = metrics.performance
+        let currencyCode = stock.market.currencyCode
+
         LazyVGrid(
             columns: [
                 GridItem(.flexible(), spacing: 12),
@@ -337,60 +369,60 @@ private struct StockHoldingOverview: View {
         ) {
             StockDetailMetricCell(
                 title: "持仓",
-                value: "\(StockValueFormatter.integerQuantity(stock.currentShares)) 股"
+                value: "\(StockValueFormatter.integerQuantity(performance.shares)) 股"
             )
             StockDetailMetricCell(
                 title: "持仓成本",
                 value: StockValueFormatter.money(
-                    stock.holdingCost,
-                    currencyCode: stock.market.currencyCode
+                    performance.holdingCost,
+                    currencyCode: currencyCode
                 )
             )
             StockDetailMetricCell(
                 title: "单股成本",
-                value: stock.averageHoldingCost.map {
-                    StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
+                value: performance.averageHoldingCost.map {
+                    StockValueFormatter.price($0, currencyCode: currencyCode)
                 } ?? "无持仓"
             )
             StockDetailMetricCell(
                 title: "持仓市值",
-                value: stock.marketValue.map {
-                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                value: metrics.marketValue.map {
+                    StockValueFormatter.money($0, currencyCode: currencyCode)
                 } ?? "待同步"
             )
             StockDetailMetricCell(
                 title: "持仓盈亏",
-                value: stock.holdingProfitLoss.map {
-                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                value: metrics.holdingProfitLoss.map {
+                    StockValueFormatter.signedMoney($0, currencyCode: currencyCode)
                 } ?? "待同步",
-                color: color(for: stock.holdingProfitLoss)
+                color: color(for: metrics.holdingProfitLoss)
             )
             StockDetailMetricCell(
                 title: "盈亏率",
-                value: stock.holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "待同步",
-                color: color(for: stock.holdingProfitRate)
+                value: metrics.holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "待同步",
+                color: color(for: metrics.holdingProfitRate)
             )
             StockDetailMetricCell(
                 title: "累计买入",
                 value: StockValueFormatter.money(
-                    stock.totalBuyCost,
-                    currencyCode: stock.market.currencyCode
+                    performance.totalBuyCost,
+                    currencyCode: currencyCode
                 )
             )
             StockDetailMetricCell(
-                title: "已变现（含分红）",
+                title: "已实现收益（含分红）",
                 value: StockValueFormatter.money(
-                    stock.realizedProfitLoss,
-                    currencyCode: stock.market.currencyCode
+                    performance.realizedProfitLoss,
+                    currencyCode: currencyCode
                 ),
-                color: color(stock.realizedProfitLoss)
+                color: color(performance.realizedProfitLoss)
             )
             StockDetailMetricCell(
                 title: "累计总收益",
-                value: stock.totalProfitLoss.map {
-                    StockValueFormatter.money($0, currencyCode: stock.market.currencyCode)
+                value: metrics.totalProfitLoss.map {
+                    StockValueFormatter.money($0, currencyCode: currencyCode)
                 } ?? "待同步",
-                color: color(for: stock.totalProfitLoss)
+                color: color(for: metrics.totalProfitLoss)
             )
         }
     }
@@ -563,13 +595,14 @@ private struct StockTransactionRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
-                Text(StockValueFormatter.money(transaction.grossAmount, currencyCode: market.currencyCode))
+                Text(StockValueFormatter.money(
+                    transaction.type == .buy ? transaction.buyTotalCost : transaction.sellNetProceeds,
+                    currencyCode: market.currencyCode
+                ))
                     .appFont(.subheadline.weight(.semibold).monospacedDigit())
-                if transaction.fees > 0 {
-                    Text("费用 \(StockValueFormatter.money(transaction.fees, currencyCode: market.currencyCode))")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(StockValueFormatter.money(transaction.grossAmount, currencyCode: market.currencyCode)) \(transaction.type == .buy ? "+" : "−") \(StockValueFormatter.money(transaction.fees, currencyCode: market.currencyCode))")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .contentShape(Rectangle())
@@ -603,6 +636,9 @@ private struct StockDividendRow: View {
             VStack(alignment: .trailing, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text(StockValueFormatter.money(dividend.netAmount, currencyCode: market.currencyCode))
                     .appFont(.subheadline.weight(.semibold).monospacedDigit())
+                Text("净分红收入")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
                 if dividend.totalDeductions > 0 {
                     Text("税前 \(StockValueFormatter.money(dividend.grossAmount, currencyCode: market.currencyCode)) · 扣除 \(StockValueFormatter.money(dividend.totalDeductions, currencyCode: market.currencyCode))")
                         .appFont(.caption)

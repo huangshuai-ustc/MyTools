@@ -33,6 +33,7 @@ struct CardDetailView: View {
 
     var body: some View {
         NavigationStack {
+            if store.cards.contains(where: { $0.id == initialCard.id }) {
             Form {
                 Section("银行卡档案") {
                     cardArchiveCard
@@ -52,8 +53,9 @@ struct CardDetailView: View {
                     )
                 }
 
-                ForEach(card.additionalCredentials) { credential in
+                if !card.additionalCredentials.isEmpty {
                     Section("其他卡号") {
+                        ForEach(card.additionalCredentials) { credential in
                         credentialCard(
                             name: credential.displayName,
                             networks: credential.networks,
@@ -65,6 +67,7 @@ struct CardDetailView: View {
                             status: credential.status,
                             isPrimary: false
                         )
+                        }
                     }
                 }
 
@@ -109,10 +112,14 @@ struct CardDetailView: View {
                 }
 
             }
+            .diagnosticScreen("银行卡详情")
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
-                        editingCard = card
+                        Task {
+                            guard await auth.verifyWithBiometrics() else { return }
+                            editingCard = card
+                        }
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
@@ -122,12 +129,7 @@ struct CardDetailView: View {
             }
             .sheet(item: $editingCard) { cardToEdit in
                 if let account = store.accounts.first(where: { $0.id == cardToEdit.accountID }) {
-                    CardEditorView(card: cardToEdit, account: account) { updated in
-                        store.replaceAccount(
-                            account,
-                            cards: store.cards(for: account).map { $0.id == updated.id ? updated : $0 }
-                        )
-                    }
+                    CardEditorView(card: cardToEdit, account: account, saveToStore: true) { _ in }
                     .iOSLargeSheet()
                 }
             }
@@ -148,6 +150,9 @@ struct CardDetailView: View {
             } message: {
                 Text(attachmentError)
             }
+            } else {
+                ContentUnavailableView("银行卡已不存在", systemImage: "creditcard")
+            }
         }
     }
 
@@ -165,7 +170,7 @@ struct CardDetailView: View {
     }
 
     private var cardArchiveCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(
                 columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
                 alignment: .leading,
@@ -265,7 +270,7 @@ struct CardDetailView: View {
         status: CardStatus,
         isPrimary: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name)
                     .appFont(.headline)
@@ -297,12 +302,12 @@ struct CardDetailView: View {
                 CardNetworkTags(networks: networks)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("卡号")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                 Text(cardNumberDisplay(cardNumber))
-                    .appFont(.title3.weight(.semibold))
+                    .appFont(.headline.monospacedDigit())
                     .fontDesign(.monospaced)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
@@ -312,7 +317,7 @@ struct CardDetailView: View {
             LazyVGrid(
                 columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
                 alignment: .leading,
-                spacing: 12
+                spacing: 8
             ) {
                 credentialFact(
                     title: "CVV",
@@ -328,18 +333,10 @@ struct CardDetailView: View {
                 )
             }
 
-            credentialFact(
-                title: "持卡人",
-                value: holderName.isEmpty ? "未填写" : holderName,
-                copyValue: holderName.isEmpty ? nil : holderName
-            )
-            credentialFact(
-                title: "币种",
-                value: currencyText(currencies),
-                copyValue: currencies.isEmpty ? nil : currencyText(currencies)
-            )
+            credentialFact(title: "持卡人", value: holderName.isEmpty ? "未填写" : holderName, copyValue: holderName.isEmpty ? nil : holderName)
+            credentialFact(title: "币种", value: currencyText(currencies), copyValue: currencies.isEmpty ? nil : currencyText(currencies))
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 
     private func credentialFact(
@@ -348,10 +345,11 @@ struct CardDetailView: View {
         copyValue: String?,
         monospaced: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(title)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize()
             Text(value)
                 .appFont(.subheadline)
                 .fontDesign(monospaced ? .monospaced : .default)

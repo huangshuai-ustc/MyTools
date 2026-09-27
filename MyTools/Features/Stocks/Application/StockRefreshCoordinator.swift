@@ -23,17 +23,17 @@ final class StockRefreshCoordinator: ObservableObject {
     private weak var store: StockStore?
     private var isStockModuleVisible: Bool = true
     private var foregroundTask: Task<Void, Never>?
+    private var closingTask: Task<Void, Never>?
     private var lastClosingRefreshSessionEndByMarket: [StockMarket: Date] = [:]
     private var lastClosingRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
     private var lastClosingChartRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
-    // Markets whose last closing-chart refresh ended with noData are skipped
-    // until the next session boundary so a permanent "no data" state (e.g. a
-    // delisted symbol or a holiday with no data yet published) does not drive
-    // a tight retry loop.
-    private var closingChartNoDataSessionEndByMarket: [StockMarket: Date] = [:]
     private var isAutomaticRefreshRunning = false
     private var currentScenePhase: ScenePhase = .inactive
-    private var isStocksPageVisible = false
+    /// Each visible stock screen owns a token. A single Boolean was insufficient:
+    /// pushing detail used to overwrite the list's visibility and multi-window
+    /// scenes could stop each other's polling.
+    private var visibleScreenTokens: Set<UUID> = []
+    private var chartStockIDsByScreen: [UUID: Set<UUID>] = [:]
     private let chartService: any StockChartServing
 
     /// Bumped whenever an automatic refresh cycle completes, regardless of
@@ -42,7 +42,7 @@ final class StockRefreshCoordinator: ObservableObject {
     /// own polling timer, so there is a single refresh cadence to reason about.
     @Published private(set) var lastRefreshCompletedAt: Date?
 
-    private init(chartService: any StockChartServing = StockChartService.shared) {
+    init(chartService: any StockChartServing = StockChartService.shared) {
         self.chartService = chartService
     }
 
@@ -54,7 +54,7 @@ final class StockRefreshCoordinator: ObservableObject {
 
     func updateModuleVisibility(_ isVisible: Bool) {
         isStockModuleVisible = isVisible
-        setStocksPageVisible(isStocksPageVisible && isVisible)
+        reconcileForegroundPolling()
     }
 
     func update(scenePhase: ScenePhase) {
@@ -79,9 +79,25 @@ final class StockRefreshCoordinator: ObservableObject {
     /// the user is elsewhere, keep it running only when a stock alert needs
     /// background evaluation; otherwise updates would invalidate every page in
     /// the navigation stack once per minute.
-    func setStocksPageVisible(_ isVisible: Bool) {
-        isStocksPageVisible = isVisible && isStockModuleVisible
+    func setStockScreen(
+        _ token: UUID,
+        isVisible: Bool,
+        chartStockIDs: Set<UUID> = []
+    ) {
+        if isVisible {
+            visibleScreenTokens.insert(token)
+            chartStockIDsByScreen[token] = chartStockIDs
+        } else {
+            visibleScreenTokens.remove(token)
+            chartStockIDsByScreen[token] = nil
+        }
         reconcileForegroundPolling()
+    }
+
+    private var focusedChartStockIDs: Set<UUID> {
+        chartStockIDsByScreen.values.reduce(into: Set<UUID>()) {
+            $0.formUnion($1)
+        }
     }
 
     func refreshEligibilityChanged() {
@@ -102,13 +118,141 @@ final class StockRefreshCoordinator: ObservableObject {
         }
     }
 
+    /// The only page-facing minute refresh entry. It feeds the same Store
+    /// queue, per-stock throttle and cache-update broadcast as polling/manual
+    /// refreshes; views never call StockChartService for minute networking.
+    func refreshChart(
+        for stockID: UUID,
+        range: StockChartRange = .intraday,
+        forceRefresh: Bool = false
+    ) async {
+        guard let store,
+              let stock = store.stocks.first(where: { $0.id == stockID }) else {
+            return
+        }
+        if range == .fiveDays {
+            await store.refreshFiveDayHistory(for: stockID, forceRefresh: forceRefresh)
+            return
+        }
+        // A cold cache must be repairable after close too. Merely opening a
+        // cached chart never reaches this method.
+        await store.refreshIntradayCharts(
+            for: stock.market,
+            stockID: stockID,
+            forceRefresh: forceRefresh
+        )
+    }
+
+    /// Manual refresh also repairs closed-market quotes and minute data.
+    /// A supplied stock ID keeps the request scoped to the current chart.
+    func refreshManually(
+        for requestedMarket: StockMarket? = nil,
+        prioritizedStockID: UUID? = nil,
+        refreshMarketCharts: Bool = false,
+        at now: Date = Date()
+    ) async {
+        guard let store, isStockModuleVisible, store.isDataLoaded else { return }
+        let markets = requestedMarket.map { [$0] } ?? StockMarket.allCases
+        for market in markets {
+            let session = StockMarketTradingCalendar.session(for: market, at: now)
+            if session != .closed {
+                // 持仓列表只刷新批量报价；看盘列表额外刷新当前市场全部分钟
+                // 缓存，让迷你图通过同一缓存广播立即重绘。单股看盘/详情仍只刷新
+                // 目标股票。港股保持分时在前，让延迟报价可用本轮末点修正。
+                let shouldRefreshCharts = refreshMarketCharts || prioritizedStockID != nil
+                if market == .hongKong, shouldRefreshCharts {
+                    await store.refreshIntradayCharts(
+                        for: market,
+                        stockID: prioritizedStockID,
+                        forceRefresh: true
+                    )
+                    await store.refreshQuotes(
+                        for: market,
+                        stockID: prioritizedStockID,
+                        forceRefresh: true
+                    )
+                } else {
+                    async let quotes: Void = store.refreshQuotes(
+                        for: market,
+                        stockID: prioritizedStockID,
+                        forceRefresh: true
+                    )
+                    if shouldRefreshCharts {
+                        await store.refreshIntradayCharts(
+                            for: market,
+                            stockID: prioritizedStockID,
+                            forceRefresh: true
+                        )
+                    }
+                    await quotes
+                }
+                continue
+            }
+            // Inspect quote and minute coverage independently. Completed data
+            // never creates traffic just because the user taps Refresh again.
+            let targets = store.stocks.filter {
+                $0.market == market && $0.hasConfiguredSymbol && !$0.isArchived
+                    && (prioritizedStockID == nil || $0.id == prioritizedStockID)
+            }
+            var chartIDs: Set<UUID> = []
+            for stock in targets {
+                guard !Task.isCancelled else { return }
+                let snapshot = await chartService.cachedChart(for: stock, range: .intraday)
+                if Self.needsClosedChartRefresh(stock: stock, snapshot: snapshot, at: now) {
+                    chartIDs.insert(stock.id)
+                }
+            }
+            if !chartIDs.isEmpty {
+                await store.refreshIntradayCharts(for: market, stockIDs: chartIDs, forceRefresh: true)
+            }
+            let targetIDs = Set(targets.map(\.id))
+            let quoteIDs = Set(store.stocks.filter {
+                targetIDs.contains($0.id) && Self.needsClosedQuoteRefresh(stock: $0, at: now)
+            }.map(\.id))
+            if !quoteIDs.isEmpty {
+                await store.refreshQuotes(for: market, stockIDs: quoteIDs, forceRefresh: true)
+            }
+            DiagnosticLogger.shared.log(.stockQuote, "休市手动检查 market=\(market.rawValue) targets=\(targets.count) charts=\(chartIDs.count) quotes=\(quoteIDs.count)")
+        }
+        lastRefreshCompletedAt = Date()
+    }
+
+    static func needsClosedQuoteRefresh(stock: StockHolding, at now: Date) -> Bool {
+        guard let end = StockMarketTradingCalendar.latestCompletedRegularSessionEnd(for: stock.market, at: now),
+              let timestamp = stock.lastQuoteAt, timestamp >= end, timestamp <= now.addingTimeInterval(300),
+              let price = stock.latestPrice, price > 0,
+              let previousClose = stock.previousClose, previousClose > 0 else { return true }
+        return false
+    }
+
+    static func needsClosedChartRefresh(stock: StockHolding, snapshot: StockChartSnapshot?, at now: Date) -> Bool {
+        guard let snapshot,
+              let end = StockMarketTradingCalendar.latestCompletedRegularSessionEnd(for: stock.market, at: now) else { return true }
+        let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
+        let startStamped = StockMarketTradingCalendar.postMarketMinuteRange(for: stock.market) != nil
+        let requiredRegular = startStamped ? end.addingTimeInterval(-60) : end
+        let regularComplete = snapshot.points.contains {
+            calendar.isDate($0.date, inSameDayAs: end) && $0.date >= requiredRegular
+                && $0.date <= end && $0.close > 0
+        }
+        guard regularComplete else { return true }
+        if let postMarket = StockMarketTradingCalendar.postMarketMinuteRange(for: stock.market),
+           let extendedEnd = calendar.date(byAdding: .minute, value: postMarket.end, to: calendar.startOfDay(for: end)),
+           extendedEnd <= now {
+            return !snapshot.postMarketPoints.contains {
+                $0.date >= extendedEnd.addingTimeInterval(-60) && $0.date <= extendedEnd && $0.close > 0
+            }
+        }
+        return false
+    }
+
     private var shouldPollInForeground: Bool {
         guard currentScenePhase == .active,
               isStockModuleVisible,
               let store,
               store.isDataLoaded,
               hasRefreshableStocks(in: store) else { return false }
-        return isStocksPageVisible
+        return !visibleScreenTokens.isEmpty
             || hasEnabledRefreshableAlert(in: store)
     }
 
@@ -123,6 +267,8 @@ final class StockRefreshCoordinator: ObservableObject {
                 .map(\.id)
         )
         return store.priceAlerts.contains {
+            $0.isEnabled && $0.stockID.map(refreshableStockIDs.contains) == true
+        } || store.returnAlerts.contains {
             $0.isEnabled && $0.stockID.map(refreshableStockIDs.contains) == true
         }
     }
@@ -146,8 +292,10 @@ final class StockRefreshCoordinator: ObservableObject {
                     self.stopForegroundPolling()
                     return
                 }
+                let started = ContinuousClock.now
                 await self.refreshAutomatically()
-                try? await Task.sleep(for: .seconds(60))
+                let remaining = Duration.seconds(60) - started.duration(to: .now)
+                if remaining > .zero { try? await Task.sleep(for: remaining) }
             }
         }
     }
@@ -165,21 +313,8 @@ final class StockRefreshCoordinator: ObservableObject {
 
         let now = Date()
 
-        let closingChartSessions = closingChartSessionsNeedingRefresh(
-            store: store,
-            now: now
-        )
-        if !closingChartSessions.isEmpty {
-            await refreshClosingData(
-                in: store,
-                sessions: closingChartSessions
-            )
-        }
-
-        await refreshExtendedHoursIntradayIfNeeded(in: store, now: now)
-        await refreshIntradayDuringSessionIfNeeded(in: store, now: now)
-
-        guard !store.isRefreshingQuotes else { return }
+        // 活跃市场优先。原先先串行补刷所有已收市市场，午夜打开美股页面时，
+        // A/港股的日 K 补刷会挡在美股报价之前，看起来就像刷新完全失效。
         let closingQuoteSessions = closingQuoteSessionsNeedingRefresh(
             store: store,
             now: now
@@ -191,20 +326,39 @@ final class StockRefreshCoordinator: ObservableObject {
                 "检测到收盘报价补刷市场：\(closingQuoteMarkets.map { $0.rawValue }.sorted().joined(separator: ","))"
             )
         }
-        let previousQuoteRefreshDates = closingQuoteMarkets.reduce(
-            into: [StockMarket: Date]()
-        ) { dates, market in
-            if let refreshedAt = store.lastRefreshAt(for: market) {
-                dates[market] = refreshedAt
-            }
-        }
+        // One set request reaches the Store's concurrent worker pool. The
+        // former per-ID await accidentally serialized every minute provider.
+        async let minuteRefresh: Void = refreshFocusedIntradayIfNeeded(in: store, now: now)
         await store.refreshQuotes(
             forcedMarkets: closingQuoteMarkets,
             allowClosedMissingData: false
         )
-        for (market, sessionEnd) in closingQuoteSessions
-        where store.lastRefreshAt(for: market) != previousQuoteRefreshDates[market] {
-            lastClosingRefreshSessionEndByMarket[market] = sessionEnd
+        for (market, sessionEnd) in closingQuoteSessions {
+            let targets = store.stocks.filter { $0.market == market && $0.hasConfiguredSymbol && !$0.isArchived }
+            if !targets.isEmpty, targets.allSatisfy({ ($0.lastQuoteAt ?? .distantPast) >= sessionEnd }) {
+                lastClosingRefreshSessionEndByMarket[market] = sessionEnd
+            }
+        }
+        await minuteRefresh
+        guard !Task.isCancelled else { return }
+
+        guard closingTask == nil else { return }
+        let closingChartSessions = closingChartSessionsNeedingRefresh(
+            store: store,
+            now: now
+        )
+        if !closingChartSessions.isEmpty {
+            if currentScenePhase == .active {
+                if closingTask == nil {
+                    closingTask = Task { [weak self] in
+                        guard let self else { return }
+                        await self.refreshClosingData(in: store, sessions: closingChartSessions)
+                        self.closingTask = nil
+                    }
+                }
+            } else {
+                await refreshClosingData(in: store, sessions: closingChartSessions)
+            }
         }
     }
 
@@ -218,7 +372,11 @@ final class StockRefreshCoordinator: ObservableObject {
             // The complete source refresh is keyed to the final regular-session
             // close. For US stocks it can run during post-market while the
             // completed regular-session data is already available.
-            guard session == .closed,
+            // Daily/K-line aggregation can start as soon as the final regular
+            // session closes. US post-market remains live for minute updates,
+            // but it must not postpone the completed regular day's daily bar.
+            guard (session == .closed
+                    || (market == .unitedStates && session == .postMarket)),
                   store.stocks.contains(where: {
                       $0.market == market
                           && $0.hasConfiguredSymbol
@@ -230,12 +388,8 @@ final class StockRefreshCoordinator: ObservableObject {
                   ) else {
                 continue
             }
-            // A previous attempt for this session ended with noData — the
-            // data source has nothing for this session yet. Skip until the
-            // next session boundary rather than retrying every 5 minutes.
-            if closingChartNoDataSessionEndByMarket[market] == sessionEnd {
-                continue
-            }
+            // Empty provider responses can be transient just after close.
+            // Retry after the cooldown instead of suppressing the entire day.
             if let attemptedAt = lastClosingChartRefreshAttemptAtByMarket[market],
                now.timeIntervalSince(attemptedAt) < 5 * 60 {
                 continue
@@ -256,54 +410,24 @@ final class StockRefreshCoordinator: ObservableObject {
                 && !$0.isArchived
         }
         for market in StockMarket.displayOrder where sessions[market] != nil {
-            var allFailedWithNoData = true
-            var stalStockCount = 0
-            for stock in stocks where stock.market == market {
-                guard !Task.isCancelled else { return }
-                // Skip stocks whose on-disk chart is already up to date for
-                // this session — avoids redundant network requests after a
-                // partial run or an app restart.
-                let isStale = await chartService.isChartStale(for: stock)
-                guard isStale else {
-                    allFailedWithNoData = false
-                    continue
+            await withTaskGroup(of: UUID?.self) { group in
+                for stock in stocks where stock.market == market {
+                    group.addTask { [chartService] in
+                        guard !Task.isCancelled, await chartService.isChartStale(for: stock) else { return nil }
+                        do {
+                            try await chartService.refreshAfterFinalSession(for: stock)
+                            return stock.id
+                        } catch {
+                            DiagnosticLogger.logError(.stockQuote, operation: "收盘数据补齐", error: error)
+                            return nil
+                        }
+                    }
                 }
-                stalStockCount += 1
-                do {
-                    _ = try await chartService.refreshAfterFinalSession(for: stock)
-                    allFailedWithNoData = false
-                } catch is CancellationError {
-                    return
-                } catch StockChartError.noData {
-                    DiagnosticLogger.shared.log(
-                        .stockQuote,
-                        "收市完整行情补刷 \(stock.symbol)：数据源暂无数据，跳过本次收市补刷",
-                        level: .warning
-                    )
-                } catch {
-                    allFailedWithNoData = false
-                    DiagnosticLogger.logError(
-                        .stockQuote,
-                        operation: "收市完整行情补刷 \(stock.symbol)",
-                        error: error
-                    )
-                }
-            }
-            let marketStocks = stocks.filter { $0.market == market }
-            if stalStockCount > 0 {
-                DiagnosticLogger.shared.log(
-                    .stockQuote,
-                    "收市完整行情补刷：\(market.rawValue) 待刷 \(stalStockCount)/\(marketStocks.count) 只"
-                )
-            } else {
-                DiagnosticLogger.shared.log(
-                    .stockQuote,
-                    "收市完整行情补刷：\(market.rawValue) 数据已最新，跳过"
-                )
-            }
-            if let sessionEnd = sessions[market] {
-                if allFailedWithNoData && !marketStocks.isEmpty && stalStockCount > 0 {
-                    closingChartNoDataSessionEndByMarket[market] = sessionEnd
+                for await id in group {
+                    guard !Task.isCancelled else { group.cancelAll(); return }
+                    if let id, store.stocks.contains(where: { $0.id == id && !$0.isArchived }) {
+                        await store.chartCacheDidUpdate(for: [id], includesDailyBars: true)
+                    }
                 }
             }
         }
@@ -344,52 +468,32 @@ final class StockRefreshCoordinator: ObservableObject {
         return result
     }
 
-    /// Refreshes the intraday chart for US stocks during pre/post-market sessions.
-    /// shouldUseCachedChart's 20 s cacheLifetime acts as the network throttle —
-    /// no separate timer is needed here.
-    private func refreshExtendedHoursIntradayIfNeeded(in store: StockStore, now: Date) async {
-        let session = StockMarketTradingCalendar.session(for: .unitedStates, at: now)
-        guard session == .preMarket || session == .postMarket else { return }
-        let stocks = store.stocks.filter {
-            $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
+    /// Automatic minute traffic follows actual chart focus. The quote service
+    /// remains the batch producer for list rows; opening one chart adds only
+    /// that stock to the minute producer. StockStore applies the per-stock
+    /// 60-second throttle and broadcasts successful cache writes.
+    private func refreshFocusedIntradayIfNeeded(
+        in store: StockStore,
+        now: Date
+    ) async {
+        var ids = currentScenePhase == .active ? focusedChartStockIDs : []
+        // Session changes and OS background launches have no page callback.
+        // Held US positions still need the extended-hours price producer.
+        for stock in store.stocks where stock.market == .unitedStates && stock.currentShares > 0 {
+            let session = StockMarketTradingCalendar.session(for: stock.market, at: now)
+            if session == .preMarket || session == .postMarket { ids.insert(stock.id) }
         }
-        guard !stocks.isEmpty else { return }
-        for stock in stocks {
-            guard !Task.isCancelled else { return }
-            do {
-                _ = try await chartService.fetchChart(for: stock, range: .intraday, forceRefresh: false)
-            } catch is CancellationError {
-                return
-            } catch {
-                DiagnosticLogger.logError(.stockQuote, operation: "延伸时段分时图 \(stock.symbol)", error: error)
-            }
-        }
-    }
-
-    /// Keeps the local minute chart cache current while a regular market is
-    /// open. Portfolio history consumes this same cache for intraday and
-    /// five-day ranges, so quote-only polling would otherwise leave it on the
-    /// previous trading day's data.
-    private func refreshIntradayDuringSessionIfNeeded(in store: StockStore, now: Date) async {
-        let activeMarkets = Set(StockMarket.allCases.filter {
-            StockMarketTradingCalendar.session(for: $0, at: now) == .regular
-        })
-        let stocks = store.stocks.filter {
-            activeMarkets.contains($0.market) && $0.hasConfiguredSymbol && !$0.isArchived
-        }
-        for stock in stocks {
-            guard !Task.isCancelled else { return }
-            do {
-                _ = try await chartService.fetchChart(for: stock, range: .intraday, forceRefresh: false)
-            } catch is CancellationError {
-                return
-            } catch {
-                DiagnosticLogger.logError(.stockQuote, operation: "盘中分时图 \(stock.symbol)", error: error)
-            }
-        }
+        let activeIDs = Set(store.stocks.filter {
+            ids.contains($0.id) && !$0.isArchived
+                && StockMarketTradingCalendar.session(for: $0.market, at: now) != .closed
+        }.map(\.id))
+        guard !activeIDs.isEmpty else { return }
+        await store.refreshIntradayCharts(stockIDs: activeIDs, forceRefresh: false)
     }
 
     private func stopForegroundPolling() {
+        closingTask?.cancel()
+        closingTask = nil
         guard foregroundTask != nil else { return }
         foregroundTask?.cancel()
         foregroundTask = nil
@@ -412,6 +516,7 @@ final class StockRefreshCoordinator: ObservableObject {
 
 #if os(iOS)
     func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        DiagnosticLogger.shared.log(.lifecycle, "系统投递股票后台刷新")
         guard isStockModuleVisible else {
             task.setTaskCompleted(success: true)
             return
@@ -425,12 +530,30 @@ final class StockRefreshCoordinator: ObservableObject {
             for _ in 0..<20 where !store.isDataLoaded {
                 try? await Task.sleep(for: .milliseconds(250))
             }
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled, store.isDataLoaded else {
                 task.setTaskCompleted(success: false)
                 return
             }
-            await self.refreshAutomatically()
-            task.setTaskCompleted(success: !Task.isCancelled)
+            var completed = false
+            do {
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    defer { group.cancelAll() }
+                    group.addTask { await self.refreshAutomatically() }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(25))
+                        throw CancellationError()
+                    }
+                    _ = try await group.next()
+                    group.cancelAll()
+                }
+                completed = true
+            } catch is CancellationError {
+                DiagnosticLogger.shared.log(.lifecycle, "股票后台刷新达到时间预算，未完成标的保留到下次重试", level: .warning)
+            } catch {
+                DiagnosticLogger.logError(.stockQuote, operation: "股票后台刷新", error: error)
+            }
+            DiagnosticLogger.shared.log(.lifecycle, "股票后台刷新结束 cancelled=\(Task.isCancelled)")
+            task.setTaskCompleted(success: completed && !Task.isCancelled)
         }
         task.expirationHandler = StockBackgroundTaskCallbacks.expirationHandler(for: work)
     }

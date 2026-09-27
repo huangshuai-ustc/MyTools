@@ -425,8 +425,7 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
         await withCheckedContinuation { continuation in
             queue.async {
                 self.lock.lock()
-                let errorCode = self.lastErrorCode
-                self.lastErrorCode = nil
+                let errorCode = self.lastErrorCode ?? (self.pendingWrite == nil ? nil : "VaultWritePending")
                 self.lock.unlock()
                 continuation.resume(returning: errorCode)
             }

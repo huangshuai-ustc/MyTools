@@ -35,29 +35,37 @@ enum BankNavigationApplication: String, CaseIterable, Identifiable {
 }
 
 enum BankBranchNavigationService {
+    static func url(for application: BankNavigationApplication, branchName: String, location: BankBranchLocation?) -> URL? {
+        let resolvedLocation = location?.isValid == true ? location! : .defaultLocation
+        let name = branchName.isEmpty ? "分行/网点" : branchName
+        func make(_ scheme: String, _ host: String?, _ items: [URLQueryItem]) -> URL? {
+            var components = URLComponents()
+            components.scheme = scheme
+            components.host = host
+            components.queryItems = items
+            return components.url
+        }
+        switch application {
+        case .appleMaps:
+            return make("maps", nil, [URLQueryItem(name: "q", value: name), URLQueryItem(name: "ll", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)")])
+        case .amap:
+            // `viewMap` presents a selected point; `navi` would immediately
+            // enter route planning, which is not the intent of this action.
+            return make("iosamap", "viewMap", [URLQueryItem(name: "sourceApplication", value: AppMetadata.appName), URLQueryItem(name: "poiname", value: name), URLQueryItem(name: "lat", value: "\(resolvedLocation.latitude)"), URLQueryItem(name: "lon", value: "\(resolvedLocation.longitude)"), URLQueryItem(name: "dev", value: "0")])
+        case .baiduMaps:
+            return make("baidumap", "map/geocoder", [URLQueryItem(name: "location", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)"), URLQueryItem(name: "name", value: name)])
+        case .googleMaps:
+            return make("comgooglemaps", nil, [URLQueryItem(name: "q", value: name), URLQueryItem(name: "center", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)")])
+        }
+    }
+
     @MainActor
     static func open(
         _ application: BankNavigationApplication,
         branchName: String,
         location: BankBranchLocation?
     ) {
-        let resolvedLocation = location?.isValid == true
-            ? location!
-            : .defaultLocation
-        let coordinate = "\(resolvedLocation.latitude),\(resolvedLocation.longitude)"
-        let name = branchName.isEmpty ? "分行/网点" : branchName
-        let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
-        let url: URL?
-        switch application {
-        case .appleMaps:
-            url = URL(string: "maps://?q=\(encodedName)&ll=\(coordinate)")
-        case .amap:
-            url = URL(string: "iosamap://poi?sourceApplication=MyTools&keywords=\(encodedName)&lat=\(resolvedLocation.latitude)&lon=\(resolvedLocation.longitude)&dev=0")
-        case .baiduMaps:
-            url = URL(string: "baidumap://map/geocoder?location=\(resolvedLocation.latitude),\(resolvedLocation.longitude)&name=\(encodedName)")
-        case .googleMaps:
-            url = URL(string: "comgooglemaps://?q=\(encodedName)&center=\(coordinate)")
-        }
+        let url = url(for: application, branchName: branchName, location: location)
         guard let url else { return }
 #if os(iOS)
         UIApplication.shared.open(url)
@@ -100,6 +108,7 @@ struct AccountDetailView: View {
             }
         }
         .appNavigationTitle(account?.bankName.isEmpty == false ? account?.bankName ?? "" : "银行账户详情")
+        .diagnosticScreen("银行账户详情")
         .iOSLabeledBackButton(backTitle)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -107,7 +116,12 @@ struct AccountDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let account {
-                    Button { editingAccount = account } label: {
+                    Button {
+                        Task {
+                            guard await auth.verifyWithBiometrics() else { return }
+                            editingAccount = account
+                        }
+                    } label: {
                         Image(systemName: "square.and.pencil")
                     }
                     .accessibilityLabel("编辑银行档案")
@@ -575,10 +589,14 @@ private enum AnySubaccount: Identifiable {
 }
 
 private final class AccountEditorDraft: ObservableObject {
+    let originalAccount: BankAccount
+    let originalCards: [BankCard]
     @Published var account: BankAccount
     @Published var cards: [BankCard]
 
     init(account: BankAccount, cards: [BankCard]) {
+        originalAccount = account
+        originalCards = cards
         self.account = account
         self.cards = cards
     }
@@ -700,7 +718,10 @@ struct AccountEditorView: View {
                 let oldTemplateNames = Set(store.loginFieldTemplates(for: oldRegion).map(\.name))
                 let currentNames = Set(draft.account.additionalLoginFields.map(\.name))
                 guard currentNames.isSubset(of: oldTemplateNames) else { return }
-                draft.account.additionalLoginFields = store.makeLoginFields(for: newRegion)
+                let defaults = store.makeLoginFields(for: newRegion)
+                let filled = draft.account.additionalLoginFields.filter { !$0.value.isEmpty }
+                let names = Set(filled.map(\.name))
+                draft.account.additionalLoginFields = filled + defaults.filter { !names.contains($0.name) }
             }
             .onDisappear(perform: cleanUpUncommittedAttachments)
             .alert("无法保存银行档案", isPresented: $showingError) {
@@ -951,8 +972,13 @@ struct AccountEditorView: View {
                 cards[index].branchLocation = nil
             }
         }
+        guard isNew || store.replaceAccount(account, cards: cards, expected: draft.originalAccount, expectedCards: draft.originalCards) else {
+            errorMessage = "银行档案在编辑期间已发生变化，请关闭后重新打开再保存。"
+            showingError = true
+            return
+        }
+        if isNew { store.replaceAccount(account, cards: cards) }
         didSave = true
-        store.replaceAccount(account, cards: cards)
         dismiss()
     }
 

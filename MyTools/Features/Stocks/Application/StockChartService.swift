@@ -1,6 +1,81 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+/// A consumer can stop waiting even when a third-party producer ignores
+/// cancellation. Late results cannot resume a completed continuation twice.
+private final class StockChartResultWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<StockChartSnapshot, Error>?
+    private var continuation: CheckedContinuation<StockChartSnapshot, Error>?
+
+    func value() async throws -> StockChartSnapshot {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+            } else {
+                self.continuation = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    func finish(_ result: Result<StockChartSnapshot, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+}
+
+private actor StockChartRemoteRequestGate {
+    /// Keep a generous ceiling to protect the process from accidental request
+    /// storms while still allowing a market-sized watchlist to use the device
+    /// and network concurrently. US intraday requests may fan out to two
+    /// providers inside one permit.
+    private let limit: Int
+    private var occupied = 0
+    private var waiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+
+    init(limit: Int = 24) {
+        self.limit = max(1, limit)
+    }
+
+    func acquire() async throws {
+        try Task.checkCancellation()
+        if occupied < limit {
+            occupied += 1
+            return
+        }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else { waiters.append((id, continuation)) }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.0 == id }) else { return }
+        waiters.remove(at: index).1.resume(throwing: CancellationError())
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            occupied = max(0, occupied - 1)
+        } else {
+            waiters.removeFirst().1.resume()
+        }
+    }
+}
+
 protocol StockChartServing: Sendable {
     func cachedChart(
         for stock: StockHolding,
@@ -33,16 +108,34 @@ actor StockChartService: StockChartServing {
     static let shared = StockChartService()
 
     private var diskStore: StockChartDiskStore
+    private let remoteRequestGate = StockChartRemoteRequestGate()
     private let providers: StockChartProviders
     private var lastRefreshSessionEnd: [StockChartCacheKey: Date] = [:]
     private var cacheGeneration = 0
+    private struct Flight {
+        let id: UUID
+        let task: Task<Void, Never>
+        let deadline: Task<Void, Never>
+        var consumers: [UUID: StockChartResultWaiter] = [:]
+    }
+    private var flights: [StockChartCacheKey: Flight] = [:]
+    private struct RenderedEntry {
+        let day: Date
+        let snapshot: StockChartSnapshot
+    }
+    private var renderedCache: [StockChartCacheKey: RenderedEntry] = [:]
+    private var lastAttempt: [StockChartCacheKey: Date] = [:]
+    private static let requestTimeout: Duration = .seconds(12)
+    private let flightTimeout: Duration
 
     init(
         diskStore: StockChartDiskStore = StockChartDiskStore(),
-        providers: StockChartProviders = StockChartProviders()
+        providers: StockChartProviders = StockChartProviders(),
+        flightTimeout: Duration = .seconds(18)
     ) {
         self.diskStore = diskStore
         self.providers = providers
+        self.flightTimeout = flightTimeout
     }
 
     func cachedChart(
@@ -52,14 +145,77 @@ actor StockChartService: StockChartServing {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { return nil }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        let cacheKey = StockChartCacheKey(market: stock.market, symbol: symbol, range: range)
+        let day = StockChartSeriesProcessor.marketCalendar(stock.market).startOfDay(for: Date())
+        if let cached = renderedCache[cacheKey], cached.day == day { return cached.snapshot }
         guard let store = diskStore.load(for: key) else { return nil }
-        return diskStore.renderedSnapshot(from: store, range: range)
+        if range == .fiveDays, !diskStore.hasRequestedCoverage(in: store, for: range) { return nil }
+        guard let snapshot = diskStore.renderedSnapshot(from: store, range: range) else { return nil }
+        if renderedCache.count >= 128 { renderedCache.removeAll(keepingCapacity: true) }
+        renderedCache[cacheKey] = RenderedEntry(day: day, snapshot: snapshot)
+        return snapshot
     }
 
     func fetchChart(
+        for stock: StockHolding, range: StockChartRange, forceRefresh: Bool = false
+    ) async throws -> StockChartSnapshot {
+        try Task.checkCancellation()
+        let key = StockChartCacheKey(market: stock.market,
+            symbol: StockHolding.normalizedSymbol(stock.symbol, market: stock.market),
+            range: range.isKLineRange ? .dayK : range)
+        let consumerID = UUID()
+        let waiter = StockChartResultWaiter()
+        let flightID: UUID
+        if let existing = flights[key] {
+            flightID = existing.id
+        } else {
+            flightID = UUID()
+            let task = Task {
+                let result: Result<StockChartSnapshot, Error>
+                do { result = .success(try await self.fetchAndCommitChart(for: stock, range: key.range, forceRefresh: forceRefresh)) }
+                catch { result = .failure(error) }
+                self.finishFlight(key, id: flightID, result: result)
+            }
+            let timeout = flightTimeout
+            let deadline = Task {
+                do { try await Task.sleep(for: timeout) } catch { return }
+                self.finishFlight(key, id: flightID, result: .failure(URLError(.timedOut)))
+            }
+            flights[key] = Flight(id: flightID, task: task, deadline: deadline)
+        }
+        flights[key]?.consumers[consumerID] = waiter
+        let snapshot = try await withTaskCancellationHandler {
+            try await waiter.value()
+        } onCancel: {
+            waiter.finish(.failure(CancellationError()))
+            Task { await self.cancelConsumer(consumerID, key: key, flightID: flightID) }
+        }
+        try Task.checkCancellation()
+        if range != key.range, let derived = await cachedChart(for: stock, range: range) { return derived }
+        return snapshot
+    }
+
+    private func finishFlight(_ key: StockChartCacheKey, id: UUID, result: Result<StockChartSnapshot, Error>) {
+        guard let flight = flights[key], flight.id == id else { return }
+        flights[key] = nil
+        flight.deadline.cancel()
+        flight.task.cancel()
+        for waiter in flight.consumers.values { waiter.finish(result) }
+    }
+
+    private func cancelConsumer(_ id: UUID, key: StockChartCacheKey, flightID: UUID) {
+        guard flights[key]?.id == flightID else { return }
+        flights[key]?.consumers[id] = nil
+        if flights[key]?.consumers.isEmpty == true {
+            lastAttempt[key] = nil
+            finishFlight(key, id: flightID, result: .failure(CancellationError()))
+        }
+    }
+
+    private func fetchAndCommitChart(
         for stock: StockHolding,
         range: StockChartRange,
-        forceRefresh: Bool = false
+        forceRefresh: Bool
     ) async throws -> StockChartSnapshot {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { throw StockChartError.invalidSymbol }
@@ -76,21 +232,17 @@ actor StockChartService: StockChartServing {
         let cached = stored.flatMap {
             diskStore.renderedSnapshot(from: $0, range: range)
         }
+        // Re-entering a page after a failed/incomplete response must not hammer
+        // its provider. Explicit refresh bypasses this short retry window.
+        if !forceRefresh, let attempted = lastAttempt[cacheKey], now.timeIntervalSince(attempted) < 60 {
+            if let cached { return cached }
+            throw StockChartError.noData
+        }
         if let cached,
            let stored,
-           diskStore.hasRequestedCoverage(in: stored, for: range),
-           (range == .intraday || !needsDailyTechnicalSupport(
-               in: stored,
-               now: now,
-               refreshingRange: range
-           )),
-           !needsMinuteTechnicalWarmup(
-                in: stored,
-                range: range,
-                market: stock.market
-           ),
-           shouldUseCachedChart(
-                cached,
+           localCacheIsComplete(
+                stored,
+                snapshot: cached,
                 for: cacheKey,
                 forceRefresh: forceRefresh,
                 now: now
@@ -99,34 +251,30 @@ actor StockChartService: StockChartServing {
         }
 
         do {
+            lastAttempt[cacheKey] = now
+            // Daily bars are the sole persisted/network source for every
+            // K-line tab. Week/month/quarter/year are always rebuilt locally
+            // by StockChartDiskStore; never issue a provider request for a
+            // presentation aggregation.
+            let sourceRange: StockChartRange = range.isKLineRange ? .dayK : range
             let request = StockChartRequest(
                 stock: stock,
                 symbol: symbol,
-                range: range
+                range: sourceRange
             )
-            let remoteSnapshot = try await fetchRemoteChart(for: request)
+            let remoteSnapshot = try await fetchRemoteChartWithPermit(for: request)
+            try Task.checkCancellation()
+            let processingStarted = Date()
             guard let snapshot = StockChartSeriesProcessor.normalizedSnapshot(
                 remoteSnapshot,
-                range: range,
+                range: sourceRange,
                 market: stock.market,
                 at: now
             ) else {
                 throw StockChartError.noData
             }
-            if range == .intraday,
-               StockMarketTradingCalendar.session(for: stock.market, at: now) != .regular,
-               let latestRegularPoint = snapshot.points.max(by: { $0.date < $1.date }),
-               StockChartSeriesProcessor.marketCalendar(stock.market)
-                   .isDate(latestRegularPoint.date, inSameDayAs: now),
-               !StockChartSeriesProcessor.hasCompletedRegularSession(
-                   snapshot.points,
-                   market: stock.market
-               ) {
-                // A same-day partial regular response is not a successful
-                // closing snapshot. Keep the previous cache and let the
-                // coordinator retry after its cooldown.
-                throw StockChartError.noData
-            }
+            // Providers may publish the closing minutes incrementally. Merge
+            // useful partial data; isChartStale still requires the closing bar.
             var scopedSnapshot = snapshotByUpdatingCurrentSession(
                 StockMarketTradingCalendar.session(for: stock.market, at: now),
                 remote: snapshot,
@@ -140,7 +288,7 @@ actor StockChartService: StockChartServing {
                     range: range,
                     market: stock.market
                ),
-               let warmupSnapshot = try? await fetchRemoteChart(
+               let warmupSnapshot = try? await fetchRemoteChartWithPermit(
                     for: StockChartRequest(
                         stock: stock,
                         symbol: symbol,
@@ -153,39 +301,21 @@ actor StockChartService: StockChartServing {
                     market: stock.market
                 )
             }
-            var updatedStore = diskStore.merging(
+            try Task.checkCancellation()
+            let mergeStarted = Date()
+            let updatedStore = diskStore.merging(
                 scopedSnapshot,
-                range: range,
+                range: sourceRange,
                 for: stockKey,
-                into: stored
+                into: diskStore.load(for: stockKey)
             )
-            if range != .intraday,
-               needsDailyTechnicalSupport(
-                   in: updatedStore,
-                   now: now,
-                   refreshingRange: range
-               ),
-               let dailyRange = dailyTechnicalRange(for: range),
-               let dailySnapshot = try? await fetchRemoteChart(
-                   for: StockChartRequest(
-                       stock: stock,
-                       symbol: symbol,
-                       range: dailyRange
-                   )
-               ),
-               !dailySnapshot.points.isEmpty {
-                updatedStore = diskStore.merging(
-                    dailySnapshot,
-                    // The supplemental request contains raw daily bars.
-                    // Merge it through the canonical daily source rather
-                    // than an old display-only range.
-                    range: .dayK,
-                    for: stockKey,
-                    into: updatedStore
-                )
-            }
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=合并指标 id=\(stock.id) ms=\(Int(Date().timeIntervalSince(mergeStarted) * 1000))")
+            try Task.checkCancellation()
             if generation == cacheGeneration {
+                let writeStarted = Date()
                 diskStore.save(updatedStore, for: stockKey)
+                DiagnosticLogger.shared.log(.stockQuote, "图表阶段=写盘 id=\(stock.id) ms=\(Int(Date().timeIntervalSince(writeStarted) * 1000))")
+                renderedCache = renderedCache.filter { $0.key.market != stockKey.market || $0.key.symbol != stockKey.symbol }
                 if range.isKLineRange
                     || !StockMarketTradingCalendar.isSessionActive(stock.market, at: now) {
                     let sessionEnd = StockMarketTradingCalendar
@@ -193,10 +323,14 @@ actor StockChartService: StockChartServing {
                     lastRefreshSessionEnd[canonicalRefreshKey(for: cacheKey)] = sessionEnd
                 }
             }
-            return diskStore.renderedSnapshot(from: updatedStore, range: range) ?? scopedSnapshot
+            let renderStarted = Date()
+            let rendered = diskStore.renderedSnapshot(from: updatedStore, range: range) ?? scopedSnapshot
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=快照 id=\(stock.id) ms=\(Int(Date().timeIntervalSince(renderStarted) * 1000)) postProviderMs=\(Int(Date().timeIntervalSince(processingStarted) * 1000))")
+            return rendered
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             if !forceRefresh, let cached { return cached }
             throw error
         }
@@ -207,7 +341,7 @@ actor StockChartService: StockChartServing {
         // These are the canonical source series. The presentation layer
         // recalculates every MA/BOLL/MACD/RSI from them, while the disk store
         // derives weekly/monthly/quarterly/yearly K-lines from the daily set.
-        for range in [StockChartRange.intraday, .fiveDays, .dayK] {
+        for range in [StockChartRange.intraday, .dayK] {
             do {
                 _ = try await fetchChart(
                     for: stock,
@@ -232,18 +366,31 @@ actor StockChartService: StockChartServing {
             .latestCompletedFinalSessionEnd(for: stock.market) else { return false }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
         guard let stored = diskStore.load(for: key) else { return true }
-        // Both the intraday and daily series must be up to date after the
-        // final session. Check whichever was fetched most recently; if that
-        // fetchedAt still predates the session end the data is stale.
-        let latestFetchedAt = [StockChartRange.intraday, .dayK]
-            .compactMap { stored.rangeMetadata[$0.rawValue]?.fetchedAt }
-            .max()
-        guard let latestFetchedAt else { return true }
-        return latestFetchedAt < sessionEnd
+        // The former `max(intradayFetchedAt, dayKFetchedAt)` check let a fresh
+        // minute response hide a stale daily source. Verify both canonical
+        // sources against the completed trading day instead; app-launch
+        // catch-up can then repair whichever close pass was missed.
+        let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
+        let dailyPoints = stored.series[StockChartSeriesKind.daily.rawValue] ?? []
+        let minutePoints = stored.series[StockChartSeriesKind.intraday.rawValue] ?? []
+        let hasCompletedDailyBar = dailyPoints.contains {
+            calendar.isDate($0.date, inSameDayAs: sessionEnd)
+        }
+        let completedDayMinutes = minutePoints.filter {
+            calendar.isDate($0.date, inSameDayAs: sessionEnd)
+        }
+        let hasCompletedMinuteSession = StockChartSeriesProcessor
+            .hasCompletedRegularSession(completedDayMinutes, market: stock.market)
+        return !hasCompletedDailyBar || !hasCompletedMinuteSession
     }
 
     func clearCache() {
         cacheGeneration += 1
+        renderedCache.removeAll()
+        lastAttempt.removeAll()
+        for (key, flight) in Array(flights) {
+            finishFlight(key, id: flight.id, result: .failure(CancellationError()))
+        }
         lastRefreshSessionEnd.removeAll()
         diskStore.removeAll()
     }
@@ -252,6 +399,13 @@ actor StockChartService: StockChartServing {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { return }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        renderedCache = renderedCache.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
+        lastAttempt = lastAttempt.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
+        for flightKey in Array(flights.keys) where flightKey.market == key.market && flightKey.symbol == key.symbol {
+            if let flight = flights[flightKey] {
+                finishFlight(flightKey, id: flight.id, result: .failure(CancellationError()))
+            }
+        }
         lastRefreshSessionEnd = lastRefreshSessionEnd.filter { $0.key.market != stock.market || $0.key.symbol != symbol }
         diskStore.remove(for: key)
     }
@@ -272,6 +426,40 @@ actor StockChartService: StockChartServing {
                 return nasdaqSnapshot
             }
         }
+        if request.stock.market == .unitedStates,
+           request.range == .intraday {
+            // The two providers are independent. Starting Yahoo only after
+            // Tencent returned doubled every US row's latency and amplified it
+            // across a watchlist. Fetch both at once, then merge whichever
+            // successful coverage is available.
+            async let tencentResult = providerResult(
+                providers.tencent,
+                request: request
+            )
+            async let yahooResult = providerResult(
+                providers.yahoo,
+                request: request
+            )
+            let (tencent, yahoo) = await (tencentResult, yahooResult)
+            switch (tencent, yahoo) {
+            case let (.success(primary), .success(fallback)):
+                return preferredUSIntradaySnapshot(
+                    primary: primary,
+                    fallback: fallback
+                )
+            case let (.success(snapshot), .failure):
+                return snapshot
+            case let (.failure, .success(snapshot)):
+                return snapshot
+            case let (.failure(firstError), .failure):
+                guard !Task.isCancelled else { throw CancellationError() }
+                if let fallback = try? await providers.nasdaq.fetchChart(for: request) {
+                    return fallback
+                }
+                throw firstError
+            }
+        }
+
         do {
             let tencentSnapshot = try await providers.tencent.fetchChart(for: request)
             let needsCompletedRegularSession = request.range == .intraday
@@ -280,18 +468,6 @@ actor StockChartService: StockChartServing {
                     tencentSnapshot.points,
                     market: request.stock.market
                 )
-            if request.stock.market == .unitedStates,
-               request.range == .intraday,
-               let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
-                // Always merge both sources for US intraday: Tencent provides
-                // denser regular-session bars while Yahoo is the authoritative
-                // extended-hours source. The merge keeps whichever series is
-                // denser for each session independently.
-                return preferredUSIntradaySnapshot(
-                    primary: tencentSnapshot,
-                    fallback: yahooSnapshot
-                )
-            }
             if request.stock.market != .unitedStates,
                needsCompletedRegularSession,
                let eastmoneySnapshot = try? await providers.eastmoney.fetchChart(for: request) {
@@ -325,6 +501,50 @@ actor StockChartService: StockChartServing {
 
             guard !Task.isCancelled else { throw CancellationError() }
             throw StockChartError.serviceUnavailable
+        }
+    }
+
+    private func providerResult(
+        _ provider: any StockChartProvider,
+        request: StockChartRequest
+    ) async -> Result<StockChartSnapshot, Error> {
+        do {
+            return .success(try await provider.fetchChart(for: request))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Provider requests use a bounded high-concurrency pool. Actor reentrancy
+    /// lets independent URLSession work proceed together; per-stock cache
+    /// merging and disk commits remain actor-isolated and therefore ordered.
+    private func fetchRemoteChartWithPermit(
+        for request: StockChartRequest
+    ) async throws -> StockChartSnapshot {
+        try await remoteRequestGate.acquire()
+        do {
+            try Task.checkCancellation()
+            let started = ContinuousClock.now
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider开始 symbol=\(request.symbol) range=\(request.range.rawValue)")
+            let snapshot = try await withThrowingTaskGroup(of: StockChartSnapshot.self) { group in
+                defer { group.cancelAll() }
+                group.addTask { try await self.fetchRemoteChart(for: request) }
+                group.addTask {
+                    try await Task.sleep(for: Self.requestTimeout)
+                    throw URLError(.timedOut)
+                }
+                guard let result = try await group.next() else { throw StockChartError.serviceUnavailable }
+                group.cancelAll()
+                return result
+            }
+            let elapsed = started.duration(to: .now).components
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider结束 symbol=\(request.symbol) range=\(request.range.rawValue) ms=\(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)")
+            await remoteRequestGate.release()
+            return snapshot
+        } catch {
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider失败 symbol=\(request.symbol) range=\(request.range.rawValue) error=\(DiagnosticLogger.errorCode(error))", level: .warning)
+            await remoteRequestGate.release()
+            throw error
         }
     }
 
@@ -456,19 +676,6 @@ actor StockChartService: StockChartServing {
     ) -> Bool {
         guard !forceRefresh else { return false }
         let session = StockMarketTradingCalendar.session(for: key.market, at: now)
-        if key.range.isKLineRange {
-            // K-lines follow the regular-session cadence while the market is
-            // open. Extended-hours sessions belong only to the intraday chart;
-            // keep the last regular K-line cache until the final close pass.
-            switch session {
-            case .preMarket, .postMarket:
-                return true
-            case .regular:
-                return false
-            case .closed:
-                break
-            }
-        }
         switch session {
         case .preMarket:
             guard !snapshot.preMarketPoints.isEmpty else { return false }
@@ -504,6 +711,53 @@ actor StockChartService: StockChartServing {
         }
         return lastRefreshSessionEnd[canonicalRefreshKey(for: key)] == sessionEnd
             && regularChartCacheIsUsable(snapshot, key: key, now: now)
+    }
+
+    /// A K-line cache is complete when its canonical daily source covers the
+    /// latest regular session that has actually finished. During the next
+    /// pre-market or regular session that remains yesterday, so opening a K
+    /// chart never turns into a real-time request. Once today's close passes,
+    /// the missing daily bar makes this false and the closing catch-up fetches
+    /// dayK once, which rebuilds every derived period locally.
+    private func localCacheIsComplete(
+        _ store: StockChartPersistedStore,
+        snapshot: StockChartSnapshot,
+        for key: StockChartCacheKey,
+        forceRefresh: Bool,
+        now: Date
+    ) -> Bool {
+        guard !forceRefresh else { return false }
+        guard diskStore.hasRequestedCoverage(in: store, for: key.range),
+              !needsMinuteTechnicalWarmup(
+                  in: store,
+                  range: key.range,
+                  market: key.market
+              ) else {
+            return false
+        }
+        guard key.range.isKLineRange else {
+            return shouldUseCachedChart(
+                snapshot,
+                for: key,
+                forceRefresh: forceRefresh,
+                now: now
+            )
+        }
+        guard !needsDailyTechnicalSupport(
+            in: store,
+            now: now,
+            refreshingRange: key.range
+        ) else {
+            return false
+        }
+        guard let completedClose = StockMarketTradingCalendar
+            .latestCompletedFinalSessionEnd(for: key.market, at: now) else {
+            return true
+        }
+        let calendar = StockChartSeriesProcessor.marketCalendar(key.market)
+        return (store.series[StockChartSeriesKind.daily.rawValue] ?? []).contains {
+            calendar.isDate($0.date, inSameDayAs: completedClose)
+        }
     }
 
     private func canonicalRefreshKey(
@@ -751,11 +1005,6 @@ actor StockChartService: StockChartServing {
         }
         return now.timeIntervalSince(dailyMetadata.fetchedAt)
             >= StockChartRange.dayK.cacheLifetime
-    }
-
-    private func dailyTechnicalRange(for range: StockChartRange) -> StockChartRange? {
-        guard range != .intraday else { return nil }
-        return .dayK
     }
 
     private func dailyTechnicalStartDate(

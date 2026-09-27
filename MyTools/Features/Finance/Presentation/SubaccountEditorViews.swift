@@ -40,6 +40,7 @@ struct DomesticSubaccountReadOnlyView: View {
 
     var body: some View {
         NavigationStack {
+            if store.accounts.first(where: { $0.id == accountID })?.domesticSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
             Form {
                 Section("账户信息") {
                     SubaccountDetailCard(
@@ -67,7 +68,11 @@ struct DomesticSubaccountReadOnlyView: View {
                     .id(value.id)
                     .iOSLargeSheet()
             }
+            } else {
+                ContentUnavailableView("子账户已不存在", systemImage: "building.columns")
+            }
         }
+        .diagnosticScreen("境内子账户详情")
     }
 
     private func save(_ value: DomesticSubaccount) {
@@ -240,6 +245,7 @@ struct ForeignSubaccountReadOnlyView: View {
 
     var body: some View {
         NavigationStack {
+            if store.accounts.first(where: { $0.id == accountID })?.foreignSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
             Form {
                 Section("账户信息") {
                     SubaccountDetailCard(
@@ -267,7 +273,11 @@ struct ForeignSubaccountReadOnlyView: View {
                     .id(value.id)
                     .iOSLargeSheet()
             }
+            } else {
+                ContentUnavailableView("子账户已不存在", systemImage: "building.columns")
+            }
         }
+        .diagnosticScreen("境外子账户详情")
     }
 
     private func save(_ value: ForeignSubaccount) {
@@ -392,7 +402,7 @@ private struct SubaccountDetailCard: View {
     let currencies: Set<CurrencyCode>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name.isEmpty ? "未命名子账户" : name)
                     .appFont(.headline)
@@ -422,7 +432,7 @@ private struct SubaccountDetailCard: View {
                 copyValue: currencies.isEmpty ? nil : currencyText
             )
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 
     private var currencyText: String {
@@ -437,12 +447,13 @@ private struct SubaccountDetailCard: View {
         monospaced: Bool = false,
         prominent: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(title)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize()
             Text(value)
-                .appFont(prominent ? .title3.weight(.semibold) : .subheadline)
+                .appFont(prominent ? .headline : .subheadline)
                 .fontDesign(monospaced ? .monospaced : .default)
                 .lineLimit(prominent ? 1 : nil)
                 .minimumScaleFactor(prominent ? 0.65 : 1)

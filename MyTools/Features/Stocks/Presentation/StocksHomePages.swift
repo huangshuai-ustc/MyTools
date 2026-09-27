@@ -34,13 +34,13 @@ enum StocksHomePage: Hashable, CaseIterable, Identifiable {
 struct StockHomeRowLink<Content: View>: View {
     @EnvironmentObject private var store: StockStore
     let stock: StockHolding
-    @Binding var watchRoute: StockWatchRoute?
+    @Binding var detailRoute: StockDetailRoute?
     @ViewBuilder var content: () -> Content
 
     @ViewBuilder
     var body: some View {
         let link = NavigationLink {
-            StockDetailView(stockID: stock.id)
+            StockWatchView(stockID: stock.id)
         } label: {
             content()
         }
@@ -48,6 +48,11 @@ struct StockHomeRowLink<Content: View>: View {
             link
                 .modifier(StockCompactListRowStyle())
                 .appSwipeActions(edge: .leading, style: AppSwipeActions.secondary) {
+                    Button {
+                        detailRoute = StockDetailRoute(stockID: stock.id)
+                    } label: {
+                        Label("详情", systemImage: "list.bullet.rectangle")
+                    }
                     Button {
                         _ = store.restoreArchivedStock(id: stock.id)
                     } label: {
@@ -71,9 +76,9 @@ struct StockHomeRowLink<Content: View>: View {
                 ))
                 .appSwipeActions(edge: .leading, style: AppSwipeActions.primary) {
                     Button {
-                        watchRoute = StockWatchRoute(stockID: stock.id)
+                        detailRoute = StockDetailRoute(stockID: stock.id)
                     } label: {
-                        Label("看盘", systemImage: "chart.xyaxis.line")
+                        Label("详情", systemImage: "list.bullet.rectangle")
                     }
                 }
         }
@@ -126,7 +131,11 @@ struct StockQuoteStatusSection: View {
     var body: some View {
         Section {
             if store.isRefreshingQuotes || store.isRefreshingCharts {
-                Label("正在刷新行情", systemImage: "arrow.triangle.2.circlepath")
+                Label(store.isRefreshingQuotes ? "正在更新报价" : "正在更新走势图", systemImage: store.isRefreshingQuotes ? "arrow.triangle.2.circlepath" : "chart.xyaxis.line")
+                    .foregroundStyle(.secondary)
+            }
+            if let market, StockMarketTradingCalendar.session(for: market) == .closed {
+                Text("休市中，显示最近交易数据")
                     .foregroundStyle(.secondary)
             }
             if let error = store.quoteRefreshError {
@@ -173,7 +182,7 @@ struct StockWatchlistSessionStrip: View {
 struct StockPositionsPage: View {
     @EnvironmentObject private var store: StockStore
     @Binding var marketFilter: StockMarketFilter
-    @Binding var watchRoute: StockWatchRoute?
+    @Binding var detailRoute: StockDetailRoute?
     let availableMarketFilters: [StockMarketFilter]
     let positions: [StockHolding]
     let summaryStocks: [StockHolding]
@@ -211,11 +220,12 @@ struct StockPositionsPage: View {
                     StockPositionColumnHeader()
                         .modifier(StockCompactListRowStyle())
                     ForEach(positions) { stock in
-                        StockHomeRowLink(stock: stock, watchRoute: $watchRoute) {
+                        StockHomeRowLink(stock: stock, detailRoute: $detailRoute) {
                             StockPositionRow(
                                 stock: stock,
                                 costShare: costAllocations.holdingShare(for: stock.id),
-                                extendedHours: store.extendedHoursPerformance[stock.id]
+                                extendedHours: store.extendedHoursPerformance[stock.id],
+                                performance: store.performance(for: stock)
                             )
                         }
                     }
@@ -242,7 +252,7 @@ struct StockPositionsPage: View {
 struct StockWatchlistPage: View {
     @EnvironmentObject private var store: StockStore
     @Binding var marketFilter: StockMarketFilter
-    @Binding var watchRoute: StockWatchRoute?
+    @Binding var detailRoute: StockDetailRoute?
     let availableMarketFilters: [StockMarketFilter]
     let watchlist: [StockHolding]
     let archivedStocks: [StockHolding]
@@ -299,7 +309,7 @@ struct StockWatchlistPage: View {
 
     @ViewBuilder
     private func watchRow(_ stock: StockHolding) -> some View {
-        StockHomeRowLink(stock: stock, watchRoute: $watchRoute) {
+        StockHomeRowLink(stock: stock, detailRoute: $detailRoute) {
             StockWatchlistRow(
                 stock: stock,
                 extendedHours: store.extendedHoursPerformance[stock.id],

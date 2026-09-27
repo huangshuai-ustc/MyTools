@@ -40,7 +40,7 @@ struct PortfolioValueSeries: Identifiable, Codable, Sendable {
     let market: StockMarket?
     let currencyCode: String
     let points: [PortfolioValuePoint]
-    /// Current holding cost (moving weighted-average), expressed in `currencyCode`.
+    /// Current moving-average holding cost, expressed in `currencyCode`.
     /// Used to draw a cost reference line, mirroring the previous-close line on
     /// the single-stock chart. `nil` when the series has no current holding.
     var costBasis: Decimal? = nil
@@ -525,29 +525,17 @@ enum PortfolioValueHistoryBuilder {
             .reduce(Decimal.zero) { $0 + $1.signedShares }
     }
 
-    /// Moving weighted-average holding cost as of `date`, mirroring
+    /// Moving-average holding cost as of `date`, mirroring
     /// `Stock.swift`'s current-day `transactionPerformance` but replaying only
     /// the transactions up to that point in time. `nil` when no shares are
     /// held as of `date`.
     static func holdingCost(for stock: StockHolding, on date: Date) -> Decimal? {
-        var shares = Decimal.zero
-        var cost = Decimal.zero
+        var ledger = StockMovingAverageCostLedger()
         let effectiveTransactions = stock.transactions.filter { $0.tradedAt <= date }
         for transaction in StockHolding.orderedTransactions(effectiveTransactions) where transaction.quantity > 0 {
-            switch transaction.type {
-            case .buy:
-                shares += transaction.quantity
-                cost += transaction.grossAmount + transaction.fees
-            case .sell:
-                guard shares > 0 else { continue }
-                let soldShares = min(transaction.quantity, shares)
-                let averageCost = cost / shares
-                shares -= soldShares
-                cost -= averageCost * soldShares
-                if shares == 0 { cost = 0 }
-            }
+            ledger.apply(transaction)
         }
-        return shares > 0 ? cost : nil
+        return ledger.shares > 0 ? ledger.cost : nil
     }
 
     /// Sum of each market stock's point-in-time holding cost as of `date`, in
@@ -569,8 +557,7 @@ enum PortfolioValueHistoryBuilder {
             (stock.id, StockHolding.orderedTransactions(stock.transactions))
         })
         var offsets: [UUID: Int] = [:]
-        var sharesByStock: [UUID: Decimal] = [:]
-        var costByStock: [UUID: Decimal] = [:]
+        var ledgers: [UUID: StockMovingAverageCostLedger] = [:]
         var result: [PortfolioCostBasisPoint] = []
 
         for date in dates.sorted() {
@@ -579,33 +566,16 @@ enum PortfolioValueHistoryBuilder {
             for stock in stocks {
                 let transactions = transactionsByStock[stock.id] ?? []
                 var offset = offsets[stock.id, default: 0]
-                var shares = sharesByStock[stock.id, default: .zero]
-                var cost = costByStock[stock.id, default: .zero]
+                var ledger = ledgers[stock.id, default: StockMovingAverageCostLedger()]
                 while offset < transactions.count, transactions[offset].tradedAt <= date {
                     let transaction = transactions[offset]
-                    if transaction.quantity > 0 {
-                        switch transaction.type {
-                        case .buy:
-                            shares += transaction.quantity
-                            cost += transaction.grossAmount + transaction.fees
-                        case .sell:
-                            guard shares > 0 else {
-                                offset += 1
-                                continue
-                            }
-                            let soldShares = min(transaction.quantity, shares)
-                            cost -= (cost / shares) * soldShares
-                            shares -= soldShares
-                            if shares == 0 { cost = 0 }
-                        }
-                    }
+                    ledger.apply(transaction)
                     offset += 1
                 }
                 offsets[stock.id] = offset
-                sharesByStock[stock.id] = shares
-                costByStock[stock.id] = cost
-                if shares > 0 {
-                    total += cost
+                ledgers[stock.id] = ledger
+                if ledger.shares > 0 {
+                    total += ledger.cost
                     hasAny = true
                 }
             }

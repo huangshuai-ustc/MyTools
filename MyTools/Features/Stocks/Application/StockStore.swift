@@ -1,12 +1,93 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
+import Combine
+
+/// The chart screen observes only its symbol. Refresh spinners, other rows and
+/// sparkline publications must not invalidate an interactive chart.
+@MainActor
+final class StockWatchObservation: ObservableObject {
+    @Published private(set) var stock: StockHolding?
+    @Published private(set) var extendedHours: StockExtendedHoursPerformance?
+    @Published private(set) var chartUpdate: StockChartCacheUpdate?
+    @Published private(set) var chartError: String?
+    let store: StockStore
+    private var subscriptions: Set<AnyCancellable> = []
+
+    init(store: StockStore, stockID: UUID) {
+        self.store = store
+        select(stockID)
+    }
+
+    func select(_ id: UUID) {
+        subscriptions.removeAll()
+        store.$stocks.map { $0.first { $0.id == id } }.removeDuplicates()
+            .sink { [weak self] in self?.stock = $0 }.store(in: &subscriptions)
+        store.$extendedHoursPerformance.map { $0[id] }.removeDuplicates()
+            .sink { [weak self] in self?.extendedHours = $0 }.store(in: &subscriptions)
+        store.$chartRefreshErrors.map { $0[id] }.removeDuplicates()
+            .sink { [weak self] in self?.chartError = $0 }.store(in: &subscriptions)
+        store.$chartCacheUpdate.compactMap { $0 }.filter { $0.stockIDs.contains(id) }
+            .sink { [weak self] in self?.chartUpdate = $0 }.store(in: &subscriptions)
+    }
+}
 
 private enum StockStoreDefaultsKey {
     static let refreshDatesByMarket = "stock-last-refresh-dates-by-market-v1"
 }
 
+struct StockChartCacheUpdate: Equatable, Sendable {
+    let sequence: UInt64
+    let stockIDs: Set<UUID>
+    /// Only a final-session aggregation may invalidate day K and coarser charts.
+    let includesDailyBars: Bool
+    let updatedAt: Date
+}
+
 @MainActor
 final class StockStore: ObservableObject, ModuleLifecycleParticipant {
+    private struct IntradayPresentationProjection: Sendable {
+        let stockID: UUID
+        let market: StockMarket
+        let symbol: String
+        let latestPoint: StockChartPoint?
+        let extendedHours: StockExtendedHoursPerformance?
+        let sparkline: StockSparklineSeries?
+    }
+
+    private struct QuoteRefreshRequest {
+        var market: StockMarket?
+        var stockIDs: Set<UUID>?
+        var forcedMarkets: Set<StockMarket>
+        var allowClosedMissingData: Bool
+
+        mutating func merge(_ other: Self) {
+            if market != other.market { market = nil }
+            if let currentIDs = stockIDs, let otherIDs = other.stockIDs {
+                stockIDs = currentIDs.union(otherIDs)
+            } else {
+                stockIDs = nil
+            }
+            forcedMarkets.formUnion(other.forcedMarkets)
+            allowClosedMissingData = allowClosedMissingData || other.allowClosedMissingData
+        }
+    }
+
+    private struct IntradayChartRefreshRequest {
+        var market: StockMarket?
+        var stockIDs: Set<UUID>?
+        var forceRefresh: Bool
+
+        mutating func merge(_ other: Self) {
+            if market != other.market { market = nil }
+            if let currentIDs = stockIDs, let otherIDs = other.stockIDs {
+                stockIDs = currentIDs.union(otherIDs)
+            } else {
+                stockIDs = nil
+            }
+            forceRefresh = forceRefresh || other.forceRefresh
+        }
+    }
+
     @Published private(set) var stocks: [StockHolding]
     @Published private(set) var priceAlerts: [StockPriceAlert]
     @Published private(set) var returnAlerts: [StockReturnAlert]
@@ -20,6 +101,17 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var quoteSources: [UUID: String] = [:]
     @Published private(set) var extendedHoursPerformance: [UUID: StockExtendedHoursPerformance] = [:]
     @Published private(set) var intradaySparklines: [UUID: StockSparklineSeries] = [:]
+    /// Monotonic per-stock disk-cache revisions. Views compare these with the
+    /// revision they last rendered, so an off-screen page can cheaply catch up
+    /// from disk on its next appearance without triggering another request.
+    @Published private(set) var chartCacheRevisionByStockID: [UUID: UInt64] = [:]
+    /// Revision whose row presentation was derived directly from the freshly
+    /// fetched in-memory snapshot. Matching cache/presentation revisions let a
+    /// visible page skip a redundant cache read after the broadcast.
+    @Published private(set) var chartPresentationRevisionByStockID: [UUID: UInt64] = [:]
+    /// 分时原始数据写入磁盘后的单一广播。视图只按股票 ID 重读本地缓存，不能借此
+    /// 再发网络请求；自动刷新和手动刷新共用这一条通知链。
+    @Published private(set) var chartCacheUpdate: StockChartCacheUpdate?
     @Published private(set) var isDataLoaded: Bool
 
     private let quoteService: any StockQuoteRefreshing
@@ -30,6 +122,23 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     private var isModuleVisible: Bool
     private weak var mutationNotifier: (any VaultMutationNotifying)?
     private weak var exchangeRateStore: ExchangeRateStore?
+    private var pendingQuoteRefresh: QuoteRefreshRequest?
+    private var pendingIntradayChartRefresh: IntradayChartRefreshRequest?
+    private var lastAutomaticIntradayAttemptAt: [UUID: Date] = [:]
+    private var chartCacheUpdateSequence: UInt64 = 0
+    private var performanceCache = StockPerformanceCache()
+    private var quoteRefreshWaiters: [CheckedContinuation<Void, Never>] = []
+    private var chartRefreshWaiters: [CheckedContinuation<Void, Never>] = []
+    private var lastQuoteAttemptAt: [UUID: Date] = [:]
+    @Published private(set) var chartRefreshErrors: [UUID: String] = [:]
+
+    func performance(for stock: StockHolding, at now: Date = Date()) -> StockHolding.Performance {
+        performanceCache.performance(for: stock, at: now)
+    }
+
+    func performances(for stocks: [StockHolding], at now: Date = Date()) -> [UUID: StockHolding.Performance] {
+        Dictionary(uniqueKeysWithValues: stocks.map { ($0.id, performance(for: $0, at: now)) })
+    }
 
     init(
         stocks: [StockHolding] = [],
@@ -79,6 +188,9 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         self.isDataLoaded = isDataLoaded
         quoteErrors = [:]
         quoteSources = [:]
+        performanceCache.retain(Set(stocks.map(\.id)))
+        lastQuoteAttemptAt.removeAll()
+        lastAutomaticIntradayAttemptAt.removeAll()
         DiagnosticLogger.shared.log(.data, "股票数据替换 stocks=\(stocks.count) alerts=\(priceAlerts.count) returnAlerts=\(returnAlerts.count)")
         refreshInvalidator.refreshEligibilityChanged()
     }
@@ -324,6 +436,13 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     }
 
     func clearLocalRefreshState() {
+        lastQuoteAttemptAt.removeAll()
+        lastAutomaticIntradayAttemptAt.removeAll()
+        chartRefreshErrors.removeAll()
+        extendedHoursPerformance.removeAll()
+        intradaySparklines.removeAll()
+        chartCacheRevisionByStockID.removeAll()
+        chartPresentationRevisionByStockID.removeAll()
         lastRefreshAtByMarket.removeAll()
         quoteErrors.removeAll()
         quoteSources.removeAll()
@@ -334,11 +453,13 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
 
     func refreshQuotes(
         for market: StockMarket? = nil,
+        stockID: UUID? = nil,
+        stockIDs: Set<UUID>? = nil,
         forcedMarkets: Set<StockMarket> = [],
         allowClosedMissingData: Bool = true,
         forceRefresh: Bool = false
     ) async {
-        guard isModuleVisible, !isRefreshingQuotes, !Task.isCancelled else { return }
+        guard isDataLoaded, isModuleVisible, !Task.isCancelled else { return }
         let effectiveForcedMarkets: Set<StockMarket>
         if forceRefresh {
             effectiveForcedMarkets = market.map { Set([$0]) }
@@ -346,27 +467,70 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         } else {
             effectiveForcedMarkets = forcedMarkets
         }
+
+        let request = QuoteRefreshRequest(
+            market: market,
+            stockIDs: stockID.map { Set([$0]) } ?? stockIDs,
+            forcedMarkets: effectiveForcedMarkets,
+            allowClosedMissingData: allowClosedMissingData
+        )
+        if pendingQuoteRefresh == nil {
+            pendingQuoteRefresh = request
+        } else {
+            pendingQuoteRefresh?.merge(request)
+        }
+        // Calls can re-enter this MainActor method while the provider is
+        // suspended. Keep the later request and let the active drain consume it
+        // rather than losing a manual force refresh behind an automatic one.
+        if isRefreshingQuotes {
+            await withCheckedContinuation { quoteRefreshWaiters.append($0) }
+            return
+        }
+        isRefreshingQuotes = true
+        defer {
+            isRefreshingQuotes = false
+            if Task.isCancelled { pendingQuoteRefresh = nil }
+            let waiters = quoteRefreshWaiters
+            quoteRefreshWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+
+        while !Task.isCancelled, isModuleVisible, let next = pendingQuoteRefresh {
+            pendingQuoteRefresh = nil
+            await performQuoteRefresh(next)
+        }
+    }
+
+    private func performQuoteRefresh(_ request: QuoteRefreshRequest) async {
+        let now = Date()
         let requestedStocks = StockQuoteRefreshReducer.stocksToRefresh(
             from: stocks,
-            market: market,
-            forcedMarkets: effectiveForcedMarkets,
-            allowClosedMissingData: allowClosedMissingData,
+            market: request.market,
+            stockIDs: request.stockIDs,
+            forcedMarkets: request.forcedMarkets,
+            allowClosedMissingData: request.allowClosedMissingData,
             at: Date()
-        )
+        ).filter { stock in
+            request.forcedMarkets.contains(stock.market)
+                || lastQuoteAttemptAt[stock.id].map { now.timeIntervalSince($0) >= 60 } != false
+        }
         guard !requestedStocks.isEmpty else { return }
-        isRefreshingQuotes = true
+        DiagnosticLogger.shared.log(.stockQuote, "报价批次开始 stocks=\(requestedStocks.count)")
+        defer {
+            DiagnosticLogger.shared.log(.stockQuote, "报价批次结束 ms=\(Int(Date().timeIntervalSince(now) * 1000))")
+        }
+        for stock in requestedStocks { lastQuoteAttemptAt[stock.id] = now }
         quoteRefreshError = nil
-        defer { isRefreshingQuotes = false }
         exchangeRateStore?.refreshIfNeeded()
 
         let quotes = await quoteService.fetchQuotes(for: requestedStocks)
-        guard !Task.isCancelled, isModuleVisible else { return }
+        guard !Task.isCancelled, isModuleVisible, isDataLoaded else { return }
         let reduction = StockQuoteRefreshReducer.reduce(
             currentStocks: stocks,
             requestedStocks: requestedStocks,
             quotes: quotes
         )
-        stocks = reduction.stocks
+        if stocks != reduction.stocks { stocks = reduction.stocks }
         quoteErrors = reduction.failures
         for id in reduction.failures.keys { quoteSources[id] = nil }
         for (id, source) in reduction.sources { quoteSources[id] = source }
@@ -397,34 +561,31 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     /// Loads the cached intraday snapshots used by the stocks list to show
     /// US pre-market and post-market performance. The chart service owns the
     /// provider/cache boundary; the list only receives derived percentages.
-    func refreshExtendedHoursPerformance(forceRefresh: Bool = false) async {
+    func refreshExtendedHoursPerformance(
+        stockIDs: Set<UUID>? = nil
+    ) async {
         let candidates = stocks.filter {
-            $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
+            $0.market == .unitedStates
+                && $0.hasConfiguredSymbol
+                && !$0.isArchived
+                && (stockIDs?.contains($0.id) ?? true)
         }
         guard !candidates.isEmpty else {
-            extendedHoursPerformance = [:]
+            if stockIDs == nil {
+                extendedHoursPerformance = [:]
+            }
             return
         }
-
         var values: [UUID: StockExtendedHoursPerformance] = [:]
         // 同一个 `now` 决定盘前/盘后数据是否属于当前交易日，与迷你图的时段判定同源。
         let now = Date()
         await withTaskGroup(of: (UUID, StockExtendedHoursPerformance?).self) { group in
             for stock in candidates {
                 group.addTask { [chartService] in
-                    let snapshot: StockChartSnapshot?
-                    if forceRefresh {
-                        snapshot = try? await chartService.fetchChart(
-                            for: stock,
-                            range: .intraday,
-                            forceRefresh: true
-                        )
-                    } else {
-                        snapshot = await chartService.cachedChart(
-                            for: stock,
-                            range: .intraday
-                        )
-                    }
+                    let snapshot = await chartService.cachedChart(
+                        for: stock,
+                        range: .intraday
+                    )
                     guard let snapshot else { return (stock.id, nil) }
                     let preMarket = StockChartPresentation.preMarketPerformance(
                         snapshot: snapshot,
@@ -471,7 +632,17 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             }
         }
         guard !Task.isCancelled else { return }
-        extendedHoursPerformance = values
+        let eligibleIDs = Set(stocks.lazy.filter {
+            $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
+        }.map(\.id))
+        let eligibleValues = values.filter { eligibleIDs.contains($0.key) }
+        if let stockIDs {
+            extendedHoursPerformance = extendedHoursPerformance
+                .filter { eligibleIDs.contains($0.key) && !stockIDs.contains($0.key) }
+                .merging(eligibleValues) { _, new in new }
+        } else {
+            extendedHoursPerformance = eligibleValues
+        }
     }
 
     nonisolated private static func decimalQuoteValue(_ value: Double) -> Decimal {
@@ -482,30 +653,240 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     /// 强制刷新分时缓存，供手动刷新按钮和下拉刷新使用。
     ///
     /// 报价接口只更新价格，而迷你图、盘前盘后派生值和持仓总价值走势都读分时缓存。
-    /// 在此之前手动刷新只会通过 `refreshExtendedHoursPerformance(forceRefresh:)`
+    /// 在此之前手动刷新只会通过盘前盘后派生流程
     /// 顺带刷新美股的分时，A 股和港股的迷你图只能等 `StockRefreshCoordinator` 的
     /// 60 秒轮询，按钮对图形形同无效。
-    func refreshIntradayCharts(for market: StockMarket? = nil) async {
-        let candidates = stocks.filter { stock in
-            guard stock.hasConfiguredSymbol, !stock.isArchived else { return false }
-            guard let market else { return true }
-            return stock.market == market
+    func refreshIntradayCharts(
+        for market: StockMarket? = nil,
+        stockID: UUID? = nil,
+        stockIDs: Set<UUID>? = nil,
+        forceRefresh: Bool = true
+    ) async {
+        guard isDataLoaded, isModuleVisible, !Task.isCancelled else { return }
+        let request = IntradayChartRefreshRequest(
+            market: market,
+            stockIDs: stockID.map { Set([$0]) } ?? stockIDs,
+            forceRefresh: forceRefresh
+        )
+        if pendingIntradayChartRefresh == nil {
+            pendingIntradayChartRefresh = request
+        } else {
+            pendingIntradayChartRefresh?.merge(request)
         }
-        guard !candidates.isEmpty, !isRefreshingCharts else { return }
+        // 自动轮询、页面进入和手动刷新都经过同一个 drain。后来的强刷会被合并到
+        // 下一轮，不能再绕过状态位同时向 Provider 发起第二批请求。
+        if isRefreshingCharts {
+            await withCheckedContinuation { chartRefreshWaiters.append($0) }
+            return
+        }
         isRefreshingCharts = true
-        defer { isRefreshingCharts = false }
-        await withTaskGroup(of: Void.self) { group in
-            for stock in candidates {
-                group.addTask { [chartService] in
-                    // 缺数据的标的不该打断其余标的，错误由行情状态区和诊断日志体现。
-                    _ = try? await chartService.fetchChart(
-                        for: stock,
-                        range: .intraday,
-                        forceRefresh: true
-                    )
+        defer {
+            isRefreshingCharts = false
+            if Task.isCancelled { pendingIntradayChartRefresh = nil }
+            let waiters = chartRefreshWaiters
+            chartRefreshWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+
+        while !Task.isCancelled,
+              isModuleVisible,
+              let next = pendingIntradayChartRefresh {
+            pendingIntradayChartRefresh = nil
+            let candidates = stocks.filter { stock in
+                guard stock.hasConfiguredSymbol, !stock.isArchived else { return false }
+                if let market = next.market, stock.market != market { return false }
+                return next.stockIDs?.contains(stock.id) ?? true
+            }
+            let attemptAt = Date()
+            let eligibleStocks = candidates.filter { stock in
+                if !next.forceRefresh,
+                   let lastAttempt = lastAutomaticIntradayAttemptAt[stock.id],
+                   attemptAt.timeIntervalSince(lastAttempt) < 60 {
+                    return false
+                }
+                return true
+            }
+            for stock in eligibleStocks {
+                lastAutomaticIntradayAttemptAt[stock.id] = attemptAt
+            }
+            guard !eligibleStocks.isEmpty else { continue }
+            DiagnosticLogger.shared.log(.stockQuote, "分钟批次开始 stocks=\(eligibleStocks.count) force=\(next.forceRefresh)")
+
+            // Network fetch and provider parsing are independent per stock and
+            // run concurrently. The chart service applies a generous global
+            // bound; successful completions flow back one by one so the
+            // cache-version publication and SwiftUI state mutation stay
+            // serialized on this MainActor.
+            await withTaskGroup(of: (UUID, IntradayPresentationProjection?).self) { group in
+                for stock in eligibleStocks {
+                    group.addTask { [chartService] in
+                        do {
+                            let snapshot = try await chartService.fetchChart(
+                                for: stock,
+                                range: .intraday,
+                                forceRefresh: next.forceRefresh
+                            )
+                            return (stock.id, Self.intradayPresentationProjection(
+                                stock: stock,
+                                snapshot: snapshot,
+                                at: attemptAt
+                            ))
+                        } catch {
+                            return (stock.id, nil)
+                        }
+                    }
+                }
+                for await (stockID, projection) in group {
+                    guard !Task.isCancelled else {
+                        group.cancelAll()
+                        return
+                    }
+                    if let projection {
+                        chartRefreshErrors[stockID] = nil
+                        publishIntradayProjection(projection)
+                    } else if stocks.contains(where: { $0.id == stockID && !$0.isArchived }) {
+                        lastAutomaticIntradayAttemptAt[stockID] = nil
+                        chartRefreshErrors[stockID] = "行情图更新失败，已保留上次数据"
+                    }
                 }
             }
+            DiagnosticLogger.shared.log(.stockQuote, "分钟批次结束 ms=\(Int(Date().timeIntervalSince(attemptAt) * 1000))")
         }
+    }
+
+    /// Cold five-day history is a separate requirement from live minute ticks.
+    /// Its results still commit through the same cache and ID-scoped broadcast.
+    func refreshFiveDayHistory(for stockID: UUID, forceRefresh: Bool) async {
+        guard isDataLoaded, isModuleVisible,
+              let stock = stocks.first(where: { $0.id == stockID && !$0.isArchived }) else { return }
+        do {
+            _ = try await chartService.fetchChart(for: stock, range: .fiveDays, forceRefresh: forceRefresh)
+            guard !Task.isCancelled, isDataLoaded, isModuleVisible,
+                  stocks.contains(where: { $0.id == stockID && $0.symbol == stock.symbol && $0.market == stock.market && !$0.isArchived }) else { return }
+            chartRefreshErrors[stockID] = nil
+            await chartCacheDidUpdate(for: [stockID])
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            chartRefreshErrors[stockID] = "五日历史更新失败，已保留上次数据"
+        }
+    }
+
+    /// Pure presentation work runs beside provider parsing and never touches
+    /// observable state. The MainActor only performs the small dictionary and
+    /// revision commit after this value is ready.
+    nonisolated private static func intradayPresentationProjection(
+        stock: StockHolding,
+        snapshot: StockChartSnapshot,
+        at now: Date
+    ) -> IntradayPresentationProjection {
+        let preMarket = StockChartPresentation.preMarketPerformance(
+            snapshot: snapshot,
+            market: stock.market,
+            at: now
+        )
+        let postMarket = StockChartPresentation.postMarketPerformance(
+            snapshot: snapshot,
+            market: stock.market,
+            at: now
+        )
+        let preMarketPrice = preMarket == nil
+            ? nil
+            : snapshot.preMarketPoints.max(by: { $0.date < $1.date })
+        let postMarketPrice = postMarket == nil
+            ? nil
+            : snapshot.postMarketPoints.max(by: { $0.date < $1.date })
+        let extendedHours = stock.market == .unitedStates
+            ? StockExtendedHoursPerformance(
+                preMarketPrice: preMarketPrice.map { decimalQuoteValue($0.close) },
+                preMarketChange: preMarket.map { decimalQuoteValue($0.change) },
+                preMarketPercent: preMarket.map { decimalQuoteValue($0.percent) },
+                postMarketPrice: postMarketPrice.map { decimalQuoteValue($0.close) },
+                postMarketChange: postMarket.map { decimalQuoteValue($0.change) },
+                postMarketPercent: postMarket.map { decimalQuoteValue($0.percent) }
+            )
+            : nil
+        let selection = StockSparklineSeries.resolve(
+            regular: snapshot.points,
+            preMarket: snapshot.preMarketPoints,
+            postMarket: snapshot.postMarketPoints,
+            market: stock.market,
+            at: now
+        )
+        return IntradayPresentationProjection(
+            stockID: stock.id,
+            market: stock.market,
+            symbol: stock.symbol,
+            latestPoint: snapshot.points.max { $0.date < $1.date },
+            extendedHours: extendedHours,
+            sparkline: StockSparklineSeries.make(
+                points: selection.points,
+                domain: selection.domain
+            )
+        )
+    }
+
+    private func publishIntradayProjection(
+        _ projection: IntradayPresentationProjection
+    ) {
+        guard isDataLoaded, isModuleVisible,
+              let index = stocks.firstIndex(where: {
+                  $0.id == projection.stockID && !$0.isArchived
+                      && $0.market == projection.market && $0.symbol == projection.symbol
+              }) else { return }
+        // Quote and minute requests can run independently. Whichever completes
+        // last preserves the newest HK timestamp, without a second HTTP quote.
+        if projection.market == .hongKong, let point = projection.latestPoint,
+           point.date <= Date().addingTimeInterval(5 * 60),
+           point.date > (stocks[index].lastQuoteAt ?? .distantPast),
+           point.close > 0, let previousClose = stocks[index].previousClose {
+            let price = Self.decimalQuoteValue(point.close)
+            stocks[index].latestPrice = price
+            stocks[index].changePercent = StockQuoteProviderSupport.percentageChange(latestPrice: price, previousClose: previousClose)
+            stocks[index].lastQuoteAt = point.date
+            didMutateLocalOnly()
+        }
+        if let extendedHours = projection.extendedHours {
+            extendedHoursPerformance[projection.stockID] = extendedHours
+        } else {
+            extendedHoursPerformance[projection.stockID] = nil
+        }
+        if let sparkline = projection.sparkline {
+            intradaySparklines[projection.stockID] = sparkline
+        } else {
+            intradaySparklines[projection.stockID] = nil
+        }
+        chartCacheUpdateSequence &+= 1
+        let revision = chartCacheUpdateSequence
+        chartCacheRevisionByStockID[projection.stockID] = revision
+        chartPresentationRevisionByStockID[projection.stockID] = revision
+        chartCacheUpdate = StockChartCacheUpdate(
+            sequence: revision,
+            stockIDs: [projection.stockID],
+            includesDailyBars: false,
+            updatedAt: Date()
+        )
+    }
+
+    /// Completes the cache-write transaction: rebuild cache-only presentation
+    /// projections, then publish one ID-scoped render event.
+    func chartCacheDidUpdate(
+        for stockIDs: Set<UUID>,
+        includesDailyBars: Bool = false
+    ) async {
+        guard !stockIDs.isEmpty else { return }
+        await refreshExtendedHoursPerformance(stockIDs: stockIDs)
+        chartCacheUpdateSequence &+= 1
+        for stockID in stockIDs {
+            chartCacheRevisionByStockID[stockID] = chartCacheUpdateSequence
+        }
+        chartCacheUpdate = StockChartCacheUpdate(
+            sequence: chartCacheUpdateSequence,
+            stockIDs: stockIDs,
+            includesDailyBars: includesDailyBars,
+            updatedAt: Date()
+        )
     }
 
     /// Derives the inline watchlist sparklines from whatever intraday snapshots
@@ -513,14 +894,19 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     /// every market, and it never calls `fetchChart` — a missing cache entry just
     /// leaves the row without a sparkline until a real chart visit populates it.
     ///
-    /// That cache is not stale while the page is open: `StockRefreshCoordinator`
-    /// already refetches the intraday chart every polling cycle during a regular
-    /// session and during US pre/post-market, so re-deriving after each cycle is
-    /// what keeps the sparklines live.
-    func refreshSparklines() async {
-        let candidates = stocks.filter { $0.hasConfiguredSymbol && !$0.isArchived }
+    /// Focused chart screens update the relevant caches through
+    /// `StockRefreshCoordinator`; a successful write calls this method for only
+    /// the affected stock IDs before publishing `chartCacheUpdate`.
+    func refreshSparklines(stockIDs: Set<UUID>? = nil) async {
+        let candidates = stocks.filter {
+            $0.hasConfiguredSymbol
+                && !$0.isArchived
+                && (stockIDs?.contains($0.id) ?? true)
+        }
         guard !candidates.isEmpty else {
-            intradaySparklines = [:]
+            if stockIDs == nil {
+                intradaySparklines = [:]
+            }
             return
         }
 
@@ -559,7 +945,17 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             }
         }
         guard !Task.isCancelled else { return }
-        intradaySparklines = values
+        let eligibleIDs = Set(stocks.lazy.filter {
+            $0.hasConfiguredSymbol && !$0.isArchived
+        }.map(\.id))
+        let eligibleValues = values.filter { eligibleIDs.contains($0.key) }
+        if let stockIDs {
+            intradaySparklines = intradaySparklines
+                .filter { eligibleIDs.contains($0.key) && !stockIDs.contains($0.key) }
+                .merging(eligibleValues) { _, new in new }
+        } else {
+            intradaySparklines = eligibleValues
+        }
     }
 
     func lastRefreshAt(for market: StockMarket?) -> Date? {
@@ -661,6 +1057,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     }
 
     private func didMutate() {
+        performanceCache.retain(Set(stocks.map(\.id)))
         mutationNotifier?.moduleStoreDidMutate()
     }
 

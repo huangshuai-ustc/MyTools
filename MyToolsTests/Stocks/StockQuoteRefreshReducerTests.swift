@@ -45,6 +45,22 @@ struct StockQuoteRefreshReducerTests {
         #expect(requested.isEmpty)
     }
 
+    @Test func targetedRefreshDoesNotExpandToOtherStocksInTheMarket() {
+        let first = Self.stock(symbol: "AAPL", market: .unitedStates)
+        let second = Self.stock(symbol: "MSFT", market: .unitedStates)
+
+        let requested = StockQuoteRefreshReducer.stocksToRefresh(
+            from: [first, second],
+            market: .unitedStates,
+            stockIDs: [second.id],
+            forcedMarkets: [.unitedStates],
+            allowClosedMissingData: false,
+            at: Date(timeIntervalSince1970: 2_000)
+        )
+
+        #expect(requested.map(\.id) == [second.id])
+    }
+
     @Test func quoteReductionUpdatesSuccessAndReportsMissingResponse() throws {
         let updatedAt = Date(timeIntervalSince1970: 2_000_000_000)
         var success = Self.stock(symbol: "OLD", market: .unitedStates)

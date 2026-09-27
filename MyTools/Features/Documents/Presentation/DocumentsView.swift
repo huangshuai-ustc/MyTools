@@ -183,6 +183,7 @@ struct DocumentsView: View {
             }
         }
         .appNavigationTitle(ToolModule.documents.title)
+        .diagnosticScreen("证照")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索名称、号码、持有人或标签")

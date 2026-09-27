@@ -1,6 +1,96 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+enum StockHoldingsExportScope: String, CaseIterable, Identifiable, Sendable {
+    case current, all
+    var id: Self { self }
+    var title: String { self == .current ? "当前持仓" : "全部持仓" }
+}
+
+/// Read-only report of a captured portfolio, in each market's native currency.
+/// It is not a Vault backup and does not change persisted business data.
+enum StockHoldingsCSVExport {
+    static func data(
+        stocks: [StockHolding], scope: StockHoldingsExportScope,
+        extendedHours: [UUID: StockExtendedHoursPerformance], at date: Date
+    ) -> Data {
+        let timestamp = ISO8601DateFormatter()
+        func number(_ value: Decimal?) -> String {
+            value.map { NSDecimalNumber(decimal: $0).stringValue } ?? ""
+        }
+        // Quote every field, preserve line breaks, and neutralize spreadsheet
+        // formulas only for untrusted text, never for negative numeric values.
+        func text(_ value: String) -> String {
+            let first = value.trimmingCharacters(in: .whitespacesAndNewlines).first
+            return first.map { "=+-@".contains($0) } == true ? "'" + value : value
+        }
+        func row(_ fields: [String]) -> String {
+            fields.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }.joined(separator: ",")
+        }
+        var lines = [row(["市场", "股票代码", "名称", "状态", "币种", "持仓股数", "持仓成本", "单股成本", "最新价", "报价时段", "持仓市值", "当日盈亏", "持仓盈亏", "持仓盈亏率(%)", "累计买入成本", "已实现交易收益", "净分红", "已实现收益(含分红)", "累计总收益", "常规报价时间", "导出时间", "成本算法"])]
+        let ordered = stocks.sorted {
+            if $0.market.rawValue != $1.market.rawValue { return $0.market.rawValue < $1.market.rawValue }
+            if $0.symbol != $1.symbol { return $0.symbol < $1.symbol }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        for stock in ordered {
+            let performance = stock.performance(asOf: date)
+            guard scope == .current ? performance.shares > 0 : performance.hasPurchaseRecord else { continue }
+            let quote = StockActiveQuote.make(stock: stock, extendedHours: extendedHours[stock.id], at: date)
+            let valuation = StockHoldingValuation(stock: stock, quote: quote, performance: performance)
+            let rate = performance.holdingCost > 0
+                ? valuation.holdingProfitLoss.map { $0 / performance.holdingCost * 100 } : nil
+            lines.append(row([
+                stock.market.title, text(stock.symbol), text(stock.displayName),
+                performance.shares > 0 ? "持有" : stock.archivedAt != nil ? "已存档" : "已清仓",
+                stock.market.currencyCode, number(performance.shares), number(performance.holdingCost),
+                number(performance.averageHoldingCost), number(quote.price), quote.sessionTitle,
+                number(valuation.marketValue), number(valuation.todayProfitLoss), number(valuation.holdingProfitLoss),
+                number(rate), number(performance.totalBuyCost), number(performance.realizedTradeProfitLoss),
+                number(performance.netDividendIncome), number(performance.realizedProfitLoss),
+                number(valuation.holdingProfitLoss.map { $0 + performance.realizedProfitLoss }),
+                stock.lastQuoteAt.map(timestamp.string(from:)) ?? "", timestamp.string(from: date), "移动加权平均"
+            ]))
+        }
+        return Data(("\u{FEFF}" + lines.joined(separator: "\r\n") + "\r\n").utf8)
+    }
+}
+
+/// A quote tick does not change the transaction ledger. Cache only the replay;
+/// valuation remains cheap and uses the current quote and session.
+struct StockPerformanceCache {
+    private struct Entry {
+        let transactions: [StockTransaction]
+        let dividends: [StockDividend]
+        let calendar: Calendar
+        let computedAt: Date
+        let validUntil: Date
+        let performance: StockHolding.Performance
+    }
+    private var entries: [UUID: Entry] = [:]
+    private(set) var replayCount = 0
+
+    mutating func performance(for stock: StockHolding, at now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> StockHolding.Performance {
+        if let entry = entries[stock.id],
+           entry.transactions == stock.transactions, entry.dividends == stock.dividends,
+           entry.calendar == calendar, now >= entry.computedAt, now < entry.validUntil {
+            return entry.performance
+        }
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now
+        let nextTransaction = stock.transactions.lazy.map(\.tradedAt).filter { $0 > now }.min() ?? nextDay
+        let performance = stock.performance(asOf: now, calendar: calendar)
+        entries[stock.id] = Entry(transactions: stock.transactions, dividends: stock.dividends,
+                                  calendar: calendar, computedAt: now, validUntil: min(nextDay, nextTransaction),
+                                  performance: performance)
+        replayCount += 1
+        return performance
+    }
+
+    mutating func retain(_ ids: Set<UUID>) {
+        entries = entries.filter { ids.contains($0.key) }
+    }
+}
+
 /// The quote actually in effect for a holding right now.
 ///
 /// 这是整个股票模块**唯一**的报价判定入口：持仓行、看盘行、市场概况和顶部总览都必须
@@ -85,13 +175,21 @@ struct StockHoldingValuation {
     let todayProfitLoss: Decimal?
     let holdingProfitLoss: Decimal?
 
-    init(stock: StockHolding, quote: StockActiveQuote) {
-        let shares = stock.currentShares
+    /// `performance` 传入已算好的交易回放结果可避免重复回放；不传就自己算一份。聚合场景
+    /// **务必**传，否则每构造一个估值就要把这只股票的全部交易重排一遍（见
+    /// `StockHolding.performance(asOf:)` 的说明）。
+    init(
+        stock: StockHolding,
+        quote: StockActiveQuote,
+        performance: StockHolding.Performance? = nil
+    ) {
+        let performance = performance ?? stock.performance()
+        let shares = performance.shares
         guard shares > 0 else {
             marketValue = 0
             previousMarketValue = 0
             todayProfitLoss = nil
-            holdingProfitLoss = -stock.holdingCost
+            holdingProfitLoss = -performance.holdingCost
             return
         }
         guard let price = quote.price else {
@@ -103,7 +201,7 @@ struct StockHoldingValuation {
         }
         let value = shares * price
         marketValue = value
-        holdingProfitLoss = value - stock.holdingCost
+        holdingProfitLoss = value - performance.holdingCost
         guard let change = quote.changeAmount else {
             previousMarketValue = nil
             todayProfitLoss = nil
@@ -116,11 +214,13 @@ struct StockHoldingValuation {
     init(
         stock: StockHolding,
         extendedHours: StockExtendedHoursPerformance?,
-        at now: Date = Date()
+        at now: Date = Date(),
+        performance: StockHolding.Performance? = nil
     ) {
         self.init(
             stock: stock,
-            quote: StockActiveQuote.make(stock: stock, extendedHours: extendedHours, at: now)
+            quote: StockActiveQuote.make(stock: stock, extendedHours: extendedHours, at: now),
+            performance: performance
         )
     }
 }
@@ -155,39 +255,62 @@ struct StockPortfolioSummary {
         market: StockMarket,
         stocks: [StockHolding],
         extendedHours: [UUID: StockExtendedHoursPerformance] = [:],
-        at now: Date = Date()
+        at now: Date = Date(),
+        performances: [UUID: StockHolding.Performance] = [:]
     ) {
         self.market = market
         let marketStocks = stocks.filter { $0.market == market }
         stockCount = marketStocks.count
-        openPositionCount = marketStocks.lazy.filter { $0.currentShares > 0 }.count
-        holdingCost = marketStocks.reduce(Decimal.zero) { $0 + $1.holdingCost }
-        netDividendIncome = marketStocks.reduce(Decimal.zero) { $0 + $1.netDividendIncome }
-        realizedProfitLoss = marketStocks.reduce(Decimal.zero) { $0 + $1.realizedProfitLoss }
-        // 与持仓行同一个判定入口，所以「市值 = 各行市值之和」是构造上成立的。
-        let valuations = marketStocks.map { stock in
-            (
-                stock: stock,
+
+        // 每只股票只回放一次交易，下面所有小计都从同一份快照里取。原实现对
+        // `currentShares`/`holdingCost`/`realizedProfitLoss` 各做一次 `reduce`，再为估值
+        // 读两次、为两个 `contains` 各读一次，合计每只股票 7 次完整回放。
+        let entries = marketStocks.map { stock -> (
+            performance: StockHolding.Performance,
+            valuation: StockHoldingValuation
+        ) in
+            let performance = performances[stock.id] ?? stock.performance(asOf: now)
+            return (
+                performance: performance,
+                // 与持仓行同一个判定入口，所以「市值 = 各行市值之和」是构造上成立的。
                 valuation: StockHoldingValuation(
                     stock: stock,
                     extendedHours: extendedHours[stock.id],
-                    at: now
+                    at: now,
+                    performance: performance
                 )
             )
         }
-        knownMarketValue = valuations.reduce(Decimal.zero) { result, entry in
-            result + (entry.valuation.marketValue ?? 0)
+
+        var openPositions = 0
+        var cost = Decimal.zero
+        var dividends = Decimal.zero
+        var realized = Decimal.zero
+        var value = Decimal.zero
+        var daily = Decimal.zero
+        var missingDailyChange = false
+        var missingQuotes = false
+        for entry in entries {
+            let isOpenPosition = entry.performance.shares > 0
+            if isOpenPosition { openPositions += 1 }
+            cost += entry.performance.holdingCost
+            dividends += entry.performance.netDividendIncome
+            realized += entry.performance.realizedProfitLoss
+            value += entry.valuation.marketValue ?? 0
+            daily += entry.valuation.todayProfitLoss ?? 0
+            guard isOpenPosition else { continue }
+            if entry.valuation.todayProfitLoss == nil { missingDailyChange = true }
+            if entry.valuation.marketValue == nil { missingQuotes = true }
         }
-        let hasMissingDailyChange = valuations.contains {
-            $0.stock.currentShares > 0 && $0.valuation.todayProfitLoss == nil
-        }
-        todayProfitLoss = hasMissingDailyChange
-            ? nil
-            : valuations.reduce(Decimal.zero) { $0 + ($1.valuation.todayProfitLoss ?? 0) }
-        hasMissingQuotes = valuations.contains {
-            $0.stock.currentShares > 0 && $0.valuation.marketValue == nil
-        }
-        profitLoss = hasMissingQuotes ? nil : knownMarketValue - holdingCost
+
+        openPositionCount = openPositions
+        holdingCost = cost
+        netDividendIncome = dividends
+        realizedProfitLoss = realized
+        knownMarketValue = value
+        todayProfitLoss = missingDailyChange ? nil : daily
+        hasMissingQuotes = missingQuotes
+        profitLoss = missingQuotes ? nil : value - cost
     }
 }
 
@@ -220,7 +343,8 @@ struct StockConvertedPortfolioSummary {
         stocks: [StockHolding],
         multipliers: [StockMarket: Decimal],
         extendedHours: [UUID: StockExtendedHoursPerformance] = [:],
-        at now: Date = Date()
+        at now: Date = Date(),
+        performances: [UUID: StockHolding.Performance] = [:]
     ) {
         var value = Decimal.zero
         var daily = Decimal.zero
@@ -232,19 +356,24 @@ struct StockConvertedPortfolioSummary {
         /// 已实现收益只需要汇率，不需要行情。
         var canConvertCurrencies = true
 
-        for stock in stocks where stock.hasPurchaseRecord {
+        for stock in stocks {
+            // 每只股票一次回放：原实现为 `hasPurchaseRecord`、`realizedProfitLoss`、
+            // `currentShares` 与估值各读一遍，合计 5 次。
+            let performance = performances[stock.id] ?? stock.performance(asOf: now)
+            guard performance.hasPurchaseRecord else { continue }
             guard let multiplier = multipliers[stock.market] else {
                 canConvertCurrencies = false
                 canCalculateValue = false
                 canCalculateDaily = false
                 continue
             }
-            realized += stock.realizedProfitLoss * multiplier
-            if stock.currentShares > 0 {
+            realized += performance.realizedProfitLoss * multiplier
+            if performance.shares > 0 {
                 let valuation = StockHoldingValuation(
                     stock: stock,
                     extendedHours: extendedHours[stock.id],
-                    at: now
+                    at: now,
+                    performance: performance
                 )
                 if let marketValue = valuation.marketValue,
                    let holdingProfitLoss = valuation.holdingProfitLoss {
@@ -283,7 +412,8 @@ struct StockAllocationSnapshot {
         stocks: [StockHolding],
         marketValueMultipliers: [StockMarket: Decimal],
         extendedHours: [UUID: StockExtendedHoursPerformance] = [:],
-        at now: Date = Date()
+        at now: Date = Date(),
+        performances: [UUID: StockHolding.Performance] = [:]
     ) {
         var valuesByHolding: [UUID: Decimal] = [:]
         var valuesByMarket = Dictionary(
@@ -297,7 +427,8 @@ struct StockAllocationSnapshot {
             let valuation = StockHoldingValuation(
                 stock: stock,
                 extendedHours: extendedHours[stock.id],
-                at: now
+                at: now,
+                performance: performances[stock.id] ?? stock.performance(asOf: now)
             )
             guard let marketValue = valuation.marketValue else {
                 complete = false
@@ -352,17 +483,20 @@ struct StockCostAllocationSnapshot {
     private let holdingShares: [UUID: Decimal]
     let isComplete: Bool
 
-    init(stocks: [StockHolding], costMultipliers: [StockMarket: Decimal]) {
+    init(stocks: [StockHolding], costMultipliers: [StockMarket: Decimal], performances: [UUID: StockHolding.Performance] = [:]) {
         var valuesByHolding: [UUID: Decimal] = [:]
         var total = Decimal.zero
 
-        for stock in stocks where stock.currentShares > 0 && stock.holdingCost > 0 {
+        for stock in stocks {
+            // 一次回放取代 `currentShares` + `holdingCost` × 2 三次。
+            let performance = performances[stock.id] ?? stock.performance()
+            guard performance.shares > 0, performance.holdingCost > 0 else { continue }
             guard let multiplier = costMultipliers[stock.market] else {
                 holdingShares = [:]
                 isComplete = false
                 return
             }
-            let convertedCost = stock.holdingCost * multiplier
+            let convertedCost = performance.holdingCost * multiplier
             valuesByHolding[stock.id] = convertedCost
             total += convertedCost
         }

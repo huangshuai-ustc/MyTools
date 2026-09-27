@@ -14,6 +14,50 @@ import Testing
 /// `latestCompletedFinalSessionEnd` 全部复用同一份，所以下面这些入口不可能出现
 /// 「一个认得调休、另一个不认得」的分叉。
 struct StockTradingCalendarTests {
+    @Test func eachMarketOwnsItsSessionBoundaries() {
+        let aShareLunch = StockChartFixtures.date(
+            2026, 9, 18, hour: 12, timeZone: "Asia/Shanghai"
+        )
+        let hongKongLunch = StockChartFixtures.date(
+            2026, 9, 18, hour: 12, minute: 30, timeZone: "Asia/Hong_Kong"
+        )
+        let usPreMarket = StockChartFixtures.date(
+            2026, 9, 18, hour: 8, timeZone: "America/New_York"
+        )
+        let usRegular = StockChartFixtures.date(
+            2026, 9, 18, hour: 10, timeZone: "America/New_York"
+        )
+        let usPostMarket = StockChartFixtures.date(
+            2026, 9, 18, hour: 17, timeZone: "America/New_York"
+        )
+
+        #expect(StockMarketTradingCalendar.session(for: .aShare, at: aShareLunch) == .closed)
+        #expect(StockMarketTradingCalendar.session(for: .hongKong, at: hongKongLunch) == .closed)
+        #expect(StockMarketTradingCalendar.isPreMarketOpen(.aShare, at: aShareLunch) == false)
+        #expect(StockMarketTradingCalendar.isPostMarketOpen(.hongKong, at: hongKongLunch) == false)
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: usPreMarket) == .preMarket)
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: usRegular) == .regular)
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: usPostMarket) == .postMarket)
+    }
+
+    /// 纽约市场始终按当地 09:30 开盘；UTC 时刻由 `America/New_York` 的时区规则
+    /// 自动随夏令时变化，业务代码不保存一套“北京时间夏/冬开盘表”。
+    @Test func usRegularSessionFollowsDaylightSavingTime() {
+        let winterOpenUTC = StockChartFixtures.date(
+            2026, 3, 6, hour: 14, minute: 30, timeZone: "UTC"
+        )
+        let summerOpenUTC = StockChartFixtures.date(
+            2026, 3, 9, hour: 13, minute: 30, timeZone: "UTC"
+        )
+        let beforeSummerOpenUTC = StockChartFixtures.date(
+            2026, 3, 9, hour: 13, minute: 29, timeZone: "UTC"
+        )
+
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: winterOpenUTC) == .regular)
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: summerOpenUTC) == .regular)
+        #expect(StockMarketTradingCalendar.session(for: .unitedStates, at: beforeSummerOpenUTC) == .preMarket)
+    }
+
     /// 2026-09-20 是周日，因中秋国庆调休而补班，但 A 股休市。
     @Test func compensatoryWorkDayOnWeekendIsNotATradingDay() {
         #expect(

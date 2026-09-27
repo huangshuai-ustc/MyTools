@@ -24,6 +24,21 @@ enum StockPositionColumnMetrics {
         width >= wideLayoutThreshold
     }
 
+    /// 只有 iPad 才按实际宽度在标准列与等宽列之间切换。
+    ///
+    /// iPhone 与 macOS 直接用固定列宽的标准布局：把 `GeometryReader` 套在列表行上会让
+    /// 行高吃掉 `List` 给出的全部提案高度（`.frame(minHeight:)` 只是下限），内容顶对齐、
+    /// 下面空出一截，整张持仓表因此比看盘页松散得多。看盘行同样只在 iPad 上测宽
+    /// （`StockWatchlistRow.body`），两页保持一致的行高观感。iPad 仍然需要测宽——分屏时
+    /// 宽度可能落在阈值以下。
+    static var usesWidthAdaptiveColumns: Bool {
+#if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad
+#else
+        false
+#endif
+    }
+
     static func equalColumnWidth(for width: CGFloat) -> CGFloat {
         max((width - spacing * 4) / 5, 0)
     }
@@ -38,14 +53,18 @@ struct StockPositionColumnHeader: View {
     @Environment(\.appFontScale) private var fontScale
 
     var body: some View {
-        GeometryReader { proxy in
-            if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
-                equalColumnHeader(width: proxy.size.width)
-            } else {
-                standardHeader
+        if StockPositionColumnMetrics.usesWidthAdaptiveColumns {
+            GeometryReader { proxy in
+                if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
+                    equalColumnHeader(width: proxy.size.width)
+                } else {
+                    standardHeader
+                }
             }
+            .frame(minHeight: 24)
+        } else {
+            standardHeader
         }
-        .frame(minHeight: 24)
     }
 
     private var standardHeader: some View {
@@ -98,55 +117,64 @@ struct StockPositionRow: View {
     let stock: StockHolding
     let costShare: Decimal?
     let extendedHours: StockExtendedHoursPerformance?
+    var performance: StockHolding.Performance? = nil
 
     var body: some View {
-        GeometryReader { proxy in
-            if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
-                equalColumnBody(width: proxy.size.width)
-            } else {
-                standardBody
+        // `GeometryReader` 会随宽度提案反复求值，而 `holdingProfitLoss`/`holdingProfitRate`
+        // /`accessibilityLabel` 原先各自都要把这只股票的交易回放一遍（`holdingCost` 还带
+        // 排序），一行最多 6 次。这里一次算好往下传。
+        let values = rowValues()
+        if StockPositionColumnMetrics.usesWidthAdaptiveColumns {
+            GeometryReader { proxy in
+                if StockPositionColumnMetrics.usesEqualColumns(at: proxy.size.width) {
+                    equalColumnBody(width: proxy.size.width, values: values)
+                } else {
+                    standardBody(values: values)
+                }
             }
+            .frame(minHeight: 42)
+        } else {
+            standardBody(values: values)
         }
-        .frame(minHeight: 42)
     }
 
-    private var standardBody: some View {
+    private func standardBody(values: RowValues) -> some View {
         HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
             identityColumn
-            priceColumn
+            priceColumn(values: values)
             valueColumn(
                 width: StockPositionColumnMetrics.change(fontScale),
-                primary: changeAmountText,
-                secondary: changePercentText,
-                color: quoteColor
+                primary: changeAmountText(values),
+                secondary: changePercentText(values),
+                color: trendColor(values.quote.percent)
             )
             valueColumn(
                 width: StockPositionColumnMetrics.shares(fontScale),
-                primary: StockValueFormatter.integerQuantity(stock.currentShares),
+                primary: StockValueFormatter.integerQuantity(values.shares),
                 secondary: costShare.map(StockValueFormatter.allocationPercent)
             )
             valueColumn(
                 width: StockPositionColumnMetrics.profit(fontScale),
-                primary: holdingProfitLossText,
-                secondary: holdingProfitRateText,
-                color: holdingProfitColor
+                primary: holdingProfitLossText(values),
+                secondary: holdingProfitRateText(values),
+                color: trendColor(values.holdingProfitLoss)
             )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel(values))
     }
 
-    private func equalColumnBody(width: CGFloat) -> some View {
+    private func equalColumnBody(width: CGFloat, values: RowValues) -> some View {
         let columnWidth = StockPositionColumnMetrics.equalColumnWidth(for: width)
         return HStack(alignment: .top, spacing: StockPositionColumnMetrics.spacing) {
             identityColumn.frame(width: columnWidth, alignment: .leading)
-            priceColumn.frame(width: columnWidth, alignment: .leading)
-            valueColumn(width: columnWidth, primary: changeAmountText, secondary: changePercentText, color: quoteColor)
-            valueColumn(width: columnWidth, primary: StockValueFormatter.integerQuantity(stock.currentShares), secondary: costShare.map(StockValueFormatter.allocationPercent))
-            valueColumn(width: columnWidth, primary: holdingProfitLossText, secondary: holdingProfitRateText, color: holdingProfitColor)
+            priceColumn(values: values).frame(width: columnWidth, alignment: .leading)
+            valueColumn(width: columnWidth, primary: changeAmountText(values), secondary: changePercentText(values), color: trendColor(values.quote.percent))
+            valueColumn(width: columnWidth, primary: StockValueFormatter.integerQuantity(values.shares), secondary: costShare.map(StockValueFormatter.allocationPercent))
+            valueColumn(width: columnWidth, primary: holdingProfitLossText(values), secondary: holdingProfitRateText(values), color: trendColor(values.holdingProfitLoss))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel(values))
     }
 
     private var identityColumn: some View {
@@ -170,14 +198,14 @@ struct StockPositionRow: View {
     /// 最新价只有一行，用一个不可见的「两行模板」撑出与其他列相同的高度，再靠
     /// `ZStack` 的垂直居中把价格摆在相邻两行文字之间。模板跟着字号变化，比写死
     /// 偏移量或依赖 `maxHeight: .infinity` 在列表行里的高度提案更可预测。
-    private var priceColumn: some View {
+    private func priceColumn(values: RowValues) -> some View {
         ZStack(alignment: .leading) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("0").font(primaryValueFont)
                 Text("0").font(secondaryValueFont)
             }
             .hidden()
-            Text(priceText)
+            Text(priceText(values))
                 .font(primaryValueFont)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -215,58 +243,66 @@ struct StockPositionRow: View {
         .frame(width: width, alignment: .leading)
     }
 
-    private var quote: StockActiveQuote {
-        StockActiveQuote.make(stock: stock, extendedHours: extendedHours)
+    /// 一行需要的全部派生值，一次交易回放算完。
+    private struct RowValues {
+        let quote: StockActiveQuote
+        let shares: Decimal
+        /// Holding profit measured against the price actually shown, so extended
+        /// hours moves are reflected in the same row.
+        ///
+        /// 由 `StockHoldingValuation` 从 `quote` 派生，与顶部总览、市场概况共用同一个
+        /// 类型：行内不再自己写 `currentShares * price - holdingCost`，否则改口径时会
+        /// 漏掉一处。
+        let holdingProfitLoss: Decimal?
+        let holdingProfitRate: Decimal?
     }
 
-    private var priceText: String {
-        quote.price.map {
+    private func rowValues() -> RowValues {
+        let performance = performance ?? stock.performance()
+        let quote = StockActiveQuote.make(stock: stock, extendedHours: extendedHours)
+        let holdingProfitLoss = StockHoldingValuation(
+            stock: stock,
+            quote: quote,
+            performance: performance
+        ).holdingProfitLoss
+        var holdingProfitRate: Decimal?
+        if performance.holdingCost > 0, let holdingProfitLoss {
+            holdingProfitRate = holdingProfitLoss / performance.holdingCost
+        }
+        return RowValues(
+            quote: quote,
+            shares: performance.shares,
+            holdingProfitLoss: holdingProfitLoss,
+            holdingProfitRate: holdingProfitRate
+        )
+    }
+
+    private func priceText(_ values: RowValues) -> String {
+        values.quote.price.map {
             StockValueFormatter.price($0, currencyCode: stock.market.currencyCode)
         } ?? "--"
     }
 
-    private var changeAmountText: String {
-        quote.changeAmount.map {
+    private func changeAmountText(_ values: RowValues) -> String {
+        values.quote.changeAmount.map {
             StockValueFormatter.signedMoney($0, currencyCode: stock.market.currencyCode)
         } ?? "--"
     }
 
-    private var changePercentText: String {
-        quote.percent.map(StockValueFormatter.signedPercent) ?? "--"
+    private func changePercentText(_ values: RowValues) -> String {
+        values.quote.percent.map(StockValueFormatter.signedPercent) ?? "--"
     }
 
-    private var quoteColor: Color {
-        trendColor(quote.percent)
-    }
-
-    /// Holding profit measured against the price actually shown, so extended
-    /// hours moves are reflected in the same row.
-    ///
-    /// 由 `StockHoldingValuation` 从 `quote` 派生，与顶部总览、市场概况共用同一个类型：
-    /// 行内不再自己写 `currentShares * price - holdingCost`，否则改口径时会漏掉一处。
-    private var holdingProfitLoss: Decimal? {
-        StockHoldingValuation(stock: stock, quote: quote).holdingProfitLoss
-    }
-
-    private var holdingProfitRate: Decimal? {
-        guard stock.holdingCost > 0, let holdingProfitLoss else { return nil }
-        return holdingProfitLoss / stock.holdingCost
-    }
-
-    private var holdingProfitLossText: String {
-        guard let holdingProfitLoss else { return "待同步" }
+    private func holdingProfitLossText(_ values: RowValues) -> String {
+        guard let holdingProfitLoss = values.holdingProfitLoss else { return "待同步" }
         return StockValueFormatter.signedMoney(
             holdingProfitLoss,
             currencyCode: stock.market.currencyCode
         )
     }
 
-    private var holdingProfitRateText: String {
-        holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "--"
-    }
-
-    private var holdingProfitColor: Color {
-        trendColor(holdingProfitLoss)
+    private func holdingProfitRateText(_ values: RowValues) -> String {
+        values.holdingProfitRate.map(StockValueFormatter.signedPercent) ?? "--"
     }
 
     private func trendColor(_ value: Decimal?) -> Color {
@@ -279,13 +315,13 @@ struct StockPositionRow: View {
         )
     }
 
-    private var accessibilityLabel: String {
+    private func accessibilityLabel(_ values: RowValues) -> String {
         var parts = [
             "\(stock.market.title) \(stock.displayName) \(stock.symbol)",
-            "\(quote.sessionTitle) \(priceText)",
-            "涨跌 \(changeAmountText) \(changePercentText)",
-            "持仓 \(StockValueFormatter.integerQuantity(stock.currentShares)) 股",
-            "盈亏 \(holdingProfitLossText) \(holdingProfitRateText)"
+            "\(values.quote.sessionTitle) \(priceText(values))",
+            "涨跌 \(changeAmountText(values)) \(changePercentText(values))",
+            "持仓 \(StockValueFormatter.integerQuantity(values.shares)) 股",
+            "盈亏 \(holdingProfitLossText(values)) \(holdingProfitRateText(values))"
         ]
         if let costShare {
             parts.append("成本占比 \(StockValueFormatter.allocationPercent(costShare))")

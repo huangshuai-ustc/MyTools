@@ -45,7 +45,16 @@ protocol StockChartHTTPClient: Sendable {
 }
 
 struct URLSessionStockChartHTTPClient: StockChartHTTPClient {
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
+
     func data(for url: URL, referer: String) async throws -> Data {
+        try Task.checkCancellation()
         var request = URLRequest(
             url: url,
             cachePolicy: .reloadIgnoringLocalCacheData,
@@ -54,7 +63,10 @@ struct URLSessionStockChartHTTPClient: StockChartHTTPClient {
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json,text/plain,*/*", forHTTPHeaderField: "Accept")
         request.setValue(referer, forHTTPHeaderField: "Referer")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let started = Date()
+        let (data, response) = try await Self.session.data(for: request)
+        try Task.checkCancellation()
+        DiagnosticLogger.shared.log(.stockQuote, "图表阶段=http host=\(url.host ?? "unknown") bytes=\(data.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
         guard let response = response as? HTTPURLResponse,
               (200..<300).contains(response.statusCode) else {
             throw StockChartError.serviceUnavailable

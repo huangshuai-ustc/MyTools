@@ -109,6 +109,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private let initialLoader: any VaultInitialLoading
     private let moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing
     private var isRestoringBackup = false
+    private var deferredAttachmentRemovals: [UUID: FileAttachment] = [:]
+    private var attachmentRemovalTask: Task<Void, Never>?
+    private var persistenceRequestRevision: UInt64 = 0
     private var isApplyingCloudChanges = false
     private var canPersistVault = true
     private var didLogPersistenceBlocked = false
@@ -197,8 +200,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         financeStore = FinanceStore(
             accounts: initialVault?.accounts ?? [],
             cards: initialVault?.cards ?? [],
-            domesticLoginFieldTemplates: initialVault?.domesticBankLoginFieldTemplates ?? [],
-            overseasLoginFieldTemplates: initialVault?.overseasBankLoginFieldTemplates ?? [],
+            domesticLoginFieldTemplates: initialVault?.domesticBankLoginFieldTemplates ?? BankLoginFieldTemplate.domesticDefaults,
+            overseasLoginFieldTemplates: initialVault?.overseasBankLoginFieldTemplates ?? BankLoginFieldTemplate.overseasDefaults,
             attachmentStore: attachmentStore
         )
 #endif
@@ -612,6 +615,29 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         }
     }
 
+    func scheduleAttachmentRemovalAfterPersistence(_ attachments: [FileAttachment]) {
+        for attachment in attachments { deferredAttachmentRemovals[attachment.id] = attachment }
+        guard attachmentRemovalTask == nil, !deferredAttachmentRemovals.isEmpty,
+              isInitialDataLoaded, canPersistVault, !isRestoringBackup else { return }
+        attachmentRemovalTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.attachmentRemovalTask = nil }
+            while true {
+                let revision = self.persistenceRequestRevision
+                guard await self.persistence.flush() == nil,
+                      self.canPersistVault, !self.isRestoringBackup,
+                      self.pendingModuleLocalDataDeletion == nil else { return }
+                if revision == self.persistenceRequestRevision { break }
+            }
+            let references = self.referencedAttachmentStoredFileNames
+            let pending = self.deferredAttachmentRemovals
+            self.deferredAttachmentRemovals.removeAll()
+            for attachment in pending.values where !references.contains(attachment.storedFileName) {
+                self.attachmentStore.delete(attachment)
+            }
+        }
+    }
+
     /// Quote fields are intentionally local-only and excluded from the
     /// CloudKit portfolio snapshot. Persist them without re-encoding every
     /// business record merely to discover that there is nothing to upload.
@@ -735,6 +761,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             }
             return
         }
+        persistenceRequestRevision &+= 1
         persistence.schedule(currentVaultData(), secrets: currentSecrets)
     }
 

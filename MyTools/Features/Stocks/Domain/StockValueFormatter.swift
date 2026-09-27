@@ -35,6 +35,22 @@ enum StockValueFormatter {
         return (value < 0 ? "-" : "+") + magnitude
     }
 
+    /// Intraday price differences need enough precision to explain a non-zero
+    /// trend even when the two-decimal percentage rounds to 0.00%.
+    static func signedPriceDifference(_ value: Decimal, currencyCode: String) -> String {
+        var source = value
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &source, 4, .plain)
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currencyCode
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 4
+        let magnitude = rounded < 0 ? -rounded : rounded
+        let number = formatter.string(from: magnitude as NSDecimalNumber) ?? "0.0000"
+        return (rounded < 0 ? "-" : "+") + number
+    }
+
     static func price(_ value: Decimal, currencyCode: String) -> String {
         guard let currency = CurrencyCode(rawValue: currencyCode.uppercased()) else {
             let formatter = NumberFormatter()

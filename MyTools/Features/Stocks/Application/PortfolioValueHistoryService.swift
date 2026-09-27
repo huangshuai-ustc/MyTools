@@ -18,14 +18,14 @@ private struct PortfolioValueCacheFile: Codable {
 
 actor PortfolioValueHistoryService {
 
-    private var diskStore: StockChartDiskStore
+    private let chartService: any StockChartServing
     private let fileManager: FileManager
     private let cacheDirectory: URL
     private var memoryCache: [String: PortfolioValueCacheFile] = [:]
     private var minuteMemoryCache: [String: PortfolioValueSeries] = [:]
 
-    init(diskStore: StockChartDiskStore = StockChartDiskStore()) {
-        self.diskStore = diskStore
+    init(chartService: any StockChartServing = StockChartService.shared) {
+        self.chartService = chartService
         self.fileManager = .default
         let fm = FileManager.default
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -52,7 +52,7 @@ actor PortfolioValueHistoryService {
         if let market {
             let marketStocks = holdingStocks.filter { $0.market == market }
             guard !marketStocks.isEmpty else { return [] }
-            return buildMarketSeries(
+            return await buildMarketSeries(
                 market: market,
                 stocks: marketStocks,
                 liveOverrides: liveOverrides
@@ -62,7 +62,7 @@ actor PortfolioValueHistoryService {
             for m in StockMarket.topLevelOrder {
                 let marketStocks = holdingStocks.filter { $0.market == m }
                 guard !marketStocks.isEmpty else { continue }
-                let series = buildMarketSeries(
+                let series = await buildMarketSeries(
                     market: m,
                     stocks: marketStocks,
                     liveOverrides: liveOverrides
@@ -91,14 +91,14 @@ actor PortfolioValueHistoryService {
         if let market {
             let marketStocks = holdingStocks.filter { $0.market == market }
             guard !marketStocks.isEmpty else { return [] }
-            let series = buildMinuteMarketSeries(for: market, range: range, stocks: marketStocks)
+            let series = await buildMinuteMarketSeries(for: market, range: range, stocks: marketStocks)
             return series.points.isEmpty ? [] : [series]
         } else {
             var marketSeries: [PortfolioValueSeries] = []
             for m in StockMarket.topLevelOrder {
                 let marketStocks = holdingStocks.filter { $0.market == m }
                 guard !marketStocks.isEmpty else { continue }
-                let series = buildMinuteMarketSeries(for: m, range: range, stocks: marketStocks)
+                let series = await buildMinuteMarketSeries(for: m, range: range, stocks: marketStocks)
                 if !series.points.isEmpty {
                     marketSeries.append(series)
                 }
@@ -127,8 +127,8 @@ actor PortfolioValueHistoryService {
         for market: StockMarket,
         range: StockChartRange,
         stocks: [StockHolding]
-    ) -> PortfolioValueSeries {
-        let minutePrices = loadMinutePrices(for: stocks)
+    ) async -> PortfolioValueSeries {
+        let minutePrices = await loadPrices(for: stocks, range: .fiveDays)
         let sourceSignature = stocks.sorted { $0.id.uuidString < $1.id.uuidString }.map { stock in
             let points = minutePrices[stock.symbol] ?? []
             let transactionData = (try? JSONEncoder.portfolioHistory.encode(stock.transactions)) ?? Data()
@@ -136,7 +136,13 @@ actor PortfolioValueHistoryService {
                 .prefix(8)
                 .map { String(format: "%02x", $0) }
                 .joined()
-            return "\(stock.id.uuidString):\(points.count):\(points.last?.date.timeIntervalSinceReferenceDate ?? 0):\(points.last?.close ?? 0):\(transactionDigest)"
+            // A provider may correct an earlier OHLC bar without changing the
+            // point count or final close. Those corrections affect portfolio
+            // candles too, so fingerprint the complete source.
+            let sourceData = (try? JSONEncoder.portfolioHistory.encode(points)) ?? Data()
+            let sourceDigest = SHA256.hash(data: sourceData)
+                .map { String(format: "%02x", $0) }.joined()
+            return "\(stock.id.uuidString):\(sourceDigest):\(transactionDigest)"
         }.joined(separator: ";")
         let digest = SHA256.hash(data: Data(sourceSignature.utf8))
             .map { String(format: "%02x", $0) }
@@ -161,9 +167,10 @@ actor PortfolioValueHistoryService {
         market: StockMarket,
         stocks: [StockHolding],
         liveOverrides: [String: Decimal]
-    ) -> [PortfolioValueSeries] {
+    ) async -> [PortfolioValueSeries] {
         let key = market.rawValue
-        let fp = fingerprint(for: stocks, market: market)
+        let prices = await loadPrices(for: stocks, range: .dayK)
+        let fp = fingerprint(for: stocks, prices: prices)
         let marketOverrides = liveOverrides.filter { sym, _ in
             stocks.contains { $0.symbol == sym }
         }
@@ -185,7 +192,6 @@ actor PortfolioValueHistoryService {
             }
         }
 
-        let prices = loadDailyPrices(for: stocks)
         let series = PortfolioValueHistoryBuilder.buildSeries(
             for: market,
             stocks: stocks,
@@ -208,45 +214,36 @@ actor PortfolioValueHistoryService {
         return seriesList
     }
 
-    private func fingerprint(for stocks: [StockHolding], market: StockMarket) -> String {
-        var parts: [String] = []
+    private func fingerprint(for stocks: [StockHolding], prices: [String: [StockChartPoint]]) -> String {
+        var parts: [String] = ["moving-average-cost-v2"]
         for stock in stocks.sorted(by: { $0.symbol < $1.symbol }) {
             let transactionData = (try? JSONEncoder.portfolioHistory.encode(stock.transactions)) ?? Data()
             let transactionDigest = SHA256.hash(data: transactionData)
                 .map { String(format: "%02x", $0) }
                 .joined()
-            let storeKey = StockChartStoreKey(market: market, symbol: stock.symbol)
-            let latestDate = diskStore.load(for: storeKey)?
-                .series[StockChartSeriesKind.daily.rawValue]?
-                .map(\.date)
-                .max()
-                .map { String($0.timeIntervalSinceReferenceDate) }
-                ?? "none"
-            parts.append("\(stock.symbol)|\(latestDate)|\(transactionDigest)")
+            let sourceData = (try? JSONEncoder.portfolioHistory.encode(prices[stock.symbol] ?? [])) ?? Data()
+            let sourceDigest = SHA256.hash(data: sourceData).map { String(format: "%02x", $0) }.joined()
+            parts.append("\(stock.id)|\(stock.symbol)|\(sourceDigest)|\(transactionDigest)")
         }
         let digest = SHA256.hash(data: Data(parts.joined(separator: ";").utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func loadMinutePrices(for stocks: [StockHolding]) -> [String: [StockChartPoint]] {
+    private func loadPrices(for stocks: [StockHolding], range: StockChartRange) async -> [String: [StockChartPoint]] {
         var result: [String: [StockChartPoint]] = [:]
-        for stock in stocks {
-            let key = StockChartStoreKey(market: stock.market, symbol: stock.symbol)
-            if let minute = diskStore.load(for: key)?.series[StockChartSeriesKind.intraday.rawValue],
-               !minute.isEmpty {
-                result[stock.symbol] = minute
+        await withTaskGroup(of: (String, [StockChartPoint]).self) { group in
+            for stock in stocks {
+                group.addTask { [chartService] in
+                    guard let snapshot = await chartService.cachedChart(for: stock, range: range) else {
+                        return (stock.symbol, [])
+                    }
+                    return (stock.symbol, range.isMinuteRange
+                        ? (snapshot.indicatorPoints ?? snapshot.points)
+                        : (snapshot.dailyIndicatorPoints ?? snapshot.indicatorPoints ?? snapshot.points))
+                }
             }
-        }
-        return result
-    }
-
-    private func loadDailyPrices(for stocks: [StockHolding]) -> [String: [StockChartPoint]] {
-        var result: [String: [StockChartPoint]] = [:]
-        for stock in stocks {
-            let key = StockChartStoreKey(market: stock.market, symbol: stock.symbol)
-            if let daily = diskStore.load(for: key)?.series[StockChartSeriesKind.daily.rawValue],
-               !daily.isEmpty {
-                result[stock.symbol] = daily
+            for await (symbol, points) in group {
+                if !points.isEmpty { result[symbol] = points }
             }
         }
         return result

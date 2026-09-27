@@ -53,6 +53,12 @@
 		A50000000000000000000001 /* StockDividendEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000001 /* StockDividendEditorView.swift */; };
 		A60000000000000000000001 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* DiagnosticLogger.swift */; };
 		A60000000000000000000002 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000002 /* DiagnosticsView.swift */; };
+		A60000000000000000000003 /* AppHangMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000003 /* AppHangMonitor.swift */; };
+		A60000000000000000000004 /* AppMemoryMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000004 /* AppMemoryMonitor.swift */; };
+		A60000000000000000000005 /* DiagnosticScreenModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000005 /* DiagnosticScreenModifier.swift */; };
+		A60000000000000000000006 /* DiagnosticFileSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000006 /* DiagnosticFileSupport.swift */; };
+		A60000000000000000000007 /* SystemLogCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000007 /* SystemLogCollector.swift */; };
+		A60000000000000000000008 /* AppDiagnosticPayloadCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000008 /* AppDiagnosticPayloadCollector.swift */; };
 		A70000000000000000000001 /* Secret.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000001 /* Secret.swift */; };
 		A70000000000000000000003 /* SecretVaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000000000000000000003 /* SecretVaultView.swift */; };
 		A80000000000000000000001 /* NotificationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000000000000000000001 /* NotificationRule.swift */; };
@@ -288,6 +294,12 @@
 		B50000000000000000000001 /* StockDividendEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockDividendEditorView.swift; sourceTree = "<group>"; };
 		B60000000000000000000001 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
 		B60000000000000000000002 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		B60000000000000000000003 /* AppHangMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHangMonitor.swift; sourceTree = "<group>"; };
+		B60000000000000000000004 /* AppMemoryMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMemoryMonitor.swift; sourceTree = "<group>"; };
+		B60000000000000000000005 /* DiagnosticScreenModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticScreenModifier.swift; sourceTree = "<group>"; };
+		B60000000000000000000006 /* DiagnosticFileSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticFileSupport.swift; sourceTree = "<group>"; };
+		B60000000000000000000007 /* SystemLogCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemLogCollector.swift; sourceTree = "<group>"; };
+		B60000000000000000000008 /* AppDiagnosticPayloadCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDiagnosticPayloadCollector.swift; sourceTree = "<group>"; };
 		B70000000000000000000001 /* Secret.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Secret.swift; sourceTree = "<group>"; };
 		B70000000000000000000003 /* SecretVaultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretVaultView.swift; sourceTree = "<group>"; };
 		B80000000000000000000001 /* NotificationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationRule.swift; sourceTree = "<group>"; };
@@ -684,6 +696,12 @@
 			isa = PBXGroup;
 			children = (
 				B60000000000000000000001 /* DiagnosticLogger.swift */,
+				B60000000000000000000003 /* AppHangMonitor.swift */,
+				B60000000000000000000004 /* AppMemoryMonitor.swift */,
+				B60000000000000000000005 /* DiagnosticScreenModifier.swift */,
+				B60000000000000000000006 /* DiagnosticFileSupport.swift */,
+				B60000000000000000000007 /* SystemLogCollector.swift */,
+				B60000000000000000000008 /* AppDiagnosticPayloadCollector.swift */,
 			);
 			path = Diagnostics;
 			sourceTree = "<group>";
@@ -1536,6 +1554,12 @@
 				A1000000000000000000000D /* ForeignExchangeRateService.swift in Sources */,
 				A1000000000000000000000E /* FormRowComponents.swift in Sources */,
 				A60000000000000000000001 /* DiagnosticLogger.swift in Sources */,
+				A60000000000000000000003 /* AppHangMonitor.swift in Sources */,
+				A60000000000000000000004 /* AppMemoryMonitor.swift in Sources */,
+				A60000000000000000000005 /* DiagnosticScreenModifier.swift in Sources */,
+				A60000000000000000000006 /* DiagnosticFileSupport.swift in Sources */,
+				A60000000000000000000007 /* SystemLogCollector.swift in Sources */,
+				A60000000000000000000008 /* AppDiagnosticPayloadCollector.swift in Sources */,
 				A60000000000000000000002 /* DiagnosticsView.swift in Sources */,
 				A70000000000000000000001 /* Secret.swift in Sources */,
 				AZ0000000000000000000001 /* ApplePasswordImport.swift in Sources */,

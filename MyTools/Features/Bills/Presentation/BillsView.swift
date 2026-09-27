@@ -111,6 +111,7 @@ struct BillsView: View {
             }
         }
         .appNavigationTitle(ToolModule.bills.title)
+        .diagnosticScreen("账单")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .appAdaptiveLargeNavigationTitle()

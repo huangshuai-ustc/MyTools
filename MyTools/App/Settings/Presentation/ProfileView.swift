@@ -13,6 +13,7 @@ struct ProfileView: View {
                 }
             }
             .appNavigationTitle("我的")
+            .diagnosticScreen("我的")
 #if os(iOS)
             .appAdaptiveLargeNavigationTitle()
             .listStyle(.insetGrouped)

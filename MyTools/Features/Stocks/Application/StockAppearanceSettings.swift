@@ -12,10 +12,14 @@ final class StockAppearanceSettings: ObservableObject {
     @Published private(set) var hongKongScheme: StockRiseFallColorScheme
     @Published private(set) var unitedStatesScheme: StockRiseFallColorScheme
     private let defaults: UserDefaults
+    @Published var overviewUsesRenminbi: Bool {
+        didSet { defaults.set(overviewUsesRenminbi, forKey: "stock-overview-cny-v1") }
+    }
     private var changeHandler: (@MainActor () -> Void)?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        overviewUsesRenminbi = defaults.bool(forKey: "stock-overview-cny-v1")
         aShareScheme = Self.savedScheme(forKey: Self.aShareKey, market: .aShare, defaults: defaults)
         hongKongScheme = Self.savedScheme(forKey: Self.hongKongKey, market: .hongKong, defaults: defaults)
         unitedStatesScheme = Self.savedScheme(forKey: Self.unitedStatesKey, market: .unitedStates, defaults: defaults)

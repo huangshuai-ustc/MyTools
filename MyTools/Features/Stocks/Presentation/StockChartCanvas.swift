@@ -12,11 +12,18 @@ private enum StockChartVisualStyle {
     static let referenceLineWidth: CGFloat = 0.75
 }
 
+@MainActor
+private final class StockChartPresentationState: ObservableObject {
+    @Published var value: StockChartPresentation
+    init(_ value: StockChartPresentation) { self.value = value }
+}
+
 struct StockChartCanvas: View {
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
 
     let snapshot: StockChartSnapshot
     let stock: StockHolding
+    let extendedHours: StockExtendedHoursPerformance?
     let range: StockChartRange
     let displayModes: Set<StockChartDisplayMode>
     @Binding var visibleXDomain: ClosedRange<Double>?
@@ -33,9 +40,11 @@ struct StockChartCanvas: View {
     @State private var latestPointerLocation: CGPoint = .zero
     @State private var lastSelectionUpdateTime: TimeInterval = 0
     @State private var hasUserAdjustedVisibleXDomain = false
-    @State private var cachedPresentation: StockChartPresentation
+    @StateObject private var presentationState: StockChartPresentationState
+    private var cachedPresentation: StockChartPresentation { presentationState.value }
 
     private struct PresentationDataInputKey: Equatable {
+        let snapshot: StockChartSnapshot
         let snapshotFetchedAt: Date
         let snapshotQuoteUpdatedAt: Date
         let snapshotPointCount: Int
@@ -57,6 +66,7 @@ struct StockChartCanvas: View {
     init(
         snapshot: StockChartSnapshot,
         stock: StockHolding,
+        extendedHours: StockExtendedHoursPerformance? = nil,
         range: StockChartRange,
         displayModes: Set<StockChartDisplayMode>,
         visibleXDomain: Binding<ClosedRange<Double>?>,
@@ -66,24 +76,26 @@ struct StockChartCanvas: View {
     ) {
         self.snapshot = snapshot
         self.stock = stock
+        self.extendedHours = extendedHours
         self.range = range
         self.displayModes = displayModes
         self._visibleXDomain = visibleXDomain
         self.isExpanded = isExpanded
         self._selectedDate = selectedDate
         self._isInteracting = isInteracting
-        self._cachedPresentation = State(
-            initialValue: StockChartPresentation(
+        self._presentationState = StateObject(
+            wrappedValue: StockChartPresentationState(StockChartPresentation(
                 snapshot: snapshot,
                 stock: stock,
                 range: range,
                 displayModes: displayModes
-            )
+            ))
         )
     }
 
     private var presentationDataInputKey: PresentationDataInputKey {
         PresentationDataInputKey(
+            snapshot: snapshot,
             snapshotFetchedAt: snapshot.fetchedAt,
             snapshotQuoteUpdatedAt: snapshot.quoteUpdatedAt,
             snapshotPointCount: snapshot.points.count,
@@ -129,7 +141,7 @@ struct StockChartCanvas: View {
             synchronizeVisibleXDomain(using: cachedPresentation)
         }
         .onChange(of: presentationDataInputKey) { _, _ in
-            let presentation = StockChartPresentation(
+            let presentation = cachedPresentation.updating(
                 snapshot: snapshot,
                 stock: stock,
                 range: range,
@@ -144,7 +156,7 @@ struct StockChartCanvas: View {
             } else if !hasUserAdjustedVisibleXDomain {
                 visibleXDomain = nil
             }
-            cachedPresentation = presentation
+            presentationState.value = presentation
             synchronizeVisibleXDomain(using: presentation)
         }
         .onChange(of: displayModes) { _, modes in
@@ -156,7 +168,7 @@ struct StockChartCanvas: View {
             if !hasUserAdjustedVisibleXDomain {
                 visibleXDomain = nil
             }
-            cachedPresentation = presentation
+            presentationState.value = presentation
             synchronizeVisibleXDomain(using: presentation)
         }
     }
@@ -542,81 +554,10 @@ struct StockChartCanvas: View {
                 }
             }
 
-            if let selectedPlotPoint {
-                RuleMark(x: .value("所选时间", selectedPlotPoint.x))
-                    .foregroundStyle(Color.primary.opacity(0.72))
-                    .lineStyle(StrokeStyle(
-                        lineWidth: StockChartVisualStyle.referenceLineWidth
-                    ))
-                if presentation.hasBasePriceChart {
-                    PointMark(
-                        x: .value("所选时间", selectedPlotPoint.x),
-                        y: .value("所选价格", selectedPlotPoint.point.close)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                }
-                if displayModes.contains(.volume),
-                   let volume = selectedPlotPoint.point.volume {
-                    PointMark(
-                        x: .value("所选时间", selectedPlotPoint.x),
-                        y: .value("所选成交量", volume)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                }
-            }
-
-            if let selectedTechnicalPlotPoint {
-                if displayModes.contains(.macd) {
-                    PointMark(
-                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
-                        y: .value("所选 DIF", selectedTechnicalPlotPoint.indicator.macdLine)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                }
-                if displayModes.contains(.rsi),
-                   let rsi = selectedTechnicalPlotPoint.indicator.rsi14 {
-                    PointMark(
-                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
-                        y: .value("所选 RSI", rsi)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                }
-                advancedIndicatorSelectionMarks(selectedTechnicalPlotPoint)
-                if displayModes.contains(.rsi),
-                   let rsi30 = selectedTechnicalPlotPoint.indicator.rsi30 {
-                    PointMark(
-                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
-                        y: .value("所选 RSI30", rsi30)
-                    )
-                    .foregroundStyle(Color.orange)
-                    .symbolSize(36)
-                }
-                if !presentation.hasBasePriceChart,
-                   displayModes.contains(.movingAverage),
-                   let movingAverage = selectedTechnicalPlotPoint.indicator.movingAverage5
-                    ?? selectedTechnicalPlotPoint.indicator.movingAverage20
-                    ?? selectedTechnicalPlotPoint.indicator.movingAverage60 {
-                    PointMark(
-                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
-                        y: .value("所选均线", movingAverage)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                } else if !presentation.hasBasePriceChart,
-                          displayModes.contains(.bollingerBands),
-                          let middle = selectedTechnicalPlotPoint.indicator.bollingerMiddle {
-                    PointMark(
-                        x: .value("所选时间", selectedTechnicalPlotPoint.x),
-                        y: .value("所选中轨", middle)
-                    )
-                    .foregroundStyle(Color.primary)
-                    .symbolSize(36)
-                }
-            }
+            // 选中十字线与标记点不再进入 `Chart {}` 内容：它们改由 `crosshairOverlay`
+            // 单独绘制。放在这里的话，`selectedDate` 一变就会让整段图表内容重新构建、
+            // Swift Charts 重新布局（K 线点多时 250~330ms 主线程卡顿）。剥离后主图内容
+            // 与选点无关，选点只重画 overlay 那一层。
         }
         .chartYScale(domain: chartYDomain)
         .chartLegend(.hidden)
@@ -784,6 +725,18 @@ struct StockChartCanvas: View {
                 }
             }
         }
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                crosshairOverlay(
+                    proxy: proxy,
+                    geometry: geometry,
+                    presentation: presentation,
+                    selectedPlotPoint: selectedPlotPoint,
+                    selectedTechnicalPlotPoint: selectedTechnicalPlotPoint
+                )
+            }
+            .allowsHitTesting(false)
+        }
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { value in
@@ -842,18 +795,97 @@ struct StockChartCanvas: View {
         }
     }
 
-    @ChartContentBuilder
-    private func advancedIndicatorSelectionMarks(
-        _ plotPoint: StockTechnicalPlotPoint
-    ) -> some ChartContent {
-        if let value = primaryAdvancedIndicatorValue(plotPoint.indicator) {
-            PointMark(
-                x: .value("所选时间", plotPoint.x),
-                y: .value("所选指标", value)
+    private struct SelectionDot {
+        let value: Double
+        let color: Color
+    }
+
+    /// 十字线与选中点标记单独画在 overlay 层，用 `ChartProxy` 把数据坐标换算成屏幕坐标。
+    /// 这样选点时只有这一层重画，主 `Chart {}` 的数据 mark 不进入重排——之前正是因为
+    /// 选中标记和数据 mark 同处一个 `Chart` 闭包，`selectedDate` 一变就整图重新布局，
+    /// K 线点多时触发 250~330ms 的主线程卡顿（Hang Detection 抓到过两次）。
+    @ViewBuilder
+    private func crosshairOverlay(
+        proxy: ChartProxy,
+        geometry: GeometryProxy,
+        presentation: StockChartPresentation,
+        selectedPlotPoint: StockChartPlotPoint?,
+        selectedTechnicalPlotPoint: StockTechnicalPlotPoint?
+    ) -> some View {
+        if let plotFrame = proxy.plotFrame,
+           let selectedPlotPoint,
+           let rawX = proxy.position(forX: selectedPlotPoint.x) {
+            let frame = geometry[plotFrame]
+            let x = rawX + frame.minX
+            let dots = selectionDots(
+                selectedPlotPoint: selectedPlotPoint,
+                selectedTechnicalPlotPoint: selectedTechnicalPlotPoint,
+                presentation: presentation
             )
-            .foregroundStyle(Color.primary)
-            .symbolSize(36)
+            ZStack(alignment: .topLeading) {
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: frame.minY))
+                    path.addLine(to: CGPoint(x: x, y: frame.maxY))
+                }
+                .stroke(
+                    Color.primary.opacity(0.72),
+                    style: StrokeStyle(lineWidth: StockChartVisualStyle.referenceLineWidth)
+                )
+                ForEach(Array(dots.enumerated()), id: \.offset) { _, dot in
+                    if let rawY = proxy.position(forY: dot.value) {
+                        Circle()
+                            .fill(dot.color)
+                            .frame(width: 6.5, height: 6.5)
+                            .position(x: x, y: rawY + frame.minY)
+                    }
+                }
+            }
         }
+    }
+
+    /// 复刻原先内嵌在 `Chart {}` 里的选中标记点集合，顺序与配色保持一致。
+    private func selectionDots(
+        selectedPlotPoint: StockChartPlotPoint?,
+        selectedTechnicalPlotPoint: StockTechnicalPlotPoint?,
+        presentation: StockChartPresentation
+    ) -> [SelectionDot] {
+        var dots: [SelectionDot] = []
+        if let selectedPlotPoint {
+            if presentation.hasBasePriceChart {
+                dots.append(SelectionDot(value: selectedPlotPoint.point.close, color: .primary))
+            }
+            if displayModes.contains(.volume),
+               let volume = selectedPlotPoint.point.volume {
+                dots.append(SelectionDot(value: volume, color: .primary))
+            }
+        }
+        if let selectedTechnicalPlotPoint {
+            let indicator = selectedTechnicalPlotPoint.indicator
+            if displayModes.contains(.macd) {
+                dots.append(SelectionDot(value: indicator.macdLine, color: .primary))
+            }
+            if displayModes.contains(.rsi), let rsi = indicator.rsi14 {
+                dots.append(SelectionDot(value: rsi, color: .primary))
+            }
+            if let advanced = primaryAdvancedIndicatorValue(indicator) {
+                dots.append(SelectionDot(value: advanced, color: .primary))
+            }
+            if displayModes.contains(.rsi), let rsi30 = indicator.rsi30 {
+                dots.append(SelectionDot(value: rsi30, color: .orange))
+            }
+            if !presentation.hasBasePriceChart,
+               displayModes.contains(.movingAverage),
+               let movingAverage = indicator.movingAverage5
+                ?? indicator.movingAverage20
+                ?? indicator.movingAverage60 {
+                dots.append(SelectionDot(value: movingAverage, color: .primary))
+            } else if !presentation.hasBasePriceChart,
+                      displayModes.contains(.bollingerBands),
+                      let middle = indicator.bollingerMiddle {
+                dots.append(SelectionDot(value: middle, color: .primary))
+            }
+        }
+        return dots
     }
 
     private func primaryAdvancedIndicatorValue(
@@ -1394,24 +1426,42 @@ struct StockChartCanvas: View {
 
     private func lineColor() -> Color {
         let quotePreviousClose = stock.previousClose.map { NSDecimalNumber(decimal: $0).doubleValue }
-        let referencePrice: Double?
         switch range {
         case .intraday:
-            referencePrice = cachedPresentation.cachedIntradayPreviousClose
-                ?? StockChartPresentation.intradayPreviousClose(
-                    snapshot: snapshot, market: stock.market,
-                    quotePreviousClose: quotePreviousClose, quoteUpdatedAt: stock.lastQuoteAt
+            let performance: (change: Double, percent: Double)?
+            if displayModes.contains(.preMarket), !displayModes.contains(.line) {
+                performance = StockChartPresentation.preMarketPerformance(
+                    snapshot: snapshot,
+                    market: stock.market
                 )
+            } else if displayModes.contains(.postMarket), !displayModes.contains(.line) {
+                performance = StockChartPresentation.postMarketPerformance(
+                    snapshot: snapshot,
+                    market: stock.market
+                )
+            } else {
+                performance = StockChartPresentation.rangePerformance(
+                    snapshot: snapshot,
+                    range: .intraday,
+                    market: stock.market,
+                    visibleXDomain: visibleXDomain,
+                    isPreMarketChart: false,
+                    quotePreviousClose: quotePreviousClose,
+                    quoteUpdatedAt: stock.lastQuoteAt
+                )
+            }
+            guard let performance else { return .secondary }
+            return valueColor(performance.change)
         default:
-            referencePrice = StockChartPresentation.rangeReferencePrice(
+            let referencePrice = StockChartPresentation.rangeReferencePrice(
                 snapshot: snapshot, range: range, market: stock.market,
                 visibleXDomain: visibleXDomain,
                 quotePreviousClose: quotePreviousClose, quoteUpdatedAt: stock.lastQuoteAt
             )
+            guard let referencePrice, referencePrice != 0,
+                  let todayClose = snapshot.latestPoint?.close else { return .accentColor }
+            return valueColor(todayClose - referencePrice)
         }
-        guard let referencePrice, referencePrice != 0,
-              let latest = snapshot.latestPoint else { return .accentColor }
-        return valueColor(latest.close - referencePrice)
     }
 
     private func candleColor(_ point: StockChartPoint) -> Color {

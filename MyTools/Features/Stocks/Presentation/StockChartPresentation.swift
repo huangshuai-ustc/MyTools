@@ -6,11 +6,11 @@ enum StockChartDisplayMode: String, CaseIterable, Identifiable {
     case line
     case postMarket
     case candlestick
+    case rsi
     case movingAverage
     case bollingerBands
     case volume
     case macd
-    case rsi
     case kdj
     case williamsR
     case cci
@@ -347,6 +347,29 @@ struct StockChartPresentation {
             range: range,
             displayModes: displayModes,
             preparedData: preparedData
+        )
+    }
+
+    /// A fresh fetch time, quote or renamed stock does not invalidate the
+    /// sorted series, indicators or transaction-marker matching.
+    func updating(
+        snapshot next: StockChartSnapshot,
+        stock nextStock: StockHolding,
+        range nextRange: StockChartRange,
+        displayModes: Set<StockChartDisplayMode>
+    ) -> StockChartPresentation {
+        let unchanged = range == nextRange && stock.market == nextStock.market
+            && stock.transactions == nextStock.transactions
+            && snapshot.points == next.points
+            && snapshot.indicatorPoints == next.indicatorPoints
+            && snapshot.dailyIndicatorPoints == next.dailyIndicatorPoints
+            && snapshot.preMarketPoints == next.preMarketPoints
+            && snapshot.postMarketPoints == next.postMarketPoints
+            && snapshot.cachedMinuteTechnicalIndicators == next.cachedMinuteTechnicalIndicators
+            && snapshot.cachedDailyTechnicalIndicators == next.cachedDailyTechnicalIndicators
+        return StockChartPresentation(
+            snapshot: next, stock: nextStock, range: nextRange, displayModes: displayModes,
+            preparedData: unchanged ? preparedData : Self.prepare(snapshot: next, stock: nextStock, range: nextRange)
         )
     }
 
@@ -741,6 +764,7 @@ struct StockChartPresentation {
         hasPostMarketChart && postMarketPointIDs.contains(point.id)
     }
 
+
     func technicalIndicator(at point: StockChartPoint) -> StockTechnicalIndicatorPoint? {
         guard let plotPoint = selectedTechnicalPlotPoint(at: point.date),
               plotPoint.indicator.date == point.date else {
@@ -916,8 +940,43 @@ struct StockChartPresentation {
                 quoteUpdatedAt: quoteUpdatedAt
               ) else { return nil }
         guard referencePrice != 0 else { return nil }
-        let change = latest.close - referencePrice
-        return (change, change / referencePrice)
+        // The chart model currently decodes provider JSON as binary Double.
+        // Recover each quote's effective decimal precision (up to the provider
+        // contract's four-digit ceiling), then compare both at the finer of the
+        // two precisions. A $712.78 instrument therefore stays two-decimal,
+        // while a $0.891 or $1.0197 quote keeps its real extra precision.
+        let latestQuote = canonicalQuote(latest.close)
+        let referenceQuote = canonicalQuote(referencePrice)
+        let comparisonScale = max(latestQuote.scale, referenceQuote.scale)
+        let canonicalLatest = rounded(latestQuote.value, scale: comparisonScale)
+        let canonicalReference = rounded(referenceQuote.value, scale: comparisonScale)
+        guard canonicalReference != 0 else { return nil }
+        let decimalChange = canonicalLatest - canonicalReference
+        let change = NSDecimalNumber(decimal: decimalChange).doubleValue
+        let percent = NSDecimalNumber(
+            decimal: decimalChange / canonicalReference
+        ).doubleValue
+        return (change, percent)
+    }
+
+    private static func canonicalQuote(_ value: Double) -> (value: Decimal, scale: Int) {
+        var source = Decimal(value)
+        var value = Decimal()
+        NSDecimalRound(&value, &source, 4, .plain)
+        let text = NSDecimalNumber(decimal: value).stringValue
+        let fraction = text.split(separator: ".", omittingEmptySubsequences: false)
+            .dropFirst()
+            .first
+            .map(String.init) ?? ""
+        let scale = fraction.reversed().drop(while: { $0 == "0" }).count
+        return (value, scale)
+    }
+
+    private static func rounded(_ value: Decimal, scale: Int) -> Decimal {
+        var source = value
+        var result = Decimal()
+        NSDecimalRound(&result, &source, scale, .plain)
+        return result
     }
 
     static func rangeReferencePrice(
@@ -1142,8 +1201,7 @@ struct StockChartPresentation {
     }
 
     static func signedPriceText(_ value: Double, currencyCode: String) -> String {
-        let prefix = value >= 0 ? "+" : "-"
-        return prefix + priceText(abs(value), currencyCode: currencyCode)
+        StockValueFormatter.signedPriceDifference(Decimal(value), currencyCode: currencyCode)
     }
 
     static func clampedReferencePrice(
@@ -1402,11 +1460,7 @@ struct StockChartPresentation {
     }
 
 
-    private static func xValue(
-        for _: StockChartPoint,
-        index: Int,
-        range _: StockChartRange
-    ) -> Double {
+    private static func xValue(for _: StockChartPoint, index: Int, range _: StockChartRange) -> Double {
         // Allocate one slot per bar for every range. Weekends and exchange
         // holidays then do not create misleading empty gaps on the x-axis;
         // the actual date remains available in axis labels and summaries.

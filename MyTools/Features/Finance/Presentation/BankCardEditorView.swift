@@ -3,8 +3,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private final class BankCardEditorDraft: ObservableObject {
+    let original: BankCard
     @Published var card: BankCard
-    init(card: BankCard) { self.card = card }
+    init(card: BankCard, original: BankCard) { self.card = card; self.original = original }
 }
 
 struct CardEditorView: View {
@@ -22,8 +23,11 @@ struct CardEditorView: View {
     let onSave: (BankCard) -> Void
     private let navigationTitle: String
     private let originalAttachmentIDs: Set<UUID>
+    var saveToStore: Bool = false
+    @State private var conflict = false
 
-    init(card: BankCard, account: BankAccount, onSave: @escaping (BankCard) -> Void) {
+    init(card: BankCard, account: BankAccount, saveToStore: Bool = false, onSave: @escaping (BankCard) -> Void) {
+        self.saveToStore = saveToStore
         var initialCard = card
         let isNewCard = card.accountID == nil
         if account.region == .domestic {
@@ -32,7 +36,7 @@ struct CardEditorView: View {
                 initialCard.currencies = [.cny]
             }
         }
-        _draft = StateObject(wrappedValue: BankCardEditorDraft(card: initialCard))
+        _draft = StateObject(wrappedValue: BankCardEditorDraft(card: initialCard, original: card))
         self.account = account
         self.onSave = onSave
         originalAttachmentIDs = Set(card.statements.compactMap { $0.attachment?.id })
@@ -195,6 +199,9 @@ struct CardEditorView: View {
                 .iOSLargeSheet()
             }
             .onDisappear(perform: cleanUpUncommittedAttachments)
+            .alert("档案已发生变化", isPresented: $conflict) {
+                Button("确定", role: .cancel) {}
+            } message: { Text("银行卡可能已被同步修改或删除。草稿已保留，请核对后重新打开编辑。") }
         }
     }
 
@@ -220,8 +227,12 @@ struct CardEditorView: View {
                 draft.card.branchLocation = nil
             }
             draft.card.expiryPrecision = .yearMonth
+            if saveToStore {
+                guard store.updateCard(draft.card, expected: draft.original) else { conflict = true; return }
+            } else {
+                onSave(draft.card)
+            }
             didSave = true
-            onSave(draft.card)
             dismiss()
         }
     }
@@ -480,6 +491,8 @@ struct CreditCardStatementRow: View {
 }
 
 private struct CreditCardStatementEditorView: View {
+    @State private var importTask: Task<Void, Never>?
+    @State private var isImporting = false
     @EnvironmentObject private var store: FinanceStore
     @Environment(\.dismiss) private var dismiss
     @State private var statement: CreditCardStatement
@@ -531,6 +544,8 @@ private struct CreditCardStatementEditorView: View {
                         )
                     }
                     .tint(statement.attachment == nil ? .accentColor : .red)
+                    .disabled(isImporting)
+                    if isImporting { ProgressView("正在导入 PDF") }
                 }
                 Section("备注") {
                     IMESafeMultilineTextField(prompt: "可选", text: $statement.note)
@@ -547,7 +562,7 @@ private struct CreditCardStatementEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .disabled(statement.attachment == nil)
+                        .disabled(statement.attachment == nil || isImporting)
                 }
             }
             .fileImporter(
@@ -557,6 +572,8 @@ private struct CreditCardStatementEditorView: View {
                 onCompletion: importPDF
             )
             .onDisappear(perform: cleanUpUncommittedAttachment)
+            .onDisappear { importTask?.cancel() }
+            .diagnosticScreen("信用卡账单编辑")
             .alert("无法添加账单", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -582,12 +599,23 @@ private struct CreditCardStatementEditorView: View {
     private func importPDF(_ result: Result<[URL], Error>) {
         do {
             guard let url = try result.get().first else { return }
-            let attachment = try store.importCreditCardStatement(from: url)
-            if let previous = statement.attachment,
-               previous.id != originalAttachmentID {
-                store.deleteUncommittedAttachment(previous)
+            isImporting = true
+            importTask = Task { @MainActor in
+                defer { isImporting = false }
+                do {
+                    let attachment = try await store.importCreditCardStatementInBackground(from: url)
+                    guard !Task.isCancelled else { store.deleteUncommittedAttachment(attachment); return }
+                    if let previous = statement.attachment,
+                       previous.id != originalAttachmentID {
+                        store.deleteUncommittedAttachment(previous)
+                    }
+                    statement.attachment = attachment
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    errorMessage = error.localizedDescription
+                    showingError = true
+                }
             }
-            statement.attachment = attachment
         } catch {
             errorMessage = error.localizedDescription
             showingError = true
@@ -596,9 +624,11 @@ private struct CreditCardStatementEditorView: View {
 
     private func save() {
         guard statement.attachment != nil else { return }
-        didSave = true
-        onSave(statement)
-        dismiss()
+        commitPendingTextInput {
+            didSave = true
+            onSave(statement)
+            dismiss()
+        }
     }
 
     private func beginRename(_ attachment: FileAttachment) {

@@ -50,9 +50,10 @@ struct PortfolioValueHistoryView: View {
     @State private var loadTask: Task<Void, Never>?
     @State private var loadGeneration = 0
     @State private var chartDataRevision = 0
+    @State private var refreshVisibilityToken = UUID()
 
     @ObservedObject private var refreshCoordinator = StockRefreshCoordinator.shared
-    private let service = PortfolioValueHistoryService()
+    @State private var service = PortfolioValueHistoryService()
 
     init(market: StockMarket?) {
         self.market = market
@@ -90,12 +91,13 @@ struct PortfolioValueHistoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .appNavigationTitle("持仓总价值走势")
+        .diagnosticScreen("持仓总价值走势")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
         .task {
             applyDefaultTargetIfNeeded()
-            if selectedRange.isMinuteRange { refreshCoordinator.triggerClosingRefreshIfNeeded() }
+            updateRefreshFocus()
             requestLoadSeries()
         }
         .onChange(of: market) { _, _ in
@@ -104,16 +106,24 @@ struct PortfolioValueHistoryView: View {
             requestLoadSeries()
         }
         .onChange(of: selectedRange) { _, _ in
-            if selectedRange.isMinuteRange { refreshCoordinator.triggerClosingRefreshIfNeeded() }
+            updateRefreshFocus()
             allSeries = []
             requestLoadSeries()
         }
-        .onChange(of: refreshCoordinator.lastRefreshCompletedAt) { _, _ in
-            guard selectedRange == .intraday || selectedRange == .fiveDays || selectedRange.isKLineRange else { return }
-            guard anyMarketIsLive else { return }
+        .onChange(of: selectedTarget) { _, _ in
+            updateRefreshFocus()
+        }
+        .onChange(of: selectedStockID) { _, _ in
+            updateRefreshFocus()
+        }
+        .onChange(of: store.chartCacheUpdate) { _, update in
+            guard let update,
+                  !update.stockIDs.isDisjoint(with: focusedChartStockIDs),
+                  selectedRange.isMinuteRange || update.includesDailyBars else { return }
             requestLoadSeries()
         }
         .onDisappear {
+            refreshCoordinator.setStockScreen(refreshVisibilityToken, isVisible: false)
             loadTask?.cancel()
             loadTask = nil
             loadGeneration += 1
@@ -123,6 +133,24 @@ struct PortfolioValueHistoryView: View {
     // MARK: - Sub-views
 
     private var selectedMarket: StockMarket? { selectedTarget.market }
+
+    private var focusedChartStockIDs: Set<UUID> {
+        guard selectedRange.isMinuteRange else { return [] }
+        if let selectedStockID { return [selectedStockID] }
+        return Set(store.stocks.lazy.filter { stock in
+            stock.hasPurchaseRecord
+                && !stock.isArchived
+                && (selectedMarket.map { stock.market == $0 } ?? true)
+        }.map(\.id))
+    }
+
+    private func updateRefreshFocus() {
+        refreshCoordinator.setStockScreen(
+            refreshVisibilityToken,
+            isVisible: true,
+            chartStockIDs: focusedChartStockIDs
+        )
+    }
 
     private var holdingMarkets: Set<StockMarket> {
         Set(store.stocks.filter(\.hasPurchaseRecord).map(\.market))
@@ -235,7 +263,13 @@ struct PortfolioValueHistoryView: View {
         loadTask?.cancel()
         loadGeneration += 1
         let generation = loadGeneration
-        loadTask = Task { await loadSeries(generation: generation) }
+        loadTask = Task {
+            // A market batch publishes several symbols. Coalesce those local
+            // notifications before rebuilding the complete portfolio curve.
+            if !allSeries.isEmpty { try? await Task.sleep(for: .milliseconds(120)) }
+            guard !Task.isCancelled else { return }
+            await loadSeries(generation: generation)
+        }
     }
 
     private func loadSeries(generation: Int) async {
@@ -270,12 +304,8 @@ struct PortfolioValueHistoryView: View {
                     market: stock.market,
                     currencyCode: $0.currencyCode,
                     points: $0.points,
-                    costBasis: stock.currentShares > 0 ? stock.holdingCost : nil,
-                    costBasisPoints: $0.points.compactMap { point in
-                        PortfolioValueHistoryBuilder.holdingCost(for: stock, on: point.date).map {
-                            PortfolioCostBasisPoint(date: point.date, cost: $0)
-                        }
-                    }
+                    costBasis: $0.costBasis,
+                    costBasisPoints: $0.costBasisPoints
                 )
             }
         }

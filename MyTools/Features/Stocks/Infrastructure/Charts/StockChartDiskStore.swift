@@ -103,6 +103,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
     func snapshot(
         points: [StockChartPoint],
         indicatorPoints: [StockChartPoint],
+        preMarketPoints storedPreMarketPoints: [StockChartPoint]? = nil,
+        postMarketPoints storedPostMarketPoints: [StockChartPoint]? = nil,
         dailyIndicatorPoints: [StockChartPoint]? = nil,
         cachedMinuteTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
         cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil
@@ -113,8 +115,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
             currencyCode: currencyCode,
             previousClose: previousClose,
             points: points,
-            preMarketPoints: preMarketPoints,
-            postMarketPoints: postMarketPoints,
+            preMarketPoints: storedPreMarketPoints ?? preMarketPoints,
+            postMarketPoints: storedPostMarketPoints ?? postMarketPoints,
             indicatorPoints: indicatorPoints,
             dailyIndicatorPoints: dailyIndicatorPoints,
             cachedMinuteTechnicalIndicators: cachedMinuteTechnicalIndicators,
@@ -132,13 +134,15 @@ struct StockChartPersistedStore: Codable, Sendable {
     // generic US regular-session filter with an inclusive 16:00 boundary.
     // Those files can contain the first post-market print in the regular
     // series and must be rebuilt.
-    static let currentVersion = 7
+    // Version 8 persists extended-hours minutes separately and applies the
+    // seven-trading-day retention policy to every minute source.
+    static let currentVersion = 8
     // Keep this separate from the file schema version. Adding a technical
     // indicator does not invalidate the raw OHLCV cache: an older file can be
     // upgraded locally once, then written back with the current indicator set.
     static let currentTechnicalIndicatorCacheVersion = 1
 
-    let version: Int
+    var version: Int
     let market: StockMarket
     let symbol: String
     var series: [String: [StockChartPoint]]
@@ -157,12 +161,17 @@ struct StockChartDiskStore {
     private let fileManager: FileManager
     private let persistentStoreDirectory: URL
     private var memoryStores: [StockChartStoreKey: StockChartPersistedStore] = [:]
+    private var recentKeys: [StockChartStoreKey] = []
+    private let memoryCapacity: Int
+    var cachedStockCount: Int { memoryStores.count }
 
     init(
         fileManager: FileManager = .default,
-        persistentStoreDirectory: URL? = nil
+        persistentStoreDirectory: URL? = nil,
+        memoryCapacity: Int = 32
     ) {
         self.fileManager = fileManager
+        self.memoryCapacity = max(1, memoryCapacity)
         let cacheDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         let supportDirectory = fileManager.urls(
@@ -176,9 +185,13 @@ struct StockChartDiskStore {
 
     mutating func load(for key: StockChartStoreKey) -> StockChartPersistedStore? {
         if var stored = memoryStores[key],
-           stored.version == StockChartPersistedStore.currentVersion,
+           (7...StockChartPersistedStore.currentVersion).contains(stored.version),
            stored.market == key.market,
            stored.symbol == key.symbol {
+            remember(stored, for: key)
+            if migrateExtendedMinuteCacheIfNeeded(in: &stored) {
+                save(stored, for: key)
+            }
             if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
                 save(stored, for: key)
             }
@@ -191,7 +204,7 @@ struct StockChartDiskStore {
                 StockChartPersistedStore.self,
                 from: data
             ),
-            stored.version == StockChartPersistedStore.currentVersion,
+            (7...StockChartPersistedStore.currentVersion).contains(stored.version),
             stored.market == key.market,
             stored.symbol == key.symbol else {
                 // Chart files are rebuildable. Do not leave an obsolete or
@@ -199,11 +212,12 @@ struct StockChartDiskStore {
                 try? fileManager.removeItem(at: url)
                 return nil
             }
-            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
+            let didMigrate = migrateExtendedMinuteCacheIfNeeded(in: &stored)
+            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) || didMigrate {
                 save(stored, for: key)
                 return stored
             }
-            memoryStores[key] = stored
+            remember(stored, for: key)
             return stored
         }
 
@@ -243,7 +257,7 @@ struct StockChartDiskStore {
             )
             return false
         }
-        memoryStores[key] = store
+        remember(store, for: key)
         do {
             try fileManager.createDirectory(
                 at: persistentStoreDirectory,
@@ -267,6 +281,7 @@ struct StockChartDiskStore {
     }
 
     mutating func removeAll() {
+        recentKeys.removeAll()
         memoryStores.removeAll()
         guard fileManager.fileExists(atPath: persistentStoreDirectory.path) else { return }
         do {
@@ -307,6 +322,12 @@ struct StockChartDiskStore {
 
         let dailyPoints = store.series[StockChartSeriesKind.daily.rawValue] ?? []
         let rawMinutePoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
+        let rawPreMarketPoints = store.series[
+            StockChartSeriesKind.preMarketMinute.rawValue
+        ] ?? []
+        let rawPostMarketPoints = store.series[
+            StockChartSeriesKind.postMarketMinute.rawValue
+        ] ?? []
         let storedPoints: [StockChartPoint]
         if let derivedKind = StockChartSeriesProcessor.derivedSeriesKind(for: range),
            let cachedPoints = store.derivedSeries[derivedKind.rawValue],
@@ -348,6 +369,16 @@ struct StockChartDiskStore {
         return metadata.snapshot(
             points: points,
             indicatorPoints: indicatorPoints,
+            preMarketPoints: StockChartSeriesProcessor.pointsOnLatestTradingDay(
+                rawPreMarketPoints,
+                market: store.market,
+                at: metadata.fetchedAt
+            ),
+            postMarketPoints: StockChartSeriesProcessor.pointsOnLatestTradingDay(
+                rawPostMarketPoints,
+                market: store.market,
+                at: metadata.fetchedAt
+            ),
             dailyIndicatorPoints: dailyPoints,
             cachedMinuteTechnicalIndicators: store.technicalIndicators[
                 StockChartTechnicalCacheKind.minute.rawValue
@@ -362,7 +393,26 @@ struct StockChartDiskStore {
         in store: StockChartPersistedStore,
         for range: StockChartRange
     ) -> Bool {
-        StockChartSeriesProcessor.compatibleMetadataRanges(for: range).contains {
+        if range == .fiveDays {
+            let calendar = StockChartSeriesProcessor.marketCalendar(store.market)
+            let points = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
+            let days = Set(points.map { calendar.startOfDay(for: $0.date) })
+            if var day = days.max() {
+                var expected: Set<Date> = [day]
+                for _ in 0..<4 {
+                    guard let previous = StockMarketTradingCalendar.previousTradingDay(for: store.market, before: day) else { break }
+                    day = calendar.startOfDay(for: previous)
+                    expected.insert(day)
+                }
+                if expected.count == 5, expected.isSubset(of: days) { return true }
+            }
+            // Newly listed stocks may have fewer than five days. An explicit
+            // history fetch distinguishes that from a one-day-only cache.
+            guard let history = store.rangeMetadata[StockChartRange.fiveDays.rawValue],
+                  let latest = points.map(\.date).max() else { return false }
+            return calendar.startOfDay(for: history.fetchedAt) >= calendar.startOfDay(for: latest)
+        }
+        return StockChartSeriesProcessor.compatibleMetadataRanges(for: range).contains {
             guard let metadata = store.rangeMetadata[$0.rawValue] else { return false }
             if range == .intraday || range == .fiveDays {
                 return metadata.indicatorPointCount != nil
@@ -406,19 +456,99 @@ struct StockChartDiskStore {
             market: store.market
         )
         if range.isMinuteRange {
+            mergeExtendedMinuteSeries(
+                snapshot.preMarketPoints,
+                kind: .preMarketMinute,
+                into: &store
+            )
+            mergeExtendedMinuteSeries(
+                snapshot.postMarketPoints,
+                kind: .postMarketMinute,
+                into: &store
+            )
+            pruneMinuteSeries(in: &store, at: snapshot.fetchedAt)
             rebuildMinuteDerivedCaches(
                 in: &store,
-                at: snapshot.fetchedAt
+                at: snapshot.fetchedAt,
+                rebuildIndicators: existing != (store.series[kind.rawValue] ?? [])
             )
         } else if range.isKLineRange {
-            rebuildDailyDerivedCaches(in: &store)
+            if existing != (store.series[kind.rawValue] ?? [])
+                || store.derivedSeries[StockChartSeriesKind.weekly.rawValue] == nil {
+                rebuildDailyDerivedCaches(in: &store)
+            }
         }
         store.rangeMetadata[range.rawValue] = StockChartStoredRangeMetadata(snapshot: snapshot)
     }
 
-    private func rebuildMinuteDerivedCaches(
+    private func mergeExtendedMinuteSeries(
+        _ incoming: [StockChartPoint],
+        kind: StockChartSeriesKind,
+        into store: inout StockChartPersistedStore
+    ) {
+        guard !incoming.isEmpty else { return }
+        store.series[kind.rawValue] = StockChartSeriesProcessor.mergedPoints(
+            store.series[kind.rawValue] ?? [],
+            with: incoming,
+            kind: kind,
+            market: store.market
+        )
+    }
+
+    /// Version 8 added dedicated pre/post-market minute series. Version 7's
+    /// regular and daily sources are still valid, so upgrade them locally
+    /// instead of deleting every chart and forcing the user to wait for all
+    /// ranges to download again after installing the update.
+    private func migrateExtendedMinuteCacheIfNeeded(
+        in store: inout StockChartPersistedStore
+    ) -> Bool {
+        guard store.version == 7 else { return false }
+        let latestMetadata = store.rangeMetadata.values.max {
+            $0.fetchedAt < $1.fetchedAt
+        }
+        if let latestMetadata {
+            mergeExtendedMinuteSeries(
+                latestMetadata.preMarketPoints,
+                kind: .preMarketMinute,
+                into: &store
+            )
+            mergeExtendedMinuteSeries(
+                latestMetadata.postMarketPoints,
+                kind: .postMarketMinute,
+                into: &store
+            )
+            pruneMinuteSeries(in: &store, at: latestMetadata.fetchedAt)
+            rebuildMinuteDerivedCaches(in: &store, at: latestMetadata.fetchedAt)
+        }
+        store.version = StockChartPersistedStore.currentVersion
+        return true
+    }
+
+    /// Minute history is only needed by the real-time and five-day views.
+    /// Keep seven actual trading days (not seven calendar days); the daily
+    /// source remains unbounded and backs every K-line aggregation.
+    private func pruneMinuteSeries(
         in store: inout StockChartPersistedStore,
         at date: Date
+    ) {
+        for kind in [
+            StockChartSeriesKind.intraday,
+            .preMarketMinute,
+            .postMarketMinute
+        ] {
+            store.series[kind.rawValue] = StockChartSeriesProcessor.pointsOnLatestTradingDays(
+                store.series[kind.rawValue] ?? [],
+                count: 7,
+                market: store.market,
+                at: date
+            )
+        }
+    }
+
+    private func rebuildMinuteDerivedCaches(
+        in store: inout StockChartPersistedStore,
+        at date: Date,
+        rebuildIndicators: Bool = true
     ) {
         let rawPoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
         let regularPoints = StockChartSeriesProcessor.regularSessionPoints(
@@ -432,8 +562,10 @@ struct StockChartDiskStore {
                 market: store.market,
                 at: date
             )
-        store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
-            StockTechnicalIndicators.calculate(regularPoints.sorted { $0.date < $1.date })
+        if rebuildIndicators {
+            store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
+                StockTechnicalIndicators.calculate(regularPoints.sorted { $0.date < $1.date })
+        }
     }
 
     private func rebuildDailyDerivedCaches(
@@ -500,6 +632,15 @@ struct StockChartDiskStore {
         Data(identifier.utf8)
             .base64EncodedString()
             .replacingOccurrences(of: "/", with: "_")
+    }
+
+    private mutating func remember(_ store: StockChartPersistedStore, for key: StockChartStoreKey) {
+        memoryStores[key] = store
+        recentKeys.removeAll { $0 == key }
+        recentKeys.append(key)
+        while recentKeys.count > memoryCapacity {
+            memoryStores[recentKeys.removeFirst()] = nil
+        }
     }
 }
 

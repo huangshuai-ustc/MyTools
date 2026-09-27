@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var regionFilter: BankRegionFilter = .all
     @State private var editingAccount: BankAccount?
     @State private var showsInactiveBanks = false
+    @State private var pendingDeleteAccount: BankAccount?
 
     private var availableRegionFilters: [BankRegionFilter] {
         let regions = Set(store.accounts.map(\.region))
@@ -41,7 +42,7 @@ struct HomeView: View {
                     ContentUnavailableView(
                         query.isEmpty ? "暂无银行" : "没有搜索结果",
                         systemImage: query.isEmpty ? "building.columns" : "magnifyingglass",
-                        description: Text(query.isEmpty ? "点右上角编辑并验证身份后添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
+                        description: Text(query.isEmpty ? "点右上角加号添加银行账户" : "请尝试其他银行、支行、卡种或持卡人关键词")
                     )
 #if os(macOS)
                     .frame(maxWidth: .infinity, minHeight: 300)
@@ -64,6 +65,7 @@ struct HomeView: View {
             }
         }
         .appNavigationTitle(ToolModule.personalFinance.title)
+        .diagnosticScreen("个人财务")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索银行、支行、卡种或持卡人")
@@ -90,7 +92,18 @@ struct HomeView: View {
         .sheet(item: $editingAccount) { account in
             AccountEditorView(account: account, isNew: true, cards: [])
                 .id(account.id)
-                .iOSLargeSheet()
+            .iOSLargeSheet()
+        }
+        .alert("删除银行账户？", isPresented: Binding(get: { pendingDeleteAccount != nil }, set: { if !$0 { pendingDeleteAccount = nil } })) {
+            Button("删除", role: .destructive) {
+                if let account = pendingDeleteAccount { store.deleteAccount(id: account.id) }
+                pendingDeleteAccount = nil
+            }
+            Button("取消", role: .cancel) { pendingDeleteAccount = nil }
+        } message: {
+            if let account = pendingDeleteAccount {
+                Text("将删除“\(account.bankName)”及其子账户、关联银行卡和账单 PDF。该操作无法撤回。")
+            }
         }
         .onDisappear {
             showsInactiveBanks = false
@@ -123,8 +136,10 @@ struct HomeView: View {
             }
         }
         .appListRowStyle()
-        .appDeleteSwipeAction(isEnabled: true) {
-            store.deleteAccount(id: account.id)
+        .appSwipeActions(edge: .trailing, style: AppSwipeActions.delete) {
+            Button(role: .destructive) { pendingDeleteAccount = account } label: {
+                Label("删除", systemImage: "trash")
+            }
         }
     }
 

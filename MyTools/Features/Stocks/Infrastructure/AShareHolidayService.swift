@@ -27,13 +27,17 @@ private struct HolidayCNFile: Codable, Sendable {
 /// reference type that `StockMarketTradingCalendar` can query synchronously
 /// without needing `await`.
 final class AShareHolidaySnapshot: @unchecked Sendable {
-    // Protected by the nonisolated(unsafe) annotation: mutations happen only
-    // from within the actor before the value is published here.
-    nonisolated(unsafe) private(set) var holidayOverrides: [Int: Set<Int>] = [:]
+    /// `snapshot` is deliberately shared with synchronous chart/calendar code.
+    /// Network refreshes can update it while those readers are running, so the
+    /// dictionary itself must never be exposed without synchronization.
+    private let lock = NSLock()
+    private var holidayOverrides: [Int: Set<Int>] = [:]
 
     /// 填充休市表。生产路径只由 `AShareHolidayService` 在解析完数据后调用；
     /// 测试用它注入一份确定的休市表。
     func update(holidayOverrides: [Int: Set<Int>]) {
+        lock.lock()
+        defer { lock.unlock() }
         self.holidayOverrides = holidayOverrides
     }
 
@@ -46,6 +50,8 @@ final class AShareHolidaySnapshot: @unchecked Sendable {
         let year = calendar.component(.year, from: date)
         let components = calendar.dateComponents([.month, .day], from: date)
         guard let month = components.month, let day = components.day else { return false }
+        lock.lock()
+        defer { lock.unlock() }
         return holidayOverrides[year]?.contains(month * 100 + day) == true
     }
 }

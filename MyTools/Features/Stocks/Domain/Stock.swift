@@ -120,12 +120,22 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
         quantity * unitPrice
     }
 
+    /// Cash paid for a buy, including fees capitalized into the position cost.
+    var buyTotalCost: Decimal {
+        grossAmount + fees
+    }
+
+    /// Cash received from a sale after its transaction fees.
+    var sellNetProceeds: Decimal {
+        grossAmount - fees
+    }
+
     var cashFlow: Decimal {
         switch type {
         case .buy:
-            return grossAmount + fees
+            return buyTotalCost
         case .sell:
-            return -(grossAmount - fees)
+            return -sellNetProceeds
         }
     }
 }
@@ -163,6 +173,36 @@ struct StockDividend: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Moving-average replay shared by current valuation and historical cost curves.
+/// Decimal intermediate values are never rounded to display precision.
+struct StockMovingAverageCostLedger: Sendable {
+    private(set) var shares: Decimal = 0
+    private(set) var cost: Decimal = 0
+    private(set) var realized: Decimal = 0
+
+    mutating func apply(_ transaction: StockTransaction) {
+        guard transaction.quantity > 0 else { return }
+        switch transaction.type {
+        case .buy:
+            let amount = transaction.grossAmount + transaction.fees
+            shares += transaction.quantity
+            cost += amount
+        case .sell:
+            let sold = min(transaction.quantity, shares)
+            guard sold > 0 else { return }
+            // Full liquidation consumes the exact remaining cost, including
+            // any sub-cent Decimal division residue from partial sales.
+            let removedCost = sold == shares ? cost : cost / shares * sold
+            shares -= sold
+            cost -= removedCost
+            realized += sold * transaction.unitPrice - transaction.fees * sold / transaction.quantity - removedCost
+            if shares == 0 {
+                cost = 0
+            }
+        }
+    }
+}
+
 struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var market: StockMarket = .aShare
@@ -187,9 +227,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     var currentShares: Decimal {
-        transactions.lazy
-            .filter { $0.tradedAt <= Date() }
-            .reduce(Decimal.zero) { $0 + $1.signedShares }
+        sharePosition().shares
     }
 
     var hasHistoricalActivity: Bool {
@@ -206,14 +244,11 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     var firstPurchasedAt: Date? {
-        transactions.lazy
-            .filter { $0.type == .buy && $0.tradedAt <= Date() }
-            .map(\.tradedAt)
-            .min()
+        sharePosition().firstPurchasedAt
     }
 
     var hasPurchaseRecord: Bool {
-        transactions.contains { $0.type == .buy && $0.tradedAt <= Date() }
+        sharePosition().hasPurchaseRecord
     }
 
     var hasConfiguredSymbol: Bool {
@@ -221,9 +256,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     }
 
     var totalBuyCost: Decimal {
-        transactions.lazy
-            .filter { $0.type == .buy && $0.tradedAt <= Date() }
-            .reduce(Decimal.zero) { $0 + $1.grossAmount + $1.fees }
+        sharePosition().totalBuyCost
     }
 
     var netDividendIncome: Decimal {
@@ -239,54 +272,43 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
             .reduce(Decimal.zero) { $0 + $1.netAmount }
     }
 
-    /// The cost of the shares that remain held, calculated with a moving
-    /// weighted-average cost after each buy or sell.
+    /// Remaining moving-average cost, including allocated buying fees.
     var holdingCost: Decimal {
-        transactionPerformance.holdingCost
+        performance().holdingCost
     }
 
     var averageHoldingCost: Decimal? {
-        guard currentShares > 0 else { return nil }
-        return holdingCost / currentShares
+        performance().averageHoldingCost
     }
 
     /// Realized trading profit plus net dividends already received. Later buys
     /// affect only the current holding cost and do not change this value.
     var realizedProfitLoss: Decimal {
-        transactionPerformance.realizedProfitLoss + netDividendIncome
+        performance().realizedProfitLoss
     }
 
     var marketValue: Decimal? {
-        guard currentShares > 0, let latestPrice else {
-            return currentShares == 0 ? 0 : nil
-        }
-        return currentShares * latestPrice
+        metrics().marketValue
     }
 
     /// Profit or loss for shares that are still held right now.
     var holdingProfitLoss: Decimal? {
-        guard let marketValue else { return nil }
-        return marketValue - holdingCost
+        metrics().holdingProfitLoss
     }
 
     var holdingProfitRate: Decimal? {
-        guard holdingCost > 0, let holdingProfitLoss else { return nil }
-        return holdingProfitLoss / holdingCost
+        metrics().holdingProfitRate
     }
 
     /// Profit or loss generated by today's regular-session move for the
     /// currently held shares. Extended-hours movement is presented separately.
     var todayProfitLoss: Decimal? {
-        guard currentShares > 0,
-              let latestPrice,
-              let previousClose else { return nil }
-        return currentShares * (latestPrice - previousClose)
+        metrics().todayProfitLoss
     }
 
     /// Lifetime result: current holding profit plus realized profit.
     var totalProfitLoss: Decimal? {
-        guard let holdingProfitLoss else { return nil }
-        return holdingProfitLoss + realizedProfitLoss
+        metrics().totalProfitLoss
     }
 
     /// A sale must have an earlier purchase available at its trade date.
@@ -342,58 +364,193 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
-    static func orderedTransactions(_ transactions: [StockTransaction]) -> [StockTransaction] {
-        transactions.sorted {
-            if !StockTransaction.isSameDay($0.tradedAt, $1.tradedAt) {
-                return $0.tradedAt < $1.tradedAt
-            }
-            if let lhsOrder = $0.dayOrder,
-               let rhsOrder = $1.dayOrder,
-               lhsOrder != rhsOrder {
-                return lhsOrder < rhsOrder
-            }
-            if $0.tradedAt != $1.tradedAt {
-                return $0.tradedAt < $1.tradedAt
-            }
-            return $0.id.uuidString < $1.id.uuidString
+    /// 同一天的交易按 `dayOrder` 排，跨天按日期排。
+    ///
+    /// 排序键在排序前一次性算好，比较器里不再调 `Calendar`：原实现用
+    /// `isDate(_:inSameDayAs:)` 判「同日」，一次排序就要做 O(n log n) 次日历运算（实测单次
+    /// 约 1 µs），而这个排序会被 `performance(asOf:)` 及其下游属性反复触发。
+    ///
+    /// 顺带修掉一个真实缺陷：原比较器**不满足严格弱序**。同日记录里只要 `dayOrder` 有缺失，
+    /// 就能构造出 a<b<c 却 c<a 的循环（a 有序号 5、b 无序号、c 有序号 1，b 的时间落在
+    /// a 与 c 之间），`sorted(by:)` 对这种谓词的结果是未定义的。现在改成一个全序：
+    /// 日 → `dayOrder` → 时间 → id。
+    static func orderedTransactions(
+        _ transactions: [StockTransaction],
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> [StockTransaction] {
+        transactions
+            .map { (key: TransactionSortKey($0, calendar: calendar), transaction: $0) }
+            .sorted { $0.key < $1.key }
+            .map(\.transaction)
+    }
+
+    private struct TransactionSortKey: Comparable {
+        let day: Date
+        /// 缺 `dayOrder` 的记录排在同日已标注顺序的记录之后。`normalizeTransactionDay`
+        /// 会给被触碰那一天的**每一条**记录都写上序号，所以同日混合状态实际不会出现。
+        let dayOrder: Int
+        let tradedAt: Date
+        let id: String
+
+        init(_ transaction: StockTransaction, calendar: Calendar) {
+            day = calendar.startOfDay(for: transaction.tradedAt)
+            dayOrder = transaction.dayOrder ?? Int.max
+            tradedAt = transaction.tradedAt
+            id = transaction.id.uuidString
+        }
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            if lhs.day != rhs.day { return lhs.day < rhs.day }
+            if lhs.dayOrder != rhs.dayOrder { return lhs.dayOrder < rhs.dayOrder }
+            if lhs.tradedAt != rhs.tradedAt { return lhs.tradedAt < rhs.tradedAt }
+            return lhs.id < rhs.id
         }
     }
 
-    private var transactionPerformance: (holdingCost: Decimal, realizedProfitLoss: Decimal) {
-        var shares = Decimal.zero
-        var cost = Decimal.zero
-        var realized = Decimal.zero
+    /// 与顺序无关的那部分派生量：股数、累计买入、首次买入日。
+    ///
+    /// 单独拆出来是因为 `listState`/`isArchived`/`hasPurchaseRecord` 会被列表过滤器
+    /// 反复调用（持仓页一次 body 里 `StocksView` 的几个分组属性就要各过一遍全部股票），
+    /// 而它们并不需要移动平均成本，也就不需要 `performance(asOf:)` 里那次排序。
+    struct SharePosition: Equatable, Sendable {
+        /// 所有已生效交易的带符号股数之和，不做截断，这样超卖的历史数据仍然会暴露成
+        /// 负数而不是被悄悄纠正。
+        var shares: Decimal = 0
+        var totalBuyCost: Decimal = 0
+        var firstPurchasedAt: Date?
 
-        let effectiveTransactions = transactions.filter { $0.tradedAt <= Date() }
-        for transaction in Self.orderedTransactions(effectiveTransactions) where transaction.quantity > 0 {
-            switch transaction.type {
-            case .buy:
-                shares += transaction.quantity
-                cost += transaction.grossAmount + transaction.fees
-            case .sell:
-                guard shares > 0 else { continue }
-                // `hasValidTransactionOrder` prevents selling more than the
-                // running share count, so soldShares == transaction.quantity in
-                // all valid portfolios. The min() here is a defensive fallback;
-                // it intentionally truncates rather than producing negative cost
-                // so that subsequent buys produce a correct average cost basis.
-                let soldShares = min(transaction.quantity, shares)
-                let averageCost = cost / shares
-                let soldCost = averageCost * soldShares
-                // Fees are apportioned to the sold fraction so that a partial
-                // sell does not over-attribute the entire fee to realized P&L.
-                let feeRatio = soldShares / transaction.quantity
-                let soldProceeds = soldShares * transaction.unitPrice - transaction.fees * feeRatio
-                realized += soldProceeds - soldCost
-                shares -= soldShares
-                cost -= soldCost
-                // Guard against floating-point-style drift: if the position
-                // is exactly zero, reset cost to avoid a tiny residual.
-                if shares == 0 { cost = 0 }
-            }
+        var hasPurchaseRecord: Bool { firstPurchasedAt != nil }
+    }
+
+    func sharePosition(asOf now: Date = Date()) -> SharePosition {
+        var result = SharePosition()
+        for transaction in transactions where transaction.tradedAt <= now {
+            result.shares += transaction.signedShares
+            guard transaction.type == .buy else { continue }
+            result.totalBuyCost += transaction.grossAmount + transaction.fees
+            result.firstPurchasedAt = result.firstPurchasedAt
+                .map { min($0, transaction.tradedAt) } ?? transaction.tradedAt
+        }
+        return result
+    }
+
+    /// 一次交易回放就能得到的全套派生金额。
+    ///
+    /// `currentShares`/`holdingCost`/`realizedProfitLoss`/`totalBuyCost` 这些计算属性各自
+    /// 都要把全部交易过滤并重排一遍，而页面一次 body 会读十几次（详情页持仓总览 9 格里读
+    /// 14 次，持仓页总览读 13 次）。导航转场中 UIKit 会反复同步布局，这个常数倍放大足以
+    /// 把一次渲染推到几百毫秒。**热路径请先取一份 `performance(asOf:)` 再复用**，不要逐个
+    /// 属性读；下面那些属性只是为了不破坏既有调用点而保留的便捷入口。
+    struct Performance: Equatable, Sendable {
+        /// 与 `currentShares` 同义。
+        var shares: Decimal = 0
+        var holdingCost: Decimal = 0
+        var realizedTradeProfitLoss: Decimal = 0
+        var netDividendIncome: Decimal = 0
+        var totalBuyCost: Decimal = 0
+        var firstPurchasedAt: Date?
+
+        var hasPurchaseRecord: Bool { firstPurchasedAt != nil }
+
+        var averageHoldingCost: Decimal? {
+            guard shares > 0 else { return nil }
+            return holdingCost / shares
         }
 
-        return (cost, realized)
+        var realizedProfitLoss: Decimal {
+            realizedTradeProfitLoss + netDividendIncome
+        }
+    }
+
+    /// 回放全部已生效交易，得到移动平均持仓成本与已实现盈亏。
+    ///
+    /// 未来日期的交易与分红一律不算，与各个同名属性的既有口径一致。
+    func performance(
+        asOf now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Performance {
+        var result = Performance()
+
+        // 这里没有直接调 `sharePosition(asOf:)`：同一次遍历还要把已生效的交易收集起来
+        // 交给下面的排序回放，拆成两趟反而多走一遍全部交易。
+        var effectiveTransactions: [StockTransaction] = []
+        effectiveTransactions.reserveCapacity(transactions.count)
+        for transaction in transactions where transaction.tradedAt <= now {
+            effectiveTransactions.append(transaction)
+            result.shares += transaction.signedShares
+            guard transaction.type == .buy else { continue }
+            result.totalBuyCost += transaction.grossAmount + transaction.fees
+            result.firstPurchasedAt = result.firstPurchasedAt
+                .map { min($0, transaction.tradedAt) } ?? transaction.tradedAt
+        }
+
+        var ledger = StockMovingAverageCostLedger()
+        for transaction in Self.orderedTransactions(effectiveTransactions, calendar: calendar)
+        where transaction.quantity > 0 {
+            ledger.apply(transaction)
+        }
+        result.holdingCost = ledger.cost
+        result.realizedTradeProfitLoss = ledger.realized
+
+        // 与 `StockDividend.isReceived(asOf:calendar:)` 同一判定，只是把「今天」的
+        // `startOfDay` 提到循环外算一次。
+        let today = calendar.startOfDay(for: now)
+        for dividend in dividends
+        where calendar.startOfDay(for: dividend.receivedAt) <= today {
+            result.netDividendIncome += dividend.netAmount
+        }
+
+        return result
+    }
+
+    /// 常规报价口径下的一只股票的全套金额，一次交易回放算完。
+    ///
+    /// 这里用的是 `latestPrice`/`previousClose`，也就是常规交易时段的报价。**跨市场聚合
+    /// 与列表行禁止用它**，那些地方必须走 `StockHoldingValuation`（它会按当前所处时段挑
+    /// 盘前/盘后报价）。详情页的持仓总览与编辑器属于单只股票的常规口径展示，用这个。
+    struct Metrics: Equatable, Sendable {
+        var performance = Performance()
+        var marketValue: Decimal?
+        var holdingProfitLoss: Decimal?
+        var holdingProfitRate: Decimal?
+        var todayProfitLoss: Decimal?
+        var totalProfitLoss: Decimal?
+    }
+
+    /// 与 `performance(asOf:)` 同理：**热路径请先取一份再复用**，不要逐个读
+    /// `marketValue`/`holdingProfitLoss`/`totalProfitLoss` 这些便捷属性，
+    /// 它们每一次读取都会完整回放一遍交易。
+    func metrics(
+        asOf now: Date = Date(),
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Metrics {
+        metrics(performance: performance(asOf: now, calendar: calendar))
+    }
+
+    func metrics(performance: Performance) -> Metrics {
+        var result = Metrics(performance: performance)
+        let shares = performance.shares
+
+        if shares == 0 {
+            result.marketValue = 0
+        } else if shares > 0, let latestPrice {
+            result.marketValue = shares * latestPrice
+        }
+
+        if let marketValue = result.marketValue {
+            let holdingProfitLoss = marketValue - performance.holdingCost
+            result.holdingProfitLoss = holdingProfitLoss
+            if performance.holdingCost > 0 {
+                result.holdingProfitRate = holdingProfitLoss / performance.holdingCost
+            }
+            result.totalProfitLoss = holdingProfitLoss + performance.realizedProfitLoss
+        }
+
+        if shares > 0, let latestPrice, let previousClose {
+            result.todayProfitLoss = shares * (latestPrice - previousClose)
+        }
+
+        return result
     }
 
     static func normalizedSymbol(_ symbol: String, market: StockMarket) -> String {

@@ -27,6 +27,7 @@ struct ToolboxView: View {
                 }
             }
             .appNavigationTitle("工具")
+            .diagnosticScreen("工具首页")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .listStyle(.insetGrouped)

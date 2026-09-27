@@ -3,6 +3,128 @@ import Testing
 @testable import MyTools
 
 struct StockPortfolioEditorTests {
+    @Test func holdingsCSVScopesPreserveHistoryAndOmitWatchOnly() {
+        var held = StockHolding(market: .hongKong, symbol: "00700", name: "持有")
+        held.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
+        held.latestPrice = 12
+        var closed = StockHolding(market: .unitedStates, symbol: "CLOSED")
+        closed.transactions = [Self.transaction(type: .buy, day: 1, quantity: 1),
+                               Self.transaction(type: .sell, day: 2, quantity: 1)]
+        closed.archivedAt = Self.date(day: 3)
+        let watch = StockHolding(market: .unitedStates, symbol: "WATCHONLY")
+        let stocks = [held, closed, watch]
+        let date = Self.date(day: 4)
+        let current = String(decoding: StockHoldingsCSVExport.data(stocks: stocks, scope: .current, extendedHours: [:], at: date), as: UTF8.self)
+        #expect(current.contains("\"00700\""))
+        #expect(current.contains("\"24\""))
+        #expect(!current.contains("CLOSED"))
+        #expect(!current.contains("WATCHONLY"))
+        let all = String(decoding: StockHoldingsCSVExport.data(stocks: stocks, scope: .all, extendedHours: [:], at: date), as: UTF8.self)
+        #expect(all.contains("CLOSED"))
+        #expect(all.contains("已存档"))
+        #expect(!all.contains("WATCHONLY"))
+        #expect(all.hasPrefix("\u{FEFF}"))
+    }
+
+    @Test func holdingsCSVEscapesNamesAndLeavesMissingQuoteBlank() {
+        var stock = StockHolding(market: .unitedStates, symbol: "TEST", name: "=SUM(1,2)\n\"名称\"")
+        stock.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
+        let data = StockHoldingsCSVExport.data(stocks: [stock], scope: .current, extendedHours: [:], at: Self.date(day: 4))
+        let csv = String(decoding: data, as: UTF8.self)
+        #expect(csv.contains("\"'=SUM(1,2)\n\"\"名称\"\"\""))
+        #expect(csv.contains("\"\",\"当前价格\",\"\",\"\",\"\""))
+        #expect(csv.contains("移动加权平均"))
+    }
+    @Test func movingAverageMatchesRKLBExampleAndHistoricalCostWithoutChangingTransactions() throws {
+        var first = Self.transaction(type: .buy, day: 1, quantity: 5)
+        first.unitPrice = Decimal(string: "65.5")!
+        first.fees = Decimal(string: "0.99")!
+        var second = Self.transaction(type: .buy, day: 2, quantity: 10)
+        second.unitPrice = 64
+        second.fees = first.fees
+        var sale = Self.transaction(type: .sell, day: 3, quantity: 5)
+        sale.unitPrice = Decimal(string: "73.2")!
+        sale.fees = first.fees
+        var stock = StockHolding(market: .unitedStates, symbol: "RKLB")
+        stock.transactions = [first, second, sale]
+        stock.latestPrice = Decimal(string: "70.31")!
+        let archived = try JSONEncoder().encode(stock)
+        let restored = try JSONDecoder().decode(StockHolding.self, from: archived)
+        let metrics = restored.metrics()
+        #expect(metrics.performance.shares == 10)
+        #expect(metrics.performance.holdingCost == Decimal(string: "646.32"))
+        #expect(metrics.performance.averageHoldingCost == Decimal(string: "64.632"))
+        #expect(metrics.performance.realizedTradeProfitLoss == Decimal(string: "41.85"))
+        #expect(metrics.holdingProfitLoss == Decimal(string: "56.78"))
+        #expect(metrics.totalProfitLoss == Decimal(string: "98.63"))
+        #expect(PortfolioValueHistoryBuilder.holdingCost(for: restored, on: Self.date(day: 4)) == metrics.performance.holdingCost)
+        #expect(restored.transactions == stock.transactions)
+    }
+
+    @Test func movingAveragePartialSalesAndLiquidationPreserveCost() {
+        var first = Self.transaction(type: .buy, day: 1, quantity: 5)
+        first.unitPrice = 10
+        first.fees = 1
+        var second = Self.transaction(type: .buy, day: 2, quantity: 10)
+        second.unitPrice = 20
+        second.fees = 2
+        var sale = Self.transaction(type: .sell, day: 3, quantity: 3)
+        sale.unitPrice = 30
+        var ledger = StockMovingAverageCostLedger()
+        ledger.apply(first); ledger.apply(second); ledger.apply(sale)
+        #expect(abs(ledger.cost - Decimal(string: "202.4")!) < Decimal(string: "0.00000000000000000001")!)
+        sale.quantity = 4
+        ledger.apply(sale)
+        #expect(ledger.shares == 8)
+        #expect(abs(ledger.cost - Decimal(253) * 8 / 15) < Decimal(string: "0.00000000000000000001")!)
+        sale.quantity = 8
+        ledger.apply(sale)
+        #expect(ledger.shares == 0)
+        #expect(ledger.cost == 0)
+        #expect(abs(ledger.realized - 197) < Decimal(string: "0.00000000000000000001")!)
+        ledger.apply(first)
+        #expect(ledger.cost == 51)
+    }
+
+    @Test @MainActor func overviewCurrencyPreferenceDefaultsToNativeAndPersistsLocally() {
+        let name = "stock-appearance-test-\(UUID())"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = StockAppearanceSettings(defaults: defaults)
+        #expect(!settings.overviewUsesRenminbi)
+        settings.overviewUsesRenminbi = true
+        #expect(StockAppearanceSettings(defaults: defaults).overviewUsesRenminbi)
+    }
+    @Test func performanceCacheReusesLedgerAcrossQuoteTicksAndInvalidatesEdits() {
+        var stock = StockHolding(symbol: "TEST")
+        stock.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
+        let now = Self.date(day: 3)
+        var cache = StockPerformanceCache()
+        let original = cache.performance(for: stock, at: now)
+        for tick in 1...50 {
+            stock.latestPrice = Decimal(tick)
+            #expect(cache.performance(for: stock, at: now) == original)
+        }
+        #expect(cache.replayCount == 1)
+        stock.transactions[0].quantity = 3
+        #expect(cache.performance(for: stock, at: now).shares == 3)
+        #expect(cache.replayCount == 2)
+        stock.dividends = [StockDividend()]
+        _ = cache.performance(for: stock, at: now)
+        #expect(cache.replayCount == 3)
+    }
+
+    @Test func performanceCacheExpiresWhenFutureTransactionBecomesEffective() {
+        let now = Self.date(day: 3)
+        var stock = StockHolding(symbol: "TEST")
+        var buy = Self.transaction(type: .buy, day: 3, quantity: 2)
+        buy.tradedAt = now.addingTimeInterval(60)
+        stock.transactions = [buy]
+        var cache = StockPerformanceCache()
+        #expect(cache.performance(for: stock, at: now).shares == 0)
+        #expect(cache.performance(for: stock, at: now.addingTimeInterval(60)).shares == 2)
+        #expect(cache.replayCount == 2)
+    }
     @Test func symbolMatchingUsesMarketNormalizationAndSupportsExclusion() {
         var stock = StockHolding()
         stock.market = .hongKong
@@ -115,6 +237,21 @@ struct StockPortfolioEditorTests {
         #expect(StockPortfolioEditor.upserting(sell, in: StockHolding()) == nil)
     }
 
+    @Test func transactionSettlementSeparatesGrossFeesAndCashFlow() {
+        var buy = Self.transaction(type: .buy, day: 1, quantity: 20)
+        buy.unitPrice = Decimal(string: "89.2")!
+        buy.fees = Decimal(string: "0.05")!
+        var sell = buy
+        sell.type = .sell
+
+        #expect(buy.grossAmount == 1_784)
+        #expect(buy.buyTotalCost == Decimal(string: "1784.05")!)
+        #expect(buy.cashFlow == Decimal(string: "1784.05")!)
+        #expect(sell.grossAmount == 1_784)
+        #expect(sell.sellNetProceeds == Decimal(string: "1783.95")!)
+        #expect(sell.cashFlow == Decimal(string: "-1783.95")!)
+    }
+
     @Test func sameDayInsertionAndEditingKeepStableOrder() throws {
         let first = Self.transaction(type: .buy, day: 1, quantity: 1)
         let second = Self.transaction(type: .buy, day: 1, quantity: 2)
@@ -160,6 +297,10 @@ struct StockPortfolioEditorTests {
 
     @Test func dividendsCanBeInsertedUpdatedAndDeleted() {
         var dividend = StockDividend()
+        // CRUD is independent of the day-level normalization covered by
+        // `savingDividendNormalizesItsDayLevelDate` below. Compare against the
+        // same canonical business date that the editor persists.
+        dividend.receivedAt = StockTransaction.normalizedDate(dividend.receivedAt)
         dividend.grossAmount = 10
         var stock = StockPortfolioEditor.upserting(dividend, in: StockHolding())
 
@@ -287,6 +428,9 @@ struct StockPortfolioEditorTests {
         #expect(StockValueFormatter.integerQuantity(1200) == "1,200")
         #expect(StockValueFormatter.signedPercent(Decimal(string: "-0.03456")!) == "-3.46%")
         #expect(StockValueFormatter.signedPercent(Decimal(string: "0.02344")!) == "+2.34%")
+        #expect(StockValueFormatter.signedPriceDifference(Decimal(string: "0.00004")!, currencyCode: "USD").hasSuffix("0.00"))
+        #expect(StockValueFormatter.signedPriceDifference(Decimal(string: "-0.00004")!, currencyCode: "USD").hasPrefix("+"))
+        #expect(StockValueFormatter.signedPriceDifference(Decimal(string: "0.0012")!, currencyCode: "USD").hasSuffix("0.0012"))
         #expect(StockValueFormatter.money(Decimal(string: "123456.789")!, currencyCode: "CNY") == "¥123,456.79")
     }
 

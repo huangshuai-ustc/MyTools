@@ -175,6 +175,7 @@ struct SecretVaultView: View {
             }
         }
         .appNavigationTitle(ToolModule.secrets.title)
+        .diagnosticScreen("保密资料")
         .onChange(of: sortOrderRawValue) { _, _ in
             preferenceChangeBus.notifyChanged()
             pagination.reset()

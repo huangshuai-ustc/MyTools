@@ -806,15 +806,6 @@ extension View {
 #endif
     }
 
-    func diagnosticScreen(_ name: String) -> some View {
-        onAppear {
-            DiagnosticLogger.shared.log(.navigation, "页面显示：\(name)")
-        }
-        .onDisappear {
-            DiagnosticLogger.shared.log(.navigation, "页面离开：\(name)")
-        }
-    }
-
     @ViewBuilder
     func appReadableContent(
         maxWidth: CGFloat = 960,

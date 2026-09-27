@@ -105,6 +105,7 @@ struct FoodMapView: View {
             }
         }
         .appNavigationTitle(ToolModule.foodMap.title)
+        .diagnosticScreen("美食地图")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索店名、推荐食物、特色、地址或标签")

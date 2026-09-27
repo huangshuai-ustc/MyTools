@@ -256,18 +256,57 @@ struct NumericFieldRow: View {
     let title: String
     let prompt: String
     @Binding var text: String
+    var prefix: String? = nil
     var allowsExpression = false
     var maxFieldWidth: CGFloat = 260
     var previewFormatter: ((Decimal) -> String)?
+    @State private var measuredPrefixedTextWidth: CGFloat = 44
 
     var body: some View {
         AppLabeledContentRow(title) {
             VStack(alignment: .trailing, spacing: 2) {
-                TextField(prompt, text: $text)
-                    .multilineTextAlignment(.trailing)
+                if let prefix {
+                    HStack(spacing: 2) {
+                        Text(prefix)
+                            .foregroundStyle(.primary)
+                        ZStack(alignment: .leading) {
+                            Text(text.isEmpty ? prompt : text)
+                                .fixedSize()
+                                .hidden()
+                                .background {
+                                    GeometryReader { proxy in
+                                        Color.clear.preference(
+                                            key: NumericFieldTextWidthKey.self,
+                                            value: proxy.size.width
+                                        )
+                                    }
+                                }
+                            TextField(prompt, text: $text)
+                                // The field is exactly as wide as its rendered
+                                // content. This keeps the prefix attached while
+                                // the whole editable amount remains right-aligned.
+                                .multilineTextAlignment(.leading)
+                                .frame(width: min(
+                                    max(measuredPrefixedTextWidth + 2, 20),
+                                    maxFieldWidth - 36
+                                ))
 #if os(iOS)
-                    .keyboardType(allowsExpression ? .numbersAndPunctuation : .decimalPad)
+                                .keyboardType(allowsExpression ? .numbersAndPunctuation : .decimalPad)
 #endif
+                        }
+                        .onPreferenceChange(NumericFieldTextWidthKey.self) { width in
+                            guard width > 0 else { return }
+                            measuredPrefixedTextWidth = width
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                } else {
+                    TextField(prompt, text: $text)
+                        .multilineTextAlignment(.trailing)
+#if os(iOS)
+                        .keyboardType(allowsExpression ? .numbersAndPunctuation : .decimalPad)
+#endif
+                }
                 if allowsExpression,
                    let previewFormatter,
                    text.contains(where: { "+-*/×÷（）()".contains($0) }),
@@ -279,5 +318,14 @@ struct NumericFieldRow: View {
             }
             .frame(maxWidth: maxFieldWidth)
         }
+    }
+
+}
+
+private struct NumericFieldTextWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

@@ -41,9 +41,9 @@ enum StockMarketFilter: Hashable, Identifiable {
     }
 }
 
-/// Push route for the full chart page. A top-level type so both home pages can
+/// Push route for stock details opened from the leading swipe action. A top-level type so both home pages can
 /// hand it back to the container that owns the navigation destination.
-struct StockWatchRoute: Hashable {
+struct StockDetailRoute: Hashable {
     let stockID: UUID
 }
 
@@ -69,9 +69,12 @@ struct StocksView: View {
     @State private var didRefreshOnCurrentAppearance = false
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
-    @State private var watchRoute: StockWatchRoute?
+    @State private var detailRoute: StockDetailRoute?
     @State private var valueHistoryRoute: ValueHistoryRoute?
     @State private var showsArchivedStocks = false
+    @State private var refreshVisibilityToken = UUID()
+    @State private var isStocksScreenVisible = false
+    @State private var renderedChartRevisionByStockID: [UUID: UInt64] = [:]
     @ObservedObject private var refreshCoordinator = StockRefreshCoordinator.shared
 
     private var configuredStocks: [StockHolding] {
@@ -108,6 +111,47 @@ struct StocksView: View {
 
     private var stocksInSelectedMarket: [StockHolding] {
         marketFilter.filtered(configuredStocks)
+    }
+
+    /// “全部”下的刷新仍只针对此刻真正活跃的一个市场，避免一次按钮操作跨三个
+    /// 市场制造无意义请求。优先级与页面首次自动选择一致。
+    private var focusedRefreshMarket: StockMarket? {
+        if let market = marketFilter.market { return market }
+        let now = Date()
+        return StockMarket.displayOrder.first { market in
+            StockMarketTradingCalendar.session(for: market, at: now) != .closed
+                && configuredStocks.contains(where: { $0.market == market })
+        }
+    }
+
+    /// The watchlist needs live minute projections for every row. The positions
+    /// page normally consumes batch quotes only, but US extended-hours values
+    /// are derived from minute charts rather than the batch quote. Keep held US
+    /// symbols registered during pre/post-market so their displayed prices do
+    /// not freeze merely because the user switched away from the watchlist.
+    private var automaticChartStockIDs: Set<UUID> {
+        guard let market = focusedRefreshMarket else { return [] }
+
+        switch effectivePage {
+        case .watchlist:
+            return Set(activeConfiguredStocks.lazy
+                .filter { $0.market == market }
+                .map(\.id))
+        case .positions:
+            let session = StockMarketTradingCalendar.session(for: market)
+            guard market == .unitedStates,
+                  session == .preMarket || session == .postMarket else { return [] }
+            return Set(activeConfiguredStocks.lazy
+                .filter { $0.market == market && $0.currentShares > 0 }
+                .map(\.id))
+        }
+    }
+
+    private var chartRegistrationKey: String {
+        "\(effectivePage.title)|" + automaticChartStockIDs
+            .map(\.uuidString)
+            .sorted()
+            .joined(separator: ",")
     }
 
     private var searchTerm: String {
@@ -169,7 +213,8 @@ struct StocksView: View {
         return StockAllocationSnapshot(
             stocks: stocks,
             marketValueMultipliers: multipliers,
-            extendedHours: store.extendedHoursPerformance
+            extendedHours: store.extendedHoursPerformance,
+            performances: store.performances(for: stocks)
         )
     }
 
@@ -184,24 +229,23 @@ struct StocksView: View {
         }
         return StockCostAllocationSnapshot(
             stocks: stocksInSelectedMarket,
-            costMultipliers: multipliers
+            costMultipliers: multipliers,
+            performances: store.performances(for: stocksInSelectedMarket)
         )
     }
 
     /// Recomputes the watchlist sparklines when the visible set or the last
     /// quote refresh changes. Cache-only, so this never causes a network call.
     private var sparklineRefreshKey: String {
-        let ids = (watchlistStocks + archivedStocks)
+        (watchlistStocks + archivedStocks)
             .map(\.id.uuidString)
             .joined(separator: ",")
-        let latestRefresh = store.lastRefreshAtByMarket.values.max()
-        return "\(ids)|\(latestRefresh?.timeIntervalSince1970 ?? 0)"
     }
 
     private var positionsPage: some View {
         StockPositionsPage(
             marketFilter: $marketFilter,
-            watchRoute: $watchRoute,
+            detailRoute: $detailRoute,
             availableMarketFilters: availableMarketFilters,
             positions: displayedStocks,
             summaryStocks: stocksInSelectedMarket,
@@ -216,7 +260,7 @@ struct StocksView: View {
     private var watchlistPage: some View {
         StockWatchlistPage(
             marketFilter: $marketFilter,
-            watchRoute: $watchRoute,
+            detailRoute: $detailRoute,
             availableMarketFilters: availableMarketFilters,
             watchlist: watchlistStocks,
             archivedStocks: archivedStocks,
@@ -287,6 +331,7 @@ struct StocksView: View {
         pages
 
         .appNavigationTitle(ToolModule.myStocks.title)
+        .diagnosticScreen("股票持仓")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索股票名称或代码")
@@ -294,15 +339,7 @@ struct StocksView: View {
         .searchable(text: $query, prompt: "搜索股票名称或代码")
 #endif
         .refreshable {
-            // 先刷分时，再刷报价：港股报价源延迟约 15 分钟，`StockQuoteService`
-            // 用实时分时末点择优覆盖，必须拿到本轮分时才能生效。
-            await store.refreshIntradayCharts(for: marketFilter.market)
-            await store.refreshQuotes(
-                for: marketFilter.market,
-                forceRefresh: true
-            )
-            await store.refreshExtendedHoursPerformance()
-            await store.refreshSparklines()
+            await refreshFocusedPage()
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -326,14 +363,7 @@ struct StocksView: View {
                 }
                 Button {
                     Task {
-                        // 顺序同下拉刷新：分时先行，港股报价才能用上本轮分时末点。
-                        await store.refreshIntradayCharts(for: marketFilter.market)
-                        await store.refreshQuotes(
-                            for: marketFilter.market,
-                            forceRefresh: true
-                        )
-                        await store.refreshExtendedHoursPerformance()
-                        await store.refreshSparklines()
+                        await refreshFocusedPage()
                     }
                 } label: {
                     if store.isRefreshingQuotes || store.isRefreshingCharts {
@@ -342,7 +372,11 @@ struct StocksView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
-                .disabled(store.isRefreshingQuotes || store.isRefreshingCharts)
+                .disabled(
+                        activeConfiguredStocks.isEmpty
+                        || store.isRefreshingQuotes
+                        || store.isRefreshingCharts
+                )
                 .accessibilityLabel("刷新股票行情")
 
                 Button { editingStock = StockHolding() } label: {
@@ -360,8 +394,8 @@ struct StocksView: View {
                 .id(stock.id)
                 .iOSLargeSheet()
         }
-        .navigationDestination(item: $watchRoute) { route in
-            StockWatchView(stockID: route.stockID)
+        .navigationDestination(item: $detailRoute) { route in
+            StockDetailView(stockID: route.stockID)
         }
         .navigationDestination(item: $valueHistoryRoute) { route in
             PortfolioValueHistoryView(market: route.market)
@@ -369,7 +403,7 @@ struct StocksView: View {
                 .environmentObject(exchangeRateStore)
         }
         .task(id: sparklineRefreshKey) {
-            await store.refreshSparklines()
+            await refreshVisibleSparklines(force: false)
         }
         .onChange(of: availableMarketFilters) { _, filters in
             if !filters.contains(marketFilter) {
@@ -377,25 +411,29 @@ struct StocksView: View {
             }
         }
         .onAppear {
-            StockRefreshCoordinator.shared.setStocksPageVisible(true)
+            isStocksScreenVisible = true
+            updateRefreshRegistration()
             autoSelectMarketIfNeeded()
             refreshWhenEntering()
         }
         .onChange(of: store.isDataLoaded) { _, isLoaded in
             if isLoaded {
-                StockRefreshCoordinator.shared.setStocksPageVisible(true)
+                updateRefreshRegistration()
                 autoSelectMarketIfNeeded()
                 refreshWhenEntering()
             }
         }
-        .onChange(of: refreshCoordinator.lastRefreshCompletedAt) { _, _ in
-            Task {
-                await store.refreshExtendedHoursPerformance()
-                await store.refreshSparklines()
-            }
+        .onChange(of: chartRegistrationKey) { _, _ in
+            updateRefreshRegistration()
+            Task { await refreshVisibleSparklines(force: false) }
+        }
+        .onChange(of: store.chartCacheRevisionByStockID) { _, _ in
+            guard isStocksScreenVisible else { return }
+            Task { await refreshVisibleSparklines(force: false) }
         }
         .onDisappear {
-            StockRefreshCoordinator.shared.setStocksPageVisible(false)
+            isStocksScreenVisible = false
+            StockRefreshCoordinator.shared.setStockScreen(refreshVisibilityToken, isVisible: false)
             enteringRefreshTask?.cancel()
             enteringRefreshTask = nil
             didRefreshOnCurrentAppearance = false
@@ -446,10 +484,54 @@ struct StocksView: View {
         didRefreshOnCurrentAppearance = true
         enteringRefreshTask?.cancel()
         enteringRefreshTask = Task { @MainActor in
-            await store.refreshQuotes(for: marketFilter.market)
             await store.refreshExtendedHoursPerformance()
-            await store.refreshSparklines()
-            StockRefreshCoordinator.shared.triggerClosingRefreshIfNeeded()
+        }
+    }
+
+    private func updateRefreshRegistration() {
+        StockRefreshCoordinator.shared.setStockScreen(
+            refreshVisibilityToken,
+            isVisible: true,
+            chartStockIDs: automaticChartStockIDs
+        )
+    }
+
+    private func refreshFocusedPage() async {
+        await refreshCoordinator.refreshManually(
+            for: focusedRefreshMarket,
+            refreshMarketCharts: effectivePage == .watchlist
+        )
+    }
+
+    /// Rendering is a local-cache concern of the visible page. Network refresh
+    /// only advances revisions; if this page missed broadcasts while covered,
+    /// the revision comparison catches it up on the next appearance.
+    private func refreshVisibleSparklines(force: Bool) async {
+        guard effectivePage == .watchlist else { return }
+        let visibleIDs = Set(watchlistStocks.map(\.id))
+        // A live fetch already derived and published its row projection from
+        // the in-memory snapshot. Acknowledge that revision locally instead of
+        // loading and processing the just-written cache again.
+        for stockID in visibleIDs {
+            let cacheRevision = store.chartCacheRevisionByStockID[stockID, default: 0]
+            if cacheRevision > 0,
+               store.chartPresentationRevisionByStockID[stockID] == cacheRevision {
+                renderedChartRevisionByStockID[stockID] = cacheRevision
+            }
+        }
+        let stockIDs = visibleIDs.filter { stockID in
+            force || store.intradaySparklines[stockID] == nil || store.chartCacheRevisionByStockID[stockID, default: 0]
+                > renderedChartRevisionByStockID[stockID, default: 0]
+        }
+        guard !stockIDs.isEmpty else { return }
+        await store.refreshSparklines(stockIDs: stockIDs)
+        guard !Task.isCancelled else { return }
+        for stockID in stockIDs {
+            renderedChartRevisionByStockID[stockID] =
+                store.chartCacheRevisionByStockID[stockID, default: 0]
+        }
+        renderedChartRevisionByStockID = renderedChartRevisionByStockID.filter {
+            visibleIDs.contains($0.key)
         }
     }
 }

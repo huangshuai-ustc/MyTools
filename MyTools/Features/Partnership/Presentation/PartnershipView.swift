@@ -43,6 +43,7 @@ struct PartnershipView: View {
             }
         }
         .appNavigationTitle("合伙记账")
+        .diagnosticScreen("合伙记账")
         .iOSLabeledBackButton("工具")
         .toolbar { Button { creating = true } label: { Label("新建账本", systemImage: "plus") } }
         .sheet(isPresented: $creating) { PartnershipCreateView().iOSLargeSheet() }

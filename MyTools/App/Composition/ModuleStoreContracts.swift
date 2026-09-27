@@ -4,6 +4,11 @@ import Foundation
 protocol VaultMutationNotifying: AnyObject {
     func moduleStoreDidMutate()
     func moduleStoreDidMutateLocalOnly()
+    func scheduleAttachmentRemovalAfterPersistence(_ attachments: [FileAttachment])
+}
+
+extension VaultMutationNotifying {
+    func scheduleAttachmentRemovalAfterPersistence(_ attachments: [FileAttachment]) {}
 }
 
 @MainActor

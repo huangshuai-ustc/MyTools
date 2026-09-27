@@ -211,18 +211,32 @@ enum StockMarketTradingCalendar {
     ) -> Date? {
         let rules = rules(for: market, snapshot: snapshot)
         guard let finalMinute = rules.regularRanges.last?.end else { return nil }
+        return latestCompletedEnd(at: date, rules: rules, endMinutes: [finalMinute])
+    }
+
+    /// Includes the morning close for lunch breaks; shares the trading-day
+    /// search with the final-session query rather than duplicating calendars.
+    static func latestCompletedRegularSessionEnd(for market: StockMarket, at date: Date = Date()) -> Date? {
+        let rules = rules(for: market, snapshot: AShareHolidayService.shared.snapshot)
+        return latestCompletedEnd(at: date, rules: rules, endMinutes: rules.regularRanges.map(\.end).reversed())
+    }
+
+    private static func latestCompletedEnd(at date: Date, rules: Rules, endMinutes: [Int]) -> Date? {
         let calendar = rules.calendar
         var currentDay = calendar.startOfDay(for: date)
 
         for _ in 0..<370 {
-            if rules.isTradingDay(currentDay, calendar),
-               let sessionEnd = calendar.date(
+            if rules.isTradingDay(currentDay, calendar) {
+                for finalMinute in endMinutes {
+                    if let sessionEnd = calendar.date(
                    byAdding: .minute,
                    value: finalMinute,
                    to: currentDay
                ),
                sessionEnd <= date {
-                return sessionEnd
+                        return sessionEnd
+                    }
+                }
             }
 
             guard let previousDay = calendar.date(

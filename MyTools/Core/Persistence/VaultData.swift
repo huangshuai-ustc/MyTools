@@ -134,6 +134,22 @@ typealias PartnershipBookVaultValue = OpaqueModuleValue
 #endif
 
 struct VaultData: Codable, @unchecked Sendable {
+    // Missing historical keys mean "not configured". Present empty arrays
+    // mean the user deliberately removed every template, including on sync.
+    static var defaultDomesticBankTemplates: [BankLoginFieldTemplateVaultValue] {
+#if MYTOOLS_FEATURE_FINANCE
+        BankLoginFieldTemplate.domesticDefaults
+#else
+        []
+#endif
+    }
+    static var defaultOverseasBankTemplates: [BankLoginFieldTemplateVaultValue] {
+#if MYTOOLS_FEATURE_FINANCE
+        BankLoginFieldTemplate.overseasDefaults
+#else
+        []
+#endif
+    }
     var accounts: [BankAccountVaultValue] = []
     var cards: [BankCardVaultValue] = []
     var domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = []
@@ -160,8 +176,8 @@ struct VaultData: Codable, @unchecked Sendable {
     init(
         accounts: [BankAccountVaultValue] = [],
         cards: [BankCardVaultValue] = [],
-        domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = [],
-        overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = [],
+        domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = VaultData.defaultDomesticBankTemplates,
+        overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = VaultData.defaultOverseasBankTemplates,
         stocks: [StockHoldingVaultValue] = [],
         currencyExchangeRecords: [CurrencyExchangeVaultValue] = [],
         medicalRecords: [MedicalRecordVaultValue] = [],
@@ -237,11 +253,11 @@ struct VaultData: Codable, @unchecked Sendable {
         domesticBankLoginFieldTemplates = try container.decodeIfPresent(
             [BankLoginFieldTemplateVaultValue].self,
             forKey: .domesticBankLoginFieldTemplates
-        ) ?? []
+        ) ?? Self.defaultDomesticBankTemplates
         overseasBankLoginFieldTemplates = try container.decodeIfPresent(
             [BankLoginFieldTemplateVaultValue].self,
             forKey: .overseasBankLoginFieldTemplates
-        ) ?? []
+        ) ?? Self.defaultOverseasBankTemplates
         stocks = try container.decodeIfPresent([StockHoldingVaultValue].self, forKey: .stocks) ?? []
         currencyExchangeRecords = try container.decodeIfPresent(
             [CurrencyExchangeVaultValue].self,

@@ -17,17 +17,17 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
     init(
         accounts: [BankAccount] = [],
         cards: [BankCard] = [],
-        domesticLoginFieldTemplates: [BankLoginFieldTemplate] = [],
-        overseasLoginFieldTemplates: [BankLoginFieldTemplate] = [],
+        domesticLoginFieldTemplates: [BankLoginFieldTemplate] = BankLoginFieldTemplate.domesticDefaults,
+        overseasLoginFieldTemplates: [BankLoginFieldTemplate] = BankLoginFieldTemplate.overseasDefaults,
         attachmentStore: AttachmentStore
     ) {
         self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
         self.domesticLoginFieldTemplates = Self.normalizedTemplates(
-            domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
+            domesticLoginFieldTemplates
         )
         self.overseasLoginFieldTemplates = Self.normalizedTemplates(
-            overseasLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.overseasDefaults : overseasLoginFieldTemplates
+            overseasLoginFieldTemplates
         )
         self.attachmentStore = attachmentStore
     }
@@ -63,10 +63,10 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         self.accounts = accounts.map(Self.convertingStoredLoginFields)
         self.cards = cards
         self.domesticLoginFieldTemplates = Self.normalizedTemplates(
-            domesticLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.domesticDefaults : domesticLoginFieldTemplates
+            domesticLoginFieldTemplates
         )
         self.overseasLoginFieldTemplates = Self.normalizedTemplates(
-            overseasLoginFieldTemplates.isEmpty ? BankLoginFieldTemplate.overseasDefaults : overseasLoginFieldTemplates
+            overseasLoginFieldTemplates
         )
         DiagnosticLogger.shared.log(.data, "财务数据替换（含模板） accounts=\(accounts.count) cards=\(cards.count)")
     }
@@ -189,17 +189,10 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
 
     func replaceAccount(_ account: BankAccount, cards updatedCards: [BankCard]) {
         let account = Self.convertingStoredLoginFields(account)
-        let previousCards = cards.filter { $0.accountID == account.id }
-        let retainedAttachmentIDs = Set(
-            updatedCards.flatMap(\.statements).compactMap { $0.attachment?.id }
-        )
-        for card in previousCards {
-            for statement in card.statements {
-                guard let attachment = statement.attachment,
-                      !retainedAttachmentIDs.contains(attachment.id) else { continue }
-                attachmentStore.delete(attachment)
-            }
-        }
+        let removedAttachments = cards.filter { $0.accountID == account.id }.flatMap(\.statements).compactMap(\.attachment)
+        // Do not delete PDFs before the Vault write is accepted. A failed or
+        // interrupted persistence operation must leave the old record readable;
+        // orphan cleanup belongs to the attachment reference-index maintenance pass.
 
         let isUpdate = accounts.contains { $0.id == account.id }
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -215,18 +208,37 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         })
         DiagnosticLogger.shared.log(.data, "银行账户\(isUpdate ? "更新" : "新增") id=\(account.id) cards=\(updatedCards.count)")
         didMutate()
+        mutationNotifier?.scheduleAttachmentRemovalAfterPersistence(removedAttachments)
+    }
+
+    /// Applies an editor snapshot only when the account still matches the
+    /// snapshot that opened the editor. This prevents a stale sheet from
+    /// overwriting a CloudKit/device update made while it was open.
+    @discardableResult
+    func replaceAccount(_ account: BankAccount, cards updatedCards: [BankCard], expected original: BankAccount, expectedCards: [BankCard]? = nil) -> Bool {
+        guard accounts.first(where: { $0.id == original.id }) == original,
+              expectedCards.map({ expected in
+                  let current = cards(for: original)
+                  return current.count == expected.count && expected.allSatisfy { current.contains($0) }
+              }) ?? true else {
+            DiagnosticLogger.shared.log(.data, "银行档案保存被拒绝（编辑期间数据已变化） id=\(original.id)", level: .warning)
+            return false
+        }
+        replaceAccount(account, cards: updatedCards)
+        return true
     }
 
     func deleteAccount(id: UUID) {
+        let removedAttachments = cards.filter { $0.accountID == id }.flatMap(\.statements).compactMap(\.attachment)
         let ids = [id]
         let cardCount = cards.filter { ids.contains($0.accountID ?? UUID()) }.count
-        for card in cards where ids.contains(card.accountID ?? UUID()) {
-            card.statements.compactMap(\.attachment).forEach(attachmentStore.delete)
-        }
+        // Keep attachments until the persisted deletion has been accepted and
+        // the global reference index confirms that no other record uses them.
         accounts.removeAll { $0.id == id }
         cards.removeAll { card in ids.contains(card.accountID ?? UUID()) }
         DiagnosticLogger.shared.log(.data, "银行账户删除 id=\(id) 关联卡片=\(cardCount)")
         didMutate()
+        mutationNotifier?.scheduleAttachmentRemovalAfterPersistence(removedAttachments)
     }
 
     func cards(for account: BankAccount) -> [BankCard] {
@@ -241,6 +253,26 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
             throw AttachmentStoreError.invalidFile
         }
         return attachment
+    }
+
+    func importCreditCardStatementInBackground(from url: URL) async throws -> FileAttachment {
+        let attachments = attachmentStore
+        return try await Task.detached(priority: .userInitiated) {
+            let attachment = try attachments.importFile(from: url)
+            guard attachment.contentType.conforms(to: .pdf) else {
+                attachments.delete(attachment)
+                throw AttachmentStoreError.invalidFile
+            }
+            return attachment
+        }.value
+    }
+
+    func updateCard(_ updated: BankCard, expected original: BankCard) -> Bool {
+        guard let accountID = original.accountID,
+              let account = accounts.first(where: { $0.id == accountID }),
+              cards.first(where: { $0.id == original.id }) == original else { return false }
+        replaceAccount(account, cards: cards(for: account).map { $0.id == original.id ? updated : $0 })
+        return true
     }
 
     // deleteUncommittedAttachment, renameAttachment, attachmentURL

@@ -14,6 +14,7 @@ enum StockQuoteRefreshReducer {
     static func stocksToRefresh(
         from stocks: [StockHolding],
         market: StockMarket?,
+        stockIDs: Set<UUID>? = nil,
         forcedMarkets: Set<StockMarket>,
         allowClosedMissingData: Bool,
         at date: Date
@@ -21,6 +22,7 @@ enum StockQuoteRefreshReducer {
         stocks.filter { stock in
             guard stock.hasConfiguredSymbol else { return false }
             guard !stock.isArchived else { return false }
+            if let stockIDs, !stockIDs.contains(stock.id) { return false }
             if let market, stock.market != market { return false }
             let quoteDataMissing = stock.latestPrice == nil
                 || stock.latestPrice.map { $0 <= 0 } == true
@@ -48,6 +50,10 @@ enum StockQuoteRefreshReducer {
         var didChangePersistedQuote = false
 
         for requestedStock in requestedStocks {
+            guard let currentIndex = stockIndices[requestedStock.id],
+                  !stocks[currentIndex].isArchived,
+                  stocks[currentIndex].market == requestedStock.market,
+                  stocks[currentIndex].symbol == requestedStock.symbol else { continue }
             guard let quote = quotes[requestedStock.id] else {
                 failures[requestedStock.id] = "行情服务暂时不可用"
                 continue
@@ -55,6 +61,11 @@ enum StockQuoteRefreshReducer {
             guard let index = stockIndices[requestedStock.id] else { continue }
 
             let previous = stocks[index]
+            if let previousDate = previous.lastQuoteAt, quote.updatedAt < previousDate {
+                // A minute-cache promotion may have landed while this batch
+                // was suspended. An older response cannot roll it back.
+                continue
+            }
             stocks[index].symbol = quote.symbol
             let quoteName = quote.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !quoteName.isEmpty {

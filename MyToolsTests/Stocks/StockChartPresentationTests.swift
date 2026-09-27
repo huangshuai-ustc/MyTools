@@ -3,6 +3,27 @@ import Testing
 @testable import MyTools
 
 struct StockChartPresentationTests {
+    @Test func updatingChartKeepsReferenceAndHistoricalCorrectionsAligned() {
+        let stock = StockHolding(market: .aShare, symbol: "600519")
+        let points = [point(day: 3, close: 100), point(day: 4, close: 102)]
+        let original = makePresentation(stock: stock, points: points, range: .dayK)
+        let referenceChange = makeSnapshot(points: points, previousClose: 98)
+        let updated = original.updating(snapshot: referenceChange, stock: stock, range: .dayK, displayModes: [.line])
+        #expect(updated.snapshot.previousClose == 98)
+        #expect(updated.plotPoints.map(\.point) == original.plotPoints.map(\.point))
+        let correctedPoints = [point(day: 3, close: 90), point(day: 4, close: 102)]
+        let corrected = updated.updating(snapshot: makeSnapshot(points: correctedPoints), stock: stock, range: .dayK, displayModes: [.line])
+        let fresh = makePresentation(stock: stock, points: correctedPoints, range: .dayK)
+        #expect(corrected.plotPoints.map(\.point) == fresh.plotPoints.map(\.point))
+        #expect(corrected.technicalPlotPoints.map(\.indicator) == fresh.technicalPlotPoints.map(\.indicator))
+    }
+
+    @Test func chartModeOrderPlacesRSIBetweenCandlestickAndMovingAverage() throws {
+        let modes = StockChartDisplayMode.allCases
+        let index = try #require(modes.firstIndex(of: .candlestick))
+        #expect(modes[index + 1] == .rsi)
+        #expect(modes[index + 2] == .movingAverage)
+    }
     @Test func headerPerformanceTitleUsesTodayOnlyForIntraday() {
         #expect(StockChartPresentation.headerPerformanceTitle(for: .intraday) == "今日涨跌")
 
@@ -721,6 +742,29 @@ struct StockChartPresentationTests {
         #expect(abs((performance?.percent ?? 0) - (1.30 / 503.70)) < 0.000_001)
     }
 
+    @Test func intradayPerformanceComparesCanonicalDecimalPrices() {
+        let currentClose = point(
+            day: 28,
+            hour: 15,
+            minute: 59,
+            close: 712.779_999_999_999_9,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [currentClose],
+            previousClose: 712.78
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .unitedStates
+        )
+
+        #expect(performance?.change == 0)
+        #expect(performance?.percent == 0)
+    }
+
     @Test func intradayPerformancePrefersCanonicalDailyCloseOverQuoteFallback() {
         let previousMinuteClose = point(day: 6, hour: 14, close: 99)
         let previousDailyClose = point(day: 6, close: 100)
@@ -858,6 +902,43 @@ struct StockChartPresentationTests {
         )
     }
 
+    @Test func regularSessionPerformanceIgnoresNewerPreMarketMove() {
+        let previousTradingDay = point(
+            day: 3,
+            hour: 16,
+            close: 222.27,
+            timeZone: "America/New_York"
+        )
+        let latestRegularPoint = point(
+            day: 4,
+            hour: 15,
+            minute: 59,
+            close: 227.38,
+            timeZone: "America/New_York"
+        )
+        let currentPreMarketPoint = point(
+            day: 5,
+            hour: 8,
+            close: 226.90,
+            timeZone: "America/New_York"
+        )
+        let snapshot = makeSnapshot(
+            points: [latestRegularPoint],
+            preMarketPoints: [currentPreMarketPoint],
+            indicatorPoints: [previousTradingDay, latestRegularPoint]
+        )
+
+        let performance = StockChartPresentation.rangePerformance(
+            snapshot: snapshot,
+            range: .intraday,
+            market: .unitedStates,
+            isPreMarketChart: false
+        )
+
+        #expect(abs((performance?.change ?? 0) - 5.11) < 0.000_001)
+        #expect((performance?.percent ?? 0) > 0)
+    }
+
     @Test func fiveDayPerformanceUsesTheFirstVisibleTradingDay() {
         let previousFriday = point(day: 31, month: 7, close: 90)
         let visible = [
@@ -880,7 +961,7 @@ struct StockChartPresentationTests {
         )
 
         #expect(performance?.change == 11)
-        #expect(performance?.percent == 11.0 / 99.0)
+        #expect(abs((performance?.percent ?? .infinity) - 11.0 / 99.0) < 1e-12)
     }
 
     @Test func fiveDayPerformanceFallsBackToFirstVisiblePointWithoutHistory() {
@@ -901,7 +982,7 @@ struct StockChartPresentationTests {
         )
 
         #expect(performance?.change == 11)
-        #expect(performance?.percent == 11.0 / 99.0)
+        #expect(abs((performance?.percent ?? .infinity) - 11.0 / 99.0) < 1e-12)
     }
 
     @Test func kLinePerformanceUsesItsOwnVisibleWindow() {
@@ -929,7 +1010,7 @@ struct StockChartPresentationTests {
                 market: .aShare
             )
             #expect(performance?.change == 21)
-            #expect(performance?.percent == 21.0 / 79.0)
+            #expect(abs((performance?.percent ?? .infinity) - 21.0 / 79.0) < 1e-12)
         }
     }
 
@@ -978,7 +1059,7 @@ struct StockChartPresentationTests {
         )
 
         #expect(performance?.change == 11)
-        #expect(performance?.percent == 11.0 / 99.0)
+        #expect(abs((performance?.percent ?? .infinity) - 11.0 / 99.0) < 1e-12)
     }
 
     @Test func availabilityUsesIndicatorHistoryRatherThanVisiblePointCount() {

@@ -2,8 +2,215 @@ import Foundation
 import Testing
 @testable import MyTools
 
+struct DiagnosticMaintenanceTests {
+    @Test func repeatedLogRotationBoundsFileSizeAndKeepsNewestCompleteLines() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DiagnosticStress-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("system.log")
+        let maximum = 4 * 1024 * 1024
+        let retained = 3 * 1024 * 1024
+        let chunk = Data(String(repeating: "历史日志测试 abcdefghijklmnopqrstuvwxyz\n", count: 100_000).utf8)
+        try chunk.write(to: url)
+        for index in 0..<12 {
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: chunk)
+            try handle.write(contentsOf: Data("最新记录-\(index)\n".utf8))
+            try handle.close()
+            try DiagnosticMaintenance.trimLog(at: url, maximumBytes: maximum, retainedBytes: retained)
+            let data = try Data(contentsOf: url)
+            #expect(data.count <= maximum)
+            let text = try #require(String(data: data, encoding: .utf8))
+            #expect(text.hasSuffix("最新记录-\(index)\n"))
+            #expect(text.hasPrefix("历史日志测试"))
+        }
+    }
+
+    @Test @MainActor func clearingKeepsMainActorResponsiveAndAttemptsOtherArtifactsAfterFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DiagnosticClear-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("temporary.log")
+        try Data(repeating: 0x61, count: 32 * 1024 * 1024).write(to: url)
+        let release = DispatchSemaphore(value: 0)
+        let work = Task {
+            await DiagnosticMaintenance.clear([
+                {
+                    #expect(!Thread.isMainThread)
+                    #expect(release.wait(timeout: .now() + 2) == .success)
+                    try FileManager.default.removeItem(at: url)
+                },
+                { throw CocoaError(.fileReadNoPermission) }
+            ])
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        release.signal()
+        let errors = await work.value
+        #expect(errors.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+}
+
 @MainActor
 struct AppStoreFacadeTests {
+    @Test func financeAttachmentCleanupRequiresSuccessfulPersistenceAndNoGlobalReferences() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("FinanceRemoval-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = AttachmentStore(directoryURL: root)
+        let pdf = try attachments.save(data: Data("%PDF-test".utf8), originalFileName: "test.pdf", contentType: .pdf)
+        var account = BankAccount()
+        account.bankName = "Test"
+        var card = BankCard()
+        card.accountID = account.id
+        var statement = CreditCardStatement()
+        statement.attachment = pdf
+        card.statements = [statement]
+        let persistence = RecordingVaultPersistence()
+        persistence.flushError = "simulated-failure"
+        let store = AppStore(initialVault: VaultData(accounts: [account], cards: [card]), dependencies:
+            Self.dependencies(defaults: Self.makeDefaults(), persistence: persistence, attachmentStore: attachments))
+        store.financeStore.deleteAccount(id: account.id)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(FileManager.default.fileExists(atPath: attachments.url(for: pdf).path))
+        persistence.flushError = nil
+        store.financeStore.replaceAccount(account, cards: [card])
+        store.scheduleAttachmentRemovalAfterPersistence([pdf])
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(FileManager.default.fileExists(atPath: attachments.url(for: pdf).path))
+        store.financeStore.deleteAccount(id: account.id)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!FileManager.default.fileExists(atPath: attachments.url(for: pdf).path))
+    }
+    @Test func completeClosedMarketRefreshUsesCacheWithoutNetwork() async {
+        let close = StockChartFixtures.date(2026, 9, 24, hour: 16)
+        var stock = StockHolding(market: .hongKong, symbol: "03033")
+        stock.latestPrice = 5
+        stock.previousClose = 4
+        stock.lastQuoteAt = close
+        let snapshot = StockChartSnapshot(symbol: stock.symbol, name: "Test", currencyCode: "HKD",
+            previousClose: 4, points: [StockChartFixtures.point(at: close, close: 5)], indicatorPoints: nil,
+            quoteUpdatedAt: close, fetchedAt: close, source: "Fixture", supportsCandlesticks: true)
+        let charts = RecordingStockCharts(cachedSnapshot: snapshot)
+        let quotes = CountingClosedQuoteProvider()
+        let store = StockStore(stocks: [stock], isDataLoaded: true, quoteService: quotes,
+            alertNotifications: NoopAlertNotificationRouter(), refreshInvalidator: NoopStockRefreshInvalidator(),
+            chartService: charts, defaults: Self.makeDefaults())
+        let coordinator = StockRefreshCoordinator(chartService: charts)
+        coordinator.attach(store: store)
+        for _ in 0..<3 {
+            await coordinator.refreshManually(for: .hongKong, prioritizedStockID: stock.id, at: close.addingTimeInterval(120))
+        }
+        #expect(await charts.fetchCount == 0)
+        #expect(await quotes.count == 0)
+    }
+
+    @Test func lunchAndWeekendCoverageUseActualCompletedSession() {
+        var stock = StockHolding(market: .hongKong, symbol: "03033")
+        let morning = StockChartFixtures.date(2026, 9, 24, hour: 12)
+        stock.latestPrice = 5; stock.previousClose = 4; stock.lastQuoteAt = morning
+        #expect(!StockRefreshCoordinator.needsClosedQuoteRefresh(stock: stock, at: morning.addingTimeInterval(60)))
+        #expect(StockRefreshCoordinator.needsClosedQuoteRefresh(stock: stock, at: StockChartFixtures.date(2026, 9, 24, hour: 17)))
+        let friday = StockChartFixtures.date(2026, 9, 25, hour: 16)
+        stock.lastQuoteAt = friday
+        #expect(!StockRefreshCoordinator.needsClosedQuoteRefresh(stock: stock, at: StockChartFixtures.date(2026, 9, 27)))
+        let incomplete = StockChartSnapshot(symbol: stock.symbol, name: "Test", currencyCode: "HKD",
+            previousClose: 4, points: [StockChartFixtures.point(at: friday.addingTimeInterval(-60), close: 5)],
+            indicatorPoints: nil, quoteUpdatedAt: friday, fetchedAt: friday, source: "Fixture", supportsCandlesticks: true)
+        #expect(StockRefreshCoordinator.needsClosedChartRefresh(stock: stock, snapshot: incomplete, at: friday.addingTimeInterval(120)))
+    }
+    @Test func closedMarketManualRefreshRepairsSelectedChartAndQuote() async {
+        let stock = StockHolding(market: .hongKong, symbol: "03033")
+        let other = StockHolding(market: .hongKong, symbol: "00700")
+        let charts = RecordingStockCharts()
+        let closed = StockChartFixtures.date(2026, 9, 24, hour: 17)
+        let quote = StockQuote(symbol: stock.symbol, name: "Test", latestPrice: 5,
+                               previousClose: 4, changePercent: 25, updatedAt: closed, source: "Fixture")
+        let store = StockStore(stocks: [stock, other], isDataLoaded: true,
+            quoteService: StaticStockQuoteProvider(quotes: [stock.id: quote]),
+            alertNotifications: NoopAlertNotificationRouter(), refreshInvalidator: NoopStockRefreshInvalidator(),
+            chartService: charts, defaults: Self.makeDefaults())
+        let coordinator = StockRefreshCoordinator(chartService: charts)
+        coordinator.attach(store: store)
+        await coordinator.refreshManually(for: .hongKong, prioritizedStockID: stock.id, at: closed)
+        #expect(await charts.fetchCount == 1)
+        #expect(store.stocks.first?.latestPrice == 5)
+        #expect(store.chartCacheRevisionByStockID[stock.id] != nil)
+        #expect(store.chartCacheRevisionByStockID[other.id] == nil)
+    }
+    @Test func stockRefreshWaitsForQueuedMinuteWorkAndThrottlesReentry() async {
+        let stock = StockHolding(market: .unitedStates, symbol: "TEST")
+        let charts = RecordingStockCharts()
+        let store = StockStore(stocks: [stock], isDataLoaded: true,
+                               quoteService: StaticStockQuoteProvider(quotes: [:]),
+                               alertNotifications: NoopAlertNotificationRouter(),
+                               refreshInvalidator: NoopStockRefreshInvalidator(),
+                               chartService: charts, defaults: Self.makeDefaults())
+        async let first: Void = store.refreshIntradayCharts(stockID: stock.id, forceRefresh: false)
+        async let second: Void = store.refreshIntradayCharts(stockID: stock.id, forceRefresh: false)
+        await first
+        await second
+        #expect(await charts.fetchCount == 1)
+        #expect(!store.isRefreshingCharts)
+        #expect(store.chartCacheRevisionByStockID[stock.id] != nil)
+        await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: false)
+        #expect(await charts.fetchCount == 1)
+        await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: true)
+        #expect(await charts.fetchCount == 2)
+    }
+
+    @Test func stockChartRequestsUseConcurrentWorkersAndRespectLoadedState() async {
+        let stocks = (0..<5).map { StockHolding(market: .unitedStates, symbol: "TEST\($0)") }
+        let charts = RecordingStockCharts()
+        let store = StockStore(stocks: stocks, isDataLoaded: false,
+                               quoteService: StaticStockQuoteProvider(quotes: [:]),
+                               alertNotifications: NoopAlertNotificationRouter(),
+                               refreshInvalidator: NoopStockRefreshInvalidator(),
+                               chartService: charts, defaults: Self.makeDefaults())
+        await store.refreshIntradayCharts()
+        #expect(await charts.fetchCount == 0)
+        store.replace(stocks: stocks, priceAlerts: [], returnAlerts: [], isDataLoaded: true)
+        await store.refreshIntradayCharts(stockIDs: Set(stocks.prefix(3).map(\.id)), forceRefresh: false)
+        #expect(await charts.fetchCount == 3)
+        #expect(await charts.peakConcurrentRequests > 1)
+        #expect(store.chartCacheRevisionByStockID.count == 3)
+    }
+
+    @Test func chartCompletionCannotRestoreDeletedStockProjection() async {
+        let stock = StockHolding(market: .unitedStates, symbol: "TEST")
+        let charts = RecordingStockCharts()
+        let store = StockStore(stocks: [stock], isDataLoaded: true,
+                               quoteService: StaticStockQuoteProvider(quotes: [:]),
+                               alertNotifications: NoopAlertNotificationRouter(),
+                               refreshInvalidator: NoopStockRefreshInvalidator(),
+                               chartService: charts, defaults: Self.makeDefaults())
+        let work = Task { await store.refreshIntradayCharts() }
+        await charts.waitUntilStarted()
+        store.deleteStocks(ids: [stock.id])
+        await work.value
+        #expect(store.stocks.isEmpty)
+        #expect(store.chartCacheRevisionByStockID[stock.id] == nil)
+        #expect(store.intradaySparklines[stock.id] == nil)
+    }
+
+    @Test func chartObservationIgnoresUnrelatedStockUpdates() {
+        let first = StockHolding(market: .unitedStates, symbol: "FIRST")
+        var second = StockHolding(market: .unitedStates, symbol: "SECOND")
+        let store = StockStore(stocks: [first, second], isDataLoaded: true,
+                               quoteService: StaticStockQuoteProvider(quotes: [:]),
+                               alertNotifications: NoopAlertNotificationRouter(),
+                               refreshInvalidator: NoopStockRefreshInvalidator(), defaults: Self.makeDefaults())
+        let observation = StockWatchObservation(store: store, stockID: first.id)
+        var emissions = 0
+        let subscription = observation.$stock.sink { _ in emissions += 1 }
+        second.latestPrice = 123
+        store.upsertStock(second)
+        #expect(emissions == 1)
+        observation.select(second.id)
+        #expect(observation.stock?.latestPrice == 123)
+        subscription.cancel()
+    }
+
     @Test func startupLoaderFailurePublishesDataButBlocksPersistence() async {
         let defaults = Self.makeDefaults()
         let persistence = RecordingVaultPersistence()
@@ -227,6 +434,7 @@ struct AppStoreFacadeTests {
         )
         var transaction = StockTransaction()
         transaction.type = .buy
+        transaction.tradedAt = Date(timeIntervalSince1970: 1_700_000_000)
         transaction.quantity = 2
         transaction.unitPrice = 10
 
@@ -433,7 +641,8 @@ struct AppStoreFacadeTests {
         persistence: RecordingVaultPersistence,
         initialLoader: any VaultInitialLoading = EmptyVaultInitialLoader(),
         quoteService: any StockQuoteRefreshing = EmptyStockQuoteProvider(),
-        moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing = DisabledModuleLocalDataCacheCleaner()
+        moduleLocalDataCacheCleaner: any ModuleLocalDataCacheClearing = DisabledModuleLocalDataCacheCleaner(),
+        attachmentStore: AttachmentStore = AttachmentStore()
     ) -> AppStoreDependencies {
         AppStoreDependencies(
             initialLoader: initialLoader,
@@ -443,7 +652,7 @@ struct AppStoreFacadeTests {
             alertNotifications: NoopAlertNotificationRouter(),
             stockRefreshInvalidator: NoopStockRefreshInvalidator(),
             backupProcessor: AppStoreBackupProcessor(),
-            attachmentStore: AttachmentStore(),
+            attachmentStore: attachmentStore,
             defaults: defaults,
             moduleLocalDataCacheCleaner: moduleLocalDataCacheCleaner
         )
@@ -515,6 +724,11 @@ private final class SequencedVaultInitialLoader: VaultInitialLoading, @unchecked
 private final class RecordingVaultPersistence: VaultPersisting, @unchecked Sendable {
     private let lock = NSLock()
     private var storedScheduleCount = 0
+    private var storedFlushError: String?
+    var flushError: String? {
+        get { lock.withLock { storedFlushError } }
+        set { lock.withLock { storedFlushError = newValue } }
+    }
 
     var scheduleCount: Int {
         lock.withLock { storedScheduleCount }
@@ -526,7 +740,7 @@ private final class RecordingVaultPersistence: VaultPersisting, @unchecked Senda
 
     func saveImmediately(_ vault: VaultData, secrets: [SecretItem]) throws {}
 
-    func flush() async -> String? { nil }
+    func flush() async -> String? { flushError }
 }
 
 private struct EmptyStockQuoteProvider: StockQuoteRefreshing {
@@ -559,4 +773,45 @@ private struct NoopAlertNotificationRouter: AlertNotificationRouting {
 
 private struct NoopStockRefreshInvalidator: StockRefreshInvalidating {
     func refreshEligibilityChanged() {}
+}
+
+private actor CountingClosedQuoteProvider: StockQuoteRefreshing {
+    private(set) var count = 0
+    func fetchQuotes(for stocks: [StockHolding]) async -> [UUID: StockQuote] {
+        count += 1
+        return [:]
+    }
+}
+
+private actor RecordingStockCharts: StockChartServing {
+    private let cachedSnapshot: StockChartSnapshot?
+    init(cachedSnapshot: StockChartSnapshot? = nil) { self.cachedSnapshot = cachedSnapshot }
+    private(set) var fetchCount = 0
+    private(set) var peakConcurrentRequests = 0
+    private var active = 0
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilStarted() async {
+        if fetchCount > 0 { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func cachedChart(for stock: StockHolding, range: StockChartRange) async -> StockChartSnapshot? { cachedSnapshot }
+    func fetchChart(for stock: StockHolding, range: StockChartRange, forceRefresh: Bool) async throws -> StockChartSnapshot {
+        fetchCount += 1
+        active += 1
+        peakConcurrentRequests = max(peakConcurrentRequests, active)
+        for waiter in startWaiters { waiter.resume() }
+        startWaiters.removeAll()
+        defer { active -= 1 }
+        try await Task.sleep(for: .milliseconds(80))
+        return StockChartSnapshot(symbol: stock.symbol, name: stock.displayName,
+                                  currencyCode: stock.market.currencyCode, previousClose: 99,
+                                  points: [StockChartFixtures.point(at: Date(), close: 100)],
+                                  indicatorPoints: nil, quoteUpdatedAt: Date(), fetchedAt: Date(),
+                                  source: "Fixture", supportsCandlesticks: true)
+    }
+    func refreshAfterFinalSession(for stock: StockHolding) async throws {}
+    func isChartStale(for stock: StockHolding) async -> Bool { false }
+    func clearCache(for stock: StockHolding) async {}
 }

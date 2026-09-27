@@ -6,38 +6,36 @@ import SwiftUI
 import UIKit
 #endif
 
-private func technicalScoreColor(_ value: Int) -> Color {
-    switch value {
-    case 80...: return .green
-    case 65..<80: return .teal
-    case 50..<65: return .secondary
-    case 35..<50: return .orange
-    default: return .red
+
+struct StockWatchView: View {
+    @EnvironmentObject private var store: StockStore
+    let stockID: UUID
+    var chartService: any StockChartServing = StockChartService.shared
+
+    var body: some View {
+        StockWatchContent(stockID: stockID, store: store, chartService: chartService)
     }
 }
 
-struct StockWatchView: View {
+private struct StockWatchContent: View {
     private struct LoadKey: Hashable {
         let market: StockMarket?
         let symbol: String
         let range: StockChartRange
     }
 
-    private struct ScoreLoadKey: Hashable {
+    private struct SessionSummaryLoadKey: Hashable {
         let market: StockMarket?
         let symbol: String
     }
 
-    private typealias SessionSummaryLoadKey = ScoreLoadKey
 
     @Environment(\.scenePhase) private var scenePhase
-    @EnvironmentObject private var store: StockStore
+    @StateObject private var observation: StockWatchObservation
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     let stockID: UUID
     private let chartService: any StockChartServing
-    private let fundamentalService: any StockFundamentalServing
 
-    @State private var selectedStockID: UUID?
     @State private var selectedRange: StockChartRange = .intraday
     @State private var selectedDisplayModes: Set<StockChartDisplayMode> = [.line]
     @State private var hasAppliedDefaultDisplayModes = false
@@ -45,31 +43,27 @@ struct StockWatchView: View {
     @State private var cachedSessionSummary: StockChartSessionSummary?
     @State private var cachedSessionSnapshot: StockChartSnapshot?
     @State private var cachedSessionSummaryKey: SessionSummaryLoadKey?
-    @State private var technicalScore: StockInvestmentScore?
-    @State private var fundamentalSnapshot: StockFundamentalSnapshot?
     @State private var selectedDate: Date?
     @State private var isRefreshing = false
-    @State private var isTechnicalScoreRefreshing = false
     @State private var errorMessage: String?
     @State private var visibleXDomain: ClosedRange<Double>?
     @State private var showsExpandedChart = false
-    @State private var showsTechnicalScoreDetails = false
     @State private var orientationBeforeExpansion: Int?
     @State private var isInteractingWithChart = false
+    @State private var refreshVisibilityToken = UUID()
 
     init(
         stockID: UUID,
-        chartService: any StockChartServing = StockChartService.shared,
-        fundamentalService: any StockFundamentalServing = StockFundamentalService.shared
+        store: StockStore,
+        chartService: any StockChartServing = StockChartService.shared
     ) {
         self.stockID = stockID
+        _observation = StateObject(wrappedValue: StockWatchObservation(store: store, stockID: stockID))
         self.chartService = chartService
-        self.fundamentalService = fundamentalService
     }
 
     private var stock: StockHolding? {
-        let activeStockID = selectedStockID ?? stockID
-        return store.stocks.first { $0.id == activeStockID }
+        observation.stock
     }
 
     private var displayModesForCurrentSession: Set<StockChartDisplayMode> {
@@ -114,8 +108,8 @@ struct StockWatchView: View {
         )
     }
 
-    private var scoreLoadKey: ScoreLoadKey {
-        ScoreLoadKey(
+    private var sessionSummaryLoadKey: SessionSummaryLoadKey {
+        SessionSummaryLoadKey(
             market: stock?.market,
             symbol: stock.map {
                 StockHolding.normalizedSymbol($0.symbol, market: $0.market)
@@ -123,9 +117,6 @@ struct StockWatchView: View {
         )
     }
 
-    private var sessionSummaryLoadKey: SessionSummaryLoadKey {
-        scoreLoadKey
-    }
 
     private var isSelectedChartAutoRefreshAllowed: Bool {
         guard let stock else { return false }
@@ -164,23 +155,17 @@ struct StockWatchView: View {
         requestedKey: SessionSummaryLoadKey
     ) async {
         guard let stock else { return }
-        let session = StockMarketTradingCalendar.session(for: stock.market)
-        let summarySnapshot: StockChartSnapshot?
-        if forceRefresh || session != .closed {
-            summarySnapshot = try? await chartService.fetchChart(
-                for: stock,
-                range: .intraday,
-                forceRefresh: forceRefresh
-            )
-        } else {
-            // Closed markets do not auto-fetch. A cached last session can still
-            // be displayed, while the toolbar's manual refresh remains able to
-            // request it explicitly.
-            summarySnapshot = await chartService.cachedChart(
-                for: stock,
-                range: .intraday
+        if forceRefresh {
+            await StockRefreshCoordinator.shared.refreshChart(
+                for: stock.id,
+                forceRefresh: true
             )
         }
+        // 当前数据面板和主图一样只消费协调器写入的本地快照。
+        let summarySnapshot = await chartService.cachedChart(
+            for: stock,
+            range: .intraday
+        )
         guard !Task.isCancelled,
               let summarySnapshot else { return }
         applySessionSummary(
@@ -228,20 +213,25 @@ struct StockWatchView: View {
                 )
             }
         }
-        .appNavigationTitle("股票看盘", displaysMacToolbarTitle: false)
+        .appNavigationTitle("股票看盘")
+        .diagnosticScreen("股票看盘")
         .iOSLabeledBackButton(ToolModule.myStocks.title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
         .toolbar {
-            ToolbarItem(placement: .principal) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 if let stock {
-                    stockSwitcher(currentStock: stock)
+                    NavigationLink {
+                        StockDetailView(stockID: stock.id)
+                    } label: {
+                        Image(systemName: "list.bullet.rectangle")
+                    }
+                    .accessibilityLabel("持仓与交易记录")
+                    .help("持仓与交易记录")
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await refreshChartAndScore() }
+                    Task { await refreshChart() }
                 } label: {
                     if isRefreshing {
                         ProgressView()
@@ -264,12 +254,6 @@ struct StockWatchView: View {
             if selectedRange != .intraday {
                 await loadSessionSummaryIfNeeded()
             }
-            await pollActiveDataIfNeeded()
-        }
-        .task(id: scoreLoadKey) {
-            technicalScore = nil
-            fundamentalSnapshot = nil
-            await loadTechnicalScore(forceRefresh: false)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
@@ -281,13 +265,39 @@ struct StockWatchView: View {
                         requestedKey: sessionSummaryLoadKey
                     )
                 }
-                await loadTechnicalScore(forceRefresh: false, showsProgress: false)
             }
         }
-        .sheet(isPresented: $showsTechnicalScoreDetails) {
-            if let technicalScore {
-                StockInvestmentScoreDetailView(score: technicalScore)
+        .onAppear {
+            StockRefreshCoordinator.shared.setStockScreen(
+                refreshVisibilityToken,
+                isVisible: true,
+                chartStockIDs: stock.map { Set([$0.id]) } ?? []
+            )
+        }
+        .onChange(of: stock?.id) { _, stockID in
+            StockRefreshCoordinator.shared.setStockScreen(
+                refreshVisibilityToken,
+                isVisible: true,
+                chartStockIDs: stockID.map { Set([$0]) } ?? []
+            )
+        }
+        .onChange(of: observation.chartUpdate) { _, update in
+            guard let update, let stock, update.stockIDs.contains(stock.id) else { return }
+            Task {
+                await reloadFromChartCache(
+                    stock: stock,
+                    includesDailyBars: update.includesDailyBars
+                )
             }
+        }
+        .onChange(of: observation.chartError) { _, error in
+            errorMessage = error
+        }
+        .onDisappear {
+            StockRefreshCoordinator.shared.setStockScreen(
+                refreshVisibilityToken,
+                isVisible: false
+            )
         }
 #if os(iOS)
         .fullScreenCover(isPresented: $showsExpandedChart) {
@@ -342,7 +352,7 @@ struct StockWatchView: View {
                     StockCurrentPeriodOverview(
                         summary: summary,
                         snapshot: summarySnapshot,
-                        fundamentals: fundamentalSnapshot
+                        fundamentals: nil
                     )
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 }
@@ -488,55 +498,6 @@ struct StockWatchView: View {
         selectedDate = nil
     }
 
-    private func stockSwitcher(currentStock: StockHolding) -> some View {
-        Menu {
-            ForEach(StockMarket.displayOrder) { market in
-                let stocks = store.stocks.filter {
-                    $0.market == market && $0.hasConfiguredSymbol
-                }
-                if !stocks.isEmpty {
-                    Section(market.title) {
-                        ForEach(stocks) { candidate in
-                            Button {
-                                selectStock(candidate.id)
-                            } label: {
-                                if candidate.id == currentStock.id {
-                                    Label(
-                                        "\(candidate.displayName) · \(candidate.symbol)",
-                                        systemImage: "checkmark"
-                                    )
-                                } else {
-                                    Text("\(candidate.displayName) · \(candidate.symbol)")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(currentStock.displayName)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .appFont(.caption2.weight(.semibold))
-            }
-            .appFont(.headline)
-        }
-        .accessibilityLabel("切换看盘股票，当前为\(currentStock.displayName)")
-        .help("切换看盘股票")
-    }
-
-    private func selectStock(_ id: UUID) {
-        guard stock?.id != id else { return }
-        selectedStockID = id
-        snapshot = nil
-        clearSessionSummary()
-        technicalScore = nil
-        fundamentalSnapshot = nil
-        selectedDate = nil
-        visibleXDomain = nil
-        errorMessage = nil
-    }
 
     private func quoteHeader(for stock: StockHolding) -> some View {
         return VStack(alignment: .leading, spacing: 8) {
@@ -573,11 +534,10 @@ struct StockWatchView: View {
                                 Text(StockValueFormatter.signedPercent(Decimal(performance.percent)))
                             }
                             .appFont(.subheadline.weight(.medium).monospacedDigit())
-                            .foregroundStyle(valueColor(performance.change, market: stock.market))
+                            .foregroundStyle(headerTrendColor(for: stock, change: performance.change))
                         }
                     }
                     Spacer(minLength: 8)
-                    technicalScoreButton
                 }
             } else if isRefreshing {
                 ProgressView("正在获取行情")
@@ -618,6 +578,29 @@ struct StockWatchView: View {
                     market: stock.market
                ) {
                 return ("盘后涨跌", performance.change, performance.percent)
+            }
+            if selectedRange == .intraday {
+                // 用户明确选择「盘中」时，标题必须和当前规则线、昨收虚线及盘中末点
+                // 使用同一个 chart contract。不能按“现在处于盘前”改去读
+                // StockActiveQuote，否则回看上一盘中时会拿盘前价对昨收计算，出现图在
+                // 昨收线上方但标题和线色仍为下跌。
+                if let performance = StockChartPresentation.rangePerformance(
+                    snapshot: snapshot,
+                    range: .intraday,
+                    market: stock.market,
+                    visibleXDomain: visibleXDomain,
+                    isPreMarketChart: false,
+                    quotePreviousClose: stock.previousClose.map {
+                        NSDecimalNumber(decimal: $0).doubleValue
+                    },
+                    quoteUpdatedAt: stock.lastQuoteAt
+                ) {
+                    return (
+                        StockChartPresentation.headerPerformanceTitle(for: .intraday),
+                        performance.change,
+                        performance.percent
+                    )
+                }
             }
             if let performance = StockChartPresentation.rangePerformance(
                     snapshot: snapshot,
@@ -661,54 +644,12 @@ struct StockWatchView: View {
         )
     }
 
-    @ViewBuilder
-    private var technicalScoreButton: some View {
-        if let technicalScore {
-            Button {
-                showsTechnicalScoreDetails = true
-            } label: {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("投资机会分")
-                        .appFont(.caption2)
-                        .foregroundStyle(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text("\(technicalScore.value)")
-                            .appFont(.title2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(technicalScoreColor(technicalScore.value))
-                        Text("/ 100")
-                            .appFont(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(minWidth: 82, alignment: .trailing)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                "投资机会分 \(technicalScore.value) 分，\(technicalScore.levelTitle)"
-            )
-            .help("查看投资机会分构成")
-        } else if isTechnicalScoreRefreshing {
-            VStack(alignment: .trailing, spacing: 6) {
-                    Text("投资机会分")
-                    .appFont(.caption2)
-                    .foregroundStyle(.secondary)
-                ProgressView()
-                    .controlSize(.small)
-            }
-            .frame(minWidth: 82, alignment: .trailing)
-        } else {
-            VStack(alignment: .trailing, spacing: 2) {
-                    Text("投资机会分")
-                    .appFont(.caption2)
-                    .foregroundStyle(.secondary)
-                Text("--")
-                    .appFont(.title2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minWidth: 82, alignment: .trailing)
-        }
+    /// 文案、绝对差值、百分比和颜色必须来自同一份 performance。若这里再次按当前
+    /// 市场时段读取 ActiveQuote，用户切换到盘中历史时就会发生跨时段错配。
+    private func headerTrendColor(for stock: StockHolding, change: Double) -> Color {
+        return valueColor(change, market: stock.market)
     }
+
 
     @ViewBuilder
     private func chartSection(for stock: StockHolding) -> some View {
@@ -717,6 +658,7 @@ struct StockWatchView: View {
                 StockChartCanvas(
                     snapshot: snapshot,
                     stock: stock,
+                    extendedHours: observation.extendedHours,
                     range: selectedRange,
                     displayModes: displayModesForCurrentSession,
                     visibleXDomain: $visibleXDomain,
@@ -761,6 +703,7 @@ struct StockWatchView: View {
                         StockChartCanvas(
                             snapshot: snapshot,
                             stock: stock,
+                            extendedHours: observation.extendedHours,
                             range: selectedRange,
                             displayModes: displayModesForCurrentSession,
                             visibleXDomain: $visibleXDomain,
@@ -786,16 +729,12 @@ struct StockWatchView: View {
             }
             .padding(16)
             .appNavigationTitle(
-                "\(stock.displayName) · 行情图",
-                displaysMacToolbarTitle: false
+                "\(stock.displayName) · 行情图"
             )
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    stockSwitcher(currentStock: stock)
-                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
                         showsExpandedChart = false
@@ -910,13 +849,9 @@ struct StockWatchView: View {
     private func loadChart(forceRefresh: Bool, showsProgress: Bool = true) async {
         guard let stock else { return }
         let requestedKey = loadKey
-        let shouldShowProgress = showsProgress
-        if shouldShowProgress { isRefreshing = true }
-        defer {
-            if shouldShowProgress, loadKey == requestedKey {
-                isRefreshing = false
-            }
-        }
+        let requestedRange = selectedRange
+        if showsProgress && snapshot == nil { isRefreshing = true }
+        defer { if loadKey == requestedKey { isRefreshing = false } }
 
         let cached = forceRefresh
             ? nil
@@ -925,7 +860,7 @@ struct StockWatchView: View {
                 range: selectedRange
             )
         if let cached {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, loadKey == requestedKey else { return }
             snapshot = cached
             if selectedRange == .intraday {
                 applySessionSummary(
@@ -936,6 +871,35 @@ struct StockWatchView: View {
             }
         }
 
+        if selectedRange.isMinuteRange {
+            if cached == nil || forceRefresh {
+                await StockRefreshCoordinator.shared.refreshChart(
+                    for: stock.id,
+                    range: requestedRange,
+                    forceRefresh: forceRefresh
+                )
+                if let updated = await chartService.cachedChart(
+                    for: stock,
+                    range: requestedRange
+                ) {
+                    guard !Task.isCancelled, loadKey == requestedKey else { return }
+                    snapshot = updated
+                    if selectedRange == .intraday {
+                        applySessionSummary(
+                            from: updated,
+                            stock: stock,
+                            requestedKey: sessionSummaryLoadKey
+                        )
+                    }
+                    removeUnavailableChartModes(for: updated)
+                    errorMessage = nil
+                } else if !Task.isCancelled, loadKey == requestedKey {
+                    errorMessage = observation.chartError ?? "暂未取得行情数据，请稍后重试"
+                }
+            }
+            return
+        }
+
         // "Market closed" alone doesn't mean the cache is final — if the last
         // fetch predates today's close (e.g. the post-close backfill in
         // StockRefreshCoordinator never ran while this page was open), the
@@ -943,12 +907,26 @@ struct StockWatchView: View {
         // trading day. Only skip the refetch once the cache actually reflects
         // a completed regular session.
         guard forceRefresh
+                || selectedRange.isKLineRange
                 || StockMarketTradingCalendar.isSessionActive(stock.market)
                 || !isCachedChartFinal(cached, market: stock.market) else {
             return
         }
-        guard forceRefresh || cached == nil || isSelectedChartAutoRefreshAllowed else {
+        guard forceRefresh
+                || cached == nil
+                || selectedRange.isKLineRange
+                || isSelectedChartAutoRefreshAllowed else {
             return
+        }
+
+        // 已有缓存先绘制，再静默做完整性检查。服务层只在分钟图过期，或 K 线
+        // 缺少最近已完成交易日时才会联网，因此本地图不会再被加载遮罩挡住。
+        let shouldShowProgress = showsProgress && cached == nil
+        if shouldShowProgress { isRefreshing = true }
+        defer {
+            if shouldShowProgress, loadKey == requestedKey {
+                isRefreshing = false
+            }
         }
 
         do {
@@ -957,7 +935,7 @@ struct StockWatchView: View {
                 range: selectedRange,
                 forceRefresh: forceRefresh
             )
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, loadKey == requestedKey else { return }
             snapshot = updated
             if selectedRange == .intraday {
                 applySessionSummary(
@@ -973,6 +951,28 @@ struct StockWatchView: View {
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "行情获取失败。"
+        }
+    }
+
+    /// Cache-update broadcasts are render signals, not network triggers.
+    private func reloadFromChartCache(
+        stock: StockHolding,
+        includesDailyBars: Bool = false
+    ) async {
+        let requestedKey = loadKey
+        if (selectedRange.isMinuteRange || includesDailyBars),
+           let cached = await chartService.cachedChart(for: stock, range: selectedRange) {
+            guard !Task.isCancelled, loadKey == requestedKey, self.stock?.id == stock.id else { return }
+            snapshot = cached
+            removeUnavailableChartModes(for: cached)
+        }
+        if let intraday = await chartService.cachedChart(for: stock, range: .intraday) {
+            guard !Task.isCancelled, loadKey == requestedKey, self.stock?.id == stock.id else { return }
+            applySessionSummary(
+                from: intraday,
+                stock: stock,
+                requestedKey: sessionSummaryLoadKey
+            )
         }
     }
 
@@ -996,90 +996,18 @@ struct StockWatchView: View {
             .allowsHitTesting(true)
     }
 
-    private func refreshChartAndScore() async {
+    private func refreshChart() async {
         guard let stock else { return }
-        await loadChart(forceRefresh: true)
-        if selectedRange != .intraday {
-            await refreshSessionSummary(
-                forceRefresh: true,
-                requestedKey: sessionSummaryLoadKey
-            )
-        }
-        if selectedRange == .dayK, let snapshot {
-            let fundamentals = await fundamentalService.fundamentals(
-                for: stock,
-                forceRefresh: true
-            )
-            fundamentalSnapshot = fundamentals
-            technicalScore = StockInvestmentScoreModel.calculate(
-                StockInvestmentScoreInput(
-                    pricePoints: snapshot.indicatorPoints ?? snapshot.points,
-                    fundamentals: fundamentals
-                )
-            )
-        } else {
-            await loadTechnicalScore(forceRefresh: true, showsProgress: false)
-        }
-    }
-
-    private func loadTechnicalScore(
-        forceRefresh: Bool,
-        showsProgress: Bool = true
-    ) async {
-        guard let stock else { return }
-        let requestedKey = scoreLoadKey
-        let shouldShowProgress = showsProgress && technicalScore == nil
-        if shouldShowProgress { isTechnicalScoreRefreshing = true }
-        defer { if shouldShowProgress { isTechnicalScoreRefreshing = false } }
-
-        let fundamentals = await fundamentalService.fundamentals(
-            for: stock,
-            forceRefresh: forceRefresh
+        errorMessage = nil
+        isRefreshing = true
+        defer { isRefreshing = false }
+        await StockRefreshCoordinator.shared.refreshManually(
+            for: stock.market,
+            prioritizedStockID: stock.id
         )
-        guard !Task.isCancelled, scoreLoadKey == requestedKey else { return }
-        fundamentalSnapshot = fundamentals
-
-        let cached = forceRefresh
-            ? nil
-            : await chartService.cachedChart(
-                for: stock,
-                range: .dayK
-            )
-        if let cached {
-            guard !Task.isCancelled, scoreLoadKey == requestedKey else { return }
-            technicalScore = StockInvestmentScoreModel.calculate(
-                StockInvestmentScoreInput(
-                    pricePoints: cached.indicatorPoints ?? cached.points,
-                    fundamentals: fundamentals
-                )
-            )
-        }
-
-        guard forceRefresh
-                || (cached == nil
-                    && StockMarketTradingCalendar.isSessionActive(stock.market)) else {
-            return
-        }
-
-        do {
-            let updated = try await chartService.fetchChart(
-                for: stock,
-                range: .dayK,
-                forceRefresh: forceRefresh
-            )
-            guard !Task.isCancelled, scoreLoadKey == requestedKey else { return }
-            technicalScore = StockInvestmentScoreModel.calculate(
-                StockInvestmentScoreInput(
-                    pricePoints: updated.indicatorPoints ?? updated.points,
-                    fundamentals: fundamentals
-                )
-            )
-        } catch is CancellationError {
-            return
-        } catch {
-            return
-        }
+        await reloadFromChartCache(stock: stock)
     }
+
 
     private func removeUnavailableChartModes(for snapshot: StockChartSnapshot) {
         selectedDisplayModes = Set(
@@ -1135,46 +1063,6 @@ struct StockWatchView: View {
         hasAppliedDefaultDisplayModes = true
     }
 
-    private func pollActiveDataIfNeeded() async {
-        while !Task.isCancelled {
-            do {
-                let interval = 60
-                try await Task.sleep(for: .seconds(interval))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled,
-                  scenePhase == .active,
-                  let stock else { continue }
-            let session = StockMarketTradingCalendar.session(for: stock.market)
-            guard session != .closed else {
-                continue
-            }
-            if selectedRange == .intraday {
-                // The intraday tab follows the active session: US pre-market,
-                // regular trading, or US post-market. A/HK only reach regular.
-                await loadChart(forceRefresh: false, showsProgress: false)
-            } else if selectedRange == .fiveDays, session == .regular {
-                await loadChart(forceRefresh: false, showsProgress: false)
-            } else if selectedRange.isKLineRange,
-                      (session == .regular || session == .postMarket) {
-                // During post-market this first reads the disk result of the
-                // coordinator's complete final-session refresh. The service
-                // cache policy prevents another remote K-line request.
-                await loadChart(forceRefresh: false, showsProgress: false)
-            }
-
-            // The current-period panel is independent of the selected chart
-            // range, so K-line and five-day pages refresh its minute snapshot
-            // during the same active session without reloading their chart.
-            if selectedRange != .intraday {
-                await refreshSessionSummary(
-                    forceRefresh: false,
-                    requestedKey: sessionSummaryLoadKey
-                )
-            }
-        }
-    }
 }
 
 private struct StockCurrentPeriodOverview: View {
@@ -1338,170 +1226,5 @@ private struct StockWatchMetricCell: View {
     }
 }
 
-private struct StockInvestmentScoreDetailView: View {
-    @Environment(\.dismiss) private var dismiss
-    let score: StockInvestmentScore
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(score.value)")
-                                .appFont(.largeTitle.weight(.bold).monospacedDigit())
-                                .foregroundStyle(technicalScoreColor(score.value))
-                            Text("/ 100")
-                                .appFont(.subheadline.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(score.levelTitle)
-                                .appFont(.headline)
-                        }
-                        Text("截至 \(AppDateFormatter.string(from: score.date)) 的日线投资机会")
-                            .appFont(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section("评分证据") {
-                    ForEach(score.factors) { factor in
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack {
-                                Text(factor.kind.title)
-                                    .fontWeight(.medium)
-                                Spacer()
-                                Text("\(factor.directionTitle) · \(factor.displayValue)")
-                                    .appFont(.subheadline.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            ProgressView(
-                                value: Double(factor.displayValue),
-                                total: 100
-                            )
-                            .tint(technicalScoreColor(factor.displayValue))
-                            Text(factor.summary)
-                                .appFont(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.vertical, 3)
-                    }
-                }
-
-                if !score.adjustments.isEmpty {
-                    Section("非线性调整") {
-                        ForEach(score.adjustments, id: \.self) { adjustment in
-                            Text(adjustment)
-                                .appFont(.subheadline)
-                        }
-                    }
-                }
-
-                if let fundamentals = score.fundamentals,
-                   fundamentals.availableMetricCount > 0 {
-                    Section {
-                        if let value = fundamentals.priceEarningsRatioTTM {
-                            DetailValueRow(title: "市盈率（TTM）", value: ratioText(value))
-                        }
-                        if let value = fundamentals.priceBookRatioMRQ {
-                            DetailValueRow(title: "市净率（MRQ）", value: ratioText(value))
-                        }
-                        if let value = fundamentals.priceEarningsGrowthRatio {
-                            DetailValueRow(title: "PEG", value: ratioText(value))
-                        }
-                        if let value = fundamentals.priceCashFlowRatioTTM {
-                            DetailValueRow(title: "市现率（TTM）", value: ratioText(value))
-                        }
-                        if let value = fundamentals.priceSalesRatioTTM {
-                            DetailValueRow(title: "市销率（TTM）", value: ratioText(value))
-                        }
-                        if let value = fundamentals.enterpriseValueToEBITDA {
-                            DetailValueRow(title: "EV / EBITDA", value: ratioText(value))
-                        }
-                        if let value = fundamentals.earningsPerShareTTM {
-                            DetailValueRow(title: "每股收益（TTM）", value: ratioText(value))
-                        }
-                        if let value = fundamentals.dividendYield {
-                            DetailValueRow(title: "股息率", value: percentageText(value))
-                        }
-                        if let value = fundamentals.returnOnEquity {
-                            DetailValueRow(title: "净资产收益率", value: percentageText(value))
-                        }
-                        if let value = fundamentals.netProfitMargin {
-                            DetailValueRow(title: "净利率", value: percentageText(value))
-                        }
-                        if let value = fundamentals.revenueGrowth {
-                            DetailValueRow(title: "收入增长", value: percentageText(value))
-                        }
-                        if let value = fundamentals.earningsGrowth {
-                            DetailValueRow(title: "盈利增长", value: percentageText(value))
-                        }
-                    } header: {
-                        Text("基本面指标")
-                    } footer: {
-                        Text("基本面指标来自公开数据，报告期和口径可能因市场与数据源不同而不同。")
-                    }
-                }
-
-                Section {
-                    DetailValueRow(title: "模型版本", value: score.modelVersion)
-                    if score.unadjustedValue != score.value {
-                        DetailValueRow(title: "可信度调整前", value: "\(score.unadjustedValue)")
-                    }
-                    DetailValueRow(title: "周期", value: "日线")
-                    DetailValueRow(title: "历史样本", value: "\(score.sampleCount) 个交易日")
-                    DetailValueRow(
-                        title: "数据可信度",
-                        value: "\(score.confidence.rawValue) · \(Int((score.confidenceValue * 100).rounded()))%"
-                    )
-                    DetailValueRow(
-                        title: "基本面覆盖",
-                        value: "\(score.fundamentalMetricCount) / 12 项"
-                    )
-                    if let fundamentalSource = score.fundamentalSource {
-                        DetailValueRow(title: "基本面来源", value: fundamentalSource)
-                    }
-                    if let fundamentalAsOfDate = score.fundamentalAsOfDate {
-                        DetailValueRow(
-                            title: "基本面时间",
-                            value: AppDateFormatter.dateTimeString(from: fundamentalAsOfDate)
-                        )
-                    }
-                } header: {
-                    Text("数据基础")
-                } footer: {
-                    Text(
-                        "相关技术指标会先在趋势、动能、市场强弱和量价资金组内聚合，再进行一致性校验；模型同时综合估值、盈利质量、成长和风险，并按数据可信度向50分收缩。估值阈值是跨市场的粗粒度参考，不替代行业比较；当前不包含行业、管理层和消息面。"
-                    )
-                }
-            }
-            .appNavigationTitle("投资机会分")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .accessibilityLabel("关闭投资机会分")
-                }
-            }
-        }
-        .appListSpacing()
-    }
-
-    private func ratioText(_ value: Double) -> String {
-        String(format: "%.2f 倍", value)
-    }
-
-    private func percentageText(_ value: Double) -> String {
-        String(format: "%.2f%%", value * 100)
-    }
-}
 
 #endif

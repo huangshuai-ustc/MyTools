@@ -468,6 +468,7 @@ struct PortfolioChartCanvas: View {
     @State private var selectedDate: Date?
     @State private var lastSelectionUpdateTime: TimeInterval = 0
     @State private var data: PortfolioChartData
+    @State private var preparationTask: Task<Void, Never>?
 
     init(
         series: [PortfolioValueSeries],
@@ -601,8 +602,7 @@ struct PortfolioChartCanvas: View {
                             if let plotX: Double = proxy.value(atX: x) {
                                 let index = min(max(Int(plotX.rounded()), 0), data.dates.count - 1)
                                 let now = Date.timeIntervalSinceReferenceDate
-                                if data.dates.indices.contains(index),
-                                   selectedDate != data.dates[index],
+                                if data.dates.indices.contains(index), selectedDate != data.dates[index],
                                    now - lastSelectionUpdateTime >= (1.0 / 30.0) {
                                     lastSelectionUpdateTime = now
                                     selectedDate = data.dates[index]
@@ -743,9 +743,8 @@ struct PortfolioChartCanvas: View {
                         let rect = geometry[frame]
                         let x = value.location.x - rect.minX
                         if let plotX: Double = proxy.value(atX: x) {
-                            let index = min(max(Int(plotX.rounded()), 0), data.dates.count - 1)
-                            if data.dates.indices.contains(index), selectedDate != data.dates[index] {
-                                selectedDate = data.dates[index]
+                            if let nearest = data.renderedProfitPoints.min(by: { abs($0.x - plotX) < abs($1.x - plotX) }), selectedDate != nearest.date {
+                                selectedDate = nearest.date
                             }
                         }
                     })

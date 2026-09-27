@@ -2,9 +2,11 @@
 import Foundation
 
 enum StockChartSeriesKind: String, Codable, Sendable {
-    // `intraday` and `daily` are the only persisted raw source kinds.
-    // The remaining kinds are used only as in-memory aggregation buckets.
+    // Minute data is persisted by session so US pre/regular/post-market data
+    // can retain independent reference semantics.
     case intraday
+    case preMarketMinute
+    case postMarketMinute
     case fiveDayMinute
     case daily
     case weekly
@@ -41,7 +43,10 @@ enum StockChartSeriesProcessor {
     static func compatibleMetadataRanges(for range: StockChartRange) -> [StockChartRange] {
         switch range {
         case .intraday: return [.intraday]
-        case .fiveDays: return [.fiveDays]
+        case .fiveDays:
+            // Five-day is a local viewport over the same canonical minute
+            // source. An intraday close refresh therefore also completes it.
+            return [.fiveDays, .intraday]
         case .dayK, .weekK, .monthK, .quarterK, .yearK:
             // Every K-line range is derived from the same complete daily
             // source, so one successful K-line fetch covers the other bar
@@ -600,7 +605,7 @@ enum StockChartSeriesProcessor {
         calendar: Calendar
     ) -> Date {
         switch kind {
-        case .intraday, .fiveDayMinute:
+        case .intraday, .preMarketMinute, .postMarketMinute, .fiveDayMinute:
             return calendar.dateInterval(of: .minute, for: date)?.start ?? date
         case .daily:
             return dailyBucket(for: date, calendar: calendar)

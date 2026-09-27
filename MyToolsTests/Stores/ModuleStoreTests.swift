@@ -6,6 +6,52 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ModuleStoreTests {
+    @Test func gaodeBankBranchURLUsesSearchNavigationEndpoint() throws {
+        let location = BankBranchLocation(latitude: 39.9042, longitude: 116.4074)
+        let url = try #require(BankBranchNavigationService.url(for: .amap, branchName: "Test Bank", location: location))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(components.scheme == "iosamap")
+        #expect(components.host == "viewMap")
+        #expect(query["poiname"] == "Test Bank")
+        #expect(query["lat"] == "39.9042")
+        #expect(query["lon"] == "116.4074")
+    }
+    @Test func financeDraftConflictDoesNotOverwriteUpdatedCardsOrRecreateDeletedAccount() {
+        let account = BankAccount()
+        var card = BankCard()
+        card.accountID = account.id
+        let store = FinanceStore(accounts: [account], cards: [card], attachmentStore: AttachmentStore())
+        var updated = card
+        updated.holderName = "Changed elsewhere"
+        store.replaceAccount(account, cards: [updated])
+        let accepted = store.replaceAccount(account, cards: [card], expected: account, expectedCards: [card])
+        #expect(!accepted)
+        #expect(store.cards == [updated])
+        #expect(!store.updateCard(card, expected: card))
+        store.deleteAccount(id: account.id)
+        let resurrected = store.replaceAccount(account, cards: [card], expected: account)
+        #expect(!resurrected)
+        #expect(store.accounts.isEmpty)
+    }
+
+    @Test func explicitEmptyFinanceTemplatesSurviveReloadAndVaultRoundTrip() throws {
+        let store = FinanceStore(attachmentStore: AttachmentStore())
+        for template in store.domesticLoginFieldTemplates { store.deleteLoginFieldTemplate(template, for: .domestic) }
+        let vault = VaultData(domesticBankLoginFieldTemplates: store.domesticLoginFieldTemplates,
+                              overseasBankLoginFieldTemplates: store.overseasLoginFieldTemplates)
+        let restored = try JSONDecoder().decode(VaultData.self, from: JSONEncoder().encode(vault))
+        store.replace(accounts: [], cards: [], domesticLoginFieldTemplates: restored.domesticBankLoginFieldTemplates,
+                      overseasLoginFieldTemplates: restored.overseasBankLoginFieldTemplates)
+        #expect(store.domesticLoginFieldTemplates.isEmpty)
+        #expect(!store.overseasLoginFieldTemplates.isEmpty)
+        let legacy = try JSONDecoder().decode(VaultData.self, from: Data("{}".utf8))
+        #expect(!legacy.domesticBankLoginFieldTemplates.isEmpty)
+        #expect(!legacy.overseasBankLoginFieldTemplates.isEmpty)
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(VaultData.self, from: Data("{\"domesticBankLoginFieldTemplates\":[{\"name\":123}]}".utf8))
+        }
+    }
     @Test func financeSubaccountTypesMatchTheirBankRegion() {
         #expect(DomesticAccountType.allCases.map(\.title) == [
             "储蓄账户",
@@ -257,7 +303,7 @@ struct ModuleStoreTests {
         #expect(health.cleanupCount == 1)
     }
 
-    @Test func financeStoreDeletesStatementsRemovedDuringAccountReplacement() throws {
+    @Test func financeStoreRetainsAttachmentsUntilPersistenceConfirmsRemoval() throws {
         let fileManager = FileManager.default
         let directoryURL = fileManager.temporaryDirectory
             .appendingPathComponent("MyToolsTests-\(UUID().uuidString)", isDirectory: true)
@@ -287,7 +333,7 @@ struct ModuleStoreTests {
         store.replaceAccount(account, cards: [])
 
         #expect(store.cards.isEmpty)
-        #expect(!fileManager.fileExists(atPath: attachmentStore.url(for: attachment).path))
+        #expect(fileManager.fileExists(atPath: attachmentStore.url(for: attachment).path))
     }
 
     @Test func financeCleanupRemovesOnlyFieldsThatDoNotApplyToTheCurrentType() throws {

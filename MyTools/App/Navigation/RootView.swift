@@ -61,6 +61,15 @@ struct RootView: View {
         }
 #endif
         .onAppear {
+            // `scenePhase` 在冷启动时不一定会变成 `.active`（初始值就是 `.active`），
+            // 所以启动路径上也要显式启一次，否则首屏那段最容易卡的时间没人盯着。
+            if scenePhase == .active {
+                AppHangMonitor.shared.start()
+                AppMemoryMonitor.shared.start()
+                SystemLogCollector.shared.start()
+            }
+            // MetricKit 只订阅一次，不随前后台启停：载荷在任意时刻投递，退订只会漏掉。
+            AppDiagnosticPayloadCollector.shared.start()
             retryInitialVaultLoadIfPossible()
         }
 #if os(iOS)
@@ -81,12 +90,22 @@ struct RootView: View {
 #endif
             if phase == .background {
                 DiagnosticLogger.shared.markEnteredBackground()
+                // 挂起期间主队列定时器不会被调度，留着监控只会在回前台时报出一次假停顿。
+                AppHangMonitor.shared.stop()
+                AppMemoryMonitor.shared.stop()
+                SystemLogCollector.shared.stop()
                 Task {
                     await store.flushPendingPersistence()
+                    // `stop()` 内部已经抄了一次，这里再 `await` 一次是当屏障用：
+                    // 队列排空就意味着那一次抄写确实落盘了，之后再 flush 事件日志。
+                    await SystemLogCollector.shared.drainNow()
                     await DiagnosticLogger.shared.flush()
                 }
             } else if phase == .active {
                 DiagnosticLogger.shared.markBecameActive()
+                AppHangMonitor.shared.start()
+                AppMemoryMonitor.shared.start()
+                SystemLogCollector.shared.start()
                 retryInitialVaultLoadIfPossible()
             }
         }
