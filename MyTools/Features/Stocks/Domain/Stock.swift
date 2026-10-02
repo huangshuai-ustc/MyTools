@@ -98,14 +98,89 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
     var type: StockTransactionType = .buy
     var tradedAt = Date()
     var dayOrder: Int?
+    /// The user-confirmed execution instant. `nil` means that only the trading
+    /// day is known and intraday consumers must use the shared inference rule.
+    /// Keeping this separate from `tradedAt` preserves the latter's historical
+    /// date-only semantics and makes the additive field safe for older data.
+    var executedAt: Date?
     var quantity: Decimal = 0
     var unitPrice: Decimal = 0
     var fees: Decimal = 0
+
+    /// Converts an absolute instant into the market's business date while
+    /// keeping the stored value compatible with the app's existing date-only
+    /// transaction model. For example, 2026-09-29 01:00 in Shanghai is still
+    /// 2026-09-28 in New York, so a newly-created US transaction defaults to
+    /// September 28 in the local date picker.
+    static func defaultTradingDate(
+        at instant: Date = Date(),
+        market: StockMarket,
+        displayCalendar: Calendar = .autoupdatingCurrent
+    ) -> Date {
+        let marketCalendar = StockChartSeriesProcessor.marketCalendar(market)
+        let components = marketCalendar.dateComponents([.year, .month, .day], from: instant)
+        let calendar = displayCalendar
+        return calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: components.year,
+            month: components.month,
+            day: components.day,
+            hour: 12
+        )) ?? normalizedDate(instant)
+    }
 
     static func normalizedDate(_ date: Date) -> Date {
         let calendar = Calendar.autoupdatingCurrent
         let startOfDay = calendar.startOfDay(for: date)
         return calendar.date(byAdding: .hour, value: 12, to: startOfDay) ?? startOfDay
+    }
+
+    static func normalizedExecutionInstant(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / 60) * 60)
+    }
+
+    /// Creates an absolute execution instant from the business day shown by
+    /// the date picker and a wall-clock time shown in the device calendar.
+    /// The resulting instant is interpreted in the selected market timezone.
+    static func executionInstant(
+        tradingDate: Date,
+        displayedTime: Date,
+        market: StockMarket,
+        displayCalendar: Calendar = .autoupdatingCurrent
+    ) -> Date? {
+        let day = displayCalendar.dateComponents([.year, .month, .day], from: tradingDate)
+        let time = displayCalendar.dateComponents([.hour, .minute], from: displayedTime)
+        var components = DateComponents()
+        components.year = day.year
+        components.month = day.month
+        components.day = day.day
+        components.hour = time.hour
+        components.minute = time.minute
+        components.second = 0
+        return StockChartSeriesProcessor.marketCalendar(market).date(from: components)
+            .map(normalizedExecutionInstant)
+    }
+
+    /// Converts an absolute market instant into a device-calendar carrier used
+    /// solely by a time-only DatePicker, so it displays the market wall clock.
+    static func displayedExecutionTime(
+        for instant: Date,
+        market: StockMarket,
+        displayCalendar: Calendar = .autoupdatingCurrent
+    ) -> Date {
+        let marketCalendar = StockChartSeriesProcessor.marketCalendar(market)
+        let time = marketCalendar.dateComponents([.hour, .minute], from: instant)
+        let reference = displayCalendar.dateComponents([.year, .month, .day], from: Date())
+        return displayCalendar.date(from: DateComponents(
+            calendar: displayCalendar,
+            timeZone: displayCalendar.timeZone,
+            year: reference.year,
+            month: reference.month,
+            day: reference.day,
+            hour: time.hour,
+            minute: time.minute
+        )) ?? instant
     }
 
     static func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {

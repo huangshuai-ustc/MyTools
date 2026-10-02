@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AZ1000000000000000000001 /* StockCashLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BZ1000000000000000000001 /* StockCashLedger.swift */; };
 		A91F00000000000000000001 = {isa = PBXBuildFile; fileRef = B91F00000000000000000001; };
 		A90000000000000000000002 = {isa = PBXBuildFile; fileRef = B90000000000000000000002; };
 		A90000000000000000000003 = {isa = PBXBuildFile; fileRef = B90000000000000000000003; };
@@ -72,6 +73,7 @@
 		AB0000000000000000000003 /* VaultData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* VaultData.swift */; };
 		AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000005 /* AttachmentPresentation.swift */; };
 		AB0000000000000000000006 /* ExchangeRateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000006 /* ExchangeRateRepository.swift */; };
+		AF1200000000000000000001 /* HistoricalExchangeRateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF1200000000000000000001 /* HistoricalExchangeRateService.swift */; };
 		AC0000000000000000000001 /* StockChartService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000001 /* StockChartService.swift */; };
 		AC0000000000000000000002 /* StockWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000002 /* StockWatchView.swift */; };
 		AC0000000000000000000003 /* StockTechnicalAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0000000000000000000003 /* StockTechnicalAnalysis.swift */; };
@@ -247,6 +249,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		BZ1000000000000000000001 /* StockCashLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockCashLedger.swift; sourceTree = "<group>"; };
 		B91F00000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/PartnershipLedger.swift"; sourceTree = "<group>"; };
 		B90000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Application/PartnershipStore.swift"; sourceTree = "<group>"; };
 		B90000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Presentation/PartnershipView.swift"; sourceTree = "<group>"; };
@@ -315,6 +318,7 @@
 		BB0000000000000000000003 /* VaultData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultData.swift; sourceTree = "<group>"; };
 		BB0000000000000000000005 /* AttachmentPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPresentation.swift; sourceTree = "<group>"; };
 		BB0000000000000000000006 /* ExchangeRateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeRateRepository.swift; sourceTree = "<group>"; };
+		BF1200000000000000000001 /* HistoricalExchangeRateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalExchangeRateService.swift; sourceTree = "<group>"; };
 		BC0000000000000000000001 /* StockChartService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockChartService.swift; sourceTree = "<group>"; };
 		BC0000000000000000000002 /* StockWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockWatchView.swift; sourceTree = "<group>"; };
 		BC0000000000000000000003 /* StockTechnicalAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockTechnicalAnalysis.swift; sourceTree = "<group>"; };
@@ -685,6 +689,7 @@
 			children = (
 				B1000000000000000000000D /* ForeignExchangeRateService.swift */,
 				BB0000000000000000000006 /* ExchangeRateRepository.swift */,
+				BF1200000000000000000001 /* HistoricalExchangeRateService.swift */,
 				BJ0000000000000000000002 /* ExchangeRateStore.swift */,
 				BB0000000000000000000001 /* CurrencyCode.swift */,
 				BB0000000000000000000007 /* AppCurrencyFormatter.swift */,
@@ -915,6 +920,7 @@
 		E12000000000000000000001 /* Domain */ = {
 			isa = PBXGroup;
 			children = (
+				BZ1000000000000000000001 /* StockCashLedger.swift */,
 				B0000000000000000000000E /* Stock.swift */,
 				BG0000000000000000000002 /* StockMarketTradingCalendar.swift */,
 				BG0000000000000000000003 /* StockPortfolioAnalytics.swift */,
@@ -1482,6 +1488,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AZ1000000000000000000001 /* StockCashLedger.swift in Sources */,
 				A91F00000000000000000001,
 				A90000000000000000000002,
 				A90000000000000000000003,
@@ -1575,6 +1582,7 @@
 				AB0000000000000000000003 /* VaultData.swift in Sources */,
 				AB0000000000000000000005 /* AttachmentPresentation.swift in Sources */,
 				AB0000000000000000000006 /* ExchangeRateRepository.swift in Sources */,
+				AF1200000000000000000001 /* HistoricalExchangeRateService.swift in Sources */,
 				AC0000000000000000000001 /* StockChartService.swift in Sources */,
 				AC0000000000000000000005 /* StockChartModels.swift in Sources */,
 				AC0000000000000000000006 /* StockChartSeriesProcessor.swift in Sources */,

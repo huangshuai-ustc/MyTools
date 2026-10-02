@@ -1,6 +1,86 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+/// Resolves transactions onto minute bars. A user-confirmed execution minute
+/// wins; date-only legacy records use price proximity. `dayOrder` remains a
+/// hard ordering constraint for both paths.
+enum StockIntradayTransactionPlacement {
+    static func resolve(
+        transactions: [StockTransaction],
+        points: [StockChartPoint],
+        market: StockMarket
+    ) -> [UUID: StockChartPoint] {
+        let sortedPoints = points.sorted { $0.date < $1.date }
+        guard !transactions.isEmpty, !sortedPoints.isEmpty else { return [:] }
+
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
+        let orderedTransactions = StockHolding.orderedTransactions(
+            transactions,
+            calendar: calendar
+        )
+        var grouped: [Date: (points: [StockChartPoint], transactions: [StockTransaction])] = [:]
+
+        for transaction in orderedTransactions {
+            let matchingDate = transaction.executedAt ?? transaction.tradedAt
+            var matchingPoints = sortedPoints.filter {
+                calendar.isDate($0.date, inSameDayAs: matchingDate)
+            }
+            if matchingPoints.isEmpty,
+               let fallbackPoint = sortedPoints.last(where: { $0.date <= transaction.tradedAt }) {
+                matchingPoints = sortedPoints.filter {
+                    calendar.isDate($0.date, inSameDayAs: fallbackPoint.date)
+                }
+            }
+            guard let firstPoint = matchingPoints.first else { continue }
+            let day = calendar.startOfDay(for: firstPoint.date)
+            if grouped[day] == nil {
+                grouped[day] = (matchingPoints, [])
+            }
+            grouped[day]?.transactions.append(transaction)
+        }
+
+        var result: [UUID: StockChartPoint] = [:]
+        for group in grouped.values {
+            let dayPoints = group.points.sorted { $0.date < $1.date }
+            let dayTransactions = StockHolding.orderedTransactions(
+                group.transactions,
+                calendar: calendar
+            )
+            var previousIndex = -1
+
+            for (transactionIndex, transaction) in dayTransactions.enumerated() {
+                let remainingCount = dayTransactions.count - transactionIndex - 1
+                let canUseDistinctPoints = dayPoints.count >= dayTransactions.count
+                let lowerBound = canUseDistinctPoints ? previousIndex + 1 : max(previousIndex, 0)
+                let upperBound = canUseDistinctPoints
+                    ? dayPoints.count - remainingCount - 1
+                    : dayPoints.count - 1
+                guard lowerBound <= upperBound else { continue }
+
+                let transactionPrice = NSDecimalNumber(decimal: transaction.unitPrice).doubleValue
+                let bestIndex = (lowerBound...upperBound).min { leftIndex, rightIndex in
+                    let leftDistance: Double
+                    let rightDistance: Double
+                    if let executedAt = transaction.executedAt {
+                        leftDistance = abs(dayPoints[leftIndex].date.timeIntervalSince(executedAt))
+                        rightDistance = abs(dayPoints[rightIndex].date.timeIntervalSince(executedAt))
+                    } else {
+                        leftDistance = abs(dayPoints[leftIndex].close - transactionPrice)
+                        rightDistance = abs(dayPoints[rightIndex].close - transactionPrice)
+                    }
+                    if leftDistance == rightDistance {
+                        return leftIndex < rightIndex
+                    }
+                    return leftDistance < rightDistance
+                } ?? lowerBound
+                result[transaction.id] = dayPoints[bestIndex]
+                previousIndex = bestIndex
+            }
+        }
+        return result
+    }
+}
+
 struct PortfolioValuePoint: Identifiable, Codable, Sendable {
     let date: Date
     let value: Decimal
@@ -282,9 +362,34 @@ enum PortfolioValueHistoryBuilder {
                 result[entry.key] = decimalPrice(first.close)
             }
         }
-        let transactionsByStock = Dictionary(uniqueKeysWithValues: marketStocks.map { stock in
-            (stock.id, stock.transactions.sorted { $0.tradedAt < $1.tradedAt })
-        })
+        let transactionCalendar = StockChartSeriesProcessor.marketCalendar(market)
+        let transactionsByStock: [UUID: [(transaction: StockTransaction, effectiveDate: Date, order: Int)]] =
+            Dictionary(uniqueKeysWithValues: marketStocks.map { stock in
+                let orderedTransactions = StockHolding.orderedTransactions(
+                    stock.transactions,
+                    calendar: transactionCalendar
+                )
+                let placements = StockIntradayTransactionPlacement.resolve(
+                    transactions: orderedTransactions,
+                    points: scopedBySymbol[stock.symbol] ?? [],
+                    market: market
+                )
+                let transactions = orderedTransactions.enumerated()
+                    .map { order, transaction in
+                        (
+                            transaction: transaction,
+                            effectiveDate: placements[transaction.id]?.date ?? transaction.tradedAt,
+                            order: order
+                        )
+                    }
+                    .sorted { left, right in
+                        if left.effectiveDate != right.effectiveDate {
+                            return left.effectiveDate < right.effectiveDate
+                        }
+                        return left.order < right.order
+                    }
+                return (stock.id, transactions)
+            })
         var transactionOffsets: [UUID: Int] = [:]
         var sharesByStock: [UUID: Decimal] = [:]
         var result: [PortfolioValuePoint] = []
@@ -300,8 +405,8 @@ enum PortfolioValueHistoryBuilder {
                 let transactions = transactionsByStock[stock.id] ?? []
                 var offset = transactionOffsets[stock.id, default: 0]
                 var shares = sharesByStock[stock.id, default: 0]
-                while offset < transactions.count, transactions[offset].tradedAt <= ts {
-                    shares += transactions[offset].signedShares
+                while offset < transactions.count, transactions[offset].effectiveDate <= ts {
+                    shares += transactions[offset].transaction.signedShares
                     offset += 1
                 }
                 transactionOffsets[stock.id] = offset
@@ -338,7 +443,15 @@ enum PortfolioValueHistoryBuilder {
             currencyCode: market.currencyCode,
             points: result,
             costBasis: totalHoldingCost(marketStocks),
-            costBasisPoints: costBasisPoints(marketStocks, dates: result.map(\.date))
+            costBasisPoints: costBasisPoints(
+                marketStocks,
+                dates: result.map(\.date),
+                effectiveDatesByTransactionID: transactionsByStock.values.reduce(into: [:]) { dates, transactions in
+                    for transaction in transactions {
+                        dates[transaction.transaction.id] = transaction.effectiveDate
+                    }
+                }
+            )
         )
     }
 
@@ -551,10 +664,21 @@ enum PortfolioValueHistoryBuilder {
     /// the holding cost, instead of a single flat "today" value.
     private static func costBasisPoints(
         _ stocks: [StockHolding],
-        dates: [Date]
+        dates: [Date],
+        effectiveDatesByTransactionID: [UUID: Date] = [:]
     ) -> [PortfolioCostBasisPoint] {
         let transactionsByStock = Dictionary(uniqueKeysWithValues: stocks.map { stock in
-            (stock.id, StockHolding.orderedTransactions(stock.transactions))
+            let orderedTransactions = StockHolding.orderedTransactions(stock.transactions)
+            let orderByID = Dictionary(uniqueKeysWithValues: orderedTransactions.enumerated().map {
+                ($0.element.id, $0.offset)
+            })
+            let transactions = orderedTransactions.sorted { left, right in
+                let leftDate = effectiveDatesByTransactionID[left.id] ?? left.tradedAt
+                let rightDate = effectiveDatesByTransactionID[right.id] ?? right.tradedAt
+                if leftDate != rightDate { return leftDate < rightDate }
+                return orderByID[left.id, default: Int.max] < orderByID[right.id, default: Int.max]
+            }
+            return (stock.id, transactions)
         })
         var offsets: [UUID: Int] = [:]
         var ledgers: [UUID: StockMovingAverageCostLedger] = [:]
@@ -567,7 +691,8 @@ enum PortfolioValueHistoryBuilder {
                 let transactions = transactionsByStock[stock.id] ?? []
                 var offset = offsets[stock.id, default: 0]
                 var ledger = ledgers[stock.id, default: StockMovingAverageCostLedger()]
-                while offset < transactions.count, transactions[offset].tradedAt <= date {
+                while offset < transactions.count,
+                      (effectiveDatesByTransactionID[transactions[offset].id] ?? transactions[offset].tradedAt) <= date {
                     let transaction = transactions[offset]
                     ledger.apply(transaction)
                     offset += 1

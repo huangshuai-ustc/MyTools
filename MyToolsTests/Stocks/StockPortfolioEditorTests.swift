@@ -3,6 +3,367 @@ import Testing
 @testable import MyTools
 
 struct StockPortfolioEditorTests {
+    @Test func xirrUsesActualRenminbiBoundaryCashFlows() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let investedAt = try #require(calendar.date(from: DateComponents(year: 2025, month: 1, day: 1)))
+        let valuedAt = try #require(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1)))
+        var deposit = StockCashFlowRecord()
+        deposit.occurredAt = investedAt
+        deposit.currency = .cny
+        deposit.amount = 100_000
+
+        let result = StockXIRRCalculator.calculate(
+            records: [deposit],
+            terminalValueRenminbi: 110_000,
+            asOf: valuedAt,
+            calendar: calendar
+        )
+
+        let rate = try #require(result.annualRate)
+        #expect(abs(NSDecimalNumber(decimal: rate - Decimal(string: "0.10")!).doubleValue) < 0.000_001)
+        #expect(result.investedRenminbi == 100_000)
+        #expect(result.withdrawnRenminbi == 0)
+        #expect(result.unavailableReason == nil)
+    }
+
+    @Test func xirrIncludesWithdrawalButExcludesInternalTransferLoss() throws {
+        let start = Self.date(day: 1)
+        let end = Self.date(day: 11)
+        var deposit = StockCashFlowRecord()
+        deposit.occurredAt = start
+        deposit.amount = 100
+        var withdrawal = StockCashFlowRecord()
+        withdrawal.occurredAt = Self.date(day: 6)
+        withdrawal.kind = .withdrawal
+        withdrawal.amount = 20
+        var loss = StockCashFlowRecord()
+        loss.occurredAt = Self.date(day: 7)
+        loss.kind = .transferLoss
+        loss.amount = 5
+
+        let result = StockXIRRCalculator.calculate(
+            records: [deposit, withdrawal, loss],
+            terminalValueRenminbi: 80,
+            asOf: end
+        )
+
+        #expect(result.annualRate != nil)
+        #expect(result.investedRenminbi == 100)
+        #expect(result.withdrawnRenminbi == 20)
+    }
+
+    @Test func currentRenminbiValuationConvertsForeignTransferLossAtLatestRate() throws {
+        let total = try #require(StockRenminbiValuation.total(
+            values: [
+                .cny: 1_000,
+                .usd: Decimal(string: "-18.94")!
+            ],
+            buyingRates: [.cny: 1, .usd: Decimal(string: "7.2")!]
+        ))
+
+        #expect(total == Decimal(string: "863.632")!)
+    }
+
+    @Test func xirrPreservesTheSpecificReasonTerminalValueIsUnavailable() {
+        var deposit = StockCashFlowRecord()
+        deposit.occurredAt = Self.date(day: 1)
+        deposit.amount = 100
+
+        let reason = StockXIRRSnapshot.UnavailableReason.incompleteTerminalValue(
+            missingQuoteSymbols: ["AAPL"],
+            missingRateCurrencies: [],
+            unresolvedExchangeCount: 0
+        )
+        let result = StockXIRRCalculator.calculate(
+            records: [deposit],
+            terminalValueRenminbi: nil,
+            terminalValueUnavailableReason: reason,
+            asOf: Self.date(day: 11)
+        )
+
+        #expect(result.unavailableReason == reason)
+    }
+
+    @Test func xirrFailsClosedForForeignBoundaryFlowWithoutHistoricalRenminbiBasis() throws {
+        var deposit = StockCashFlowRecord()
+        deposit.occurredAt = Self.date(day: 1)
+        deposit.currency = .usd
+        deposit.amount = 100
+
+        let result = StockXIRRCalculator.calculate(
+            records: [deposit],
+            terminalValueRenminbi: 800,
+            asOf: Self.date(day: 11)
+        )
+
+        #expect(result.annualRate == nil)
+        guard case let .missingRenminbiBasis(recordIDs) = result.unavailableReason else {
+            Issue.record("Expected missing RMB basis")
+            return
+        }
+        #expect(recordIDs == [deposit.id])
+    }
+
+    @Test func xirrRecoversLegacyForeignDepositFromLinkedRenminbiExchange() throws {
+        let exchangeID = UUID()
+        var legacyDeposit = StockCashFlowRecord()
+        legacyDeposit.occurredAt = Self.date(day: 1)
+        legacyDeposit.currency = .usd
+        legacyDeposit.amount = 1_000
+        legacyDeposit.linkedExchangeRecordID = exchangeID
+        let exchange = StockExchangeRecordSnapshot(
+            id: exchangeID,
+            exchangedAt: Self.date(day: 1),
+            soldCurrency: .cny,
+            boughtCurrency: .usd,
+            soldAmount: 7_000,
+            boughtAmount: 1_000,
+            fee: 10
+        )
+
+        let result = StockXIRRCalculator.calculate(
+            records: [legacyDeposit],
+            exchangeRecords: [exchange],
+            terminalValueRenminbi: 7_100,
+            asOf: Self.date(day: 11)
+        )
+
+        #expect(result.annualRate != nil)
+        #expect(result.investedRenminbi == 7_010)
+        #expect(result.unavailableReason == nil)
+    }
+
+    @Test func stockCashFlowVaultFieldIsBackwardCompatibleAndStrictWhenPresent() throws {
+        let legacy = try JSONDecoder().decode(VaultData.self, from: Data("{}".utf8))
+        #expect(legacy.stockCashFlowRecords.isEmpty)
+
+        var record = StockCashFlowRecord()
+        record.kind = .withdrawal
+        record.currency = .usd
+        record.amount = 12.34
+        record.note = "test"
+        let restored = try JSONDecoder().decode(
+            VaultData.self,
+            from: JSONEncoder().encode(VaultData(stockCashFlowRecords: [record]))
+        )
+        #expect(restored.stockCashFlowRecords == [record])
+
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(
+                VaultData.self,
+                from: Data("{\"stockCashFlowRecords\":{}}".utf8)
+            )
+        }
+    }
+
+    @Test func cashLedgerCombinesExternalFlowsExchangeAndStockActivity() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let exchangeID = UUID()
+        var deposit = StockCashFlowRecord()
+        deposit.occurredAt = now.addingTimeInterval(-400)
+        deposit.currency = .cny
+        deposit.amount = 7_010
+        deposit.linkedExchangeRecordID = exchangeID
+
+        var loss = StockCashFlowRecord()
+        loss.occurredAt = now.addingTimeInterval(-100)
+        loss.kind = .transferLoss
+        loss.currency = .usd
+        loss.amount = 3
+
+        var buy = StockTransaction()
+        buy.tradedAt = now.addingTimeInterval(-200)
+        buy.quantity = 5
+        buy.unitPrice = 100
+        buy.fees = 1
+        var dividend = StockDividend()
+        dividend.receivedAt = now.addingTimeInterval(-50)
+        dividend.grossAmount = 10
+        dividend.withholdingTax = 2
+        var stock = StockHolding()
+        stock.market = .unitedStates
+        stock.transactions = [buy]
+        stock.dividends = [dividend]
+
+        let result = StockCashLedger.build(
+            records: [deposit, loss],
+            exchangeRecords: [StockExchangeRecordSnapshot(
+                id: exchangeID,
+                exchangedAt: now.addingTimeInterval(-300),
+                soldCurrency: .cny,
+                boughtCurrency: .usd,
+                soldAmount: 7_000,
+                boughtAmount: 1_000,
+                fee: 10
+            )],
+            stocks: [stock],
+            asOf: now
+        )
+
+        #expect(result.balances[.cny] == nil)
+        #expect(result.balances[.usd] == 504)
+        #expect(result.unresolvedExchangeRecordIDs.isEmpty)
+    }
+
+    @Test func cashLedgerDoesNotApplyOneExchangeTwice() {
+        let exchangeID = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var first = StockCashFlowRecord()
+        first.occurredAt = now.addingTimeInterval(-100)
+        first.currency = .cny
+        first.amount = 100
+        first.linkedExchangeRecordID = exchangeID
+        var second = first
+        second.id = UUID()
+        second.amount = 50
+
+        let result = StockCashLedger.build(
+            records: [first, second],
+            exchangeRecords: [StockExchangeRecordSnapshot(
+                id: exchangeID,
+                exchangedAt: now.addingTimeInterval(-200),
+                soldCurrency: .cny,
+                boughtCurrency: .usd,
+                soldAmount: 100,
+                boughtAmount: 14,
+                fee: 0
+            )],
+            stocks: [],
+            asOf: now
+        )
+
+        #expect(result.balances[.cny] == 50)
+        #expect(result.balances[.usd] == 14)
+    }
+
+    @Test func newTransactionDateDefaultsToTheMarketsBusinessDate() throws {
+        var shanghaiCalendar = Calendar(identifier: .gregorian)
+        shanghaiCalendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let instant = try #require(shanghaiCalendar.date(from: DateComponents(
+            year: 2026,
+            month: 9,
+            day: 29,
+            hour: 1
+        )))
+
+        let usDate = StockTransaction.defaultTradingDate(
+            at: instant,
+            market: .unitedStates,
+            displayCalendar: shanghaiCalendar
+        )
+        let aShareDate = StockTransaction.defaultTradingDate(
+            at: instant,
+            market: .aShare,
+            displayCalendar: shanghaiCalendar
+        )
+        let hongKongDate = StockTransaction.defaultTradingDate(
+            at: instant,
+            market: .hongKong,
+            displayCalendar: shanghaiCalendar
+        )
+
+        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: usDate)
+            == DateComponents(year: 2026, month: 9, day: 28))
+        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: aShareDate)
+            == DateComponents(year: 2026, month: 9, day: 29))
+        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: hongKongDate)
+            == DateComponents(year: 2026, month: 9, day: 29))
+    }
+
+    @Test func fiveDayPortfolioAxisUsesFiveEqualIntervals() throws {
+        let values = PortfolioChartXAxis.values(pointCount: 101, range: .fiveDays)
+        let labels = PortfolioChartXAxis.labelValues(pointCount: 101, range: .fiveDays)
+
+        #expect(values == [0, 20, 40, 60, 80, 100])
+        #expect(values.count - 1 == 5)
+        #expect(labels == values)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let dates = (1...5).flatMap { day in
+            (0..<20).compactMap { minute in
+                calendar.date(from: DateComponents(
+                    year: 2026,
+                    month: 9,
+                    day: day,
+                    hour: 9,
+                    minute: minute
+                ))
+            }
+        }
+        let layout = PortfolioFiveDayXAxis.layout(
+            dates: dates,
+            calendar: calendar
+        )
+        #expect(layout.gridValues.count == 6)
+        #expect(layout.labelTexts.count == 5)
+        #expect(layout.centersLabelsInIntervals)
+    }
+
+    @Test func consecutiveCostLabelsWithTheSameDisplayValueAreMerged() throws {
+        let labels = PortfolioCostLabelLayout.merged([
+            .init(id: "a", seriesID: "US", cost: 5_724.6, startX: 0, endX: 2),
+            .init(id: "b", seriesID: "US", cost: 5_725.2, startX: 2, endX: 4),
+            .init(id: "c", seriesID: "US", cost: 5_724.8, startX: 4, endX: 6),
+            .init(id: "d", seriesID: "US", cost: 12_010, startX: 6, endX: 7),
+            .init(id: "e", seriesID: "US", cost: 12_049, startX: 7, endX: 8)
+        ]) { value in
+            abs(value) >= 10_000
+                ? String(format: "%.1f万", value / 10_000)
+                : String(format: "%.0f", value)
+        }
+
+        #expect(labels.map(\.text) == ["5725", "1.2万"])
+        #expect(labels.map(\.x) == [3, 7])
+    }
+
+    @Test func otherPortfolioAxesKeepExistingFourIntervals() {
+        let values = PortfolioChartXAxis.values(pointCount: 101, range: .dayK)
+        let labels = PortfolioChartXAxis.labelValues(pointCount: 101, range: .dayK)
+
+        #expect(values == [0, 25, 50, 75, 100])
+        #expect(labels == values)
+    }
+
+    @Test func portfolioKLineAxesUseCalendarBucketsAndCompactLabels() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let dates = [
+            calendar.date(from: DateComponents(year: 2025, month: 12, day: 31))!,
+            calendar.date(from: DateComponents(year: 2026, month: 1, day: 31))!,
+            calendar.date(from: DateComponents(year: 2026, month: 2, day: 28))!
+        ]
+
+        #expect(PortfolioChartXAxis.gridValues(dates: dates, range: .monthK, calendar: calendar) == [0, 1, 2])
+        #expect(PortfolioChartXAxis.labelValues(dates: dates, range: .monthK, calendar: calendar) == [0, 1, 2])
+        #expect(PortfolioChartXAxis.label(for: dates[0], range: .dayK, calendar: calendar) == "12-31")
+        #expect(PortfolioChartXAxis.label(for: dates[1], range: .weekK, calendar: calendar) == "1月")
+        #expect(PortfolioChartXAxis.label(for: dates[1], range: .monthK, calendar: calendar) == "1月")
+        #expect(PortfolioChartXAxis.label(for: dates[1], range: .quarterK, calendar: calendar) == "Q1")
+        #expect(PortfolioChartXAxis.label(for: dates[1], range: .yearK, calendar: calendar) == "2026")
+    }
+
+    @Test func portfolioLongPeriodAxisUsesSparseUniqueNaturalTicks() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let dates = (2020...2026).flatMap { year in
+            (1...12).compactMap { month in
+                calendar.date(from: DateComponents(year: year, month: month, day: 1))
+            }
+        }
+        let layout = PortfolioChartXAxis.layout(
+            dates: dates,
+            range: .monthK,
+            calendar: calendar
+        )
+
+        #expect(layout.labelValues.count <= 5)
+        #expect(layout.gridValues == layout.labelValues)
+        #expect(Set(layout.labelTexts.values).count == layout.labelTexts.count)
+        #expect(!layout.centersLabelsInIntervals)
+    }
+
     @Test func holdingsCSVScopesPreserveHistoryAndOmitWatchOnly() {
         var held = StockHolding(market: .hongKong, symbol: "00700", name: "持有")
         held.transactions = [Self.transaction(type: .buy, day: 1, quantity: 2)]
@@ -35,6 +396,40 @@ struct StockPortfolioEditorTests {
         #expect(csv.contains("\"\",\"当前价格\",\"\",\"\",\"\""))
         #expect(csv.contains("移动加权平均"))
     }
+
+    @Test func holdingsWorkbookSeparatesRawRecordsFromDerivedSummary() throws {
+        var transaction = Self.transaction(type: .buy, day: 1, quantity: 2)
+        transaction.unitPrice = Decimal(string: "12.34")!
+        transaction.fees = Decimal(string: "0.56")!
+        var dividend = StockDividend()
+        dividend.receivedAt = Self.date(day: 2)
+        dividend.quantity = 2
+        dividend.dividendPerShare = Decimal(string: "0.8")!
+        dividend.grossAmount = Decimal(string: "1.6")!
+        dividend.withholdingTax = Decimal(string: "0.16")!
+        dividend.fees = Decimal(string: "0.02")!
+        dividend.note = "季度分红"
+        var stock = StockHolding(market: .unitedStates, symbol: "TEST", name: "测试")
+        stock.transactions = [transaction]
+        stock.dividends = [dividend]
+        stock.latestPrice = 15
+
+        let data = StockHoldingsXLSXExport.data(
+            stocks: [stock],
+            scope: .all,
+            extendedHours: [:],
+            at: Self.date(day: 4)
+        )
+        let rawRows = try BillXLSXReader.worksheetRows(from: data)
+
+        #expect(rawRows.first?.contains("记录类型") == true)
+        #expect(rawRows.contains { $0.contains("交易") && $0.contains("12.34") && $0.contains("0.56") })
+        #expect(rawRows.contains { $0.contains("分红") && $0.contains("0.16") && $0.contains("季度分红") })
+        #expect(rawRows.first?.contains("持仓盈亏") == false)
+        #expect(data.range(of: Data("持仓汇总".utf8)) != nil)
+        #expect(data.range(of: Data("累计总收益".utf8)) != nil)
+    }
+
     @Test func movingAverageMatchesRKLBExampleAndHistoricalCostWithoutChangingTransactions() throws {
         var first = Self.transaction(type: .buy, day: 1, quantity: 5)
         first.unitPrice = Decimal(string: "65.5")!
@@ -269,6 +664,29 @@ struct StockPortfolioEditorTests {
         #expect(stock.transactionsChronologically.map(\.id) == [first.id, second.id])
         #expect(stock.transactionsChronologically.map(\.dayOrder) == [0, 1])
         #expect(stock.transactionsChronologically.first?.unitPrice == 25)
+    }
+
+    @Test func legacyTransactionWithoutExecutionTimeDecodesAsUnknown() throws {
+        let json = #"{"id":"9E354B58-669A-4C65-A896-BD6474C2B98D","type":"buy","tradedAt":0,"quantity":1,"unitPrice":2,"fees":0}"#
+        let transaction = try JSONDecoder().decode(
+            StockTransaction.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(transaction.executedAt == nil)
+        #expect(transaction.quantity == 1)
+        #expect(transaction.unitPrice == 2)
+    }
+
+    @Test func savingConfirmedExecutionTimePreservesMinuteAndDropsSeconds() throws {
+        var transaction = Self.transaction(type: .buy, day: 1, quantity: 1)
+        transaction.executedAt = Self.date(day: 1).addingTimeInterval(10 * 3_600 + 23 * 60 + 47)
+
+        let stock = try #require(StockPortfolioEditor.upserting(transaction, in: StockHolding()))
+        let stored = try #require(stock.transactions.first)
+
+        #expect(stored.executedAt?.timeIntervalSince1970.truncatingRemainder(dividingBy: 60) == 0)
+        #expect(stored.tradedAt == StockTransaction.normalizedDate(transaction.tradedAt))
     }
 
     @Test func deletingBuyIsRejectedWhenItWouldInvalidateLaterSale() throws {

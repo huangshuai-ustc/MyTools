@@ -56,6 +56,305 @@ enum StockHoldingsCSVExport {
     }
 }
 
+/// Human-readable workbook export. The first worksheet is a lossless view of
+/// user-entered stock transactions and dividends; the second worksheet is a
+/// derived portfolio report. Keeping them separate prevents calculated values
+/// from being mistaken for ledger facts.
+enum StockHoldingsXLSXExport {
+    fileprivate enum Cell {
+        case text(String)
+        case number(Decimal)
+    }
+
+    static func data(
+        stocks: [StockHolding],
+        scope: StockHoldingsExportScope,
+        extendedHours: [UUID: StockExtendedHoursPerformance],
+        at date: Date
+    ) -> Data {
+        let included = includedStocks(stocks, scope: scope, at: date)
+        return SimpleXLSXWorkbook.data(sheets: [
+            ("原始记录", rawRows(stocks: included)),
+            ("持仓汇总", summaryRows(stocks: included, extendedHours: extendedHours, at: date))
+        ])
+    }
+
+    private static func includedStocks(
+        _ stocks: [StockHolding],
+        scope: StockHoldingsExportScope,
+        at date: Date
+    ) -> [StockHolding] {
+        stocks.filter { stock in
+            let performance = stock.performance(asOf: date)
+            return scope == .current ? performance.shares > 0 : performance.hasPurchaseRecord
+        }.sorted {
+            if $0.market.rawValue != $1.market.rawValue { return $0.market.rawValue < $1.market.rawValue }
+            if $0.symbol != $1.symbol { return $0.symbol < $1.symbol }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
+    private static func rawRows(stocks: [StockHolding]) -> [[Cell]] {
+        var rows: [[Cell]] = [[
+            .text("记录类型"), .text("市场"), .text("股票代码"), .text("名称"),
+            .text("记录ID"), .text("业务日期"), .text("成交时间（市场当地）"),
+            .text("同日顺序"), .text("交易方向"),
+            .text("交易股数"), .text("每股价格"), .text("交易费用"), .text("分红股数"),
+            .text("每股股息"), .text("分红总额"), .text("预扣税"), .text("分红费用"), .text("备注")
+        ]]
+        let formatter = businessDateFormatter()
+        for stock in stocks {
+            for transaction in stock.transactionsChronologically {
+                rows.append([
+                    .text("交易"), .text(stock.market.title), .text(stock.symbol), .text(stock.name),
+                    .text(transaction.id.uuidString), .text(formatter.string(from: transaction.tradedAt)),
+                    .text(transaction.executedAt.map {
+                        executionTimeFormatter(for: stock.market).string(from: $0)
+                    } ?? ""),
+                    transaction.dayOrder.map { .number(Decimal($0)) } ?? .text(""), .text(transaction.type.title),
+                    .number(transaction.quantity), .number(transaction.unitPrice), .number(transaction.fees),
+                    .text(""), .text(""), .text(""), .text(""), .text(""), .text("")
+                ])
+            }
+            for dividend in stock.dividends.sorted(by: {
+                if $0.receivedAt != $1.receivedAt { return $0.receivedAt < $1.receivedAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }) {
+                rows.append([
+                    .text("分红"), .text(stock.market.title), .text(stock.symbol), .text(stock.name),
+                    .text(dividend.id.uuidString), .text(formatter.string(from: dividend.receivedAt)),
+                    .text(""), .text(""), .text(""), .text(""), .text(""), .text(""),
+                    .number(dividend.quantity), .number(dividend.dividendPerShare), .number(dividend.grossAmount),
+                    .number(dividend.withholdingTax), .number(dividend.fees), .text(dividend.note)
+                ])
+            }
+        }
+        return rows
+    }
+
+    private static func summaryRows(
+        stocks: [StockHolding],
+        extendedHours: [UUID: StockExtendedHoursPerformance],
+        at date: Date
+    ) -> [[Cell]] {
+        var rows: [[Cell]] = [[
+            .text("市场"), .text("股票代码"), .text("名称"), .text("状态"), .text("币种"),
+            .text("持仓股数"), .text("持仓成本"), .text("单股成本"), .text("最新价"), .text("报价时段"),
+            .text("持仓市值"), .text("当日盈亏"), .text("持仓盈亏"), .text("持仓盈亏率(%)"),
+            .text("累计买入成本"), .text("已实现交易收益"), .text("净分红"),
+            .text("已实现收益(含分红)"), .text("累计总收益"), .text("常规报价时间"),
+            .text("导出时间"), .text("成本算法")
+        ]]
+        let timestamp = ISO8601DateFormatter()
+        func optionalNumber(_ value: Decimal?) -> Cell { value.map(Cell.number) ?? .text("") }
+        for stock in stocks {
+            let performance = stock.performance(asOf: date)
+            let quote = StockActiveQuote.make(stock: stock, extendedHours: extendedHours[stock.id], at: date)
+            let valuation = StockHoldingValuation(stock: stock, quote: quote, performance: performance)
+            let rate = performance.holdingCost > 0
+                ? valuation.holdingProfitLoss.map { $0 / performance.holdingCost * 100 }
+                : nil
+            rows.append([
+                .text(stock.market.title), .text(stock.symbol), .text(stock.displayName),
+                .text(performance.shares > 0 ? "持有" : stock.archivedAt != nil ? "已存档" : "已清仓"),
+                .text(stock.market.currencyCode), .number(performance.shares), .number(performance.holdingCost),
+                optionalNumber(performance.averageHoldingCost), optionalNumber(quote.price), .text(quote.sessionTitle),
+                optionalNumber(valuation.marketValue), optionalNumber(valuation.todayProfitLoss),
+                optionalNumber(valuation.holdingProfitLoss), optionalNumber(rate), .number(performance.totalBuyCost),
+                .number(performance.realizedTradeProfitLoss), .number(performance.netDividendIncome),
+                .number(performance.realizedProfitLoss),
+                optionalNumber(valuation.holdingProfitLoss.map { $0 + performance.realizedProfitLoss }),
+                .text(stock.lastQuoteAt.map(timestamp.string(from:)) ?? ""), .text(timestamp.string(from: date)),
+                .text("移动加权平均")
+            ])
+        }
+        return rows
+    }
+
+    private static func businessDateFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }
+
+    private static func executionTimeFormatter(for market: StockMarket) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = StockChartSeriesProcessor.marketCalendar(market)
+        formatter.timeZone = formatter.calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }
+}
+
+/// Minimal dependency-free XLSX writer using inline strings and stored ZIP
+/// entries. It intentionally implements only the workbook features required by
+/// the read-only stock export.
+private enum SimpleXLSXWorkbook {
+    typealias Cell = StockHoldingsXLSXExport.Cell
+
+    static func data(sheets: [(name: String, rows: [[Cell]])]) -> Data {
+        var entries: [(String, Data)] = [
+            ("[Content_Types].xml", utf8(contentTypes(sheetCount: sheets.count))),
+            ("_rels/.rels", utf8(packageRelationships)),
+            ("xl/workbook.xml", utf8(workbook(sheets: sheets))),
+            ("xl/_rels/workbook.xml.rels", utf8(workbookRelationships(sheetCount: sheets.count))),
+            ("xl/styles.xml", utf8(styles))
+        ]
+        for (index, sheet) in sheets.enumerated() {
+            entries.append(("xl/worksheets/sheet\(index + 1).xml", utf8(worksheet(rows: sheet.rows))))
+        }
+        return zip(entries)
+    }
+
+    private static func worksheet(rows: [[Cell]]) -> String {
+        let maximumColumns = rows.map(\.count).max() ?? 1
+        let finalReference = "\(columnName(maximumColumns))\(max(rows.count, 1))"
+        let body = rows.enumerated().map { rowIndex, row in
+            let cells = row.enumerated().map { columnIndex, cell in
+                let reference = "\(columnName(columnIndex + 1))\(rowIndex + 1)"
+                let style = rowIndex == 0 ? " s=\"1\"" : ""
+                switch cell {
+                case .text(let value):
+                    return "<c r=\"\(reference)\" t=\"inlineStr\"\(style)><is><t xml:space=\"preserve\">\(xml(value))</t></is></c>"
+                case .number(let value):
+                    return "<c r=\"\(reference)\"\(style)><v>\(NSDecimalNumber(decimal: value).stringValue)</v></c>"
+                }
+            }.joined()
+            return "<row r=\"\(rowIndex + 1)\">\(cells)</row>"
+        }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+          <dimension ref="A1:\(finalReference)"/>
+          <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+          <sheetFormatPr defaultRowHeight="15"/>
+          <sheetData>\(body)</sheetData>
+          <autoFilter ref="A1:\(finalReference)"/>
+        </worksheet>
+        """
+    }
+
+    private static func workbook(sheets: [(name: String, rows: [[Cell]])]) -> String {
+        let nodes = sheets.enumerated().map { index, sheet in
+            "<sheet name=\"\(xml(sheet.name))\" sheetId=\"\(index + 1)\" r:id=\"rId\(index + 1)\"/>"
+        }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>\(nodes)</sheets></workbook>
+        """
+    }
+
+    private static func contentTypes(sheetCount: Int) -> String {
+        let sheets = (1...sheetCount).map {
+            "<Override PartName=\"/xl/worksheets/sheet\($0).xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+        }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>\(sheets)</Types>
+        """
+    }
+
+    private static func workbookRelationships(sheetCount: Int) -> String {
+        let sheets = (1...sheetCount).map {
+            "<Relationship Id=\"rId\($0)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet\($0).xml\"/>"
+        }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\(sheets)<Relationship Id="rId\(sheetCount + 1)" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>
+        """
+    }
+
+    private static let packageRelationships = """
+    <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>
+    """
+
+    private static let styles = """
+    <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Aptos"/></font><font><b/><sz val="11"/><name val="Aptos"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>
+    """
+
+    private static func columnName(_ index: Int) -> String {
+        var value = index
+        var result = ""
+        while value > 0 {
+            value -= 1
+            result = String(UnicodeScalar(65 + value % 26)!) + result
+            value /= 26
+        }
+        return result
+    }
+
+    private static func xml(_ value: String) -> String {
+        let valid = value.unicodeScalars.filter {
+            $0.value == 0x9 || $0.value == 0xA || $0.value == 0xD
+                || (0x20...0xD7FF).contains($0.value)
+                || (0xE000...0xFFFD).contains($0.value)
+                || (0x10000...0x10FFFF).contains($0.value)
+        }
+        return String(String.UnicodeScalarView(valid))
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
+
+    private static func utf8(_ value: String) -> Data { Data(value.utf8) }
+
+    private static func zip(_ entries: [(String, Data)]) -> Data {
+        var localHeaders = Data()
+        var centralHeaders = Data()
+        for (name, contents) in entries {
+            let nameData = Data(name.utf8)
+            let checksum = crc32(contents)
+            let offset = UInt32(localHeaders.count)
+            var local = Data()
+            local += littleEndian(UInt32(0x04034B50)); local += littleEndian(UInt16(20))
+            local += littleEndian(UInt16(0x0800)); local += littleEndian(UInt16(0))
+            local += littleEndian(UInt16(0)); local += littleEndian(UInt16(0)); local += littleEndian(checksum)
+            local += littleEndian(UInt32(contents.count)); local += littleEndian(UInt32(contents.count))
+            local += littleEndian(UInt16(nameData.count)); local += littleEndian(UInt16(0)); local += nameData; local += contents
+            localHeaders += local
+
+            var central = Data()
+            central += littleEndian(UInt32(0x02014B50)); central += littleEndian(UInt16(20)); central += littleEndian(UInt16(20))
+            central += littleEndian(UInt16(0x0800)); central += littleEndian(UInt16(0)); central += littleEndian(UInt16(0)); central += littleEndian(UInt16(0))
+            central += littleEndian(checksum); central += littleEndian(UInt32(contents.count)); central += littleEndian(UInt32(contents.count))
+            central += littleEndian(UInt16(nameData.count)); central += littleEndian(UInt16(0)); central += littleEndian(UInt16(0))
+            central += littleEndian(UInt16(0)); central += littleEndian(UInt16(0)); central += littleEndian(UInt32(0)); central += littleEndian(offset); central += nameData
+            centralHeaders += central
+        }
+        var end = Data()
+        end += littleEndian(UInt32(0x06054B50)); end += littleEndian(UInt16(0)); end += littleEndian(UInt16(0))
+        end += littleEndian(UInt16(entries.count)); end += littleEndian(UInt16(entries.count))
+        end += littleEndian(UInt32(centralHeaders.count)); end += littleEndian(UInt32(localHeaders.count)); end += littleEndian(UInt16(0))
+        return localHeaders + centralHeaders + end
+    }
+
+    private static func crc32(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFFFFFF
+        for byte in data {
+            var value = UInt32(byte) ^ (crc & 0xFF)
+            for _ in 0..<8 { value = value & 1 == 1 ? (value >> 1) ^ 0xEDB88320 : value >> 1 }
+            crc = value ^ (crc >> 8)
+        }
+        return crc ^ 0xFFFFFFFF
+    }
+
+    private static func littleEndian(_ value: UInt16) -> Data {
+        Data([UInt8(value & 0xFF), UInt8(value >> 8)])
+    }
+
+    private static func littleEndian(_ value: UInt32) -> Data {
+        Data([UInt8(value & 0xFF), UInt8((value >> 8) & 0xFF), UInt8((value >> 16) & 0xFF), UInt8(value >> 24)])
+    }
+}
+
 /// A quote tick does not change the transaction ledger. Cache only the replay;
 /// valuation remains cheap and uses the current quote and session.
 struct StockPerformanceCache {

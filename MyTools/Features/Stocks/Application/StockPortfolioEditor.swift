@@ -89,6 +89,9 @@ enum StockPortfolioEditor {
 
         var storedTransaction = transaction
         storedTransaction.tradedAt = StockTransaction.normalizedDate(transaction.tradedAt)
+        storedTransaction.executedAt = transaction.executedAt.map(
+            StockTransaction.normalizedExecutionInstant
+        )
         let staysOnSameDay = existingTransaction.map {
             StockTransaction.isSameDay($0.tradedAt, transaction.tradedAt)
         } ?? false

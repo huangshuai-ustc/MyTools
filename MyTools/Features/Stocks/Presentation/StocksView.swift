@@ -49,7 +49,7 @@ struct StockDetailRoute: Hashable {
 
 /// 股票投资首页容器。
 ///
-/// 页面本身只做三件事：用系统 `TabView` 在持仓页与看盘页之间切换、组合筛选结果、
+/// 页面本身只做三件事：用系统 `TabView` 在持仓与看盘页之间切换、组合筛选结果、
 /// 持有全部导航与生命周期钩子。底部栏交给 `TabView` + `Tab` 由系统绘制，和「合伙
 /// 记账」一致，这样 iOS 26 的 Liquid Glass 标签栏样式、macOS 的顶部标签样式都不用
 /// 自己维护。`navigationTitle`、`.searchable`、`.refreshable`、`.toolbar`、
@@ -98,15 +98,14 @@ struct StocksView: View {
         return [.all] + marketFilters
     }
 
-    /// 一支持仓都没有时只剩看盘页，底部标签栏也就没必要出现。
+    /// 没有持仓时不构建持仓页，只保留看盘页。
     private var hasAnyPosition: Bool {
         configuredStocks.contains { $0.currentShares > 0 }
     }
 
-    /// 只有持仓页存在时 `selectedPage` 才有意义；否则一律按看盘页解释，工具栏才不会
-    /// 因为残留的选中值显示成持仓页的按钮。
+    /// 持仓页不存在时才把残留的 `.positions` 选中值折叠到看盘页。
     private var effectivePage: StocksHomePage {
-        hasAnyPosition ? selectedPage : .watchlist
+        !hasAnyPosition && selectedPage == .positions ? .watchlist : selectedPage
     }
 
     private var stocksInSelectedMarket: [StockHolding] {
@@ -272,19 +271,15 @@ struct StocksView: View {
 
     @ViewBuilder
     private var pages: some View {
-        if hasAnyPosition {
 #if os(iOS)
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                iPadPages
-            } else {
-                stockTabView
-            }
-#else
-            stockTabView
-#endif
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            iPadPages
         } else {
-            watchlistPage
+            stockTabView
         }
+#else
+        stockTabView
+#endif
     }
 
 #if os(iOS)
@@ -301,7 +296,7 @@ struct StocksView: View {
     }
 
     private var stockTabItems: [AppInternalTabItem<StocksHomePage>] {
-        StocksHomePage.allCases.map { page in
+        StocksHomePage.allCases.filter { hasAnyPosition || $0 != .positions }.map { page in
             AppInternalTabItem(page, title: page.title, systemImage: page.systemImage)
         }
     }
@@ -309,12 +304,14 @@ struct StocksView: View {
 
     private var stockTabView: some View {
         TabView(selection: $selectedPage) {
-            Tab(
-                StocksHomePage.positions.title,
-                systemImage: StocksHomePage.positions.systemImage,
-                value: StocksHomePage.positions
-            ) {
-                positionsPage
+            if hasAnyPosition {
+                Tab(
+                    StocksHomePage.positions.title,
+                    systemImage: StocksHomePage.positions.systemImage,
+                    value: StocksHomePage.positions
+                ) {
+                    positionsPage
+                }
             }
             Tab(
                 StocksHomePage.watchlist.title,
@@ -362,9 +359,7 @@ struct StocksView: View {
                     .help(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
                 }
                 Button {
-                    Task {
-                        await refreshFocusedPage()
-                    }
+                    Task { await refreshFocusedPage() }
                 } label: {
                     if store.isRefreshingQuotes || store.isRefreshingCharts {
                         ProgressView()
@@ -379,7 +374,9 @@ struct StocksView: View {
                 )
                 .accessibilityLabel("刷新股票行情")
 
-                Button { editingStock = StockHolding() } label: {
+                Button {
+                    editingStock = StockHolding()
+                } label: {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("添加股票")
@@ -411,6 +408,7 @@ struct StocksView: View {
             }
         }
         .onAppear {
+            if !hasAnyPosition && selectedPage == .positions { selectedPage = .watchlist }
             isStocksScreenVisible = true
             updateRefreshRegistration()
             autoSelectMarketIfNeeded()

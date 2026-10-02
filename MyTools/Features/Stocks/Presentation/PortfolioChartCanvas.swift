@@ -10,6 +10,246 @@ enum PortfolioChartStyle: String, CaseIterable, Identifiable {
     var title: String { self == .line ? "折线" : "K 线" }
 }
 
+/// 持仓五日图的横轴独立于 K 线自然刻度。它只按真实交易日分组，生成
+/// `交易日数量 + 1` 条边界，并把日期放在各交易日区间中央；回退该行为时
+/// 只需要替换这一处，不会影响日 K 及以上周期。
+enum PortfolioFiveDayXAxis {
+    static func layout(
+        dates: [Date],
+        calendar: Calendar
+    ) -> PortfolioChartXAxis.Layout {
+        guard !dates.isEmpty else {
+            return .init(
+                gridValues: [],
+                labelValues: [],
+                labelTexts: [:],
+                centersLabelsInIntervals: true
+            )
+        }
+        let dayExtents = groupedDayExtents(dates: dates, calendar: calendar)
+        let centers = dayExtents.map { (Double($0.first) + Double($0.last)) / 2 }
+        let boundaries: [Double]
+        if centers.count > 1 {
+            boundaries = [Double(dayExtents[0].first)]
+                + zip(centers, centers.dropFirst()).map { ($0 + $1) / 2 }
+                + [Double(dayExtents[dayExtents.count - 1].last)]
+        } else {
+            boundaries = [Double(dayExtents[0].first) - 0.5, Double(dayExtents[0].last) + 0.5]
+        }
+        let texts = Dictionary(uniqueKeysWithValues: zip(boundaries, dayExtents).map { boundary, extent in
+            let middleIndex = (extent.first + extent.last) / 2
+            return (
+                boundary,
+                PortfolioChartXAxis.label(
+                    for: dates[middleIndex],
+                    range: .fiveDays,
+                    calendar: calendar
+                )
+            )
+        })
+        return .init(
+            gridValues: boundaries,
+            labelValues: boundaries,
+            labelTexts: texts,
+            centersLabelsInIntervals: true
+        )
+    }
+
+    private static func groupedDayExtents(
+        dates: [Date],
+        calendar: Calendar
+    ) -> [(first: Int, last: Int)] {
+        var order: [Date] = []
+        var extents: [Date: (first: Int, last: Int)] = [:]
+        for index in dates.indices {
+            let day = calendar.startOfDay(for: dates[index])
+            if var extent = extents[day] {
+                extent.last = index
+                extents[day] = extent
+            } else {
+                order.append(day)
+                extents[day] = (index, index)
+            }
+        }
+        return order.compactMap { extents[$0] }
+    }
+}
+
+enum PortfolioChartXAxis {
+    struct Layout {
+        let gridValues: [Double]
+        let labelValues: [Double]
+        let labelTexts: [Double: String]
+        let centersLabelsInIntervals: Bool
+    }
+
+    /// Five-day charts need six grid marks to divide the plot into five equal
+    /// time intervals. Other ranges retain the existing five-mark layout.
+    static func values(pointCount: Int, range: StockChartRange) -> [Double] {
+        guard pointCount > 0 else { return [] }
+        let maximumMarkCount = range == .fiveDays ? 6 : 5
+        let markCount = min(maximumMarkCount, pointCount)
+        guard markCount > 1 else { return [0] }
+        return (0..<markCount).map {
+            Double($0) * Double(pointCount - 1) / Double(markCount - 1)
+        }
+    }
+
+    /// Five-day labels keep all six boundary values. Charts uses each following
+    /// boundary to center the preceding label inside its interval; the final
+    /// boundary is retained as an anchor but does not display text.
+    static func labelValues(pointCount: Int, range: StockChartRange) -> [Double] {
+        let gridValues = values(pointCount: pointCount, range: range)
+        guard range == .fiveDays else { return gridValues }
+        return gridValues
+    }
+
+    static func gridValues(
+        dates: [Date],
+        range: StockChartRange,
+        calendar: Calendar
+    ) -> [Double] {
+        layout(dates: dates, range: range, calendar: calendar).gridValues
+    }
+
+    static func labelValues(
+        dates: [Date],
+        range: StockChartRange,
+        calendar: Calendar
+    ) -> [Double] {
+        layout(dates: dates, range: range, calendar: calendar).labelValues
+    }
+
+    static func layout(
+        dates: [Date],
+        range: StockChartRange,
+        calendar: Calendar,
+        maximumTickCount: Int = 5
+    ) -> Layout {
+        guard !dates.isEmpty else {
+            return Layout(gridValues: [], labelValues: [], labelTexts: [:], centersLabelsInIntervals: false)
+        }
+        if range == .fiveDays {
+            return PortfolioFiveDayXAxis.layout(dates: dates, calendar: calendar)
+        }
+
+        let tickIndices: [(Int, String)]
+        switch range {
+        case .weekK, .monthK:
+            tickIndices = monthlyTicks(
+                dates: dates,
+                calendar: calendar,
+                maximumCount: maximumTickCount
+            )
+        case .quarterK, .yearK:
+            let years = uniqueFirstIndices(dates: dates) {
+                calendar.component(.year, from: $0)
+            }
+            tickIndices = sampled(years, maximumCount: maximumTickCount).map {
+                ($0, String(calendar.component(.year, from: dates[$0])))
+            }
+        case .intraday, .dayK:
+            tickIndices = values(pointCount: dates.count, range: range).map { value in
+                let index = min(max(Int(value.rounded()), 0), dates.count - 1)
+                return (index, label(for: dates[index], range: range, calendar: calendar))
+            }
+        case .fiveDays:
+            tickIndices = []
+        }
+        let pairs = tickIndices.map { (Double($0.0), $0.1) }
+        let tickValues = pairs.map(\.0)
+        return Layout(
+            gridValues: tickValues,
+            labelValues: tickValues,
+            labelTexts: Dictionary(uniqueKeysWithValues: pairs),
+            centersLabelsInIntervals: false
+        )
+    }
+
+    static func label(for date: Date, range: StockChartRange, calendar: Calendar) -> String {
+        if range == .quarterK {
+            let quarter = (calendar.component(.month, from: date) - 1) / 3 + 1
+            return "Q\(quarter)"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = calendar.timeZone
+        switch range {
+        case .intraday:
+            formatter.dateFormat = "MM-dd HH:mm"
+        case .fiveDays, .dayK:
+            formatter.dateFormat = "MM-dd"
+        case .weekK, .monthK:
+            formatter.dateFormat = "M月"
+        case .yearK:
+            formatter.dateFormat = "yyyy"
+        case .quarterK:
+            return ""
+        }
+        return formatter.string(from: date)
+    }
+
+    private static func monthlyTicks(
+        dates: [Date],
+        calendar: Calendar,
+        maximumCount: Int
+    ) -> [(Int, String)] {
+        let months = uniqueFirstIndices(dates: dates) { date in
+            let components = calendar.dateComponents([.year, .month], from: date)
+            return "\(components.year ?? 0)-\(components.month ?? 0)"
+        }
+        let spansMultipleYears = Set(months.map {
+            calendar.component(.year, from: dates[$0])
+        }).count > 1
+        for step in [1, 2, 3, 6, 12] {
+            let selected = months.filter { index in
+                let components = calendar.dateComponents([.year, .month], from: dates[index])
+                let ordinal = (components.year ?? 0) * 12 + (components.month ?? 1) - 1
+                return ordinal.isMultiple(of: step)
+            }
+            if !selected.isEmpty, selected.count <= maximumCount {
+                return selected.map { index in
+                    let year = calendar.component(.year, from: dates[index])
+                    let month = calendar.component(.month, from: dates[index])
+                    let text: String
+                    if step == 12 || month == 1 {
+                        text = String(year)
+                    } else if spansMultipleYears {
+                        text = String(format: "%02d-%02d", year % 100, month)
+                    } else {
+                        text = "\(month)月"
+                    }
+                    return (index, text)
+                }
+            }
+        }
+        let years = uniqueFirstIndices(dates: dates) {
+            calendar.component(.year, from: $0)
+        }
+        return sampled(years, maximumCount: maximumCount).map {
+            ($0, String(calendar.component(.year, from: dates[$0])))
+        }
+    }
+
+    private static func uniqueFirstIndices<Key: Hashable>(
+        dates: [Date],
+        key: (Date) -> Key
+    ) -> [Int] {
+        var seen = Set<Key>()
+        return dates.indices.filter { seen.insert(key(dates[$0])).inserted }
+    }
+
+    private static func sampled<T>(_ values: [T], maximumCount: Int) -> [T] {
+        guard values.count > maximumCount, maximumCount > 1 else { return values }
+        let finalIndex = values.count - 1
+        let indices = Set((0..<maximumCount).map { position in
+            Int((Double(position) * Double(finalIndex) / Double(maximumCount - 1)).rounded())
+        })
+        return indices.sorted().map { values[$0] }
+    }
+
+}
+
 private struct PortfolioChartPoint: Identifiable {
     let seriesID: String
     let seriesLabel: String
@@ -60,10 +300,52 @@ private struct PortfolioCostBasisSegment: Identifiable {
     let seriesID: String
     let cost: Double
     let points: [PortfolioCostBasisChartPoint]
-    /// 标签挂在水平段的中点，而不是端点：挂端点时最左边那段会贴着绘图区边缘，
-    /// 标签被裁掉一半。
-    let labelX: Double
     var id: String { "\(seriesID)-\(points.first?.id ?? "")-\(cost)" }
+}
+
+struct PortfolioCostLabelInput: Equatable {
+    let id: String
+    let seriesID: String
+    let cost: Double
+    let startX: Double
+    let endX: Double
+}
+
+struct PortfolioCostLabel: Identifiable, Equatable {
+    let id: String
+    let cost: Double
+    let text: String
+    let x: Double
+}
+
+/// Labels are presentation values, so consecutive cost runs that format to the
+/// same text form one visual run. The underlying cost line remains untouched.
+enum PortfolioCostLabelLayout {
+    static func merged(
+        _ inputs: [PortfolioCostLabelInput],
+        formatter: (Double) -> String
+    ) -> [PortfolioCostLabel] {
+        var groups: [[(input: PortfolioCostLabelInput, text: String)]] = []
+        for input in inputs {
+            let element = (input, formatter(input.cost))
+            if let last = groups.last?.last,
+               last.input.seriesID == input.seriesID,
+               last.text == element.1 {
+                groups[groups.count - 1].append(element)
+            } else {
+                groups.append([element])
+            }
+        }
+        return groups.compactMap { group in
+            guard let first = group.first, let last = group.last else { return nil }
+            return PortfolioCostLabel(
+                id: first.input.id,
+                cost: first.input.cost,
+                text: first.text,
+                x: (first.input.startX + last.input.endX) / 2
+            )
+        }
+    }
 }
 
 private struct PortfolioChartData {
@@ -78,7 +360,6 @@ private struct PortfolioChartData {
     let profitPercents: [Double]
     let profitSegments: [PortfolioProfitSegment]
     let costBasisSegments: [PortfolioCostBasisSegment]
-    let totalCostBasis: Double?
     let costLookupBySeries: [String: (Date) -> Decimal?]
 
     init() {
@@ -93,7 +374,6 @@ private struct PortfolioChartData {
         profitPercents = []
         profitSegments = []
         costBasisSegments = []
-        totalCostBasis = nil
         costLookupBySeries = [:]
     }
 
@@ -140,16 +420,10 @@ private struct PortfolioChartData {
         self.renderedPoints = displayPoints
         self.renderedCandles = candlePoints
         self.dates = orderedDates
-        let costBasisSegments: [PortfolioCostBasisSegment] = range == .intraday ? [] : series.flatMap { item in
+        let costBasisSegments: [PortfolioCostBasisSegment] = series.flatMap { item in
             Self.costBasisSegment(for: item, range: range, xByDate: xByDate)
         }
         self.costBasisSegments = costBasisSegments
-        let totalCostBasis: Double? = {
-            let costs = series.compactMap(\.costBasis)
-            guard !costs.isEmpty else { return nil }
-            return NSDecimalNumber(decimal: costs.reduce(Decimal.zero, +)).doubleValue
-        }()
-        self.totalCostBasis = totalCostBasis
         self.values = allPoints.flatMap {
             [$0.low, $0.high].map { NSDecimalNumber(decimal: $0).doubleValue }
         }
@@ -263,7 +537,7 @@ private struct PortfolioChartData {
         guard !sortedDates.isEmpty else { return [] }
         let lookup = costLookup(for: item.costBasisPoints)
         var datesToRender = sortedDates
-        if range == .fiveDays {
+        if range.isMinuteRange {
             // Cost changes are transaction events, not market-day events. Keep
             // the first visible point, every actual cost transition, and the
             // final visible point. This places an add-on at its true minute
@@ -287,13 +561,12 @@ private struct PortfolioChartData {
             return PortfolioCostBasisChartPoint(date: date, cost: NSDecimalNumber(decimal: cost).doubleValue, x: x)
         }
         guard !chartPoints.isEmpty else { return [] }
-        guard range == .fiveDays else {
+        guard range.isMinuteRange else {
             return [
                 PortfolioCostBasisSegment(
                     seriesID: item.id,
                     cost: chartPoints.last?.cost ?? 0,
-                    points: chartPoints,
-                    labelX: chartPoints.last?.x ?? 0
+                    points: chartPoints
                 )
             ]
         }
@@ -310,7 +583,7 @@ private struct PortfolioChartData {
         }
         return levels.indices.compactMap { index in
             let level = levels[index]
-            guard let first = level.first, let last = level.last else { return nil }
+            guard let first = level.first else { return nil }
             // 水平段右端延到下一段的起点，并把下一段的首点接在后面，`.stepEnd`
             // 就能在那个 x 上画出竖直跳变；标签仍用本段自己的高度。
             let next = index + 1 < levels.count ? levels[index + 1].first : nil
@@ -318,8 +591,7 @@ private struct PortfolioChartData {
             return PortfolioCostBasisSegment(
                 seriesID: item.id,
                 cost: first.cost,
-                points: points,
-                labelX: ((next?.x ?? last.x) + first.x) / 2
+                points: points
             )
         }
     }
@@ -492,45 +764,55 @@ struct PortfolioChartCanvas: View {
     }
 
     var body: some View {
+        // These values only depend on the prepared chart data. Snapshot them
+        // once per body evaluation: asking for `yDomain` from every cost-basis
+        // mark used to rescan the complete value array for every rendered
+        // point, and the two axes rebuilt the same calendar layout repeatedly.
+        let resolvedYDomain = yDomain
+        let resolvedXAxisLayout = xAxisLayout
+        let resolvedProfitYDomain = profitYDomain
+        let costLabels = fiveDayCostLabels
         VStack(alignment: .leading, spacing: 0) {
             selectionSummary
                 .frame(height: 68, alignment: .topLeading)
             Chart {
-                if range == .intraday, let costBasis = data.totalCostBasis {
-                    let displayedCost = StockChartPresentation.clampedReferencePrice(costBasis, to: yDomain)
-                    RuleMark(y: .value("成本", displayedCost))
+                ForEach(data.costBasisSegments) { segment in
+                    ForEach(segment.points) { point in
+                        LineMark(
+                            x: .value("行情序号", point.x),
+                            y: .value("成本", clampedCost(point.cost, to: resolvedYDomain)),
+                            series: .value("成本系列", segment.id)
+                        )
                         .foregroundStyle(.blue.opacity(0.35))
+                        .interpolationMethod(range == .dayK ? .linear : .stepEnd)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        .annotation(position: .top, alignment: .trailing, spacing: 2) {
-                            Text("成本 \(yLabel(costBasis))")
-                                .appFont(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                } else {
-                    ForEach(data.costBasisSegments) { segment in
-                        ForEach(segment.points) { point in
-                            LineMark(
-                                x: .value("行情序号", point.x),
-                                y: .value("成本", clampedCost(point.cost)),
-                                series: .value("成本系列", segment.id)
-                            )
-                            .foregroundStyle(.blue.opacity(0.35))
-                            .interpolationMethod(range == .dayK ? .linear : .stepEnd)
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        }
-                        if range == .fiveDays {
-                            PointMark(
-                                x: .value("行情序号", segment.labelX),
-                                y: .value("成本", clampedCost(segment.cost))
-                            )
-                                .foregroundStyle(.blue.opacity(0.35))
-                                .symbolSize(1)
-                                .annotation(position: .top, alignment: .center, spacing: 2) {
-                                    Text(yLabel(segment.cost))
-                                        .appFont(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                        }
+                    }
+                }
+                ForEach(costLabels) { label in
+                    PointMark(
+                        x: .value("行情序号", label.x),
+                        y: .value("成本", clampedCost(label.cost, to: resolvedYDomain))
+                    )
+                    .foregroundStyle(.blue.opacity(0.35))
+                    .symbolSize(1)
+                    .annotation(position: .top, alignment: .center, spacing: 2) {
+                        Text(label.text)
+                            .appFont(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if range == .intraday, let segment = data.costBasisSegments.last,
+                   let finalPoint = segment.points.last {
+                    PointMark(
+                        x: .value("行情序号", finalPoint.x),
+                        y: .value("成本", clampedCost(segment.cost, to: resolvedYDomain))
+                    )
+                    .foregroundStyle(.blue.opacity(0.35))
+                    .symbolSize(1)
+                    .annotation(position: .top, alignment: .trailing, spacing: 2) {
+                        Text("成本 \(yLabel(segment.cost))")
+                            .appFont(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -566,23 +848,26 @@ struct PortfolioChartCanvas: View {
                         .foregroundStyle(candleColor(point))
                     }
                 }
-                if let selectedDate, let nearest = nearestPoint(to: selectedDate) {
-                    RuleMark(x: .value("所选日期", nearest.x))
-                        .foregroundStyle(.secondary.opacity(0.55))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    PointMark(x: .value("所选日期", nearest.x), y: .value("持仓价值", decimalDouble(nearest.value)))
-                        .foregroundStyle(seriesColor(for: nearest.seriesID))
-                        .symbolSize(55)
-                }
             }
             .chartXScale(domain: chartXDomain)
-            .chartYScale(domain: yDomain)
+            .chartYScale(domain: resolvedYDomain)
             .chartLegend(.hidden)
             .chartXAxis {
-                AxisMarks(values: axisValues) { value in
+                AxisMarks(values: resolvedXAxisLayout.gridValues) { _ in
                     AxisGridLine()
-                    if let x = value.as(Double.self) {
-                        AxisValueLabel { Text(axisLabel(at: x)).appFont(.caption2) }
+                }
+                AxisMarks(values: resolvedXAxisLayout.labelValues) { value in
+                    if let x = value.as(Double.self),
+                       let text = resolvedXAxisLayout.labelTexts[x] {
+                        if resolvedXAxisLayout.centersLabelsInIntervals {
+                            AxisValueLabel(centered: true, collisionResolution: .disabled) {
+                                Text(text).appFont(.caption2)
+                            }
+                        } else {
+                            AxisValueLabel(collisionResolution: .greedy) {
+                                Text(text).appFont(.caption2)
+                            }
+                        }
                     }
                 }
             }
@@ -594,28 +879,36 @@ struct PortfolioChartCanvas: View {
             }
             .chartOverlay { proxy in
                 GeometryReader { geometry in
-                    Rectangle().fill(.clear).contentShape(Rectangle())
+                    ZStack {
+                        if let selectedDate, let nearest = nearestPoint(to: selectedDate) {
+                            selectionOverlay(
+                                proxy: proxy,
+                                geometry: geometry,
+                                x: nearest.x,
+                                y: decimalDouble(nearest.value),
+                                color: seriesColor(for: nearest.seriesID)
+                            )
+                        }
+                        Rectangle().fill(.clear).contentShape(Rectangle())
                         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                             guard let frame = proxy.plotFrame else { return }
                             let rect = geometry[frame]
                             let x = value.location.x - rect.minX
                             if let plotX: Double = proxy.value(atX: x) {
-                                let index = min(max(Int(plotX.rounded()), 0), data.dates.count - 1)
-                                let now = Date.timeIntervalSinceReferenceDate
-                                if data.dates.indices.contains(index), selectedDate != data.dates[index],
-                                   now - lastSelectionUpdateTime >= (1.0 / 30.0) {
-                                    lastSelectionUpdateTime = now
-                                    selectedDate = data.dates[index]
-                                }
+                                updateSelection(plotX: plotX)
                             }
                         })
+                    }
                 }
             }
             .frame(height: 280)
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             if hasProfitData {
-                profitChart
+                profitChart(
+                    xAxisLayout: resolvedXAxisLayout,
+                    yDomain: resolvedProfitYDomain
+                )
                     .frame(height: 110)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
@@ -674,8 +967,8 @@ struct PortfolioChartCanvas: View {
         return (low - pad)...(high + pad)
     }
 
-    private func clampedCost(_ cost: Double) -> Double {
-        min(max(cost, yDomain.lowerBound), yDomain.upperBound)
+    private func clampedCost(_ cost: Double, to domain: ClosedRange<Double>) -> Double {
+        min(max(cost, domain.lowerBound), domain.upperBound)
     }
 
     private var hasProfitData: Bool { !data.renderedProfitPoints.isEmpty }
@@ -691,7 +984,10 @@ struct PortfolioChartCanvas: View {
         return (low - pad)...(high + pad)
     }
 
-    private var profitChart: some View {
+    private func profitChart(
+        xAxisLayout: PortfolioChartXAxis.Layout,
+        yDomain: ClosedRange<Double>
+    ) -> some View {
         Chart {
             ForEach(data.profitSegments) { segment in
                 ForEach(segment.points) { point in
@@ -705,23 +1001,26 @@ struct PortfolioChartCanvas: View {
                     .lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
                 }
             }
-            if let selectedDate, let nearest = nearestProfitPoint(to: selectedDate) {
-                RuleMark(x: .value("所选日期", nearest.x))
-                    .foregroundStyle(.secondary.opacity(0.55))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                PointMark(x: .value("所选日期", nearest.x), y: .value("盈利比例", nearest.percent))
-                    .foregroundStyle(seriesColor(for: nearest.seriesID))
-                    .symbolSize(55)
-            }
         }
         .chartXScale(domain: chartXDomain)
-        .chartYScale(domain: profitYDomain)
+        .chartYScale(domain: yDomain)
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks(values: axisValues) { value in
+            AxisMarks(values: xAxisLayout.gridValues) { _ in
                 AxisGridLine()
-                if let x = value.as(Double.self) {
-                    AxisValueLabel { Text(axisLabel(at: x)).appFont(.caption2) }
+            }
+            AxisMarks(values: xAxisLayout.labelValues) { value in
+                if let x = value.as(Double.self),
+                   let text = xAxisLayout.labelTexts[x] {
+                    if xAxisLayout.centersLabelsInIntervals {
+                        AxisValueLabel(centered: true, collisionResolution: .disabled) {
+                            Text(text).appFont(.caption2)
+                        }
+                    } else {
+                        AxisValueLabel(collisionResolution: .greedy) {
+                            Text(text).appFont(.caption2)
+                        }
+                    }
                 }
             }
         }
@@ -737,37 +1036,84 @@ struct PortfolioChartCanvas: View {
         }
         .chartOverlay { proxy in
             GeometryReader { geometry in
-                Rectangle().fill(.clear).contentShape(Rectangle())
+                ZStack {
+                    if let selectedDate, let nearest = nearestProfitPoint(to: selectedDate) {
+                        selectionOverlay(
+                            proxy: proxy,
+                            geometry: geometry,
+                            x: nearest.x,
+                            y: nearest.percent,
+                            color: seriesColor(for: nearest.seriesID)
+                        )
+                    }
+                    Rectangle().fill(.clear).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                         guard let frame = proxy.plotFrame else { return }
                         let rect = geometry[frame]
                         let x = value.location.x - rect.minX
                         if let plotX: Double = proxy.value(atX: x) {
-                            if let nearest = data.renderedProfitPoints.min(by: { abs($0.x - plotX) < abs($1.x - plotX) }), selectedDate != nearest.date {
-                                selectedDate = nearest.date
-                            }
+                            updateSelection(plotX: plotX)
                         }
                     })
+                }
             }
         }
     }
 
-    private var axisValues: [Double] {
-        guard !data.dates.isEmpty else { return [] }
-        let desiredCount = min(5, data.dates.count)
-        guard desiredCount > 1 else { return [0] }
-        return (0..<desiredCount).map {
-            Double($0) * Double(data.dates.count - 1) / Double(desiredCount - 1)
+    @ViewBuilder
+    private func selectionOverlay(
+        proxy: ChartProxy,
+        geometry: GeometryProxy,
+        x: Double,
+        y: Double,
+        color: Color
+    ) -> some View {
+        if let plotFrame = proxy.plotFrame,
+           let plotX = proxy.position(forX: x),
+           let plotY = proxy.position(forY: y) {
+            let frame = geometry[plotFrame]
+            let screenX = frame.minX + plotX
+            let screenY = frame.minY + plotY
+            Path { path in
+                path.move(to: CGPoint(x: screenX, y: frame.minY))
+                path.addLine(to: CGPoint(x: screenX, y: frame.maxY))
+            }
+            .stroke(.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+                .position(x: screenX, y: screenY)
         }
     }
-    private func axisLabel(at x: Double) -> String {
-        guard !data.dates.isEmpty else { return "" }
-        let index = min(max(Int(x.rounded()), 0), data.dates.count - 1)
-        let date = data.dates[index]
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = range.isMinuteRange ? "MM-dd HH:mm" : "yyyy-MM-dd"
-        return formatter.string(from: date)
+
+    private func updateSelection(plotX: Double) {
+        guard !data.dates.isEmpty else { return }
+        let index = min(max(Int(plotX.rounded()), 0), data.dates.count - 1)
+        let now = Date.timeIntervalSinceReferenceDate
+        guard data.dates.indices.contains(index),
+              selectedDate != data.dates[index],
+              now - lastSelectionUpdateTime >= (1.0 / 30.0) else { return }
+        lastSelectionUpdateTime = now
+        selectedDate = data.dates[index]
     }
+
+    private var xAxisLayout: PortfolioChartXAxis.Layout {
+        PortfolioChartXAxis.layout(
+            dates: data.dates,
+            range: range,
+            calendar: axisCalendar,
+            maximumTickCount: 5
+        )
+    }
+
+    private var axisCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        if let market = series.compactMap(\.market).first {
+            calendar.timeZone = StockChartSeriesProcessor.marketTimeZone(market)
+        }
+        return calendar
+    }
+
     private func nearestPoint(to date: Date) -> PortfolioChartPoint? {
         data.pointsBySeries.values.compactMap { nearestPoint(in: $0, to: date) }
             .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
@@ -849,6 +1195,21 @@ struct PortfolioChartCanvas: View {
         return "（成本 \(formatted(cost, currencyCode: currencyCode))，\(rateText)）"
     }
     private func yLabel(_ value: Double) -> String { abs(value) >= 10_000 ? String(format: "%.1f万", value / 10_000) : String(format: "%.0f", value) }
+
+    private var fiveDayCostLabels: [PortfolioCostLabel] {
+        guard range == .fiveDays else { return [] }
+        let inputs = data.costBasisSegments.compactMap { segment -> PortfolioCostLabelInput? in
+            guard let first = segment.points.first, let last = segment.points.last else { return nil }
+            return PortfolioCostLabelInput(
+                id: segment.id,
+                seriesID: segment.seriesID,
+                cost: segment.cost,
+                startX: first.x,
+                endX: last.x
+            )
+        }
+        return PortfolioCostLabelLayout.merged(inputs, formatter: yLabel)
+    }
 }
 
 #endif

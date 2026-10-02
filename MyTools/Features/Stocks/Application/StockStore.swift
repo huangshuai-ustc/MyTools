@@ -89,6 +89,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     }
 
     @Published private(set) var stocks: [StockHolding]
+    @Published private(set) var cashFlowRecords: [StockCashFlowRecord]
     @Published private(set) var priceAlerts: [StockPriceAlert]
     @Published private(set) var returnAlerts: [StockReturnAlert]
     @Published private(set) var isRefreshingQuotes = false
@@ -122,6 +123,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     private var isModuleVisible: Bool
     private weak var mutationNotifier: (any VaultMutationNotifying)?
     private weak var exchangeRateStore: ExchangeRateStore?
+    private var exchangeRecordProvider: @MainActor () -> [StockExchangeRecordSnapshot]
     private var pendingQuoteRefresh: QuoteRefreshRequest?
     private var pendingIntradayChartRefresh: IntradayChartRefreshRequest?
     private var lastAutomaticIntradayAttemptAt: [UUID: Date] = [:]
@@ -142,6 +144,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
 
     init(
         stocks: [StockHolding] = [],
+        cashFlowRecords: [StockCashFlowRecord] = [],
         priceAlerts: [StockPriceAlert] = [],
         returnAlerts: [StockReturnAlert] = [],
         isDataLoaded: Bool = false,
@@ -151,9 +154,11 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         chartService: any StockChartServing = StockChartService.shared,
         defaults: UserDefaults,
         isModuleVisible: Bool = true,
-        exchangeRateStore: ExchangeRateStore? = nil
+        exchangeRateStore: ExchangeRateStore? = nil,
+        exchangeRecordProvider: @escaping @MainActor () -> [StockExchangeRecordSnapshot] = { [] }
     ) {
         self.stocks = stocks
+        self.cashFlowRecords = cashFlowRecords
         self.priceAlerts = priceAlerts
         self.returnAlerts = returnAlerts
         self.isDataLoaded = isDataLoaded
@@ -165,6 +170,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         self.defaults = defaults
         self.isModuleVisible = isModuleVisible
         self.exchangeRateStore = exchangeRateStore
+        self.exchangeRecordProvider = exchangeRecordProvider
         lastRefreshAtByMarket = Self.loadRefreshDates(from: defaults)
     }
 
@@ -178,11 +184,13 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
 
     func replace(
         stocks: [StockHolding],
+        cashFlowRecords: [StockCashFlowRecord],
         priceAlerts: [StockPriceAlert],
         returnAlerts: [StockReturnAlert],
         isDataLoaded: Bool
     ) {
         self.stocks = stocks
+        self.cashFlowRecords = cashFlowRecords
         self.priceAlerts = priceAlerts
         self.returnAlerts = returnAlerts
         self.isDataLoaded = isDataLoaded
@@ -193,6 +201,58 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         lastAutomaticIntradayAttemptAt.removeAll()
         DiagnosticLogger.shared.log(.data, "股票数据替换 stocks=\(stocks.count) alerts=\(priceAlerts.count) returnAlerts=\(returnAlerts.count)")
         refreshInvalidator.refreshEligibilityChanged()
+    }
+
+    /// Compatibility entry point for quote-focused callers that replace only
+    /// the legacy stock payload. Existing cash records must not be cleared just
+    /// because that caller does not participate in the funding ledger.
+    func replace(
+        stocks: [StockHolding],
+        priceAlerts: [StockPriceAlert],
+        returnAlerts: [StockReturnAlert],
+        isDataLoaded: Bool
+    ) {
+        replace(
+            stocks: stocks,
+            cashFlowRecords: cashFlowRecords,
+            priceAlerts: priceAlerts,
+            returnAlerts: returnAlerts,
+            isDataLoaded: isDataLoaded
+        )
+    }
+
+    var availableExchangeRecords: [StockExchangeRecordSnapshot] {
+        exchangeRecordProvider().sorted {
+            if $0.exchangedAt != $1.exchangedAt { return $0.exchangedAt > $1.exchangedAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
+    func cashLedger(asOf date: Date = Date()) -> StockCashLedgerSnapshot {
+        StockCashLedger.build(
+            records: cashFlowRecords,
+            exchangeRecords: availableExchangeRecords,
+            stocks: stocks,
+            asOf: date
+        )
+    }
+
+    func upsertCashFlowRecord(_ record: StockCashFlowRecord) {
+        guard record.amount > 0 else { return }
+        if let index = cashFlowRecords.firstIndex(where: { $0.id == record.id }) {
+            cashFlowRecords[index] = record
+        } else {
+            cashFlowRecords.append(record)
+        }
+        DiagnosticLogger.shared.log(.data, "股票资金流水保存 kind=\(record.kind.rawValue) id=\(record.id)")
+        didMutate()
+    }
+
+    func deleteCashFlowRecords(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        cashFlowRecords.removeAll { ids.contains($0.id) }
+        DiagnosticLogger.shared.log(.data, "股票资金流水删除 count=\(ids.count)")
+        didMutate()
     }
 
     var observedModules: Set<ToolModule> { [.myStocks] }

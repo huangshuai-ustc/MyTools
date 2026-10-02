@@ -882,6 +882,98 @@ struct StockClosingAuctionBarTests {
         #expect(try #require(series.points.last).value == 5_184)
     }
 
+    @Test func minutePortfolioSeriesShowsSameDayBuyAndSaleBetweenTheirPlacedMinutes() throws {
+        let transactionDate = StockChartFixtures.date(
+            2026, 9, 17,
+            hour: 12,
+            timeZone: "Asia/Shanghai"
+        )
+        var buy = StockTransaction()
+        buy.type = .buy
+        buy.tradedAt = transactionDate
+        buy.dayOrder = 0
+        buy.quantity = 1
+        buy.unitPrice = 10
+        var sale = StockTransaction()
+        sale.type = .sell
+        sale.tradedAt = transactionDate
+        sale.dayOrder = 1
+        sale.quantity = 1
+        sale.unitPrice = 13
+        let stock = StockHolding(
+            market: .aShare,
+            symbol: "600519",
+            transactions: [sale, buy]
+        )
+        let minutePoints = [
+            Self.point(hour: 9, minute: 30, close: 10),
+            Self.point(hour: 10, minute: 0, close: 12),
+            Self.point(hour: 10, minute: 30, close: 11),
+            Self.point(hour: 11, minute: 0, close: 13)
+        ]
+
+        let series = PortfolioValueHistoryBuilder.buildMinuteSeries(
+            for: .aShare,
+            range: .intraday,
+            stocks: [stock],
+            minutePointsBySymbol: [stock.symbol: minutePoints]
+        )
+
+        #expect(!series.points.isEmpty)
+        #expect(series.points.first?.date == minutePoints[0].date)
+        #expect(try #require(series.points.last).date < minutePoints[3].date)
+    }
+
+    @Test func minutePortfolioCostBasisUsesTheSamePlacedMinutesAsPositionValue() {
+        var originalBuy = StockTransaction()
+        originalBuy.type = .buy
+        originalBuy.tradedAt = StockChartFixtures.date(
+            2026, 9, 16,
+            hour: 12,
+            timeZone: "Asia/Shanghai"
+        )
+        originalBuy.quantity = 1
+        originalBuy.unitPrice = 10
+
+        let transactionDate = StockChartFixtures.date(
+            2026, 9, 17,
+            hour: 12,
+            timeZone: "Asia/Shanghai"
+        )
+        var addedBuy = StockTransaction()
+        addedBuy.type = .buy
+        addedBuy.tradedAt = transactionDate
+        addedBuy.dayOrder = 0
+        addedBuy.quantity = 1
+        addedBuy.unitPrice = 20
+        var partialSale = StockTransaction()
+        partialSale.type = .sell
+        partialSale.tradedAt = transactionDate
+        partialSale.dayOrder = 1
+        partialSale.quantity = 1
+        partialSale.unitPrice = 15
+        let stock = StockHolding(
+            market: .aShare,
+            symbol: "600519",
+            transactions: [partialSale, originalBuy, addedBuy]
+        )
+        let minutePoints = [
+            Self.point(hour: 9, minute: 30, close: 10),
+            Self.point(hour: 10, minute: 0, close: 20),
+            Self.point(hour: 11, minute: 0, close: 15)
+        ]
+
+        let series = PortfolioValueHistoryBuilder.buildMinuteSeries(
+            for: .aShare,
+            range: .intraday,
+            stocks: [stock],
+            minutePointsBySymbol: [stock.symbol: minutePoints]
+        )
+
+        #expect(series.points.map(\.value) == [10, 40, 15])
+        #expect(series.costBasisPoints.map(\.cost) == [10, 30, 15])
+    }
+
     private static func point(
         hour: Int,
         minute: Int,

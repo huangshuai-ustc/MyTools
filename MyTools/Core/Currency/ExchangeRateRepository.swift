@@ -6,6 +6,13 @@ struct ExchangeRateSnapshot: Sendable {
     let updatedAt: Date?
 }
 
+struct ExchangeRateHistoryPoint: Codable, Equatable, Sendable, Identifiable {
+    let date: Date
+    let buyingRates: [CurrencyCode: Decimal]
+    let sellingRates: [CurrencyCode: Decimal]
+    var id: Date { date }
+}
+
 actor ExchangeRateRepository {
     private enum DefaultsKey {
         static let buyingRates = "boc-currency-buying-rates-v1"
@@ -13,6 +20,7 @@ actor ExchangeRateRepository {
         static let updatedAt = "boc-currency-rates-date-v1"
         static let legacyUSDBuyingRate = "stock-usd-cny-buying-rate-v1"
         static let legacyUpdatedAt = "stock-usd-cny-buying-rate-date-v1"
+        static let history = "boc-currency-rates-history-v1"
     }
 
     private let service = ForeignExchangeRateService()
@@ -51,6 +59,12 @@ actor ExchangeRateRepository {
         )
     }
 
+    static func loadHistory(defaults: UserDefaults = .standard) -> [ExchangeRateHistoryPoint] {
+        guard let data = defaults.data(forKey: DefaultsKey.history),
+              let points = try? JSONDecoder().decode([ExchangeRateHistoryPoint].self, from: data) else { return [] }
+        return points.sorted { $0.date < $1.date }
+    }
+
     func fetchSnapshot() async throws -> ExchangeRateSnapshot {
         let rates = try await service.fetchRates()
         var buyingRates: [CurrencyCode: Decimal] = [.cny: 1]
@@ -80,12 +94,19 @@ actor ExchangeRateRepository {
             Self.stringRates(snapshot.renminbiSellingRates),
             forKey: DefaultsKey.sellingRates
         )
+        var history = Self.loadHistory(defaults: defaults)
+        let point = ExchangeRateHistoryPoint(date: snapshot.updatedAt ?? Date(), buyingRates: snapshot.renminbiBuyingRates, sellingRates: snapshot.renminbiSellingRates)
+        history.removeAll { Calendar.current.isDate($0.date, equalTo: point.date, toGranularity: .minute) }
+        history.append(point)
+        history = Array(history.sorted { $0.date < $1.date }.suffix(2_000))
+        if let data = try? JSONEncoder().encode(history) { defaults.set(data, forKey: DefaultsKey.history) }
     }
 
     static func clearCachedSnapshot(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: DefaultsKey.buyingRates)
         defaults.removeObject(forKey: DefaultsKey.sellingRates)
         defaults.removeObject(forKey: DefaultsKey.updatedAt)
+        defaults.removeObject(forKey: DefaultsKey.history)
         defaults.removeObject(forKey: DefaultsKey.legacyUSDBuyingRate)
         defaults.removeObject(forKey: DefaultsKey.legacyUpdatedAt)
     }

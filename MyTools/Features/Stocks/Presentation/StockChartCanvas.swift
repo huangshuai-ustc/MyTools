@@ -192,6 +192,10 @@ struct StockChartCanvas: View {
         let requestedXDomain = visibleXDomain
             ?? presentation.defaultVisibleXDomain(isExpanded: isExpanded)
         let chartXDomain = presentation.clampedVisibleXDomain(requestedXDomain)
+        let xAxisLayout = presentation.xAxisLayout(
+            isExpanded: isExpanded,
+            in: chartXDomain
+        )
         // Swift Charts can let fixed-width marks bleed across the domain edge.
         // Feed it only points in the active viewport so a candle/line from the
         // previous period cannot appear in the left gutter.
@@ -562,22 +566,25 @@ struct StockChartCanvas: View {
         .chartYScale(domain: chartYDomain)
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks(
-                values: presentation.xAxisValues(
-                    isExpanded: isExpanded,
-                    in: chartXDomain
-                )
-            ) { value in
+            AxisMarks(values: xAxisLayout.gridValues) { _ in
                 AxisGridLine()
                 AxisTick()
-                AxisValueLabel {
-                    if let x = value.as(Double.self),
-                       let plotPoint = presentation.plotPoint(
-                           closestTo: x,
-                           in: chartXDomain
-                       ) {
-                        Text(presentation.axisLabelText(plotPoint.point.date))
+            }
+            AxisMarks(values: xAxisLayout.labelValues) { value in
+                if let x = value.as(Double.self),
+                   let date = xAxisLayout.labelDate(at: x) {
+                    let label = xAxisLayout.labelText(at: x)
+                        ?? presentation.axisLabelText(date)
+                    if xAxisLayout.centersLabelsInIntervals {
+                        AxisValueLabel(centered: true, collisionResolution: .disabled) {
+                            Text(label)
                             .appFont(.caption2)
+                        }
+                    } else {
+                        AxisValueLabel(collisionResolution: .greedy) {
+                            Text(label)
+                                .appFont(.caption2)
+                        }
                     }
                 }
             }

@@ -7,9 +7,16 @@ private final class StockTransactionEditorDraft: ObservableObject {
     @Published var unitPriceText: String
     @Published var feesText: String
     @Published var totalAmountText: String
+    @Published var recordsExecutionTime: Bool
+    @Published var executionTime: Date
 
-    init(transaction: StockTransaction) {
+    init(transaction: StockTransaction, market: StockMarket) {
         self.transaction = transaction
+        recordsExecutionTime = transaction.executedAt != nil
+        executionTime = StockTransaction.displayedExecutionTime(
+            for: transaction.executedAt ?? Date(),
+            market: market
+        )
         quantityText = transaction.quantity == 0 ? "" : Self.display(transaction.quantity)
         unitPriceText = transaction.unitPrice == 0 ? "" : Self.display(transaction.unitPrice)
         feesText = transaction.fees == 0 ? "" : Self.display(transaction.fees)
@@ -47,7 +54,10 @@ struct StockTransactionEditorView: View {
     let stock: StockHolding
 
     init(transaction: StockTransaction, stock: StockHolding) {
-        _draft = StateObject(wrappedValue: StockTransactionEditorDraft(transaction: transaction))
+        _draft = StateObject(wrappedValue: StockTransactionEditorDraft(
+            transaction: transaction,
+            market: stock.market
+        ))
         self.stock = stock
     }
 
@@ -62,6 +72,17 @@ struct StockTransactionEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt, upperBound: Date())
+                    ToggleFieldRow(title: "记录成交时间", isOn: $draft.recordsExecutionTime)
+                    if draft.recordsExecutionTime {
+                        DateFieldRow(
+                            title: "成交时间：",
+                            date: $draft.executionTime,
+                            displayedComponents: .hourAndMinute
+                        )
+                        Text("按\(stock.market.title)当地时间记录；不填写时继续按价格和同日顺序推定。")
+                            .appFont(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     decimalField("交易股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                     decimalField(
                         "每股价格：",
@@ -196,6 +217,13 @@ struct StockTransactionEditorView: View {
             return nil
         }
         var transaction = draft.transaction
+        transaction.executedAt = draft.recordsExecutionTime
+            ? StockTransaction.executionInstant(
+                tradingDate: transaction.tradedAt,
+                displayedTime: draft.executionTime,
+                market: stock.market
+            )
+            : nil
         transaction.quantity = quantity
         transaction.unitPrice = unitPrice
         transaction.fees = fees

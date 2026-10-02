@@ -162,17 +162,19 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         )
         self.exchangeRateStore = exchangeRateStore
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
-        currencyExchangeStore = CurrencyExchangeStore(
+        let currencyExchangeStore = CurrencyExchangeStore(
             records: initialVault?.currencyExchangeRecords ?? [],
             rateAlerts: initialVault?.currencyRateAlerts ?? [],
             alertNotifications: dependencies.alertNotifications,
             isModuleVisible: moduleSettings.isVisible(.currencyExchange),
             exchangeRateStore: exchangeRateStore
         )
+        self.currencyExchangeStore = currencyExchangeStore
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         stockStore = StockStore(
             stocks: initialVault?.stocks ?? [],
+            cashFlowRecords: initialVault?.stockCashFlowRecords ?? [],
             priceAlerts: initialVault?.stockPriceAlerts ?? [],
             returnAlerts: initialVault?.stockReturnAlerts ?? [],
             isDataLoaded: initialVault != nil,
@@ -181,7 +183,24 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             refreshInvalidator: dependencies.stockRefreshInvalidator,
             defaults: dependencies.defaults,
             isModuleVisible: moduleSettings.isVisible(.myStocks),
-            exchangeRateStore: exchangeRateStore
+            exchangeRateStore: exchangeRateStore,
+            exchangeRecordProvider: {
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+                currencyExchangeStore.records.map {
+                    StockExchangeRecordSnapshot(
+                        id: $0.id,
+                        exchangedAt: $0.exchangedAt,
+                        soldCurrency: $0.soldCurrency,
+                        boughtCurrency: $0.boughtCurrency,
+                        soldAmount: $0.soldAmount,
+                        boughtAmount: $0.boughtAmount,
+                        fee: $0.fee
+                    )
+                }
+#else
+                []
+#endif
+            }
         )
 #if MYTOOLS_FEATURE_PARTNERSHIP
         partnershipStore.attach(stockImportProvider: stockStore)
@@ -466,6 +485,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_STOCKS
         stockStore.replace(
             stocks: vault.stocks,
+            cashFlowRecords: vault.stockCashFlowRecords,
             priceAlerts: vault.stockPriceAlerts,
             returnAlerts: vault.stockReturnAlerts,
             isDataLoaded: true
@@ -775,6 +795,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_STOCKS
         vault.stocks = stockStore.stocks
+        vault.stockCashFlowRecords = stockStore.cashFlowRecords
         vault.stockPriceAlerts = stockStore.priceAlerts
         vault.stockReturnAlerts = stockStore.returnAlerts
 #endif
@@ -919,6 +940,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         case .myStocks:
 #if MYTOOLS_FEATURE_STOCKS
             vault.stocks = []
+            vault.stockCashFlowRecords = []
             vault.stockPriceAlerts = []
             vault.stockReturnAlerts = []
 #endif
@@ -999,6 +1021,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         case .myStocks:
 #if MYTOOLS_FEATURE_STOCKS
             vault.stocks = mergingRestored(snapshot.vault.stocks, into: vault.stocks)
+            vault.stockCashFlowRecords = mergingRestored(
+                snapshot.vault.stockCashFlowRecords,
+                into: vault.stockCashFlowRecords
+            )
             vault.stockPriceAlerts = mergingRestored(
                 snapshot.vault.stockPriceAlerts,
                 into: vault.stockPriceAlerts

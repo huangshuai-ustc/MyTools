@@ -12,6 +12,7 @@ struct CurrencyExchangeView: View {
     @State private var pairedCurrencyFilter: CurrencyCode?
     @State private var query = ""
     @State private var pagination = AppListPagination(pageSize: CurrencyExchangeView.pageSize)
+    @State private var showsAdvancedFilters = false
 
     private var allRecords: [CurrencyExchangeRecord] {
         // 默认按换汇日期降序排列，最近日期显示在最前面。
@@ -76,57 +77,26 @@ struct CurrencyExchangeView: View {
 
     var body: some View {
         List {
-            Section("中国银行牌价") {
-                NavigationLink {
-                    BankOfChinaExchangeRatesView()
-                } label: {
-                    Label("查看当前结售汇牌价", systemImage: "yensign.arrow.trianglehead.counterclockwise.rotate.90")
-                }
-            }
-
-            Section("换汇概览") {
-                exchangeOverviewMetrics
+            Section {
+                exchangeOverviewCard
                     .appListRowStyle()
             }
 
-            Section("记录筛选") {
+            Section {
                 Picker("记录分类", selection: $recordFilter) {
                     ForEach(availableRecordFilters) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
                 .pickerStyle(.segmented)
-
-                PickerFieldRow(title: "年份", selection: $selectedYear) {
-                    Text("全部年份").tag(nil as Int?)
-                    ForEach(availableYears, id: \.self) { year in
-                        Text(verbatim: "\(year) 年").tag(year as Int?)
+                HStack {
+                    filterSummary
+                    Spacer()
+                    Button("筛选", systemImage: "line.3.horizontal.decrease.circle") {
+                        showsAdvancedFilters = true
                     }
+                    .font(.subheadline.weight(.semibold))
                 }
-
-                PickerFieldRow(title: "相关币种", selection: $primaryCurrencyFilter) {
-                    Text("全部币种").tag(nil as CurrencyCode?)
-                    ForEach(availableCurrencies) { currency in
-                        Text(currency.title).tag(currency as CurrencyCode?)
-                    }
-                }
-
-                if primaryCurrencyFilter != nil {
-                    PickerFieldRow(title: "组合币种", selection: $pairedCurrencyFilter) {
-                        Text("不限另一币种").tag(nil as CurrencyCode?)
-                        ForEach(availablePairedCurrencies) { currency in
-                            Text(currency.title).tag(currency as CurrencyCode?)
-                        }
-                    }
-                }
-
-                if records.isEmpty {
-                    ContentUnavailableView(
-                        allRecords.isEmpty ? "暂无换汇记录" : "没有匹配的换汇记录",
-                        systemImage: allRecords.isEmpty ? "arrow.left.arrow.right.circle" : "magnifyingglass"
-                    )
-                }
-
             }
 
             ForEach(recordGroups) { group in
@@ -135,6 +105,15 @@ struct CurrencyExchangeView: View {
                         recordButton(record)
                             .onAppear { loadMoreIfNeeded(record) }
                     }
+                }
+            }
+
+            if records.isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        allRecords.isEmpty ? "暂无换汇记录" : "没有匹配的换汇记录",
+                        systemImage: allRecords.isEmpty ? "arrow.left.arrow.right.circle" : "magnifyingglass"
+                    )
                 }
             }
 
@@ -191,6 +170,17 @@ struct CurrencyExchangeView: View {
                 .id(record.id)
                 .iOSLargeSheet()
         }
+        .sheet(isPresented: $showsAdvancedFilters) {
+            CurrencyExchangeFilterSheet(
+                selectedYear: $selectedYear,
+                primaryCurrencyFilter: $primaryCurrencyFilter,
+                pairedCurrencyFilter: $pairedCurrencyFilter,
+                availableYears: availableYears,
+                availableCurrencies: availableCurrencies,
+                availablePairedCurrencies: availablePairedCurrencies
+            )
+            .iOSLargeSheet()
+        }
         .refreshable {
             exchangeRateStore.refresh()
         }
@@ -238,6 +228,22 @@ struct CurrencyExchangeView: View {
     private var currencyCountText: String {
         let currencies = Set(allRecords.flatMap { [$0.soldCurrency, $0.boughtCurrency] })
         return currencies.isEmpty ? "0 种" : "\(currencies.count) 种"
+    }
+
+    private var filterSummary: some View {
+        HStack(spacing: 6) {
+            if let selectedYear { filterChip("\(selectedYear)年", color: .indigo) }
+            if let primaryCurrencyFilter { filterChip(primaryCurrencyFilter.rawValue, color: .blue) }
+            if let pairedCurrencyFilter { filterChip(pairedCurrencyFilter.rawValue, color: .teal) }
+            if selectedYear == nil && primaryCurrencyFilter == nil { Text("全部记录").foregroundStyle(.secondary) }
+        }
+        .font(.caption.weight(.medium))
+    }
+
+    private func filterChip(_ text: String, color: Color) -> some View {
+        Text(text).padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.14), in: Capsule())
+            .foregroundStyle(color)
     }
 
     private var availableYears: [Int] {
@@ -296,6 +302,51 @@ struct CurrencyExchangeView: View {
                 exchangeMetric(totalResultTitle, value: resultValue, color: resultColor)
             }
         }
+    }
+
+    private var exchangeOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("当前累计损耗", systemImage: "chart.line.downtrend.xyaxis")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "arrow.left.arrow.right.circle.fill")
+                    .foregroundStyle(.tint)
+            }
+            HStack(alignment: .firstTextBaseline) {
+                Text(overviewLossText)
+                    .font(.title2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(overviewLossColor)
+                Spacer()
+            }
+            HStack(spacing: 16) {
+                Label("\(allRecords.count) 笔", systemImage: "list.number")
+                Label(currencyCountText, systemImage: "dollarsign.circle")
+                NavigationLink {
+                    BankOfChinaExchangeRatesView()
+                } label: {
+                    Label("按当前牌价估算", systemImage: "chevron.right")
+                        .foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("按当前牌价估算，查看当前结售汇牌价")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(4)
+    }
+
+    private var overviewLossText: String {
+        guard let totalRenminbiLoss else { return "待同步" }
+        let result = CurrencyExchangeResult(amount: totalRenminbiLoss)
+        let value = CurrencyExchangeValueFormatter.amount(result.displayValue(totalRenminbiLoss), currency: .cny)
+        switch result { case .loss: return "−\(value)"; case .profit: return "+\(value)"; case .even: return value }
+    }
+
+    private var overviewLossColor: Color {
+        guard let totalRenminbiLoss else { return .orange }
+        return resultColor(for: totalRenminbiLoss)
     }
 
     private func exchangeMetric(_ title: String, value: String, color: Color = .primary) -> some View {
@@ -401,6 +452,51 @@ private enum CurrencyExchangeRecordFilter: String, CaseIterable, Identifiable, H
     }
 }
 
+private struct CurrencyExchangeFilterSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedYear: Int?
+    @Binding var primaryCurrencyFilter: CurrencyCode?
+    @Binding var pairedCurrencyFilter: CurrencyCode?
+    let availableYears: [Int]
+    let availableCurrencies: [CurrencyCode]
+    let availablePairedCurrencies: [CurrencyCode]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("时间") {
+                    PickerFieldRow(title: "年份", selection: $selectedYear) {
+                        Text("全部年份").tag(nil as Int?)
+                        ForEach(availableYears, id: \.self) { year in Text(verbatim: "\(year) 年").tag(year as Int?) }
+                    }
+                }
+                Section("币种") {
+                    PickerFieldRow(title: "相关币种", selection: $primaryCurrencyFilter) {
+                        Text("全部币种").tag(nil as CurrencyCode?)
+                        ForEach(availableCurrencies) { currency in Text(currency.title).tag(currency as CurrencyCode?) }
+                    }
+                    if primaryCurrencyFilter != nil {
+                        PickerFieldRow(title: "组合币种", selection: $pairedCurrencyFilter) {
+                            Text("不限另一币种").tag(nil as CurrencyCode?)
+                            ForEach(availablePairedCurrencies) { currency in Text(currency.title).tag(currency as CurrencyCode?) }
+                        }
+                    }
+                }
+                Section {
+                    Button("清除筛选", systemImage: "xmark.circle") {
+                        selectedYear = nil
+                        primaryCurrencyFilter = nil
+                        pairedCurrencyFilter = nil
+                    }
+                    .foregroundStyle(.red)
+                }
+            }
+            .appNavigationTitle("筛选换汇记录")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+
 private struct CurrencyExchangeRecordRow: View {
     @Environment(\.appFontScale) private var fontScale
     let record: CurrencyExchangeRecord
@@ -409,7 +505,7 @@ private struct CurrencyExchangeRecordRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
             HStack {
-                Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: "arrow.left.arrow.right")
+                Label("\(record.soldCurrency.rawValue) → \(record.boughtCurrency.rawValue)", systemImage: directionIcon)
                     .appFont(.headline)
                 Text(direction.shortTitle)
                     .appFont(.caption2.weight(.semibold))
@@ -430,6 +526,7 @@ private struct CurrencyExchangeRecordRow: View {
                 Text("买 \(CurrencyExchangeValueFormatter.amount(record.boughtAmount, currency: record.boughtCurrency))")
             }
             .appFont(.subheadline)
+            .foregroundStyle(.primary)
 
             HStack {
                 Text(priceText)
@@ -470,6 +567,14 @@ private struct CurrencyExchangeRecordRow: View {
         case .sell: return .blue
         case .buy: return .purple
         case .crossCurrency: return .teal
+        }
+    }
+
+    private var directionIcon: String {
+        switch direction {
+        case .buy: return "arrow.down.left.circle.fill"
+        case .sell: return "arrow.up.right.circle.fill"
+        case .crossCurrency: return "arrow.left.arrow.right.circle.fill"
         }
     }
 

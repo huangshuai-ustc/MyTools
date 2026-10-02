@@ -58,3 +58,34 @@ struct ExchangeRateRepositoryTests {
         #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-date-v1") == nil)
     }
 }
+
+struct HistoricalReferenceRateTests {
+    @Test func filtersPrecedingBusinessDayAndPreservesDecimalRates() throws {
+        let formatter = HistoricalExchangeRateService.formatter()
+        let start = try #require(formatter.date(from: "2024-01-01"))
+        let end = try #require(formatter.date(from: "2024-01-08"))
+        let fixture = Data(#"{"base":"CNY","rates":{"2023-12-29":{"USD":0.125,"HKD":1},"2024-01-02":{"USD":0.125,"HKD":1}}}"#.utf8)
+        let points = try HistoricalExchangeRateService.decodeResponse(fixture, from: start, through: end)
+        #expect(points.count == 1)
+        #expect(points[0].renminbiPerUnit[.usd] == 8)
+        #expect(points[0].renminbiPerUnit[.hkd] == 1)
+        #expect(points[0].renminbiPerUnit[.cny] == 1)
+        let cache = HistoricalExchangeRateService.MonthCache(fetchedAt: end, through: end, points: points)
+        #expect(try HistoricalExchangeRateService.decodeCache(JSONEncoder().encode(cache)) == cache)
+        var future = cache
+        future.version = 2
+        #expect(throws: (any Error).self) { try HistoricalExchangeRateService.decodeCache(JSONEncoder().encode(future)) }
+    }
+
+    @Test func rejectsEmptyInvalidAndWrongBaseResponses() throws {
+        let day = Date(timeIntervalSince1970: 1704153600)
+        for fixture in [
+            #"{"base":"CNY","rates":{}}"#,
+            #"{"base":"USD","rates":{"2024-01-02":{"USD":1}}}"#,
+            #"{"base":"CNY","rates":{"2024-01-02":{"USD":0}}}"#,
+            #"{"base":"CNY","rates":{"2024-01-02":{"USD":"bad"}}}"#
+        ] {
+            #expect(throws: (any Error).self) { try HistoricalExchangeRateService.decodeResponse(Data(fixture.utf8), from: day, through: day) }
+        }
+    }
+}

@@ -505,6 +505,73 @@ struct StockChartPresentationTests {
         #expect(marker.date == points[0].date)
     }
 
+    @Test func intradayTransactionMarkersPreserveSameDayOrderBeforePriceProximity() throws {
+        let points = [
+            point(day: 7, hour: 9, minute: 30, close: 20),
+            point(day: 7, hour: 10, close: 20),
+            point(day: 7, hour: 10, minute: 30, close: 10),
+            point(day: 7, hour: 11, close: 10)
+        ]
+        var buy = StockTransaction()
+        buy.type = .buy
+        buy.tradedAt = StockChartFixtures.date(2026, 8, 7, hour: 12)
+        buy.dayOrder = 0
+        buy.quantity = 1
+        buy.unitPrice = 10
+        var sale = StockTransaction()
+        sale.type = .sell
+        sale.tradedAt = buy.tradedAt
+        sale.dayOrder = 1
+        sale.quantity = 1
+        sale.unitPrice = 20
+        let stock = StockHolding(
+            market: .aShare,
+            symbol: "600519",
+            transactions: [sale, buy]
+        )
+
+        let presentation = makePresentation(
+            stock: stock,
+            points: points,
+            range: .intraday,
+            displayModes: [.line]
+        )
+        let buyMarker = try #require(presentation.transactionMarkers.first { $0.type == .buy })
+        let saleMarker = try #require(presentation.transactionMarkers.first { $0.type == .sell })
+
+        #expect(buyMarker.plotX < saleMarker.plotX)
+        #expect(buyMarker.date < saleMarker.date)
+    }
+
+    @Test func confirmedExecutionMinuteWinsOverPriceProximity() throws {
+        let points = [
+            point(day: 7, hour: 9, minute: 30, close: 10),
+            point(day: 7, hour: 10, close: 20)
+        ]
+        var transaction = StockTransaction()
+        transaction.type = .buy
+        transaction.tradedAt = StockChartFixtures.date(2026, 8, 7, hour: 12)
+        transaction.executedAt = points[1].date
+        transaction.quantity = 1
+        transaction.unitPrice = 10
+        let stock = StockHolding(
+            market: .aShare,
+            symbol: "600519",
+            transactions: [transaction]
+        )
+
+        let presentation = makePresentation(
+            stock: stock,
+            points: points,
+            range: .intraday,
+            displayModes: [.line]
+        )
+
+        let marker = try #require(presentation.transactionMarkers.first)
+        #expect(marker.date == points[1].date)
+        #expect(marker.plotPrice == 10)
+    }
+
     @Test func transactionMarkerConvertsDeviceDateToUSTradingDayAcrossAllRanges() throws {
         let regularPoint = StockChartFixtures.point(
             at: StockChartFixtures.date(
@@ -613,6 +680,39 @@ struct StockChartPresentationTests {
         let presentation = makePresentation(points: points, range: .fiveDays)
 
         #expect(presentation.xAxisValues(isExpanded: false) == [0, 2, 4, 5, 6])
+        let layout = presentation.xAxisLayout(isExpanded: false)
+        #expect(layout.gridValues.count == 6)
+        #expect(layout.labelValues.count == 6)
+        #expect(layout.labelDates.count == 5)
+    }
+
+    @Test func kLineAxisLabelsUseRequestedCalendarGranularity() throws {
+        let chartPoint = point(day: 3, hour: 10)
+
+        #expect(makePresentation(points: [chartPoint], range: .dayK).axisLabelText(chartPoint.date) == "08-03")
+        #expect(makePresentation(points: [chartPoint], range: .weekK).axisLabelText(chartPoint.date) == "8月")
+        #expect(makePresentation(points: [chartPoint], range: .monthK).axisLabelText(chartPoint.date) == "8月")
+        #expect(makePresentation(points: [chartPoint], range: .quarterK).axisLabelText(chartPoint.date) == "Q3")
+        #expect(makePresentation(points: [chartPoint], range: .yearK).axisLabelText(chartPoint.date) == "2026")
+    }
+
+    @Test func longPeriodAxisUsesSparseUniqueNaturalTicks() {
+        let points = (2023...2026).flatMap { year in
+            (1...12).map { month in
+                StockChartFixtures.point(
+                    at: StockChartFixtures.date(year, month, 1, hour: 10),
+                    close: 100
+                )
+            }
+        }
+        let presentation = makePresentation(points: points, range: .monthK)
+        let compact = presentation.xAxisLayout(isExpanded: false)
+        let expanded = presentation.xAxisLayout(isExpanded: true)
+
+        #expect(compact.labelDates.count <= 5)
+        #expect(expanded.labelDates.count <= 8)
+        #expect(Set(compact.labelTexts.values).count == compact.labelTexts.count)
+        #expect(Set(expanded.labelTexts.values).count == expanded.labelTexts.count)
     }
 
     @Test func selectedTransactionSummaryUsesQuantityWeightedAverage() {

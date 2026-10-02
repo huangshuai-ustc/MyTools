@@ -77,7 +77,7 @@ struct StockAppearanceSettingsView: View {
     @EnvironmentObject private var stockAppearanceSettings: StockAppearanceSettings
     @EnvironmentObject private var stockStore: StockStore
     @State private var colorMarket: StockMarket = .aShare
-    @State private var exportDocument: StockHoldingsCSVDocument?
+    @State private var exportDocument: StockHoldingsWorkbookDocument?
     @State private var showingExporter = false
     @State private var isPreparingExport = false
     @State private var exportName = "持仓明细"
@@ -87,7 +87,7 @@ struct StockAppearanceSettingsView: View {
         List {
             Section {
                 ForEach(StockHoldingsExportScope.allCases) { scope in
-                    Button("导出\(scope.title)明细（CSV）") { prepareExport(scope) }
+                    Button("导出\(scope.title)明细（XLSX）") { prepareExport(scope) }
                         .disabled(!stockStore.isDataLoaded || isPreparingExport || showingExporter)
                 }
                 if isPreparingExport { ProgressView("正在生成明细") }
@@ -95,7 +95,7 @@ struct StockAppearanceSettingsView: View {
             } header: {
                 Text("持仓明细导出")
             } footer: {
-                Text("当前持仓仅含仍持有股份的股票；全部持仓包含历史清仓和已存档股票，不含纯看盘股票。使用现有行情快照和市场原币，缺失数据留空；不主动刷新行情。CSV 可用 Excel 或 Numbers 打开，股票代码列请按文本导入以保留前导零。")
+                Text("工作簿包含“原始记录”和“持仓汇总”两个子表：原始记录逐条保留实际填写的买卖、分红、税费和备注；持仓汇总使用现有行情与移动平均成本计算。导出不主动刷新行情，缺失数据留空。")
             }
             Section {
                 Picker("市场", selection: $colorMarket) {
@@ -121,7 +121,7 @@ struct StockAppearanceSettingsView: View {
         .appNavigationTitle(ToolModule.myStocks.title)
         .diagnosticScreen("股票投资设置")
         .fileExporter(isPresented: $showingExporter, document: exportDocument,
-                      contentType: .commaSeparatedText, defaultFilename: exportName) { result in
+                      contentType: .stockHoldingsWorkbook, defaultFilename: exportName) { result in
             exportDocument = nil
             if case .failure(let error) = result { exportError = error.localizedDescription }
         }
@@ -152,11 +152,11 @@ struct StockAppearanceSettingsView: View {
         Task { @MainActor in
             defer { isPreparingExport = false }
             let data = await Task.detached(priority: .userInitiated) {
-                StockHoldingsCSVExport.data(stocks: stocks, scope: scope, extendedHours: extendedHours, at: date)
+                StockHoldingsXLSXExport.data(stocks: stocks, scope: scope, extendedHours: extendedHours, at: date)
             }.value
             guard stockStore.isDataLoaded else { exportError = "数据读取状态已变化，请稍后重试"; return }
-            exportName = "股票-\(scope.title)-\(Int(date.timeIntervalSince1970)).csv"
-            exportDocument = StockHoldingsCSVDocument(data: data)
+            exportName = "股票-\(scope.title)-\(Int(date.timeIntervalSince1970)).xlsx"
+            exportDocument = StockHoldingsWorkbookDocument(data: data)
             showingExporter = true
         }
     }
@@ -169,8 +169,8 @@ struct StockAppearanceSettingsView: View {
     }
 }
 
-private struct StockHoldingsCSVDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText] }
+private struct StockHoldingsWorkbookDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.stockHoldingsWorkbook] }
     let data: Data
     init(data: Data) { self.data = data }
     init(configuration: ReadConfiguration) throws {
@@ -179,6 +179,12 @@ private struct StockHoldingsCSVDocument: FileDocument {
     }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: data)
+    }
+}
+
+private extension UTType {
+    static var stockHoldingsWorkbook: UTType {
+        UTType(filenameExtension: "xlsx") ?? .data
     }
 }
 #endif

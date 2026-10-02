@@ -119,6 +119,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         }
         if !includedModules.contains(.myStocks) {
             snapshot.stocks = []
+            snapshot.stockCashFlowRecords = []
             snapshot.stockPriceAlerts = []
             snapshot.stockReturnAlerts = []
         }

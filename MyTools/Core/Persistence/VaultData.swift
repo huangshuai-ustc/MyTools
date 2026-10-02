@@ -81,8 +81,10 @@ typealias BankLoginFieldTemplateVaultValue = OpaqueModuleValue
 
 #if MYTOOLS_FEATURE_STOCKS
 typealias StockHoldingVaultValue = StockHolding
+typealias StockCashFlowVaultValue = StockCashFlowRecord
 #else
 typealias StockHoldingVaultValue = OpaqueModuleValue
+typealias StockCashFlowVaultValue = OpaqueModuleValue
 #endif
 
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -155,6 +157,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = []
     var overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = []
     var stocks: [StockHoldingVaultValue] = []
+    var stockCashFlowRecords: [StockCashFlowVaultValue] = []
     var currencyExchangeRecords: [CurrencyExchangeVaultValue] = []
     var medicalRecords: [MedicalRecordVaultValue] = []
     var hospitalProfiles: [HospitalProfileVaultValue] = []
@@ -179,6 +182,7 @@ struct VaultData: Codable, @unchecked Sendable {
         domesticBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = VaultData.defaultDomesticBankTemplates,
         overseasBankLoginFieldTemplates: [BankLoginFieldTemplateVaultValue] = VaultData.defaultOverseasBankTemplates,
         stocks: [StockHoldingVaultValue] = [],
+        stockCashFlowRecords: [StockCashFlowVaultValue] = [],
         currencyExchangeRecords: [CurrencyExchangeVaultValue] = [],
         medicalRecords: [MedicalRecordVaultValue] = [],
         hospitalProfiles: [HospitalProfileVaultValue] = [],
@@ -202,6 +206,7 @@ struct VaultData: Codable, @unchecked Sendable {
         self.domesticBankLoginFieldTemplates = domesticBankLoginFieldTemplates
         self.overseasBankLoginFieldTemplates = overseasBankLoginFieldTemplates
         self.stocks = stocks
+        self.stockCashFlowRecords = stockCashFlowRecords
         self.currencyExchangeRecords = currencyExchangeRecords
         self.medicalRecords = medicalRecords
         self.hospitalProfiles = hospitalProfiles
@@ -227,6 +232,7 @@ struct VaultData: Codable, @unchecked Sendable {
         case domesticBankLoginFieldTemplates
         case overseasBankLoginFieldTemplates
         case stocks
+        case stockCashFlowRecords
         case currencyExchangeRecords
         case medicalRecords
         case hospitalProfiles
@@ -259,6 +265,10 @@ struct VaultData: Codable, @unchecked Sendable {
             forKey: .overseasBankLoginFieldTemplates
         ) ?? Self.defaultOverseasBankTemplates
         stocks = try container.decodeIfPresent([StockHoldingVaultValue].self, forKey: .stocks) ?? []
+        stockCashFlowRecords = try container.decodeIfPresent(
+            [StockCashFlowVaultValue].self,
+            forKey: .stockCashFlowRecords
+        ) ?? []
         currencyExchangeRecords = try container.decodeIfPresent(
             [CurrencyExchangeVaultValue].self,
             forKey: .currencyExchangeRecords

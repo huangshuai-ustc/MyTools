@@ -38,8 +38,17 @@ protocol StockQuoteRefreshing: Sendable {
 }
 
 protocol ExchangeRateProviding: Sendable {
+    func loadHistory() -> [ExchangeRateHistoryPoint]
+    func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint]
+    func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint]
     func fetchSnapshot() async throws -> ExchangeRateSnapshot
     func persist(snapshot: ExchangeRateSnapshot) async
+}
+
+extension ExchangeRateProviding {
+    func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint] { [] }
+    func loadHistory() -> [ExchangeRateHistoryPoint] { [] }
+    func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint] { [] }
 }
 
 @MainActor

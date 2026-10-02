@@ -7,6 +7,8 @@ private final class StockEditorDraft: ObservableObject {
     @Published var nameText: String
     @Published var searchText: String
     @Published var initialTradedAt = Date()
+    @Published var recordsInitialExecutionTime = false
+    @Published var initialExecutionTime = Date()
     @Published var isWatchOnly = false
     @Published var quantityText = ""
     @Published var unitPriceText = ""
@@ -50,7 +52,17 @@ struct StockEditorView: View {
     private let originalSymbol: String
 
     init(stock: StockHolding, isNew: Bool) {
-        _draft = StateObject(wrappedValue: StockEditorDraft(stock: stock))
+        let draft = StockEditorDraft(stock: stock)
+        if isNew {
+            draft.initialTradedAt = StockTransaction.defaultTradingDate(
+                market: stock.market
+            )
+            draft.initialExecutionTime = StockTransaction.displayedExecutionTime(
+                for: Date(),
+                market: stock.market
+            )
+        }
+        _draft = StateObject(wrappedValue: draft)
         self.isNew = isNew
         originalSymbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
     }
@@ -147,6 +159,17 @@ struct StockEditorView: View {
                 if isNew, !draft.isWatchOnly {
                     Section("首次买入") {
                         DateFieldRow(title: "购买日期：", date: $draft.initialTradedAt, upperBound: Date())
+                        ToggleFieldRow(title: "记录成交时间", isOn: $draft.recordsInitialExecutionTime)
+                        if draft.recordsInitialExecutionTime {
+                            DateFieldRow(
+                                title: "成交时间：",
+                                date: $draft.initialExecutionTime,
+                                displayedComponents: .hourAndMinute
+                            )
+                            Text("按\(draft.stock.market.title)当地时间记录；不填写时继续按价格推定。")
+                                .appFont(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                         decimalField("购买股数：", placeholder: "必填", text: $draft.quantityText, field: .quantity)
                         decimalField("每股价格：", placeholder: "必填", text: $draft.unitPriceText, field: .price)
                         decimalField("交易费用：", placeholder: "可选，默认 0", text: $draft.feesText, field: .fees)
@@ -170,9 +193,18 @@ struct StockEditorView: View {
             .task(id: searchKey) {
                 await searchStocks()
             }
-            .onChange(of: draft.stock.market) { _, _ in
+            .onChange(of: draft.stock.market) { _, market in
                 searchResults = []
                 didFinishSearch = false
+                if isNew {
+                    draft.initialTradedAt = StockTransaction.defaultTradingDate(
+                        market: market
+                    )
+                    draft.initialExecutionTime = StockTransaction.displayedExecutionTime(
+                        for: Date(),
+                        market: market
+                    )
+                }
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -278,6 +310,13 @@ struct StockEditorView: View {
                 type: .buy,
                 tradedAt: StockTransaction.normalizedDate(draft.initialTradedAt),
                 dayOrder: 0,
+                executedAt: draft.recordsInitialExecutionTime
+                    ? StockTransaction.executionInstant(
+                        tradingDate: draft.initialTradedAt,
+                        displayedTime: draft.initialExecutionTime,
+                        market: stock.market
+                    )
+                    : nil,
                 quantity: quantity,
                 unitPrice: unitPrice,
                 fees: fees

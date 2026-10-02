@@ -4,6 +4,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
     case bankAccount
     case bankCard
     case stockHolding
+    case stockCashFlowRecord
     case currencyExchangeRecord
     case medicalRecord
     case hospitalProfile
@@ -28,7 +29,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .bankAccount, .bankCard:
             .personalFinance
-        case .stockHolding, .stockPriceAlert, .stockReturnAlert:
+        case .stockHolding, .stockCashFlowRecord, .stockPriceAlert, .stockReturnAlert:
             .myStocks
         case .currencyExchangeRecord, .currencyRateAlert:
             .currencyExchange
@@ -235,6 +236,7 @@ enum CloudSyncSnapshotBuilder {
             )
             try append(vault.stockPriceAlerts, kind: .stockPriceAlert, encoder: encoder, to: &items)
             try append(vault.stockReturnAlerts, kind: .stockReturnAlert, encoder: encoder, to: &items)
+            try append(vault.stockCashFlowRecords, kind: .stockCashFlowRecord, encoder: encoder, to: &items)
         }
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -575,6 +577,14 @@ enum CloudSyncMerger {
                     upsert(incoming, in: &vault.stocks)
 #endif
                     break
+                case .stockCashFlowRecord:
+#if MYTOOLS_FEATURE_STOCKS
+                    try upsert(
+                        decoder.decode(StockCashFlowRecord.self, from: payload),
+                        in: &vault.stockCashFlowRecords
+                    )
+#endif
+                    break
                 case .currencyExchangeRecord:
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
                     try upsert(
@@ -717,6 +727,11 @@ enum CloudSyncMerger {
                 case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS
                     vault.stocks.removeAll { $0.id == id }
+#endif
+                    break
+                case .stockCashFlowRecord:
+#if MYTOOLS_FEATURE_STOCKS
+                    vault.stockCashFlowRecords.removeAll { $0.id == id }
 #endif
                     break
                 case .currencyExchangeRecord:

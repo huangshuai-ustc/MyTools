@@ -1,6 +1,202 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+struct StockChartXAxisLayout {
+    let gridValues: [Double]
+    let labelValues: [Double]
+    let labelDates: [Double: Date]
+    let labelTexts: [Double: String]
+    let centersLabelsInIntervals: Bool
+
+    func labelDate(at value: Double) -> Date? { labelDates[value] }
+    func labelText(at value: Double) -> String? { labelTexts[value] }
+
+    static func make(
+        points: [StockChartPlotPoint],
+        range: StockChartRange,
+        calendar: Calendar,
+        fallbackValues: [Double],
+        maximumTickCount: Int
+    ) -> Self {
+        guard !points.isEmpty else {
+            return Self(
+                gridValues: [],
+                labelValues: [],
+                labelDates: [:],
+                labelTexts: [:],
+                centersLabelsInIntervals: false
+            )
+        }
+        guard range != .fiveDays else {
+            let centers = groupCenters(points: points) { calendar.startOfDay(for: $0.point.date) }
+            let boundaries: [Double]
+            if centers.count > 1 {
+                boundaries = [points[0].x]
+                    + zip(centers, centers.dropFirst()).map { ($0 + $1) / 2 }
+                    + [points[points.count - 1].x]
+            } else {
+                boundaries = [points[0].x - 0.5, points[0].x + 0.5]
+            }
+            let dates = Dictionary(uniqueKeysWithValues: zip(boundaries, boundaries.dropFirst()).compactMap { lower, upper in
+                let midpoint = (lower + upper) / 2
+                return points.min(by: { abs($0.x - midpoint) < abs($1.x - midpoint) }).map { (lower, $0.point.date) }
+            })
+            return Self(
+                gridValues: boundaries,
+                labelValues: boundaries,
+                labelDates: dates,
+                labelTexts: [:],
+                centersLabelsInIntervals: true
+            )
+        }
+
+        let ticks: [(point: StockChartPlotPoint, text: String)]
+        if range == .intraday || range == .dayK {
+            ticks = fallbackValues.compactMap { value in
+                points.min(by: { abs($0.x - value) < abs($1.x - value) }).map {
+                    ($0, "")
+                }
+            }
+        } else {
+            ticks = naturalTicks(
+                points: points,
+                range: range,
+                calendar: calendar,
+                maximumCount: maximumTickCount
+            )
+        }
+        let values = ticks.map(\.point.x)
+        return Self(
+            gridValues: values,
+            labelValues: values,
+            labelDates: Dictionary(uniqueKeysWithValues: ticks.map { ($0.point.x, $0.point.point.date) }),
+            labelTexts: Dictionary(uniqueKeysWithValues: ticks.compactMap {
+                $0.text.isEmpty ? nil : ($0.point.x, $0.text)
+            }),
+            centersLabelsInIntervals: false
+        )
+    }
+
+    private static func groupCenters<Key: Hashable>(
+        points: [StockChartPlotPoint],
+        key: (StockChartPlotPoint) -> Key
+    ) -> [Double] {
+        var order: [Key] = []
+        var extents: [Key: (first: Double, last: Double)] = [:]
+        for point in points {
+            let itemKey = key(point)
+            if var extent = extents[itemKey] {
+                extent.last = point.x
+                extents[itemKey] = extent
+            } else {
+                order.append(itemKey)
+                extents[itemKey] = (point.x, point.x)
+            }
+        }
+        return order.compactMap { itemKey in
+            extents[itemKey].map { ($0.first + $0.last) / 2 }
+        }
+    }
+
+    private static func naturalTicks(
+        points: [StockChartPlotPoint],
+        range: StockChartRange,
+        calendar: Calendar,
+        maximumCount: Int
+    ) -> [(point: StockChartPlotPoint, text: String)] {
+        let candidates: [(StockChartPlotPoint, String)]
+        switch range {
+        case .weekK:
+            candidates = monthlyTicks(points, calendar: calendar, maximumCount: maximumCount)
+        case .monthK:
+            candidates = monthlyTicks(points, calendar: calendar, maximumCount: maximumCount)
+        case .quarterK:
+            candidates = firstPointsByYear(points, calendar: calendar).map {
+                ($0, yearText($0.point.date, calendar: calendar))
+            }
+        case .yearK:
+            candidates = points.map { ($0, yearText($0.point.date, calendar: calendar)) }
+        case .intraday, .fiveDays, .dayK:
+            candidates = []
+        }
+        return sampled(candidates, maximumCount: maximumCount)
+    }
+
+    private static func monthlyTicks(
+        _ points: [StockChartPlotPoint],
+        calendar: Calendar,
+        maximumCount: Int
+    ) -> [(StockChartPlotPoint, String)] {
+        let months = firstPointsByMonth(points, calendar: calendar)
+        let years = Set(months.map { calendar.component(.year, from: $0.point.date) })
+        let spansMultipleYears = years.count > 1
+        let steps = [1, 2, 3, 6, 12]
+        for step in steps {
+            let selected = months.filter { point in
+                let components = calendar.dateComponents([.year, .month], from: point.point.date)
+                let ordinal = (components.year ?? 0) * 12 + (components.month ?? 1) - 1
+                return ordinal.isMultiple(of: step)
+            }
+            if !selected.isEmpty, selected.count <= maximumCount {
+                return selected.map { point in
+                    let month = calendar.component(.month, from: point.point.date)
+                    let year = calendar.component(.year, from: point.point.date)
+                    let text: String
+                    if step == 12 || month == 1 {
+                        text = String(year)
+                    } else if spansMultipleYears {
+                        text = String(format: "%02d-%02d", year % 100, month)
+                    } else {
+                        text = "\(month)月"
+                    }
+                    return (point, text)
+                }
+            }
+        }
+        return firstPointsByYear(points, calendar: calendar).map {
+            ($0, yearText($0.point.date, calendar: calendar))
+        }
+    }
+
+    private static func firstPointsByMonth(
+        _ points: [StockChartPlotPoint],
+        calendar: Calendar
+    ) -> [StockChartPlotPoint] {
+        uniqueFirst(points) {
+            let components = calendar.dateComponents([.year, .month], from: $0.point.date)
+            return "\(components.year ?? 0)-\(components.month ?? 0)"
+        }
+    }
+
+    private static func firstPointsByYear(
+        _ points: [StockChartPlotPoint],
+        calendar: Calendar
+    ) -> [StockChartPlotPoint] {
+        uniqueFirst(points) { calendar.component(.year, from: $0.point.date) }
+    }
+
+    private static func uniqueFirst<Key: Hashable>(
+        _ points: [StockChartPlotPoint],
+        key: (StockChartPlotPoint) -> Key
+    ) -> [StockChartPlotPoint] {
+        var seen = Set<Key>()
+        return points.filter { seen.insert(key($0)).inserted }
+    }
+
+    private static func yearText(_ date: Date, calendar: Calendar) -> String {
+        String(calendar.component(.year, from: date))
+    }
+
+    private static func sampled<T>(_ values: [T], maximumCount: Int) -> [T] {
+        guard values.count > maximumCount, maximumCount > 1 else { return values }
+        let finalIndex = values.count - 1
+        let indices = Set((0..<maximumCount).map { position in
+            Int((Double(position) * Double(finalIndex) / Double(maximumCount - 1)).rounded())
+        })
+        return indices.sorted().map { values[$0] }
+    }
+}
+
 enum StockChartDisplayMode: String, CaseIterable, Identifiable {
     case preMarket
     case line
@@ -500,7 +696,11 @@ struct StockChartPresentation {
             axisFmt.dateFormat = "HH:mm"
         case .fiveDays, .dayK:
             axisFmt.dateFormat = "MM-dd"
-        case .weekK, .monthK, .quarterK, .yearK:
+        case .weekK, .monthK:
+            axisFmt.dateFormat = "M月"
+        case .quarterK:
+            axisFmt.dateFormat = "M"
+        case .yearK:
             axisFmt.dateFormat = "yyyy"
         }
         axisDateFormatter = axisFmt
@@ -842,7 +1042,29 @@ struct StockChartPresentation {
     }
 
     func axisLabelText(_ date: Date) -> String {
-        axisDateFormatter.string(from: date)
+        if range == .quarterK {
+            let month = Self.calendar(for: stock.market).component(.month, from: date)
+            return "Q\((month - 1) / 3 + 1)"
+        }
+        return axisDateFormatter.string(from: date)
+    }
+
+    func xAxisLayout(
+        isExpanded: Bool,
+        in requestedVisibleDomain: ClosedRange<Double>? = nil
+    ) -> StockChartXAxisLayout {
+        let domain = requestedVisibleDomain ?? defaultVisibleXDomain(isExpanded: isExpanded)
+        let source = range.isMinuteRange ? allPricePlotPoints : plotPoints
+        let visible = visibleElements(source, in: domain, x: \.x)
+        let points = visible.isEmpty ? source : visible
+        let fallbackValues = xAxisValues(isExpanded: isExpanded, in: domain)
+        return StockChartXAxisLayout.make(
+            points: points,
+            range: range,
+            calendar: Self.calendar(for: stock.market),
+            fallbackValues: fallbackValues,
+            maximumTickCount: isExpanded ? 8 : 5
+        )
     }
 
     static func isModeAvailable(
@@ -1380,10 +1602,17 @@ struct StockChartPresentation {
             ? (snapshot.indicatorPoints ?? snapshot.points)
             : snapshot.points)
             .sorted { $0.date < $1.date }
+        let intradayPlacements = range == .intraday
+            ? StockIntradayTransactionPlacement.resolve(
+                transactions: stock.transactions,
+                points: sourcePoints,
+                market: stock.market
+            )
+            : [:]
         return stock.transactions.compactMap { transaction in
             guard transaction.quantity > 0,
                   transaction.unitPrice > 0 else { return nil }
-            let transactionDate = transaction.tradedAt
+            let transactionDate = transaction.executedAt ?? transaction.tradedAt
 
             let exactMatchingPoints = sourcePoints.filter { point in
                 if range == .weekK {
@@ -1422,14 +1651,7 @@ struct StockChartPresentation {
             let markerPrice: Double
             if range == .intraday {
                 let transactionPrice = NSDecimalNumber(decimal: transaction.unitPrice).doubleValue
-                markerPoint = matchingPoints.min { left, right in
-                    let leftDistance = abs(left.close - transactionPrice)
-                    let rightDistance = abs(right.close - transactionPrice)
-                    if leftDistance == rightDistance {
-                        return left.date < right.date
-                    }
-                    return leftDistance < rightDistance
-                } ?? matchingPoints[0]
+                markerPoint = intradayPlacements[transaction.id] ?? matchingPoints[0]
                 markerPrice = transactionPrice
             } else if range == .fiveDays {
                 markerPoint = matchingPoints[matchingPoints.count / 2]

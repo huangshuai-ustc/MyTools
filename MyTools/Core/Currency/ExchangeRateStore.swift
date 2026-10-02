@@ -7,6 +7,8 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var updatedAt: Date?
     @Published private(set) var error: String?
     @Published private(set) var isRefreshing = false
+    @Published private(set) var history: [ExchangeRateHistoryPoint]
+    @Published private(set) var referenceHistory: [ReferenceExchangeRatePoint]
 
     private let repository: any ExchangeRateProviding
     private weak var updateObserver: (any ExchangeRateUpdateObserving)?
@@ -19,7 +21,34 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks, .partnership]
     ) {
         self.repository = repository
+        self.history = repository.loadHistory()
+        self.referenceHistory = []
         self.enabledModules = initialEnabledModules
+    }
+
+    @Published private(set) var historyError: String?
+    @Published private(set) var isLoadingHistory = false
+    private var historyGeneration = UUID()
+
+    func refreshReferenceHistory() async {
+        guard isCapabilityNeeded, !isLoadingHistory else { return }
+        let generation = historyGeneration
+        isLoadingHistory = true
+        defer { if generation == historyGeneration { isLoadingHistory = false } }
+        do {
+            let end = Date()
+            let start = end.addingTimeInterval(-365 * 86400)
+            let cached = try await repository.cachedReferenceHistory()
+            guard generation == historyGeneration, !Task.isCancelled else { return }
+            if !cached.isEmpty { referenceHistory = cached.filter { $0.date >= start && $0.date <= end } }
+            let points = try await repository.fetchReferenceHistory(from: start, to: end, currencies: CurrencyCode.selectableCases)
+            guard generation == historyGeneration, !Task.isCancelled else { return }
+            referenceHistory = points
+            historyError = nil
+        } catch {
+            guard generation == historyGeneration, !Task.isCancelled else { return }
+            historyError = "历史参考汇率更新失败，保留已加载数据：" + error.localizedDescription
+        }
     }
 
     private var isCapabilityNeeded: Bool { !enabledModules.isEmpty }
@@ -92,6 +121,11 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         renminbiBuyingRates = [.cny: 1]
         renminbiSellingRates = [.cny: 1]
         updatedAt = nil
+        history = []
+        referenceHistory = []
+        historyGeneration = UUID()
+        isLoadingHistory = false
+        historyError = nil
     }
 
     private func apply(_ snapshot: ExchangeRateSnapshot) {

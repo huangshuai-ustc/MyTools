@@ -1,9 +1,9 @@
 #if MYTOOLS_FEATURE_STOCKS
 import SwiftUI
 
-/// The two pages reachable from the stocks home tab bar.
+/// The pages reachable from the stocks home tab bar.
 ///
-/// Both pages are plain `List`s hosted by `StocksView`'s `TabView`; the container
+/// All pages are plain `List`s hosted by `StocksView`'s `TabView`; the container
 /// keeps the navigation title, search, pull-to-refresh and every lifecycle hook so
 /// page switching never disturbs the refresh coordinator's visibility bookkeeping.
 enum StocksHomePage: Hashable, CaseIterable, Identifiable {

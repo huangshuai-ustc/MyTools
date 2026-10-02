@@ -3,6 +3,33 @@ import Testing
 @testable import MyTools
 
 struct AppStoreBackupMergerTests {
+    @Test func stockCashFlowsAreMergedOnlyWithStocksModule() {
+        var local = StockCashFlowRecord()
+        local.amount = 100
+        var imported = local
+        imported.amount = 200
+
+        let excluded = AppStoreBackupMerger.merge(
+            localVault: VaultData(stockCashFlowRecords: [local]),
+            localSecrets: [],
+            imported: VaultBackupPayload(
+                vault: VaultData(stockCashFlowRecords: [imported]),
+                includedModules: [.currencyExchange]
+            )
+        )
+        #expect(excluded.vault.stockCashFlowRecords == [local])
+
+        let included = AppStoreBackupMerger.merge(
+            localVault: VaultData(stockCashFlowRecords: [local]),
+            localSecrets: [],
+            imported: VaultBackupPayload(
+                vault: VaultData(stockCashFlowRecords: [imported]),
+                includedModules: [.myStocks]
+            )
+        )
+        #expect(included.vault.stockCashFlowRecords == [imported])
+    }
+
     @Test func onlyIncludedModulesAreMerged() {
         let accountID = UUID()
         let stockID = UUID()

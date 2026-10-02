@@ -43,6 +43,10 @@ enum AppStoreBackupMerger {
                 $0.hasValidTransactionOrder
             }
             merged.stocks = mergeByID(local: localVault.stocks, imported: validImportedStocks)
+            merged.stockCashFlowRecords = mergeByID(
+                local: localVault.stockCashFlowRecords,
+                imported: imported.vault.stockCashFlowRecords
+            )
             merged.stockPriceAlerts = mergeByID(
                 local: localVault.stockPriceAlerts,
                 imported: imported.vault.stockPriceAlerts

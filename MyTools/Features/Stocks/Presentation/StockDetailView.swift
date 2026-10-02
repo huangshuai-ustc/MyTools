@@ -188,7 +188,13 @@ struct StockDetailView: View {
                         deleteTransaction(id: transaction.id, from: sortedTransactions)
                     }
                 }
-                Button { editorRoute = .transaction(StockTransaction()) } label: {
+                Button {
+                    var transaction = StockTransaction()
+                    transaction.tradedAt = StockTransaction.defaultTradingDate(
+                        market: stock.market
+                    )
+                    editorRoute = .transaction(transaction)
+                } label: {
                     Label("添加买入或卖出记录", systemImage: "plus.circle")
                 }
                 if !stock.reorderableTransactionDayGroups.isEmpty {
@@ -589,7 +595,7 @@ private struct StockTransactionRow: View {
             VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
                 Text("\(StockValueFormatter.quantity(transaction.quantity)) 股 × \(StockValueFormatter.price(transaction.unitPrice, currencyCode: market.currencyCode))")
                     .appFont(.subheadline.monospacedDigit())
-                Text(AppDateFormatter.string(from: transaction.tradedAt))
+                Text(transactionDateText)
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -606,6 +612,18 @@ private struct StockTransactionRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+
+    private var transactionDateText: String {
+        guard let executedAt = transaction.executedAt else {
+            return AppDateFormatter.string(from: transaction.tradedAt)
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = StockChartSeriesProcessor.marketCalendar(market)
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = formatter.calendar.timeZone
+        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
+        return formatter.string(from: executedAt)
     }
 }
 

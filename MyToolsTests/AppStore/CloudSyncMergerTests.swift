@@ -4,6 +4,29 @@ import Testing
 @testable import MyTools
 
 struct CloudSyncMergerTests {
+    @Test func stockCashFlowsRoundTripThroughCloudSnapshot() throws {
+        var record = StockCashFlowRecord()
+        record.kind = .deposit
+        record.currency = .cny
+        record.amount = 20_000
+
+        let snapshot = try CloudSyncSnapshotBuilder.make(
+            vault: VaultData(stockCashFlowRecords: [record]),
+            secrets: [],
+            attachmentStore: AttachmentStore(),
+            enabledModules: [.myStocks]
+        )
+        let item = try #require(snapshot.items.first { $0.kind == .stockCashFlowRecord })
+        let result = try CloudSyncMerger.apply(
+            [.upsert(kind: item.kind, id: item.id, payload: item.payload)],
+            to: VaultData(),
+            secrets: [],
+            enabledModules: [.myStocks]
+        )
+
+        #expect(result.vault.stockCashFlowRecords == [record])
+    }
+
     @Test func snapshotContainsOnlyEnabledModuleEntities() throws {
         var account = BankAccount()
         account.bankName = "Account"

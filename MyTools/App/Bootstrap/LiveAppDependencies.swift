@@ -16,6 +16,15 @@ extension StockRefreshCoordinator: StockRefreshInvalidating {}
 #endif
 
 extension ExchangeRateRepository: ExchangeRateProviding {
+    func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint] {
+        try await HistoricalExchangeRateService.shared.cachedPoints()
+    }
+    nonisolated func loadHistory() -> [ExchangeRateHistoryPoint] {
+        Self.loadHistory()
+    }
+    func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint] {
+        try await HistoricalExchangeRateService.shared.fetch(from: from, to: to, currencies: currencies)
+    }
     func persist(snapshot: ExchangeRateSnapshot) async {
         save(snapshot)
     }
@@ -29,6 +38,8 @@ private struct LiveModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
             await StockChartService.shared.clearCache()
 #endif
             ExchangeRateRepository.clearCachedSnapshot()
+            do { try await HistoricalExchangeRateService.shared.clear() }
+            catch { DiagnosticLogger.logError(.exchangeRate, operation: "清理历史汇率缓存失败", error: error) }
             break
         case .sportsLottery:
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
@@ -37,6 +48,8 @@ private struct LiveModuleLocalDataCacheCleaner: ModuleLocalDataCacheClearing {
             break
         case .currencyExchange:
             ExchangeRateRepository.clearCachedSnapshot()
+            do { try await HistoricalExchangeRateService.shared.clear() }
+            catch { DiagnosticLogger.logError(.exchangeRate, operation: "清理历史汇率缓存失败", error: error) }
             break
         case .personalFinance, .healthRecords, .foodMap,
              .secrets, .documents, .bills, .partnership:
