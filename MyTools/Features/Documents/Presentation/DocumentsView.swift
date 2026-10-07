@@ -98,6 +98,7 @@ struct DocumentsView: View {
     @State private var isUnlocked = false
     @State private var editingDocument: CredentialDocument?
     @State private var pagination = AppListPagination(pageSize: DocumentsView.pageSize)
+    @State private var showsFilters = false
 
     private var canAccess: Bool { isUnlocked }
 
@@ -142,29 +143,19 @@ struct DocumentsView: View {
 
     var body: some View {
         List {
+            Section {
+                documentsOverview
+                    .appListRowStyle()
+            }
             if !store.documents.isEmpty {
-                Section("筛选") {
-                    PickerFieldRow(title: "类型", selection: $typeFilter) {
-                        Text(CredentialTypeFilter.all.title).tag(CredentialTypeFilter.all)
-                        ForEach(CredentialDocumentType.allCases) { type in
-                            Text(type.title).tag(CredentialTypeFilter.type(type))
-                        }
-                    }
-                    PickerFieldRow(title: "有效期", selection: $statusFilter) {
-                        ForEach(CredentialStatusFilter.allCases) { status in
-                            Text(status.title).tag(status)
-                        }
-                    }
-                    PickerFieldRow(title: "证照状态", selection: $versionStatusFilter) {
-                        Text(CredentialVersionStatusFilter.all.title)
-                            .tag(CredentialVersionStatusFilter.all)
-                        ForEach(CredentialVersionStatus.allCases) { status in
-                            Text(status.title)
-                                .tag(CredentialVersionStatusFilter.status(status))
-                        }
-                    }
-                    if !availableTags.isEmpty {
-                        AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
+                Section {
+                    HStack {
+                        Label(filterSummary, systemImage: "line.3.horizontal.decrease.circle")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(filterIsActive ? Color.accentColor : Color.secondary)
+                        Spacer()
+                        Button("筛选", systemImage: "chevron.right") { showsFilters = true }
+                            .font(.subheadline.weight(.semibold))
                     }
                 }
             }
@@ -217,6 +208,16 @@ struct DocumentsView: View {
                 .id(document.id)
                 .iOSLargeSheet()
         }
+        .sheet(isPresented: $showsFilters) {
+            DocumentsFilterSheet(
+                typeFilter: $typeFilter,
+                statusFilter: $statusFilter,
+                versionStatusFilter: $versionStatusFilter,
+                selectedTag: $selectedTag,
+                availableTags: availableTags
+            )
+            .iOSLargeSheet()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { isUnlocked = false }
         }
@@ -230,6 +231,55 @@ struct DocumentsView: View {
         .onChange(of: statusFilter) { _, _ in pagination.reset() }
         .onChange(of: versionStatusFilter) { _, _ in pagination.reset() }
         .onChange(of: selectedTag) { _, _ in pagination.reset() }
+    }
+
+    private var filterIsActive: Bool {
+        typeFilter != .all || statusFilter != .all || versionStatusFilter != .all || !selectedTag.isEmpty
+    }
+
+    private var filterSummary: String {
+        if !filterIsActive { return "筛选" }
+        var parts: [String] = []
+        if typeFilter != .all { parts.append(typeFilter.title) }
+        if statusFilter != .all { parts.append(statusFilter.title) }
+        if versionStatusFilter != .all { parts.append("证照" + versionStatusFilter.title) }
+        if !selectedTag.isEmpty { parts.append(selectedTag) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var documentsOverview: some View {
+        let normal = store.documents.filter {
+            if case .valid = $0.validityStatus() { return true }
+            return $0.validityStatus() == .permanent
+        }.count
+        let expiring = store.documents.filter {
+            if case .expiringSoon = $0.validityStatus() { return true }
+            return false
+        }.count
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("证照概览", systemImage: "person.text.rectangle.fill")
+                    .font(.headline)
+                Spacer()
+                if !canAccess {
+                    Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 10) {
+                overviewMetric("全部", value: store.documents.count, color: .accentColor)
+                overviewMetric("正常", value: normal, color: .green)
+                overviewMetric("临近到期", value: expiring, color: .orange)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func overviewMetric(_ title: String, value: Int, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(value)").font(.title3.weight(.bold).monospacedDigit()).foregroundStyle(color)
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func documentLink(_ group: CredentialDocumentGroup) -> some View {
@@ -276,7 +326,7 @@ private struct CredentialDocumentRow: View {
                 .appFont(.title3)
                 .foregroundStyle(.teal)
                 .frame(width: 42, height: 42)
-                .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 5) {
                 Text(protectedDisplayTitle)
                     .appFont(.headline)
@@ -296,12 +346,64 @@ private struct CredentialDocumentRow: View {
                     CredentialVersionStatusLabel(status: document.versionStatus)
                     CredentialStatusLabel(status: document.validityStatus())
                 }
-                AppTagCapsules(tags: document.tags, limit: 3)
+                if let expiration = document.expirationDate(), document.validity.kind != .permanent {
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar")
+                        Text(AppDateFormatter.string(from: expiration))
+                    }
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .layoutPriority(1)
+                        .foregroundStyle({
+                            if case .expired = document.validityStatus() { return Color.red }
+                            if case .expiringSoon = document.validityStatus() { return Color.orange }
+                            return Color.secondary
+                        }())
+                }
             }
             Spacer(minLength: 4)
             Image(systemName: isHolderRevealed ? "lock.open.fill" : "lock.fill")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DocumentsFilterSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var typeFilter: CredentialTypeFilter
+    @Binding var statusFilter: CredentialStatusFilter
+    @Binding var versionStatusFilter: CredentialVersionStatusFilter
+    @Binding var selectedTag: String
+    let availableTags: [String]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                PickerFieldRow(title: "类型", selection: $typeFilter) {
+                    Text(CredentialTypeFilter.all.title).tag(CredentialTypeFilter.all)
+                    ForEach(CredentialDocumentType.allCases) { type in Text(type.title).tag(CredentialTypeFilter.type(type)) }
+                }
+                PickerFieldRow(title: "有效期", selection: $statusFilter) {
+                    ForEach(CredentialStatusFilter.allCases) { status in Text(status.title).tag(status) }
+                }
+                PickerFieldRow(title: "证照状态", selection: $versionStatusFilter) {
+                    Text(CredentialVersionStatusFilter.all.title).tag(CredentialVersionStatusFilter.all)
+                    ForEach(CredentialVersionStatus.allCases) { status in Text(status.title).tag(CredentialVersionStatusFilter.status(status)) }
+                }
+                if !availableTags.isEmpty {
+                    Section("标签") { AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag) }
+                }
+                Section {
+                    Button("清除筛选", systemImage: "xmark.circle") {
+                        typeFilter = .all; statusFilter = .all; versionStatusFilter = .all; selectedTag = ""
+                    }.foregroundStyle(.red)
+                }
+            }
+            .appNavigationTitle("筛选证照")
+            .diagnosticScreen("筛选证照")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
     }
 }

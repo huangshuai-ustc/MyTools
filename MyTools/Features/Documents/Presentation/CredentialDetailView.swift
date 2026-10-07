@@ -35,6 +35,10 @@ struct CredentialDetailView: View {
         Group {
             if let document {
                 Form {
+                    Section {
+                        credentialHero(document)
+                            .appListRowStyle()
+                    }
                     Section("证照信息") {
                         DetailValueRow(title: "类型", value: document.typeTitle)
                             .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
@@ -99,9 +103,12 @@ struct CredentialDetailView: View {
                         }
                     }
 
-                    if !document.fields.isEmpty {
+                    let filledFields = document.fields.filter {
+                        !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    if !filledFields.isEmpty {
                         Section("其他信息") {
-                            ForEach(document.fields) { field in
+                            ForEach(filledFields) { field in
                                 fieldRow(field)
                             }
                         }
@@ -230,6 +237,26 @@ struct CredentialDetailView: View {
         } message: {
             Text(attachmentError ?? "")
         }
+    }
+
+    private func credentialHero(_ document: CredentialDocument) -> some View {
+        let status = document.validityStatus()
+        return HStack(spacing: 14) {
+            Image(systemName: document.type.systemImage)
+                .font(.title2)
+                .foregroundStyle(.teal)
+                .frame(width: 54, height: 54)
+                .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(document.typeTitle).font(.headline)
+                Text(document.versionStatus.title).font(.caption).foregroundStyle(.secondary)
+                CredentialStatusLabel(status: status)
+            }
+            Spacer()
+            Image(systemName: canReveal ? "lock.open.fill" : "lock.fill")
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
