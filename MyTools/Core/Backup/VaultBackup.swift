@@ -9,6 +9,7 @@ enum VaultBackupError: LocalizedError {
     case invalidFile
     case unsupportedVersion
     case wrongPassword
+    case moduleUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ enum VaultBackupError: LocalizedError {
             return "此备份版本不是当前支持的 1.0，无法导入。"
         case .wrongPassword:
             return "备份密码错误，无法解密文件。"
+        case .moduleUnavailable:
+            return "所选模块有未能读取的数据，不能将其导出为空备份。原始资料已保留。"
         }
     }
 }

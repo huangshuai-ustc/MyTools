@@ -720,13 +720,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             guard !entry.isDeleted, let payload = entry.payload else { return }
             let decoder = CloudSyncCoding.decoder()
             switch entry.kind {
-            case .bankCard:
+            case .financialInstitution:
 #if MYTOOLS_FEATURE_FINANCE
-                guard let card = try? decoder.decode(BankCard.self, from: payload) else { return }
-                if card.statements.contains(where: { $0.attachment?.id == id }) {
-                    result.insert(.personalFinance)
-                }
+                guard let institution = try? decoder.decode(FinancialInstitution.self, from: payload) else { return }
+                if institution.financeAttachments.contains(where: { $0.id == id }) { result.insert(.personalFinance) }
 #endif
+                break
+            case .financialProvider, .bankAccount, .bankCard:
                 break
             case .medicalRecord:
 #if MYTOOLS_FEATURE_HEALTH

@@ -141,7 +141,7 @@ struct CurrencyExchangeView: View {
         .searchable(text: $query, prompt: "搜索币种或代码")
 #endif
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {

@@ -2,9 +2,19 @@ import SwiftUI
 
 struct ToolModuleDestination: View {
     let module: ToolModule
+    @EnvironmentObject private var store: AppStore
 
     @ViewBuilder
     var body: some View {
+        if store.unavailableModules.contains(module) {
+            ContentUnavailableView("此模块的数据暂时无法读取", systemImage: "exclamationmark.shield", description: Text("原始资料已保留，此模块的编辑和同步已暂停。其他功能仍可正常使用。请勿通过清空数据处理此问题。"))
+        } else {
+            destination
+        }
+    }
+
+    @ViewBuilder
+    private var destination: some View {
         switch module {
         case .personalFinance:
 #if MYTOOLS_FEATURE_FINANCE

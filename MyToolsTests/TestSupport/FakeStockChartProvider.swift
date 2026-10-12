@@ -31,9 +31,11 @@ struct FakeStockChartProvider: StockChartProvider {
     var delay: Duration = .zero
     var behaviorsByRange: [StockChartRange: Behavior] = [:]
     var ignoresCancellation = false
+    var delaysByRange: [StockChartRange: Duration] = [:]
 
     func fetchChart(for request: StockChartRequest) async throws -> StockChartSnapshot {
         await recorder.record(id, range: request.range)
+        let delay = delaysByRange[request.range] ?? delay
         if delay > .zero {
             if ignoresCancellation {
                 let components = delay.components

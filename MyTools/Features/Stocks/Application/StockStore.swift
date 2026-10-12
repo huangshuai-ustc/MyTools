@@ -805,7 +805,9 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
                         chartRefreshErrors[stockID] = nil
                         publishIntradayProjection(projection)
                     } else if stocks.contains(where: { $0.id == stockID && !$0.isArchived }) {
-                        lastAutomaticIntradayAttemptAt[stockID] = nil
+                        // Failure is still an attempt. Keep the automatic
+                        // cooldown so repeated page entries cannot hammer an
+                        // unavailable source; explicit refresh bypasses it.
                         chartRefreshErrors[stockID] = "行情图更新失败，已保留上次数据"
                     }
                 }

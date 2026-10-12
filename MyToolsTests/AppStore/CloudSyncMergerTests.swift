@@ -28,7 +28,7 @@ struct CloudSyncMergerTests {
     }
 
     @Test func snapshotContainsOnlyEnabledModuleEntities() throws {
-        var account = BankAccount()
+        var account = FinancialInstitution()
         account.bankName = "Account"
         var stock = StockHolding()
         stock.symbol = "TEST"
@@ -187,7 +187,7 @@ struct CloudSyncMergerTests {
     }
 
     @Test func preferencesDoNotMutateVaultEntities() throws {
-        var account = BankAccount()
+        var account = FinancialInstitution()
         account.bankName = "Retained"
 
         let result = try CloudSyncMerger.apply(
@@ -203,7 +203,7 @@ struct CloudSyncMergerTests {
             secrets: []
         )
 
-        #expect(result.vault.accounts == [account])
+        #expect(result.vault.financialInstitutions == [account])
         #expect(result.secrets.isEmpty)
     }
 
@@ -407,9 +407,9 @@ struct CloudSyncMergerTests {
     }
 
     @Test func remoteRecordUpdatesOnlyItsMatchingEntity() throws {
-        var account = BankAccount()
+        var account = FinancialInstitution()
         account.bankName = "Before"
-        var otherAccount = BankAccount()
+        var otherAccount = FinancialInstitution()
         otherAccount.bankName = "Other"
         var remoteAccount = account
         remoteAccount.bankName = "After"
@@ -421,7 +421,7 @@ struct CloudSyncMergerTests {
             secrets: []
         )
 
-        #expect(result.vault.accounts.map(\.bankName) == ["After", "Other"])
+        #expect(result.vault.financialInstitutions.map(\.bankName) == ["After", "Other"])
     }
 
     @Test func remoteDeletionRemovesOnlyTheMatchingRecord() throws {

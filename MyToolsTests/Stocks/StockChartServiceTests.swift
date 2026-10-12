@@ -3,6 +3,105 @@ import Testing
 @testable import MyTools
 
 struct StockChartServiceTests {
+    @Test func closingRepairOnlyRequestsMissingCanonicalRange() throws {
+        let market = StockMarket.unitedStates
+        let close = StockChartFixtures.date(2026, 8, 7, hour: 16, timeZone: "America/New_York")
+        let now = close.addingTimeInterval(3600)
+        let disk = StockChartDiskStore()
+        let key = StockChartStoreKey(market: market, symbol: "VOO")
+        var stored = disk.emptyStore(for: key)
+        #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now) == [.intraday, .dayK])
+        let daily = StockChartSnapshot(symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 100,
+            points: [StockChartFixtures.point(at: close)], quoteUpdatedAt: close, fetchedAt: now,
+            source: "Test", supportsCandlesticks: true)
+        stored = disk.merging(daily, range: .dayK, for: key, into: stored)
+        #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now) == [.intraday])
+        let minute = StockChartSnapshot(symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 100,
+            points: [StockChartFixtures.point(at: close.addingTimeInterval(-60))], quoteUpdatedAt: close, fetchedAt: now,
+            source: "Test", supportsCandlesticks: true)
+        stored = disk.merging(minute, range: .intraday, for: key, into: stored)
+        #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now).isEmpty)
+        stored.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt = close.addingTimeInterval(-120)
+        #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now) == [.dayK])
+    }
+
+    @Test func fastRegularOnlySourceCannotSuppressPostMarketSource() async throws {
+        let context = try makeContext(market: .unitedStates, range: .intraday)
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let now = StockChartFixtures.date(2026, 8, 7, hour: 17, timeZone: "America/New_York")
+        let regular = snapshot(for: context.stock, range: .intraday)
+        let post = StockChartFixtures.point(at: now, close: 110)
+        let extended = StockChartSnapshot(
+            symbol: regular.symbol, name: regular.name, currencyCode: "USD", previousClose: 100,
+            points: regular.points, postMarketPoints: [post],
+            indicatorPoints: regular.indicatorPoints, quoteUpdatedAt: now, fetchedAt: now,
+            source: "Yahoo", supportsCandlesticks: true
+        )
+        let service = StockChartService(
+            diskStore: StockChartDiskStore(persistentStoreDirectory: context.root.appendingPathComponent("Extended")),
+            providers: StockChartProviders(
+                tencent: FakeStockChartProvider(id: "tencent", behavior: .success(regular), recorder: context.recorder),
+                eastmoney: FakeStockChartProvider(id: "eastmoney", behavior: .failure(.noData), recorder: context.recorder),
+                yahoo: FakeStockChartProvider(id: "yahoo", behavior: .success(extended), recorder: context.recorder, delay: .milliseconds(400)),
+                nasdaq: FakeStockChartProvider(id: "nasdaq", behavior: .failure(.noData), recorder: context.recorder)
+            ), nowProvider: { now }
+        )
+        let result = try await service.fetchChart(for: context.stock, range: .intraday, forceRefresh: true)
+        #expect(result.postMarketPoints == [post])
+        #expect(result.quoteUpdatedAt == now)
+        await service.clearCache()
+    }
+
+    @Test func slowPrimaryDoesNotBlockUsableFallback() async throws {
+        let context = try makeContext(market: .unitedStates, range: .intraday,
+                                      nasdaqSucceeds: true, providerDelay: .seconds(5))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let started = ContinuousClock.now
+        let result = try await context.service.fetchChart(for: context.stock, range: .intraday, forceRefresh: true)
+        #expect(!result.points.isEmpty)
+        #expect(started.duration(to: .now) < .seconds(2))
+        #expect(await context.service.cachedChart(for: context.stock, range: .intraday) != nil)
+        await context.service.clearCache()
+    }
+
+    @Test func slowWarmupDoesNotDelayOrDiscardSuccessfulIntraday() async throws {
+        let context = try makeContext(market: .unitedStates, range: .intraday,
+                                      warmupDelay: .seconds(5))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let started = ContinuousClock.now
+        let result = try await context.service.fetchChart(for: context.stock, range: .intraday, forceRefresh: true)
+        #expect(!result.points.isEmpty)
+        #expect(started.duration(to: .now) < .seconds(2))
+        #expect(await context.service.cachedChart(for: context.stock, range: .intraday) != nil)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await context.recorder.ranges().contains(.fiveDays))
+        await context.service.clearCache()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await context.service.cachedChart(for: context.stock, range: .intraday) == nil)
+    }
+
+    @Test func stalledHistoricalPrimaryDoesNotStarveFallback() async throws {
+        let context = try makeContext(market: .unitedStates, range: .dayK,
+                                      nasdaqSucceeds: true, providerDelay: .seconds(5))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let started = ContinuousClock.now
+        let result = try await context.service.fetchChart(for: context.stock, range: .dayK, forceRefresh: true)
+        #expect(!result.points.isEmpty)
+        #expect(started.duration(to: .now) < .seconds(2))
+    }
+
+    @Test func clearingCacheStopsLateUncooperativeWarmupFromRecreatingIt() async throws {
+        let context = try makeContext(market: .unitedStates, range: .intraday,
+                                      ignoresCancellation: true, warmupDelay: .milliseconds(300))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        _ = try await context.service.fetchChart(for: context.stock, range: .intraday, forceRefresh: true)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await context.recorder.ranges().contains(.fiveDays))
+        await context.service.clearCache(for: context.stock)
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(await context.service.cachedChart(for: context.stock, range: .intraday) == nil)
+    }
+
     @Test func uncooperativeProviderCannotHoldCallerPastDeadlineOrWriteLateCache() async throws {
         let context = try makeContext(market: .unitedStates, range: .dayK,
                                       providerDelay: .seconds(1), flightTimeout: .milliseconds(30), ignoresCancellation: true)
@@ -235,7 +334,8 @@ struct StockChartServiceTests {
         nasdaqSucceeds: Bool = false,
         providerDelay: Duration = .zero,
         flightTimeout: Duration = .seconds(18),
-        ignoresCancellation: Bool = false
+        ignoresCancellation: Bool = false,
+        warmupDelay: Duration = .zero
     ) throws -> (
         root: URL,
         stock: StockHolding,
@@ -268,7 +368,8 @@ struct StockChartServiceTests {
                 behavior: yahooBehavior ?? .success(success),
                 recorder: recorder,
                 delay: providerDelay,
-                ignoresCancellation: ignoresCancellation
+                ignoresCancellation: ignoresCancellation,
+                delaysByRange: warmupDelay > .zero ? [.fiveDays: warmupDelay] : [:]
             ),
             nasdaq: FakeStockChartProvider(
                 id: "nasdaq",
@@ -282,7 +383,8 @@ struct StockChartServiceTests {
         return (root, stock, StockChartService(
             diskStore: diskStore,
             providers: providers,
-            flightTimeout: flightTimeout
+            flightTimeout: flightTimeout,
+            nowProvider: { StockChartFixtures.date(2026, 8, 8, hour: 12, timeZone: "America/New_York") }
         ), recorder)
     }
 

@@ -61,7 +61,7 @@ struct SportsLotteryView: View {
             .appNavigationTitle(ToolModule.sportsLottery.title)
             .diagnosticScreen("竞彩")
 #if os(iOS)
-            .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
 #endif
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {

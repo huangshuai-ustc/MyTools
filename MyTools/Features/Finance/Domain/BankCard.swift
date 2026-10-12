@@ -21,6 +21,7 @@ enum DomesticAccountType: String, CaseIterable, Identifiable {
     case foreignCurrency
     case personalPension
     case socialSecurity
+    case providentFund
     case other
 
     var id: Self { self }
@@ -32,6 +33,7 @@ enum DomesticAccountType: String, CaseIterable, Identifiable {
         case .foreignCurrency: return "外汇账户"
         case .personalPension: return "个人养老金账户"
         case .socialSecurity: return "社保账户"
+        case .providentFund: return "公积金账户"
         case .other: return "其他账户"
         }
     }
@@ -69,30 +71,12 @@ enum ForeignAccountType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum AccountStatus: String, Codable, CaseIterable, Identifiable {
-    case normal
-    case abnormal
-    case closed
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .normal: return "正常"
-        case .abnormal: return "异常"
-        case .closed: return "销户"
-        }
-    }
-}
+// Accounts and cards share the same lifecycle; encoded raw values are unchanged.
+typealias AccountStatus = CardStatus
 
 extension CurrencyCode {
     static func preferredFinanceCases(for region: BankRegion) -> [CurrencyCode] {
-        switch region {
-        case .domestic:
-            return [.cny, .hkd, .usd]
-        case .overseas:
-            return [.cny, .hkd, .usd, .eur, .gbp, .jpy]
-        }
+        [.cny, .hkd, .usd]
     }
 
     static func additionalFinanceCases(
@@ -327,6 +311,13 @@ struct BankCardCredential: Identifiable, Codable, Equatable {
 struct BankCard: Identifiable, Codable, Equatable {
     var id = UUID()
     var accountID: UUID? = nil
+    /// accountID remains the institution envelope; these are actual financial accounts.
+    var linkedFinancialAccountIDs: Set<UUID>?
+    var isVirtual: Bool?
+    var isArchived: Bool?
+    var replacedByCardID: UUID?
+    var openingDateKnown: Bool?
+    var expiryDateKnown: Bool?
     var openedAt = Date()
     var cardNumber = ""
     var cvv = ""
@@ -436,108 +427,18 @@ struct BankBranchReference: Equatable, Sendable {
     }
 }
 
-struct BankAccount: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var region: BankRegion = .domestic
-    var domesticSubaccounts: [DomesticSubaccount] = []
-    var foreignSubaccounts: [ForeignSubaccount] = []
-    var bankName = ""
-    var branchName = ""
-    private var onlineBank: Bool?
-    var branchLocation: BankBranchLocation?
-    var openedAt = Date()
-    var swift = ""
-    var iban = ""
-    /// Transitional persisted values. `FinanceStore` immediately converts them into independent
-    /// `additionalLoginFields`; they are not part of the template system.
-    var boundPhoneNumber = ""
-    var loginAccount = ""
-    var loginPassword = ""
-    var additionalLoginFields: [AdditionalLoginField] = []
-    var correspondenceAddressChinese = ""
-    var correspondenceAddressEnglish = ""
-    var residentialAddressChinese = ""
-    var residentialAddressEnglish = ""
-    var remittanceBankName = ""
-    var remittanceBankAddress = ""
-    var remittanceInstructions = ""
-    var status: AccountStatus = .normal
-    var note = ""
-
-    var isOnlineBank: Bool {
-        get { onlineBank ?? false }
-        set { onlineBank = newValue }
-    }
-}
-
-extension BankAccount {
-    var activeSubaccountCount: Int {
-        switch region {
-        case .domestic:
-            domesticSubaccounts.filter { $0.status != .closed }.count
-        case .overseas:
-            foreignSubaccounts.filter { $0.status != .closed }.count
-        }
-    }
-
-    var closedSubaccountCount: Int {
-        switch region {
-        case .domestic:
-            domesticSubaccounts.filter { $0.status == .closed }.count
-        case .overseas:
-            foreignSubaccounts.filter { $0.status == .closed }.count
-        }
-    }
-
-    func isInactiveFinanceArchive(cards: [BankCard]) -> Bool {
-        let hasActiveCard = cards.contains { $0.status != .closed }
-        let hasActiveSubaccount: Bool
-        switch region {
-        case .domestic:
-            hasActiveSubaccount = domesticSubaccounts.contains { $0.status == .normal }
-        case .overseas:
-            hasActiveSubaccount = foreignSubaccounts.contains { $0.status == .normal }
-        }
-        let hasHistoricalCard = !cards.isEmpty
-        return !hasActiveCard
-            && !hasActiveSubaccount
-            && (hasHistoricalCard || status != .normal)
-    }
-}
-
 extension BankCard {
-    func resolvedOpeningBranch(for account: BankAccount) -> BankBranchReference {
-        if account.isOnlineBank {
-            return BankBranchReference(name: "网络银行", location: nil)
-        }
-        let cardBranch = BankBranchReference(
-            name: branchName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-            location: branchLocation
-        )
-        guard account.region == .domestic, !cardBranch.hasValue else {
-            return cardBranch
-        }
-        return BankBranchReference(
-            name: account.branchName.trimmingCharacters(in: .whitespacesAndNewlines),
-            location: account.branchLocation
-        )
+    func resolvedOpeningBranch(for account: FinancialInstitution) -> BankBranchReference {
+        guard account.kind == .bank, !account.isOnlineBank else { return BankBranchReference(name: account.isOnlineBank ? "网络银行" : "", location: nil) }
+        if account.region == .overseas { return BankBranchReference(name: account.branchName, location: account.branchLocation) }
+        let explicit = BankBranchReference(name: branchName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", location: branchLocation)
+        return explicit.hasValue ? explicit : BankBranchReference(name: account.branchName, location: account.branchLocation)
     }
-
-    mutating func applyDefaultOpeningBranch(from account: BankAccount) {
-        if account.isOnlineBank {
-            branchName = nil
-            branchLocation = nil
-            return
-        }
-        let cardBranch = BankBranchReference(
-            name: branchName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-            location: branchLocation
-        )
-        guard account.region == .domestic, !cardBranch.hasValue else { return }
-        let accountBranch = resolvedOpeningBranch(for: account)
-        branchName = accountBranch.name.isEmpty ? nil : accountBranch.name
-        branchLocation = accountBranch.location
+    mutating func applyDefaultOpeningBranch(from account: FinancialInstitution) {
+        guard account.kind == .bank, account.region == .domestic, !account.isOnlineBank, branchName?.isEmpty != false, branchLocation == nil else { return }
+        let branch = resolvedOpeningBranch(for: account)
+        branchName = branch.name.isEmpty ? nil : branch.name
+        branchLocation = branch.location
     }
 }
-
 #endif

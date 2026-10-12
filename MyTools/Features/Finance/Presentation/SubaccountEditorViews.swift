@@ -26,6 +26,7 @@ struct DomesticSubaccountReadOnlyView: View {
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
     @State private var editingSubaccount: DomesticSubaccount?
+    @State private var expectedInstitution: FinancialInstitution?
 
     init(subaccount: DomesticSubaccount, accountID: UUID) {
         initialSubaccount = subaccount
@@ -33,14 +34,14 @@ struct DomesticSubaccountReadOnlyView: View {
     }
 
     private var subaccount: DomesticSubaccount {
-        store.accounts.first { $0.id == accountID }?
+        store.financialInstitutions.first { $0.id == accountID }?
             .domesticSubaccounts.first { $0.id == initialSubaccount.id }
             ?? initialSubaccount
     }
 
     var body: some View {
         NavigationStack {
-            if store.accounts.first(where: { $0.id == accountID })?.domesticSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
+            if store.financialInstitutions.first(where: { $0.id == accountID })?.domesticSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
             Form {
                 Section("账户信息") {
                     SubaccountDetailCard(
@@ -55,6 +56,7 @@ struct DomesticSubaccountReadOnlyView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
+                        expectedInstitution = store.financialInstitutions.first { $0.id == accountID }
                         editingSubaccount = subaccount
                     } label: {
                         Image(systemName: "square.and.pencil")
@@ -76,12 +78,13 @@ struct DomesticSubaccountReadOnlyView: View {
     }
 
     private func save(_ value: DomesticSubaccount) {
-        guard var account = store.accounts.first(where: { $0.id == accountID }),
+        guard var account = store.financialInstitutions.first(where: { $0.id == accountID }),
               let index = account.domesticSubaccounts.firstIndex(where: { $0.id == value.id }) else {
             return
         }
         account.domesticSubaccounts[index] = value
-        store.replaceAccount(account, cards: store.cards(for: account))
+        guard let expectedInstitution else { return }
+        _ = store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
     }
 }
 
@@ -231,6 +234,7 @@ struct ForeignSubaccountReadOnlyView: View {
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
     @State private var editingSubaccount: ForeignSubaccount?
+    @State private var expectedInstitution: FinancialInstitution?
 
     init(subaccount: ForeignSubaccount, accountID: UUID) {
         initialSubaccount = subaccount
@@ -238,14 +242,14 @@ struct ForeignSubaccountReadOnlyView: View {
     }
 
     private var subaccount: ForeignSubaccount {
-        store.accounts.first { $0.id == accountID }?
+        store.financialInstitutions.first { $0.id == accountID }?
             .foreignSubaccounts.first { $0.id == initialSubaccount.id }
             ?? initialSubaccount
     }
 
     var body: some View {
         NavigationStack {
-            if store.accounts.first(where: { $0.id == accountID })?.foreignSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
+            if store.financialInstitutions.first(where: { $0.id == accountID })?.foreignSubaccounts.contains(where: { $0.id == initialSubaccount.id }) == true {
             Form {
                 Section("账户信息") {
                     SubaccountDetailCard(
@@ -260,6 +264,7 @@ struct ForeignSubaccountReadOnlyView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
+                        expectedInstitution = store.financialInstitutions.first { $0.id == accountID }
                         editingSubaccount = subaccount
                     } label: {
                         Image(systemName: "square.and.pencil")
@@ -281,12 +286,13 @@ struct ForeignSubaccountReadOnlyView: View {
     }
 
     private func save(_ value: ForeignSubaccount) {
-        guard var account = store.accounts.first(where: { $0.id == accountID }),
+        guard var account = store.financialInstitutions.first(where: { $0.id == accountID }),
               let index = account.foreignSubaccounts.firstIndex(where: { $0.id == value.id }) else {
             return
         }
         account.foreignSubaccounts[index] = value
-        store.replaceAccount(account, cards: store.cards(for: account))
+        guard let expectedInstitution else { return }
+        _ = store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
     }
 }
 
@@ -467,6 +473,7 @@ private struct SubaccountDetailCard: View {
 struct CurrencySelectionRows: View {
     @Binding var currencies: Set<CurrencyCode>
     var region: BankRegion = .overseas
+    var wrapsInField: Bool = false
 
     private var primaryCurrencies: [CurrencyCode] {
         CurrencyCode.preferredFinanceCases(for: region)
@@ -478,6 +485,16 @@ struct CurrencySelectionRows: View {
 
     var body: some View {
         Group {
+            if wrapsInField {
+                DisclosureGroup("币种") { currencyRows }
+            } else {
+                currencyRows
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var currencyRows: some View {
             ForEach(primaryCurrencies) { currency in
                 currencyRow(currency)
             }
@@ -488,7 +505,6 @@ struct CurrencySelectionRows: View {
                     }
                 }
             }
-        }
     }
 
     private func currencyRow(_ currency: CurrencyCode) -> some View {

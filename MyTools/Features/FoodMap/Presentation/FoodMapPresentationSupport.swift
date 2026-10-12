@@ -136,6 +136,17 @@ enum FoodPlaceValueFormatter {
         case .usd: symbol = "$"
         case .aud: symbol = "A$"
         case .mop: symbol = "MOP "
+        case .huf: symbol = "HUF "
+        case .php: symbol = "₱"
+        case .aed: symbol = "AED "
+        case .czk: symbol = "CZK "
+        case .dkk: symbol = "DKK "
+        case .ils: symbol = "₪"
+        case .nok: symbol = "NOK "
+        case .pln: symbol = "PLN "
+        case .sek: symbol = "SEK "
+        case .ugx: symbol = "UGX "
+        case .zar: symbol = "R"
         }
         return "\(symbol)\(amount)"
     }

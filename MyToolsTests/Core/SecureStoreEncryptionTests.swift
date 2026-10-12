@@ -63,6 +63,85 @@ private struct PlainVaultFixture: Codable {
 }
 
 struct SecureStoreEncryptionTests {
+    @Test func unreadableFinanceIsQuarantinedWhileOtherModulesRemainWritable() throws {
+        let key = FixedVaultEncryptionKey()
+        let (store, url, _) = makeStore(keyProvider: key)
+        var institution = FinancialInstitution()
+        institution.financialProfile = FinancialInstitution()
+        var vault = sampleVault(marker: "healthy bills")
+        vault.financialInstitutions = [institution]
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(PlainVaultFixture(vault: vault, secrets: []))) as? [String: Any])
+        var rawVault = try #require(json["vault"] as? [String: Any])
+        var accounts = try #require(rawVault["accounts"] as? [[String: Any]])
+        var profile = try #require(accounts[0]["financialProfile"] as? [String: Any])
+        profile["schemaVersion"] = 999
+        profile["unknownFutureValue"] = ["storedFileName": "protected.pdf"]
+        accounts[0]["financialProfile"] = profile
+        rawVault["accounts"] = accounts
+        rawVault["futureModule"] = ["amount": 12345, "note": "retain unknown module"]
+        json["vault"] = rawVault
+        let raw = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+        let encrypted = try VaultCrypto.encrypt(raw, using: key.key)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encrypted.write(to: url)
+
+        let loaded = store.loadVaultWithMetrics()
+        #expect(loaded.canPersist)
+        #expect(loaded.vault.unavailableModules == ["personalFinance"])
+        #expect(loaded.vault.billRecords.first?.merchant == "healthy bills")
+        #expect(try Data(contentsOf: url) == encrypted)
+        #expect(loaded.vault.opaqueAttachmentStoredFileNames.contains("protected.pdf"))
+        var edited = loaded.vault
+        edited.billRecords[0].merchant = "edited safely"
+        // Even an accidental mutation of the unavailable typed projection must not overwrite it.
+        edited.accounts = []
+        try store.saveVault(edited, secrets: loaded.secrets)
+        let reloaded = store.loadVaultWithMetrics()
+        #expect(reloaded.vault.billRecords.first?.merchant == "edited safely")
+        #expect(reloaded.vault.unavailableModules == ["personalFinance"])
+        #expect(reloaded.vault.preservedModulePayloads == loaded.vault.preservedModulePayloads)
+        #expect(reloaded.vault.unknownPayloads == loaded.vault.unknownPayloads)
+        let snapshot = try CloudSyncSnapshotBuilder.make(vault: reloaded.vault, secrets: [], attachmentStore: AttachmentStore())
+        #expect(!snapshot.participatingModules.contains(.personalFinance))
+        #expect(snapshot.participatingModules.contains(.bills))
+        let backups = try FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "snapshot" }
+        #expect(!backups.isEmpty)
+        #expect(try backups.contains { try VaultCrypto.decrypt(Data(contentsOf: $0), using: key.key) == raw })
+    }
+
+    @Test func malformedSecretsDoNotBlockBillsAndArePreservedOnSave() throws {
+        let key = FixedVaultEncryptionKey()
+        let (store, url, _) = makeStore(keyProvider: key)
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(PlainVaultFixture(vault: sampleVault(marker: "safe"), secrets: []))) as? [String: Any])
+        json["secrets"] = ["unsupported": ["storedFileName": "secret.pdf"]]
+        let original = try JSONSerialization.data(withJSONObject: json)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try VaultCrypto.encrypt(original, using: key.key).write(to: url)
+        let loaded = store.loadVaultWithMetrics()
+        #expect(loaded.canPersist)
+        #expect(loaded.vault.unavailableModules == ["secrets"])
+        #expect(loaded.vault.billRecords.first?.merchant == "safe")
+        try store.saveVault(loaded.vault, secrets: [])
+        let reloaded = store.loadVaultWithMetrics()
+        #expect(reloaded.vault.preservedSecrets == loaded.vault.preservedSecrets)
+        #expect(reloaded.vault.preservedModulePayloads == loaded.vault.preservedModulePayloads)
+        #expect(reloaded.vault.opaqueAttachmentStoredFileNames.contains("secret.pdf"))
+    }
+
+    @Test func strictBackupDecodeStillRejectsBrokenModuleAndLocalDecodeIsolatesEachGroup() throws {
+        let raw = Data(#"{"accounts":"bad-finance","stocks":"bad-stocks","billTags":["keep"]}"#.utf8)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(VaultData.self, from: raw) }
+        let decoder = JSONDecoder()
+        decoder.userInfo[.isolateVaultModules] = true
+        let vault = try decoder.decode(VaultData.self, from: raw)
+        #expect(vault.unavailableModules == ["personalFinance", "myStocks"])
+        #expect(vault.billTags == ["keep"])
+        let roundTrip = try decoder.decode(VaultData.self, from: JSONEncoder().encode(vault))
+        #expect(roundTrip.preservedModulePayloads == vault.preservedModulePayloads)
+        #expect(roundTrip.unavailableModules == vault.unavailableModules)
+    }
+
     private func makeStore(
         keyProvider: any VaultEncryptionKeyProviding
     ) -> (store: SecureStore, vaultURL: URL, directory: URL) {

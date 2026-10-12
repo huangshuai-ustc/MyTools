@@ -42,12 +42,47 @@ struct LocalVaultLoadResult: @unchecked Sendable {
 }
 
 private struct LocalVaultDocument: Codable {
-    let vault: VaultData
+    let schemaVersion: Int
+    var vault: VaultData
     let secrets: [SecretVaultValue]
 
     init(vault: VaultData, secrets: [SecretVaultValue]) {
+        schemaVersion = 2
         self.vault = vault
         self.secrets = secrets
+    }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, vault, secrets }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard (1...2).contains(schemaVersion) else { throw VaultReadError.unsupportedVersion }
+        vault = try c.decode(VaultData.self, forKey: .vault)
+        do {
+            secrets = try c.decode([SecretVaultValue].self, forKey: .secrets)
+        } catch {
+            guard decoder.userInfo[.isolateVaultModules] as? Bool == true else { throw error }
+            vault.unavailableModules.insert("secrets")
+            secrets = []
+        }
+        if vault.unavailableModules.contains("secrets"), c.contains(.secrets) {
+            vault.preservedSecrets = try c.decode(OpaqueModuleValue.self, forKey: .secrets)
+        }
+        if vault.unavailableModules.contains("secrets"),
+           case .object(let rawVault) = try c.decode(OpaqueModuleValue.self, forKey: .vault) {
+            for key in ["secretTags", "secretFieldTemplates"] {
+                vault.preservedModulePayloads[key] = rawVault[key]
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(2, forKey: .schemaVersion)
+        try c.encode(vault, forKey: .vault)
+        if let raw = vault.preservedSecrets { try c.encode(raw, forKey: .secrets) }
+        else if !vault.unavailableModules.contains("secrets") { try c.encode(secrets, forKey: .secrets) }
     }
 }
 
@@ -114,6 +149,9 @@ final class SecureStore {
 
                 let decodeStartedAt = ProcessInfo.processInfo.systemUptime
                 let document = try decodeDocument(from: data)
+                if document.schemaVersion < 2 || !document.vault.unavailableModules.isEmpty {
+                    try preserveRecoverySnapshot(data, vault: document.vault)
+                }
                 decodeMilliseconds += elapsedMilliseconds(since: decodeStartedAt)
 
                 return loadResult(
@@ -149,6 +187,11 @@ final class SecureStore {
     }
 
     func saveVault(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
+#if MYTOOLS_FEATURE_FINANCE
+        if !vault.unavailableModules.contains("personalFinance") {
+            for institution in vault.financialInstitutions { try institution.validate() }
+        }
+#endif
         let document = LocalVaultDocument(vault: vault, secrets: secrets)
         let payload = try JSONEncoder().encode(document)
         try writeVaultFile(payload)
@@ -160,9 +203,12 @@ final class SecureStore {
         let vault: VaultData
         let secrets: [SecretVaultValue]
         let source: String
+        let schemaVersion: Int
     }
 
     private func decodeDocument(from data: Data) throws -> DecodedVaultDocument {
+        let decoder = JSONDecoder()
+        decoder.userInfo[.isolateVaultModules] = true
         if VaultCrypto.isEncryptedEnvelope(data) {
             let key: SymmetricKey
             do {
@@ -194,11 +240,12 @@ final class SecureStore {
                 throw VaultReadError.authenticationFailed
             }
             do {
-                let document = try JSONDecoder().decode(LocalVaultDocument.self, from: payload)
+                let document = try decoder.decode(LocalVaultDocument.self, from: payload)
                 return DecodedVaultDocument(
                     vault: document.vault,
                     secrets: document.secrets,
-                    source: "Application Support（已加密）"
+                    source: "Application Support（已加密）",
+                    schemaVersion: document.schemaVersion
                 )
             } catch {
                 throw VaultReadError.invalidPayload
@@ -206,18 +253,20 @@ final class SecureStore {
         }
 
         // 旧版明文格式：正常解码，并尽可能立即原地升级为加密信封。
-        let document = try JSONDecoder().decode(LocalVaultDocument.self, from: data)
-        if let migratedSource = migratePlaintextToEncryption(data) {
+        let document = try decoder.decode(LocalVaultDocument.self, from: data)
+        if document.vault.unavailableModules.isEmpty, let migratedSource = migratePlaintextToEncryption(data) {
             return DecodedVaultDocument(
                 vault: document.vault,
                 secrets: document.secrets,
-                source: migratedSource
+                source: migratedSource,
+                schemaVersion: document.schemaVersion
             )
         }
         return DecodedVaultDocument(
             vault: document.vault,
             secrets: document.secrets,
-            source: "Application Support（未加密）"
+            source: "Application Support（未加密）",
+            schemaVersion: document.schemaVersion
         )
     }
 
@@ -247,6 +296,34 @@ final class SecureStore {
 
     // MARK: - Write
 
+    /// Keep the exact pre-upgrade/quarantined document, encrypted at rest. A content
+    /// hash avoids another whole-vault snapshot on each launch of the same file.
+    private func preserveRecoverySnapshot(_ original: Data, vault: VaultData) throws {
+        var identity = original
+        if !vault.unavailableModules.isEmpty {
+            var quarantined = vault.preservedModulePayloads
+            quarantined["$secrets"] = vault.preservedSecrets
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            identity = try encoder.encode(quarantined)
+        }
+        let digest = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
+        let url = localVaultDirectory.appendingPathComponent("recovery-\(digest).snapshot")
+        guard !fileManager.fileExists(atPath: url.path) else { return }
+        let bytes: Data
+        if VaultCrypto.isEncryptedEnvelope(original) { bytes = original }
+        else {
+            // A plaintext document remains readable when Keychain is unavailable;
+            // saveVault still refuses to write without an encryption key.
+            guard let key = try? keyProvider.loadKey() else { return }
+            bytes = try VaultCrypto.encrypt(original, using: key)
+        }
+        try bytes.write(to: url, options: .atomic)
+#if os(iOS)
+        try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path)
+#endif
+    }
+
     private func writeVaultFile(_ payload: Data) throws {
         let key: SymmetricKey
         if let existing = try keyProvider.loadKey() {
@@ -259,7 +336,20 @@ final class SecureStore {
             at: localVaultDirectory,
             withIntermediateDirectories: true
         )
-        try dataToWrite.write(to: localVaultURL, options: .atomic)
+        let staging = localVaultDirectory.appendingPathComponent("vault-write-\(UUID().uuidString).tmp")
+        defer { try? fileManager.removeItem(at: staging) }
+        try dataToWrite.write(to: staging, options: .atomic)
+        guard try VaultCrypto.decrypt(Data(contentsOf: staging), using: key) == payload else {
+            throw VaultReadError.invalidPayload
+        }
+#if os(iOS)
+        try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: staging.path)
+#endif
+        if fileManager.fileExists(atPath: localVaultURL.path) {
+            _ = try fileManager.replaceItemAt(localVaultURL, withItemAt: staging)
+        } else {
+            try fileManager.moveItem(at: staging, to: localVaultURL)
+        }
         applyFileProtectionIfNeeded()
     }
 

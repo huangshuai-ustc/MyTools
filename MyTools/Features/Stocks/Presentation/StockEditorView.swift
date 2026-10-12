@@ -166,7 +166,7 @@ struct StockEditorView: View {
                                 date: $draft.initialExecutionTime,
                                 displayedComponents: .hourAndMinute
                             )
-                            Text("按\(draft.stock.market.title)当地时间记录；不填写时继续按价格推定。")
+                            Text("按北京时间记录；保存后按股票市场自动换算。不填写时继续按价格推定。")
                                 .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }

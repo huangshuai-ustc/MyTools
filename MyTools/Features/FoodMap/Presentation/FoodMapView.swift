@@ -113,7 +113,7 @@ struct FoodMapView: View {
         .searchable(text: $query, prompt: "搜索店名、推荐食物、特色、地址或标签")
 #endif
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {

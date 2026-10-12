@@ -527,8 +527,7 @@ struct MedicalRecordEditorView: View {
     }
 
     private func multilineField(_ title: String, prompt: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("\(title)：").appFont(.subheadline).foregroundStyle(.secondary)
+        AppAdaptiveEditableRow(title: "\(title)：") {
             IMESafeMultilineTextField(prompt: prompt, text: text)
         }
     }

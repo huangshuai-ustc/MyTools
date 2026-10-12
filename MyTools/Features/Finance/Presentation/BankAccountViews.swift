@@ -7,71 +7,16 @@ import UIKit
 import AppKit
 #endif
 
-enum BankNavigationApplication: String, CaseIterable, Identifiable {
-    case appleMaps
-    case amap
-    case baiduMaps
-    case googleMaps
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .appleMaps: return "Apple 地图"
-        case .amap: return "高德地图"
-        case .baiduMaps: return "百度地图"
-        case .googleMaps: return "Google Maps"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .appleMaps: return "map"
-        case .amap: return "location.north.line"
-        case .baiduMaps: return "map.fill"
-        case .googleMaps: return "globe"
-        }
-    }
-}
+typealias BankNavigationApplication = AppMapNavigationApplication
 
 enum BankBranchNavigationService {
     static func url(for application: BankNavigationApplication, branchName: String, location: BankBranchLocation?) -> URL? {
-        let resolvedLocation = location?.isValid == true ? location! : .defaultLocation
-        let name = branchName.isEmpty ? "分行/网点" : branchName
-        func make(_ scheme: String, _ host: String?, _ items: [URLQueryItem]) -> URL? {
-            var components = URLComponents()
-            components.scheme = scheme
-            components.host = host
-            components.queryItems = items
-            return components.url
-        }
-        switch application {
-        case .appleMaps:
-            return make("maps", nil, [URLQueryItem(name: "q", value: name), URLQueryItem(name: "ll", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)")])
-        case .amap:
-            // `viewMap` presents a selected point; `navi` would immediately
-            // enter route planning, which is not the intent of this action.
-            return make("iosamap", "viewMap", [URLQueryItem(name: "sourceApplication", value: AppMetadata.appName), URLQueryItem(name: "poiname", value: name), URLQueryItem(name: "lat", value: "\(resolvedLocation.latitude)"), URLQueryItem(name: "lon", value: "\(resolvedLocation.longitude)"), URLQueryItem(name: "dev", value: "0")])
-        case .baiduMaps:
-            return make("baidumap", "map/geocoder", [URLQueryItem(name: "location", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)"), URLQueryItem(name: "name", value: name)])
-        case .googleMaps:
-            return make("comgooglemaps", nil, [URLQueryItem(name: "q", value: name), URLQueryItem(name: "center", value: "\(resolvedLocation.latitude),\(resolvedLocation.longitude)")])
-        }
+        let resolved = location?.isValid == true ? location! : .defaultLocation
+        return AppMapNavigationService.url(for: application, target: AppMapNavigationTarget(name: branchName.isEmpty ? "分行/网点" : branchName, latitude: resolved.latitude, longitude: resolved.longitude))
     }
-
-    @MainActor
-    static func open(
-        _ application: BankNavigationApplication,
-        branchName: String,
-        location: BankBranchLocation?
-    ) {
-        let url = url(for: application, branchName: branchName, location: location)
-        guard let url else { return }
-#if os(iOS)
-        UIApplication.shared.open(url)
-#elseif os(macOS)
-        NSWorkspace.shared.open(url)
-#endif
+    @MainActor static func open(_ application: BankNavigationApplication, branchName: String, location: BankBranchLocation?) {
+        let resolved = location?.isValid == true ? location! : .defaultLocation
+        _ = AppMapNavigationService.open(application, target: AppMapNavigationTarget(name: branchName.isEmpty ? "分行/网点" : branchName, latitude: resolved.latitude, longitude: resolved.longitude))
     }
 }
 
@@ -81,22 +26,22 @@ struct AccountDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     private let accountID: UUID
     private let backTitle: String
-    @State private var editingAccount: BankAccount?
+    @State private var editingAccount: FinancialInstitution?
     @State private var viewingCard: BankCard?
     @State private var viewingDomesticSubaccount: DomesticSubaccount?
     @State private var viewingForeignSubaccount: ForeignSubaccount?
-    @State private var editingBranchLocation: BankAccount?
+    @State private var editingBranchLocation: FinancialInstitution?
     @State private var sensitiveLoginInformationRevealed = false
     @State private var showsClosedCards = false
     @State private var showsClosedSubaccounts = false
 
-    init(account: BankAccount, backTitle: String) {
+    init(account: FinancialInstitution, backTitle: String) {
         accountID = account.id
         self.backTitle = backTitle
     }
 
-    private var account: BankAccount? {
-        store.accounts.first { $0.id == accountID }
+    private var account: FinancialInstitution? {
+        store.financialInstitutions.first { $0.id == accountID }
     }
 
     var body: some View {
@@ -132,7 +77,7 @@ struct AccountDetailView: View {
         .sheet(item: $editingAccount) { account in
             AccountEditorView(
                 account: account,
-                isNew: !store.accounts.contains { $0.id == account.id },
+                isNew: !store.financialInstitutions.contains { $0.id == account.id },
                 cards: store.cards(for: account)
             )
             .id(account.id)
@@ -160,7 +105,7 @@ struct AccountDetailView: View {
                 if !branch.name.isEmpty {
                     updated.branchName = branch.name
                 }
-                store.replaceAccount(updated, cards: store.cards(for: account))
+                store.replaceAccount(updated, cards: store.cards(for: account), expected: account)
             }
             .iOSLargeSheet()
         }
@@ -175,7 +120,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func accountList(_ account: BankAccount) -> some View {
+    private func accountList(_ account: FinancialInstitution) -> some View {
         let cards = displayedCards(for: account)
         let allCards = store.cards(for: account)
 
@@ -209,7 +154,7 @@ struct AccountDetailView: View {
 #endif
     }
 
-    private func accountOverviewCard(_ account: BankAccount, cards: [BankCard]) -> some View {
+    private func accountOverviewCard(_ account: FinancialInstitution, cards: [BankCard]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(account.bankName.isEmpty ? "未命名银行" : account.bankName)
@@ -228,14 +173,14 @@ struct AccountDetailView: View {
             )
             overviewFact(
                 title: "建立日期",
-                value: AppDateFormatter.string(from: account.openedAt)
+                value: account.openedAt.map(AppDateFormatter.string) ?? "未填写"
             )
         }
         .padding(.vertical, 6)
     }
 
     @ViewBuilder
-    private func accountBranchFact(_ account: BankAccount) -> some View {
+    private func accountBranchFact(_ account: FinancialInstitution) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(account.region == .domestic ? "开户网点" : "分行/网点")
                 .appFont(.caption)
@@ -279,7 +224,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func subaccountsSections(_ account: BankAccount) -> some View {
+    private func subaccountsSections(_ account: FinancialInstitution) -> some View {
         let allSubaccounts = account.region == .domestic
             ? account.domesticSubaccounts.map(AnySubaccount.domestic)
             : account.foreignSubaccounts.map(AnySubaccount.foreign)
@@ -323,7 +268,7 @@ struct AccountDetailView: View {
 
     @ViewBuilder
     private func cardsSection(
-        _ account: BankAccount,
+        _ account: FinancialInstitution,
         cards: [BankCard],
         allCards: [BankCard]
     ) -> some View {
@@ -355,7 +300,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func loginSection(_ account: BankAccount) -> some View {
+    private func loginSection(_ account: FinancialInstitution) -> some View {
         let additionalFields = account.additionalLoginFields.filter {
             !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.value.isEmpty
         }
@@ -393,7 +338,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func addressSection(_ account: BankAccount) -> some View {
+    private func addressSection(_ account: FinancialInstitution) -> some View {
         if !account.correspondenceAddressChinese.isEmpty
             || !account.correspondenceAddressEnglish.isEmpty
             || !account.residentialAddressChinese.isEmpty
@@ -408,7 +353,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func remittanceSection(_ account: BankAccount) -> some View {
+    private func remittanceSection(_ account: FinancialInstitution) -> some View {
         if !account.remittanceBankName.isEmpty
             || !account.remittanceBankAddress.isEmpty
             || !account.swift.isEmpty
@@ -424,7 +369,7 @@ struct AccountDetailView: View {
         }
     }
 
-    private func branchLocationValueLabel(for account: BankAccount) -> some View {
+    private func branchLocationValueLabel(for account: FinancialInstitution) -> some View {
         HStack(spacing: 8) {
             Image(systemName: account.branchLocation?.isValid == true
                   ? "mappin.and.ellipse"
@@ -440,11 +385,11 @@ struct AccountDetailView: View {
         .contentShape(Rectangle())
     }
 
-    private func displayedCards(for account: BankAccount) -> [BankCard] {
+    private func displayedCards(for account: FinancialInstitution) -> [BankCard] {
         sortedCards(store.cards(for: account).filter { $0.status != .closed })
     }
 
-    private func closedCards(for account: BankAccount) -> [BankCard] {
+    private func closedCards(for account: FinancialInstitution) -> [BankCard] {
         sortedCards(store.cards(for: account).filter { $0.status == .closed })
     }
 
@@ -482,14 +427,14 @@ struct AccountDetailView: View {
         cards.filter { $0.status != .closed }.count
     }
 
-    private func accountSummary(_ account: BankAccount, cards: [BankCard]) -> String {
+    private func accountSummary(_ account: FinancialInstitution, cards: [BankCard]) -> String {
         let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
         let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
         let subaccountCount = account.activeSubaccountCount
         return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subaccountCount) 个子账户"
     }
 
-    private func hasSubaccounts(_ account: BankAccount) -> Bool {
+    private func hasSubaccounts(_ account: FinancialInstitution) -> Bool {
         account.region == .domestic
             ? !account.domesticSubaccounts.isEmpty
             : !account.foreignSubaccounts.isEmpty
@@ -589,16 +534,20 @@ private enum AnySubaccount: Identifiable {
 }
 
 private final class AccountEditorDraft: ObservableObject {
-    let originalAccount: BankAccount
+    let originalAccount: FinancialInstitution
     let originalCards: [BankCard]
-    @Published var account: BankAccount
+    @Published var account: FinancialInstitution
     @Published var cards: [BankCard]
+    var attachmentSession: AttachmentEditSession
 
-    init(account: BankAccount, cards: [BankCard]) {
+    init(account: FinancialInstitution, cards: [BankCard]) {
         originalAccount = account
         originalCards = cards
-        self.account = account
+        var initial = account
+        if initial.openedAt == nil { initial.openedAt = Date() }
+        self.account = initial
         self.cards = cards
+        attachmentSession = AttachmentEditSession(originalAttachments: cards.flatMap(\.statements).compactMap(\.attachment))
     }
 }
 
@@ -619,7 +568,7 @@ struct AccountEditorView: View {
     private let isNew: Bool
     private let originalAttachmentIDs: Set<UUID>
 
-    init(account: BankAccount, isNew: Bool, cards: [BankCard] = []) {
+    init(account: FinancialInstitution, isNew: Bool, cards: [BankCard] = []) {
         _draft = StateObject(wrappedValue: AccountEditorDraft(account: account, cards: cards))
         self.isNew = isNew
         navigationTitle = isNew ? "新增银行档案" : "编辑银行档案"
@@ -650,7 +599,7 @@ struct AccountEditorView: View {
 
                 Section("其他") {
                     AccountStatusDisclosurePicker(status: $draft.account.status)
-                    DateFieldRow(title: "建立日期：", date: $draft.account.openedAt)
+                    DateFieldRow(title: "建立日期：", date: Binding(get: { draft.account.openedAt ?? Date() }, set: { draft.account.openedAt = $0 }))
                     VStack(alignment: .leading, spacing: 6) {
                         Text("备注：")
                             .foregroundStyle(.secondary)
@@ -883,7 +832,7 @@ struct AccountEditorView: View {
     private var loginEditorSection: some View {
         Section {
             ForEach($draft.account.additionalLoginFields) { $field in
-                AppLabeledContentRow(field.name.isEmpty ? "未命名字段" : field.name) {
+                AppAdaptiveEditableRow(title: field.name.isEmpty ? "未命名字段" : field.name) {
                     IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
                 }
                 .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
@@ -972,12 +921,14 @@ struct AccountEditorView: View {
                 cards[index].branchLocation = nil
             }
         }
-        guard isNew || store.replaceAccount(account, cards: cards, expected: draft.originalAccount, expectedCards: draft.originalCards) else {
-            errorMessage = "银行档案在编辑期间已发生变化，请关闭后重新打开再保存。"
+        do {
+            guard try store.saveInstitution(account, cards: cards, expected: isNew ? nil : draft.originalAccount, expectedCards: draft.originalCards) else { return }
+        } catch {
+            errorMessage = error.localizedDescription
             showingError = true
             return
         }
-        if isNew { store.replaceAccount(account, cards: cards) }
+        draft.attachmentSession.commit()
         didSave = true
         dismiss()
     }
@@ -999,6 +950,7 @@ struct AccountEditorView: View {
     }
 
     private func upsertCard(_ card: BankCard) {
+        for file in card.statements.compactMap(\.attachment) { draft.attachmentSession.trackRename(file) }
         if let index = draft.cards.firstIndex(where: { $0.id == card.id }) {
             draft.cards[index] = card
         } else {
@@ -1026,11 +978,10 @@ struct AccountEditorView: View {
 
     private func cleanUpUncommittedAttachments() {
         guard !didSave else { return }
-        for attachment in draft.cards.flatMap(\.statements).compactMap(\.attachment)
-        where !originalAttachmentIDs.contains(attachment.id) {
-            store.deleteUncommittedAttachment(attachment)
-        }
+        let failures = draft.attachmentSession.rollback(currentAttachments: draft.cards.flatMap(\.statements).compactMap(\.attachment), delete: store.deleteUncommittedAttachment, restoreLocation: store.restoreAttachmentLocation)
+        if !failures.isEmpty { DiagnosticLogger.shared.log(.data, "银行草稿附件回滚失败 count=\(failures.count)", level: .error) }
     }
+
 }
 
 private struct AdditionalLoginFieldEditorView: View {
@@ -1089,7 +1040,7 @@ private struct AdditionalLoginFieldEditorView: View {
     }
 }
 
-private struct BankLoginTemplateEditorView: View {
+struct BankLoginTemplateEditorView: View {
     @EnvironmentObject private var store: FinanceStore
     @Environment(\.dismiss) private var dismiss
     let region: BankRegion

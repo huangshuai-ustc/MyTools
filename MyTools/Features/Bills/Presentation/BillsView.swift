@@ -114,7 +114,7 @@ struct BillsView: View {
         .diagnosticScreen("账单")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
 #endif
         .toolbar { billsToolbar }
         .sheet(item: $editingRecord) { record in

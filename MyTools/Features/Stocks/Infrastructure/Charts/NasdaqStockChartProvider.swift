@@ -55,10 +55,13 @@ struct NasdaqStockChartProvider: StockChartProvider {
         )
         let points = prepared.visible
         let preMarketPoints = preMarketRaw.sorted { $0.date < $1.date }
-        guard !points.isEmpty || !preMarketPoints.isEmpty else {
+        let postMarketPoints = StockChartSeriesProcessor.postMarketSessionPoints(
+            rawPoints, market: .unitedStates
+        ).sorted { $0.date < $1.date }
+        guard let latestDate = [points.last?.date, preMarketPoints.last?.date, postMarketPoints.last?.date]
+            .compactMap({ $0 }).max() else {
             throw StockChartError.noData
         }
-        let latest = points.last ?? preMarketPoints.last!
 
         return StockChartSnapshot(
             symbol: payload["symbol"] as? String ?? symbol,
@@ -68,8 +71,9 @@ struct NasdaqStockChartProvider: StockChartProvider {
                 ?? stock.previousClose.map { NSDecimalNumber(decimal: $0).doubleValue },
             points: points,
             preMarketPoints: preMarketPoints,
+            postMarketPoints: postMarketPoints,
             indicatorPoints: prepared.indicators,
-            quoteUpdatedAt: latest.date,
+            quoteUpdatedAt: latestDate,
             fetchedAt: Date(),
             source: "Nasdaq",
             supportsCandlesticks: false

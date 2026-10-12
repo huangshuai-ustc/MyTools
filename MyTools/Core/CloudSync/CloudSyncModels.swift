@@ -1,6 +1,8 @@
 import Foundation
 
 enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
+    case financialInstitution
+    case financialProvider
     case bankAccount
     case bankCard
     case stockHolding
@@ -27,7 +29,7 @@ enum CloudSyncEntityKind: String, Codable, CaseIterable, Sendable {
 
     var module: ToolModule? {
         switch self {
-        case .bankAccount, .bankCard:
+        case .financialInstitution, .financialProvider, .bankAccount, .bankCard:
             .personalFinance
         case .stockHolding, .stockCashFlowRecord, .stockPriceAlert, .stockReturnAlert:
             .myStocks
@@ -201,19 +203,15 @@ enum CloudSyncSnapshotBuilder {
         enabledModules: Set<ToolModule> = ToolModuleCatalog.allModules
     ) throws -> CloudSyncSnapshot {
         let enabledModules = CompiledToolModules.available(from: enabledModules)
+            .subtracting(Set(vault.unavailableModules.compactMap(ToolModule.init(rawValue:))))
             .intersection(ToolModuleCatalog.cloudSyncModules)
         let encoder = CloudSyncCoding.encoder()
         var items: [CloudSyncItem] = []
 
 #if MYTOOLS_FEATURE_FINANCE
         if enabledModules.contains(.personalFinance) {
-            try append(vault.accounts, kind: .bankAccount, encoder: encoder, to: &items)
-            try append(
-                vault.cards.map(metadataOnlyCard),
-                kind: .bankCard,
-                encoder: encoder,
-                to: &items
-            )
+            for institution in vault.financialInstitutions { try institution.validate() }
+            try append(vault.financialInstitutions.map(metadataOnlyInstitution), kind: .financialInstitution, encoder: encoder, to: &items)
             try append(
                 CloudSyncFinanceMetadata(
                     domesticLoginFieldTemplates: vault.domesticBankLoginFieldTemplates,
@@ -426,6 +424,13 @@ enum CloudSyncSnapshotBuilder {
 #endif
 
 #if MYTOOLS_FEATURE_FINANCE
+    private static func metadataOnlyInstitution(_ institution: FinancialInstitution) -> FinancialInstitution {
+        var value = institution
+        for i in value.documents.indices { value.documents[i].attachment = metadataOnlyAttachment(value.documents[i].attachment) }
+        value.cards = value.cards.map(metadataOnlyCard)
+        return value
+    }
+
     private static func metadataOnlyCard(_ card: BankCard) -> BankCard {
         var result = card
         result.statements = card.statements.map { statement in
@@ -489,9 +494,7 @@ enum CloudSyncSnapshotBuilder {
         var result: [UUID: (FileAttachment, ToolModule)] = [:]
 #if MYTOOLS_FEATURE_FINANCE
         if enabledModules.contains(.personalFinance) {
-            for attachment in vault.cards.flatMap(\.statements).compactMap(\.attachment) {
-                result[attachment.id] = (attachment, .personalFinance)
-            }
+            for attachment in vault.financialInstitutions.flatMap(\.financeAttachments) { result[attachment.id] = (attachment, .personalFinance) }
         }
 #endif
 #if MYTOOLS_FEATURE_HEALTH
@@ -536,6 +539,7 @@ enum CloudSyncMerger {
         var vault = vault
         var secrets = secrets
         let enabledModules = CompiledToolModules.available(from: enabledModules)
+            .subtracting(Set(vault.unavailableModules.compactMap(ToolModule.init(rawValue:))))
             .intersection(ToolModuleCatalog.cloudSyncModules)
         let decoder = CloudSyncCoding.decoder()
 
@@ -544,15 +548,15 @@ enum CloudSyncMerger {
             case .upsert(let kind, _, let payload):
                 guard kind.isIncluded(in: enabledModules) else { continue }
                 switch kind {
-                case .bankAccount:
+                case .financialInstitution:
 #if MYTOOLS_FEATURE_FINANCE
-                    try upsert(decoder.decode(BankAccount.self, from: payload), in: &vault.accounts)
+                    let incoming = try decoder.decode(FinancialInstitution.self, from: payload)
+                    try incoming.validate()
+                    upsert(incoming, in: &vault.financialInstitutions)
 #endif
                     break
-                case .bankCard:
-#if MYTOOLS_FEATURE_FINANCE
-                    try upsert(decoder.decode(BankCard.self, from: payload), in: &vault.cards)
-#endif
+                case .financialProvider, .bankAccount, .bankCard:
+                    // Reserved record types from the previous product schema are never applied.
                     break
                 case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS
@@ -714,15 +718,12 @@ enum CloudSyncMerger {
             case .delete(let kind, let id):
                 guard kind.isIncluded(in: enabledModules) else { continue }
                 switch kind {
-                case .bankAccount:
+                case .financialInstitution:
 #if MYTOOLS_FEATURE_FINANCE
-                    vault.accounts.removeAll { $0.id == id }
+                    vault.financialInstitutions.removeAll { $0.id == id }
 #endif
                     break
-                case .bankCard:
-#if MYTOOLS_FEATURE_FINANCE
-                    vault.cards.removeAll { $0.id == id }
-#endif
+                case .financialProvider, .bankAccount, .bankCard:
                     break
                 case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS

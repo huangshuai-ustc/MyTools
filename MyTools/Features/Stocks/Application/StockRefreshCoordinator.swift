@@ -417,7 +417,10 @@ final class StockRefreshCoordinator: ObservableObject {
                         do {
                             try await chartService.refreshAfterFinalSession(for: stock)
                             return stock.id
+                        } catch is CancellationError {
+                            return nil
                         } catch {
+                            guard !Task.isCancelled else { return nil }
                             DiagnosticLogger.logError(.stockQuote, operation: "收盘数据补齐", error: error)
                             return nil
                         }

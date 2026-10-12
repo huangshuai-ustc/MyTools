@@ -1,6 +1,16 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
 
+enum StockCodeOrdering {
+    static func precedes(_ lhs: StockHolding, _ rhs: StockHolding) -> Bool {
+        AppAlphabeticalSort.isOrderedBefore(
+            lhs.symbol, rhs.symbol,
+            lhsTieBreaker: "\(lhs.market.rawValue)|\(lhs.id.uuidString)",
+            rhsTieBreaker: "\(rhs.market.rawValue)|\(rhs.id.uuidString)"
+        )
+    }
+}
+
 enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     case aShare
     case hongKong
@@ -149,7 +159,9 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
         market: StockMarket,
         displayCalendar: Calendar = .autoupdatingCurrent
     ) -> Date? {
-        let day = displayCalendar.dateComponents([.year, .month, .day], from: tradingDate)
+        var beijingCalendar = Calendar(identifier: .gregorian)
+        beijingCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let day = beijingCalendar.dateComponents([.year, .month, .day], from: tradingDate)
         let time = displayCalendar.dateComponents([.hour, .minute], from: displayedTime)
         var components = DateComponents()
         components.year = day.year
@@ -158,7 +170,8 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
         components.hour = time.hour
         components.minute = time.minute
         components.second = 0
-        return StockChartSeriesProcessor.marketCalendar(market).date(from: components)
+        components.timeZone = beijingCalendar.timeZone
+        return beijingCalendar.date(from: components)
             .map(normalizedExecutionInstant)
     }
 
@@ -169,8 +182,9 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
         market: StockMarket,
         displayCalendar: Calendar = .autoupdatingCurrent
     ) -> Date {
-        let marketCalendar = StockChartSeriesProcessor.marketCalendar(market)
-        let time = marketCalendar.dateComponents([.hour, .minute], from: instant)
+        var beijingCalendar = Calendar(identifier: .gregorian)
+        beijingCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let time = beijingCalendar.dateComponents([.hour, .minute], from: instant)
         let reference = displayCalendar.dateComponents([.year, .month, .day], from: Date())
         return displayCalendar.date(from: DateComponents(
             calendar: displayCalendar,

@@ -114,6 +114,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private var persistenceRequestRevision: UInt64 = 0
     private var isApplyingCloudChanges = false
     private var canPersistVault = true
+    @Published private(set) var unavailableModules: Set<ToolModule> = []
     private var didLogPersistenceBlocked = false
     private var retainedVault: VaultData
     private var retainedSecrets: [SecretVaultValue]
@@ -136,6 +137,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         initialLoader = dependencies.initialLoader
         moduleLocalDataCacheCleaner = dependencies.moduleLocalDataCacheCleaner
         retainedVault = initialVault ?? VaultData()
+        unavailableModules = Set((initialVault?.unavailableModules ?? []).compactMap(ToolModule.init(rawValue:)))
         retainedSecrets = secretItems
         moduleLifecycleRegistry = ModuleLifecycleRegistry()
         moduleDataCleanupRegistry = ModuleDataCleanupRegistry()
@@ -217,8 +219,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_FINANCE
         financeStore = FinanceStore(
-            accounts: initialVault?.accounts ?? [],
-            cards: initialVault?.cards ?? [],
+            financialInstitutions: initialVault?.financialInstitutions ?? [],
             domesticLoginFieldTemplates: initialVault?.domesticBankLoginFieldTemplates ?? BankLoginFieldTemplate.domesticDefaults,
             overseasLoginFieldTemplates: initialVault?.overseasBankLoginFieldTemplates ?? BankLoginFieldTemplate.overseasDefaults,
             attachmentStore: attachmentStore
@@ -474,10 +475,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     private func applyVault(_ vault: VaultData) {
         retainedVault = vault
+        unavailableModules = Set(vault.unavailableModules.compactMap(ToolModule.init(rawValue:)))
 #if MYTOOLS_FEATURE_FINANCE
         financeStore.replace(
-            accounts: vault.accounts,
-            cards: vault.cards,
+            financialInstitutions: vault.financialInstitutions,
             domesticLoginFieldTemplates: vault.domesticBankLoginFieldTemplates,
             overseasLoginFieldTemplates: vault.overseasBankLoginFieldTemplates
         )
@@ -523,9 +524,20 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     func makeBackupDocument(password: String) async throws -> VaultBackupDocument {
-        let includedModules = Set(
-            CompiledToolModules.ordered.filter { isModuleVisible($0) }
-        )
+        let includedModules = Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+        return try await makeBackupDocument(password: password, includedModules: includedModules)
+    }
+
+    /// Exports an explicit module snapshot. A module present in the payload is
+    /// replaced on import even when its snapshot is empty; omitted modules are
+    /// untouched by import.
+    func makeBackupDocument(password: String, includedModules requestedModules: Set<ToolModule>) async throws -> VaultBackupDocument {
+        let includedModules = requestedModules
+            .intersection(Set(CompiledToolModules.ordered.filter { isModuleVisible($0) }))
+            .intersection(ToolModuleCatalog.backupModules)
+        guard canPersistVault, includedModules.isDisjoint(with: unavailableModules) else {
+            throw VaultBackupError.moduleUnavailable
+        }
         let data: Data
         do {
             data = try await backupProcessor.makeBackup(
@@ -549,7 +561,12 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             isRestoringBackup = false
         }
         let restoredPayload: VaultBackupPayload
-        let enabledModules = self.enabledModules
+        // A backup import is the recovery path for a quarantined module. Keep
+        // compiled modules in the decode/merge set even when the current local
+        // Vault marked that module unavailable; otherwise a valid replacement
+        // payload can never repair the quarantine.
+        let enabledModules = Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+            .intersection(ToolModuleCatalog.backupModules)
         do {
             restoredPayload = try await backupProcessor.restorePayload(
                 from: data,
@@ -687,6 +704,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     ) -> PendingModuleLocalDataDeletion? {
         guard isInitialDataLoaded,
               canPersistVault,
+              !unavailableModules.contains(module),
               pendingModuleLocalDataDeletion == nil,
               CompiledToolModules.ordered.contains(module) else { return nil }
 
@@ -788,8 +806,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private func currentVaultData() -> VaultData {
         var vault = retainedVault
 #if MYTOOLS_FEATURE_FINANCE
-        vault.accounts = financeStore.accounts
-        vault.cards = financeStore.cards
+        vault.financialInstitutions = financeStore.financialInstitutions
         vault.domesticBankLoginFieldTemplates = financeStore.domesticLoginFieldTemplates
         vault.overseasBankLoginFieldTemplates = financeStore.overseasLoginFieldTemplates
 #endif
@@ -911,6 +928,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     private var enabledModules: Set<ToolModule> {
         var modules = Set(CompiledToolModules.ordered.filter { isModuleVisible($0) })
+        modules.subtract(unavailableModules)
         if let pendingModuleLocalDataDeletion {
             modules.remove(pendingModuleLocalDataDeletion.module)
         }
@@ -919,6 +937,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 
     private var cloudSyncModules: Set<ToolModule> {
         var modules = ToolModuleCatalog.cloudSyncModules
+        modules.subtract(unavailableModules)
         if let pendingModuleLocalDataDeletion {
             modules.remove(pendingModuleLocalDataDeletion.module)
         }
@@ -933,8 +952,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         switch module {
         case .personalFinance:
 #if MYTOOLS_FEATURE_FINANCE
-            vault.accounts = []
-            vault.cards = []
+            vault.financialInstitutions = []
 #endif
             break
         case .myStocks:
@@ -1014,8 +1032,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         switch snapshot.module {
         case .personalFinance:
 #if MYTOOLS_FEATURE_FINANCE
-            vault.accounts = mergingRestored(snapshot.vault.accounts, into: vault.accounts)
-            vault.cards = mergingRestored(snapshot.vault.cards, into: vault.cards)
+            vault.financialInstitutions = mergingRestored(snapshot.vault.financialInstitutions, into: vault.financialInstitutions)
 #endif
             break
         case .myStocks:

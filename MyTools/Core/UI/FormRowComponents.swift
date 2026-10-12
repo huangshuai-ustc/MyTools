@@ -1,5 +1,115 @@
 import SwiftUI
 
+/// A compact record row that stays on one line when the available width can
+/// contain both values and automatically switches to a stacked layout when it
+/// cannot. `ViewThatFits` measures against the current list/form width.
+struct AppAdaptiveRecordRow: View {
+    let title: String
+    let value: String
+    var titleFont: Font = .body
+    var valueFont: Font = .subheadline
+    /// Payment/account lists use a tighter row while keeping the same adaptive
+    /// single-line/stacked layout as every other record row.
+    var verticalPadding: CGFloat = 3
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).font(titleFont).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(valueFont)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .copyableText(value.isEmpty ? nil : value)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(titleFont).foregroundStyle(.secondary)
+                Text(value)
+                    .font(valueFont)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .copyableText(value.isEmpty ? nil : value)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, verticalPadding)
+        .appListRowStyle()
+    }
+}
+
+/// Adaptive record row variant for rows that need a trailing action such as
+/// reveal, copy or navigation controls.
+struct AppAdaptiveRecordRowWithAccessory<Accessory: View>: View {
+    let title: String
+    let value: String
+    let accessory: () -> Accessory
+
+    init(title: String, value: String, @ViewBuilder accessory: @escaping () -> Accessory) {
+        self.title = title
+        self.value = value
+        self.accessory = accessory
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(value).multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .copyableText(value.isEmpty ? nil : value)
+                accessory()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).foregroundStyle(.secondary)
+                    Spacer()
+                    accessory()
+                }
+                Text(value)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .copyableText(value.isEmpty ? nil : value)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
+        .appListRowStyle()
+    }
+}
+
+/// Editable counterpart for adaptive form rows. Controls remain supplied by
+/// the feature while Core decides whether the label and control fit inline.
+struct AppAdaptiveEditableRow<Content: View>: View {
+    let title: String
+    var prefersStacked = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Group {
+            if prefersStacked {
+                stackedContent
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(title).foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        content()
+                    }
+                    stackedContent
+                }
+            }
+        }
+        .appListRowStyle()
+    }
+
+    private var stackedContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).foregroundStyle(.secondary)
+            content().frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 /// 标准单行“标签 + 任意尾部内容”容器。文本、日期、Picker、Badge、菜单和按钮等
 /// 单行内容都以同一个内容高度为基准；真正的多行地址、备注和记录卡片不使用它。
 struct AppLabeledContentRow<Content: View>: View {
@@ -19,22 +129,31 @@ struct AppLabeledContentRow<Content: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            if let systemImage {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(title)
-                    .foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                label
+                Spacer(minLength: 8)
+                content()
             }
-            Spacer(minLength: 8)
-            content()
+            VStack(alignment: .leading, spacing: 4) {
+                label
+                content().frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale))
+        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .leading)
         // Do not leave row insets to each native control. Picker/DatePicker/Toggle
         // otherwise ask Form for slightly different vertical padding even when
         // their visible content has the same height.
         .appListRowStyle()
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if let systemImage {
+            Label(title, systemImage: systemImage).foregroundStyle(.secondary)
+        } else {
+            Text(title).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -48,22 +167,7 @@ struct DetailValueRow: View {
     var truncationMode: Text.TruncationMode = .tail
 
     var body: some View {
-        if alignment == .leading {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .appFont(.body)
-                    .foregroundStyle(.secondary)
-                valueText
-                    .appFont(.subheadline)
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            AppLabeledContentRow(title) {
-                valueText
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-        }
+        AppAdaptiveRecordRow(title: title, value: value, valueFont: .subheadline)
     }
 
     @ViewBuilder
@@ -327,5 +431,17 @@ private struct NumericFieldTextWidthKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+/// Standard multiline form input for notes, addresses and arbitrary text.
+struct AppMultilineFieldRow: View {
+    let title: String
+    @Binding var text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).appFont(.subheadline).foregroundStyle(.secondary)
+            IMESafeMultilineTextField(prompt: "可选", text: $text)
+        }
     }
 }

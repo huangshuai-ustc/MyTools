@@ -3,6 +3,28 @@ import Testing
 @testable import MyTools
 
 struct StockChartProviderParsingTests {
+    @Test func nasdaqIntradayPreservesPostMarketOnlyResponse() async throws {
+        let date = StockChartFixtures.date(2026, 10, 8, hour: 17, timeZone: "America/New_York")
+        let offset = TimeZone(identifier: "America/New_York")!.secondsFromGMT(for: Date())
+        let payload: [String: Any] = ["data": ["chart": [
+            ["x": (date.timeIntervalSince1970 + Double(offset)) * 1_000, "y": 101.0]
+        ]]]
+        let provider = NasdaqStockChartProvider(httpClient: StubStockChartHTTPClient(responseData: try json(payload)))
+        let snapshot = try await provider.fetchChart(for: request(market: .unitedStates, range: .intraday))
+        #expect(snapshot.points.isEmpty)
+        #expect(snapshot.postMarketPoints.count == 1)
+        #expect(snapshot.postMarketPoints.first?.date == date)
+        #expect(snapshot.quoteUpdatedAt == date)
+        let normalized = StockChartSeriesProcessor.normalizedSnapshot(
+            snapshot, range: .intraday, market: .unitedStates, at: date
+        )
+        #expect(normalized?.postMarketPoints == snapshot.postMarketPoints)
+        let store = StockChartDiskStore()
+        let key = StockChartStoreKey(market: .unitedStates, symbol: snapshot.symbol)
+        let merged = store.merging(snapshot, range: .intraday, for: key, into: nil)
+        #expect(store.renderedSnapshot(from: merged, range: .intraday)?.postMarketPoints == snapshot.postMarketPoints)
+    }
+
     @Test func minuteRangesUseOneMinuteProviderIntervals() {
         #expect(StockChartRange.intraday.yahooInterval == "1m")
         #expect(StockChartRange.fiveDays.yahooInterval == "1m")

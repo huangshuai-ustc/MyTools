@@ -64,14 +64,19 @@ struct URLSessionStockChartHTTPClient: StockChartHTTPClient {
         request.setValue("application/json,text/plain,*/*", forHTTPHeaderField: "Accept")
         request.setValue(referer, forHTTPHeaderField: "Referer")
         let started = Date()
-        let (data, response) = try await Self.session.data(for: request)
-        try Task.checkCancellation()
-        DiagnosticLogger.shared.log(.stockQuote, "图表阶段=http host=\(url.host ?? "unknown") bytes=\(data.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode) else {
-            throw StockChartError.serviceUnavailable
+        do {
+            let (data, response) = try await Self.session.data(for: request)
+            try Task.checkCancellation()
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=http host=\(url.host ?? "unknown") status=\(status) bytes=\(data.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+            guard (200..<300).contains(status) else { throw StockChartError.serviceUnavailable }
+            return data
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            DiagnosticLogger.shared.log(.stockQuote,
+                "图表阶段=http失败 host=\(url.host ?? "unknown") error=\(DiagnosticLogger.errorCode(error)) ms=\(Int(Date().timeIntervalSince(started) * 1000))", level: .warning)
+            throw error
         }
-        return data
     }
 }
 

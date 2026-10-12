@@ -12,7 +12,7 @@ struct StockChartCacheKey: Hashable, Sendable {
     let range: StockChartRange
 }
 
-struct StockChartStoredRangeMetadata: Codable, Sendable {
+struct StockChartStoredRangeMetadata: Codable, Equatable, Sendable {
     let symbol: String
     let name: String
     let currencyCode: String
@@ -20,7 +20,7 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
     let preMarketPoints: [StockChartPoint]
     let postMarketPoints: [StockChartPoint]
     let quoteUpdatedAt: Date
-    let fetchedAt: Date
+    var fetchedAt: Date
     let source: String
     let supportsCandlesticks: Bool
     let indicatorPointCount: Int?
@@ -107,7 +107,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
         postMarketPoints storedPostMarketPoints: [StockChartPoint]? = nil,
         dailyIndicatorPoints: [StockChartPoint]? = nil,
         cachedMinuteTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
-        cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil
+        cachedDailyTechnicalIndicators: [StockTechnicalIndicatorPoint]? = nil,
+        quoteUpdatedAt latestQuoteUpdatedAt: Date? = nil
     ) -> StockChartSnapshot {
         StockChartSnapshot(
             symbol: symbol,
@@ -121,7 +122,7 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
             dailyIndicatorPoints: dailyIndicatorPoints,
             cachedMinuteTechnicalIndicators: cachedMinuteTechnicalIndicators,
             cachedDailyTechnicalIndicators: cachedDailyTechnicalIndicators,
-            quoteUpdatedAt: points.last?.date ?? quoteUpdatedAt,
+            quoteUpdatedAt: latestQuoteUpdatedAt ?? points.last?.date ?? quoteUpdatedAt,
             fetchedAt: fetchedAt,
             source: source,
             supportsCandlesticks: supportsCandlesticks
@@ -132,8 +133,8 @@ struct StockChartStoredRangeMetadata: Codable, Sendable {
 struct StockChartPersistedStore: Codable, Sendable {
     // Version 7 invalidates minute caches that were merged through the
     // generic US regular-session filter with an inclusive 16:00 boundary.
-    // Those files can contain the first post-market print in the regular
-    // series and must be rebuilt.
+    // Version 6 can be repaired by moving that boundary print to the
+    // post-market series; its daily history must remain untouched.
     // Version 8 persists extended-hours minutes separately and applies the
     // seven-trading-day retention policy to every minute source.
     static let currentVersion = 8
@@ -150,6 +151,21 @@ struct StockChartPersistedStore: Codable, Sendable {
     var technicalIndicators: [String: [StockTechnicalIndicatorPoint]] = [:]
     var technicalIndicatorCacheVersion: Int? = currentTechnicalIndicatorCacheVersion
     var rangeMetadata: [String: StockChartStoredRangeMetadata]
+
+    /// A successful check with no new prices need not rewrite the whole
+    /// history and indicator cache. Fetch times remain current in memory.
+    func hasSameContent(as other: Self) -> Bool {
+        guard version == other.version, market == other.market, symbol == other.symbol,
+              series == other.series, derivedSeries == other.derivedSeries,
+              technicalIndicators == other.technicalIndicators,
+              technicalIndicatorCacheVersion == other.technicalIndicatorCacheVersion else { return false }
+        var metadata = rangeMetadata
+        for (key, var value) in metadata {
+            value.fetchedAt = other.rangeMetadata[key]?.fetchedAt ?? value.fetchedAt
+            metadata[key] = value
+        }
+        return metadata == other.rangeMetadata
+    }
 }
 
 private enum StockChartTechnicalCacheKind: String {
@@ -162,6 +178,10 @@ struct StockChartDiskStore {
     private let persistentStoreDirectory: URL
     private var memoryStores: [StockChartStoreKey: StockChartPersistedStore] = [:]
     private var recentKeys: [StockChartStoreKey] = []
+    private var lastSuccessfulWriteAt: [StockChartStoreKey: Date] = [:]
+    // Keep unreadable/unsupported files intact, including when fresh network
+    // data becomes available. Only an explicit cache clear removes this block.
+    private var blockedWrites: Set<StockChartStoreKey> = []
     private let memoryCapacity: Int
     var cachedStockCount: Int { memoryStores.count }
 
@@ -190,7 +210,7 @@ struct StockChartDiskStore {
            stored.symbol == key.symbol {
             remember(stored, for: key)
             if migrateExtendedMinuteCacheIfNeeded(in: &stored) {
-                save(stored, for: key)
+                save(stored, for: key, validatingWrite: true)
             }
             if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
                 save(stored, for: key)
@@ -204,23 +224,40 @@ struct StockChartDiskStore {
                 StockChartPersistedStore.self,
                 from: data
             ),
-            (7...StockChartPersistedStore.currentVersion).contains(stored.version),
+            (6...StockChartPersistedStore.currentVersion).contains(stored.version),
             stored.market == key.market,
             stored.symbol == key.symbol else {
-                // Chart files are rebuildable. Do not leave an obsolete or
-                // corrupt cache file behind after the schema changes.
-                try? fileManager.removeItem(at: url)
+                blockedWrites.insert(key)
+                DiagnosticLogger.shared.log(.stockQuote,
+                    "离线行情无法读取或版本不支持，保留原文件并阻断覆盖 symbol=\(key.symbol)", level: .warning)
                 return nil
+            }
+            let originalVersion = stored.version
+            if originalVersion < StockChartPersistedStore.currentVersion {
+                do {
+                    let recoveryURL = url.appendingPathExtension("v\(originalVersion).recovery")
+                    if !fileManager.fileExists(atPath: recoveryURL.path) {
+                        try data.write(to: recoveryURL, options: .atomic)
+                    }
+                } catch {
+                    blockedWrites.insert(key)
+                    DiagnosticLogger.logError(.stockQuote, operation: "行情迁移快照", error: error)
+                    return nil
+                }
             }
             let didMigrate = migrateExtendedMinuteCacheIfNeeded(in: &stored)
             if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) || didMigrate {
-                save(stored, for: key)
+                save(stored, for: key, validatingWrite: didMigrate)
                 return stored
             }
             remember(stored, for: key)
             return stored
         }
 
+        if fileManager.fileExists(atPath: url.path) {
+            blockedWrites.insert(key)
+            DiagnosticLogger.shared.log(.stockQuote, "离线行情文件暂不可读，保留原文件 symbol=\(key.symbol)", level: .warning)
+        }
         return nil
     }
 
@@ -246,7 +283,12 @@ struct StockChartDiskStore {
     }
 
     @discardableResult
-    mutating func save(_ store: StockChartPersistedStore, for key: StockChartStoreKey) -> Bool {
+    mutating func save(
+        _ store: StockChartPersistedStore,
+        for key: StockChartStoreKey,
+        validatingWrite: Bool = false,
+        at now: Date = Date()
+    ) -> Bool {
         guard store.version == StockChartPersistedStore.currentVersion,
               store.market == key.market,
               store.symbol == key.symbol else {
@@ -257,7 +299,16 @@ struct StockChartDiskStore {
             )
             return false
         }
+        let previous = memoryStores[key]
+        let lastWrite = lastSuccessfulWriteAt[key]
         remember(store, for: key)
+        guard !blockedWrites.contains(key) else { return false }
+        if !validatingWrite, let previous, let lastWrite,
+           (0..<300).contains(now.timeIntervalSince(lastWrite)),
+           previous.hasSameContent(as: store),
+           fileManager.fileExists(atPath: persistentStoreURL(for: key).path) {
+            return true
+        }
         do {
             try fileManager.createDirectory(
                 at: persistentStoreDirectory,
@@ -268,9 +319,27 @@ struct StockChartDiskStore {
             resourceValues.isExcludedFromBackup = true
             try? directory.setResourceValues(resourceValues)
             let data = try JSONEncoder().encode(store)
+            if validatingWrite {
+                let stagingURL = persistentStoreDirectory.appendingPathComponent("migration-\(UUID().uuidString).tmp")
+                defer { try? fileManager.removeItem(at: stagingURL) }
+                try data.write(to: stagingURL, options: .atomic)
+                let verifiedData = try Data(contentsOf: stagingURL)
+                let verified = try JSONDecoder().decode(StockChartPersistedStore.self, from: verifiedData)
+                guard verifiedData == data, verified.series == store.series,
+                      verified.version == store.version, verified.market == key.market,
+                      verified.symbol == key.symbol else {
+                    blockedWrites.insert(key)
+                    return false
+                }
+            }
             try data.write(to: persistentStoreURL(for: key), options: .atomic)
+            lastSuccessfulWriteAt[key] = now
+            DiagnosticLogger.shared.log(.stockQuote,
+                "离线行情写入 symbol=\(key.symbol) bytes=\(data.count) daily=\(store.series[StockChartSeriesKind.daily.rawValue]?.count ?? 0) minute=\(store.series[StockChartSeriesKind.intraday.rawValue]?.count ?? 0) post=\(store.series[StockChartSeriesKind.postMarketMinute.rawValue]?.count ?? 0)")
             return true
         } catch {
+            lastSuccessfulWriteAt[key] = nil
+            if validatingWrite { blockedWrites.insert(key) }
             DiagnosticLogger.shared.log(
                 .stockQuote,
                 "离线行情文件写入失败：\(error.localizedDescription)",
@@ -281,6 +350,8 @@ struct StockChartDiskStore {
     }
 
     mutating func removeAll() {
+        lastSuccessfulWriteAt.removeAll()
+        blockedWrites.removeAll()
         recentKeys.removeAll()
         memoryStores.removeAll()
         guard fileManager.fileExists(atPath: persistentStoreDirectory.path) else { return }
@@ -296,6 +367,8 @@ struct StockChartDiskStore {
     }
 
     mutating func remove(for key: StockChartStoreKey) {
+        lastSuccessfulWriteAt[key] = nil
+        blockedWrites.remove(key)
         memoryStores.removeValue(forKey: key)
         let url = persistentStoreURL(for: key)
         guard fileManager.fileExists(atPath: url.path) else { return }
@@ -352,7 +425,9 @@ struct StockChartDiskStore {
             market: store.market,
             inceptionDate: inceptionDate
         )
-        guard !points.isEmpty else { return nil }
+        guard !points.isEmpty || (range == .intraday && (!rawPreMarketPoints.isEmpty || !rawPostMarketPoints.isEmpty)) else {
+            return nil
+        }
         let indicatorPoints: [StockChartPoint]
         if range.isMinuteRange {
             // Keep the complete minute history for indicator warm-up. The
@@ -385,7 +460,10 @@ struct StockChartDiskStore {
             ],
             cachedDailyTechnicalIndicators: store.technicalIndicators[
                 StockChartTechnicalCacheKind.daily.rawValue
-            ]
+            ],
+            quoteUpdatedAt: range.isMinuteRange
+                ? [points.last?.date, rawPreMarketPoints.last?.date, rawPostMarketPoints.last?.date].compactMap { $0 }.max()
+                : points.last?.date
         )
     }
 
@@ -502,21 +580,33 @@ struct StockChartDiskStore {
     private func migrateExtendedMinuteCacheIfNeeded(
         in store: inout StockChartPersistedStore
     ) -> Bool {
-        guard store.version == 7 else { return false }
+        guard (6...7).contains(store.version) else { return false }
+        if store.version == 6 {
+            let original = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
+            // Repair only the erroneous US boundary, never discard daily bars.
+            mergeExtendedMinuteSeries(
+                StockChartSeriesProcessor.postMarketSessionPoints(original, market: store.market),
+                kind: .postMarketMinute, into: &store
+            )
+            store.series[StockChartSeriesKind.intraday.rawValue] =
+                StockChartSeriesProcessor.regularSessionPoints(original, market: store.market)
+        }
         let latestMetadata = store.rangeMetadata.values.max {
             $0.fetchedAt < $1.fetchedAt
         }
-        if let latestMetadata {
+        for metadata in store.rangeMetadata.values.sorted(by: { $0.fetchedAt < $1.fetchedAt }) {
             mergeExtendedMinuteSeries(
-                latestMetadata.preMarketPoints,
+                metadata.preMarketPoints,
                 kind: .preMarketMinute,
                 into: &store
             )
             mergeExtendedMinuteSeries(
-                latestMetadata.postMarketPoints,
+                metadata.postMarketPoints,
                 kind: .postMarketMinute,
                 into: &store
             )
+        }
+        if let latestMetadata {
             pruneMinuteSeries(in: &store, at: latestMetadata.fetchedAt)
             rebuildMinuteDerivedCaches(in: &store, at: latestMetadata.fetchedAt)
         }
@@ -601,28 +691,28 @@ struct StockChartDiskStore {
         in store: inout StockChartPersistedStore
     ) -> Bool {
         let rawMinutePoints = store.series[StockChartSeriesKind.intraday.rawValue] ?? []
-        let minutePoints = StockChartSeriesProcessor.regularSessionPoints(
-            rawMinutePoints,
-            market: store.market
-        ).sorted { $0.date < $1.date }
-        let dailyPoints = (store.series[StockChartSeriesKind.daily.rawValue] ?? [])
-            .sorted { $0.date < $1.date }
+        let dailyPoints = store.series[StockChartSeriesKind.daily.rawValue] ?? []
         let cachedMinuteCount = store.technicalIndicators[
             StockChartTechnicalCacheKind.minute.rawValue
         ]?.count ?? 0
         let cachedDailyCount = store.technicalIndicators[
             StockChartTechnicalCacheKind.daily.rawValue
         ]?.count ?? 0
-        let needsRefresh = store.technicalIndicatorCacheVersion
-                != StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
-            || cachedMinuteCount != minutePoints.count
-            || cachedDailyCount != dailyPoints.count
-        guard needsRefresh else { return false }
-
-        store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
-            StockTechnicalIndicators.calculate(minutePoints)
-        store.technicalIndicators[StockChartTechnicalCacheKind.daily.rawValue] =
-            StockTechnicalIndicators.calculate(dailyPoints)
+        let versionChanged = store.technicalIndicatorCacheVersion
+            != StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+        let refreshMinute = versionChanged || cachedMinuteCount != rawMinutePoints.count
+        let refreshDaily = versionChanged || cachedDailyCount != dailyPoints.count
+        guard refreshMinute || refreshDaily else { return false }
+        if refreshMinute {
+            let minutePoints = StockChartSeriesProcessor.regularSessionPoints(rawMinutePoints, market: store.market)
+                .sorted { $0.date < $1.date }
+            store.technicalIndicators[StockChartTechnicalCacheKind.minute.rawValue] =
+                StockTechnicalIndicators.calculate(minutePoints)
+        }
+        if refreshDaily {
+            store.technicalIndicators[StockChartTechnicalCacheKind.daily.rawValue] =
+                StockTechnicalIndicators.calculate(dailyPoints.sorted { $0.date < $1.date })
+        }
         store.technicalIndicatorCacheVersion =
             StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
         return true
@@ -639,7 +729,9 @@ struct StockChartDiskStore {
         recentKeys.removeAll { $0 == key }
         recentKeys.append(key)
         while recentKeys.count > memoryCapacity {
-            memoryStores[recentKeys.removeFirst()] = nil
+            let evicted = recentKeys.removeFirst()
+            memoryStores[evicted] = nil
+            lastSuccessfulWriteAt[evicted] = nil
         }
     }
 }

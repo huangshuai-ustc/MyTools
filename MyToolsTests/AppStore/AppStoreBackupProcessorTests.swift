@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 struct AppStoreBackupProcessorTests {
     @Test func backupRoundTripIncludesOnlySelectedModules() async throws {
-        var account = BankAccount()
+        var account = FinancialInstitution()
         account.bankName = "Example Bank"
         var stock = StockHolding()
         stock.symbol = "TEST"
@@ -32,7 +32,7 @@ struct AppStoreBackupProcessorTests {
         )
 
         #expect(payload.includedModules == [.myStocks, .secrets])
-        #expect(payload.vault.accounts.isEmpty)
+        #expect(payload.vault.financialInstitutions.isEmpty)
         #expect(payload.vault.stocks.map(\.symbol) == ["TEST"])
         #expect(payload.vault.medicalRecords.isEmpty)
         #expect(payload.secrets.map(\.title) == ["Example Secret"])

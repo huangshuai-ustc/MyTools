@@ -11,7 +11,7 @@ struct ModuleAttachmentReferenceIndex {
         switch module {
         case .personalFinance:
 #if MYTOOLS_FEATURE_FINANCE
-            return vault.cards.flatMap(\.statements).compactMap(\.attachment)
+            return vault.financialInstitutions.flatMap(\.financeAttachments)
 #else
             return []
 #endif

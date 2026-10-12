@@ -45,6 +45,17 @@ enum AppCurrencyFormatter {
         case .chf: return "CHF "
         case .thb: return "฿"
         case .mop: return "MOP "
+        case .huf: return "HUF "
+        case .php: return "₱"
+        case .aed: return "AED "
+        case .czk: return "CZK "
+        case .dkk: return "DKK "
+        case .ils: return "₪"
+        case .nok: return "NOK "
+        case .pln: return "PLN "
+        case .sek: return "SEK "
+        case .ugx: return "UGX "
+        case .zar: return "R"
         }
     }
 }

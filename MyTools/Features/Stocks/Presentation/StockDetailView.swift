@@ -619,9 +619,9 @@ private struct StockTransactionRow: View {
             return AppDateFormatter.string(from: transaction.tradedAt)
         }
         let formatter = DateFormatter()
-        formatter.calendar = StockChartSeriesProcessor.marketCalendar(market)
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = formatter.calendar.timeZone
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
         return formatter.string(from: executedAt)
     }

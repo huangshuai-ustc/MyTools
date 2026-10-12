@@ -54,12 +54,27 @@ struct DiagnosticMaintenanceTests {
 
 @MainActor
 struct AppStoreFacadeTests {
+    @Test func unavailableFinanceDoesNotParticipateInSyncDeletionOrNormalBackup() async throws {
+        let decoder = JSONDecoder()
+        decoder.userInfo[.isolateVaultModules] = true
+        let vault = try decoder.decode(VaultData.self, from: Data(#"{"accounts":"future-finance","billTags":["retained"]}"#.utf8))
+        let store = AppStore(initialVault: vault, dependencies: Self.dependencies(defaults: Self.makeDefaults(), persistence: RecordingVaultPersistence()))
+        #expect(store.unavailableModules == [.personalFinance])
+        #expect(store.beginModuleLocalDataDeletion(for: .personalFinance) == nil)
+        let snapshot = try await store.makeCloudSyncSnapshot()
+        #expect(!snapshot.participatingModules.contains(.personalFinance))
+        #expect(snapshot.participatingModules.contains(.myStocks))
+        do {
+            _ = try await store.makeBackupDocument(password: "test-password")
+            Issue.record("An unavailable visible module must not be exported as a normal empty backup")
+        } catch {}
+    }
     @Test func financeAttachmentCleanupRequiresSuccessfulPersistenceAndNoGlobalReferences() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("FinanceRemoval-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let attachments = AttachmentStore(directoryURL: root)
         let pdf = try attachments.save(data: Data("%PDF-test".utf8), originalFileName: "test.pdf", contentType: .pdf)
-        var account = BankAccount()
+        var account = FinancialInstitution()
         account.bankName = "Test"
         var card = BankCard()
         card.accountID = account.id
@@ -155,6 +170,20 @@ struct AppStoreFacadeTests {
         #expect(store.chartCacheRevisionByStockID[stock.id] != nil)
         await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: false)
         #expect(await charts.fetchCount == 1)
+        await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: true)
+        #expect(await charts.fetchCount == 2)
+    }
+
+    @Test func failedAutomaticMinuteRefreshKeepsCooldownButAllowsManualRetry() async {
+        let stock = StockHolding(market: .unitedStates, symbol: "TEST")
+        let charts = RecordingStockCharts(fails: true)
+        let store = StockStore(stocks: [stock], isDataLoaded: true,
+            quoteService: StaticStockQuoteProvider(quotes: [:]),
+            alertNotifications: NoopAlertNotificationRouter(),
+            refreshInvalidator: NoopStockRefreshInvalidator(), chartService: charts, defaults: Self.makeDefaults())
+        for _ in 0..<3 { await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: false) }
+        #expect(await charts.fetchCount == 1)
+        #expect(store.chartRefreshErrors[stock.id] != nil)
         await store.refreshIntradayCharts(stockID: stock.id, forceRefresh: true)
         #expect(await charts.fetchCount == 2)
     }
@@ -505,6 +534,7 @@ struct AppStoreFacadeTests {
         let defaults = Self.makeDefaults()
         let settings = ToolModuleSettings(defaults: defaults)
         settings.setVisible(false, for: .myStocks)
+        settings.setVisible(true, for: .bills)
         var stock = StockHolding()
         stock.symbol = "SYNC"
         let store = AppStore(
@@ -527,6 +557,7 @@ struct AppStoreFacadeTests {
         let defaults = Self.makeDefaults()
         let settings = ToolModuleSettings(defaults: defaults)
         settings.setVisible(false, for: .myStocks)
+        settings.setVisible(true, for: .bills)
         var stock = StockHolding()
         stock.symbol = "HIDDEN"
         var bill = BillRecord()
@@ -785,7 +816,11 @@ private actor CountingClosedQuoteProvider: StockQuoteRefreshing {
 
 private actor RecordingStockCharts: StockChartServing {
     private let cachedSnapshot: StockChartSnapshot?
-    init(cachedSnapshot: StockChartSnapshot? = nil) { self.cachedSnapshot = cachedSnapshot }
+    private let fails: Bool
+    init(cachedSnapshot: StockChartSnapshot? = nil, fails: Bool = false) {
+        self.cachedSnapshot = cachedSnapshot
+        self.fails = fails
+    }
     private(set) var fetchCount = 0
     private(set) var peakConcurrentRequests = 0
     private var active = 0
@@ -805,6 +840,7 @@ private actor RecordingStockCharts: StockChartServing {
         startWaiters.removeAll()
         defer { active -= 1 }
         try await Task.sleep(for: .milliseconds(80))
+        if fails { throw StockChartError.serviceUnavailable }
         return StockChartSnapshot(symbol: stock.symbol, name: stock.displayName,
                                   currencyCode: stock.market.currencyCode, previousClose: 99,
                                   points: [StockChartFixtures.point(at: Date(), close: 100)],

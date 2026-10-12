@@ -6,12 +6,12 @@ struct HomeView: View {
     @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
     @State private var regionFilter: BankRegionFilter = .all
-    @State private var editingAccount: BankAccount?
+    @State private var editingAccount: FinancialInstitution?
     @State private var showsInactiveBanks = false
-    @State private var pendingDeleteAccount: BankAccount?
+    @State private var pendingDeleteAccount: FinancialInstitution?
 
     private var availableRegionFilters: [BankRegionFilter] {
-        let regions = Set(store.accounts.map(\.region))
+        let regions = Set(store.financialInstitutions.filter { $0.kind == .bank }.map(\.region))
         return BankRegionFilter.allCases.filter { filter in
             filter == .all || filter.region.map(regions.contains) ?? false
         }
@@ -63,6 +63,24 @@ struct HomeView: View {
                     }
                 }
             }
+            ForEach([FinancialInstitutionKind.brokerage, .payment, .other]) { kind in
+                let matches = store.financialInstitutions.filter { $0.kind == kind && $0.matches(query.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                if !matches.isEmpty {
+                    Section(kind.title) {
+                        ForEach(matches) { institution in
+                            NavigationLink {
+                                switch institution.kind {
+                                case .brokerage: BrokerageInstitutionDetailView(institutionID: institution.id)
+                                case .payment: PaymentInstitutionDetailView(institutionID: institution.id)
+                                default: FinanceInstitutionDetailView(institutionID: institution.id)
+                                }
+                            } label: {
+                                Label(institution.name.isEmpty ? "未命名机构" : institution.name, systemImage: kind == .brokerage ? "chart.line.uptrend.xyaxis" : "wallet.bifold")
+                            }
+                        }
+                    }
+                }
+            }
         }
         .appNavigationTitle(ToolModule.personalFinance.title)
         .diagnosticScreen("个人财务")
@@ -74,10 +92,14 @@ struct HomeView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    var account = BankAccount()
-                    account.additionalLoginFields = store.makeLoginFields(for: .domestic)
-                    editingAccount = account
+                Menu {
+                    ForEach(FinancialInstitutionKind.allCases) { kind in
+                        Button("添加" + kind.title) {
+                            var account = FinancialInstitution(kind: kind)
+                            if kind == .bank { account.additionalLoginFields = store.makeLoginFields(for: .domestic) }
+                            editingAccount = account
+                        }
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -90,9 +112,12 @@ struct HomeView: View {
         .scrollDismissesKeyboard(.interactively)
 #endif
         .sheet(item: $editingAccount) { account in
-            AccountEditorView(account: account, isNew: true, cards: [])
-                .id(account.id)
-            .iOSLargeSheet()
+            switch account.kind {
+            case .bank: AccountEditorView(account: account, isNew: true, cards: []).id(account.id).iOSLargeSheet()
+            case .brokerage: BrokerageInstitutionEditorView(institution: account, isNew: true).iOSLargeSheet()
+            case .payment: PaymentInstitutionEditorView(institution: account, isNew: true).iOSLargeSheet()
+            case .other: FinanceInstitutionEditorView(institution: account, isNew: true).iOSLargeSheet()
+            }
         }
         .alert("删除银行账户？", isPresented: Binding(get: { pendingDeleteAccount != nil }, set: { if !$0 { pendingDeleteAccount = nil } })) {
             Button("删除", role: .destructive) {
@@ -115,7 +140,7 @@ struct HomeView: View {
         }
     }
 
-    private func accountLink(_ account: BankAccount, cards: [BankCard]) -> some View {
+    private func accountLink(_ account: FinancialInstitution, cards: [BankCard]) -> some View {
         NavigationLink {
             AccountDetailView(account: account, backTitle: ToolModule.personalFinance.title)
         } label: {
@@ -175,7 +200,7 @@ struct HomeView: View {
         }
 
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filteredAccounts = store.accounts
+        let filteredAccounts = store.financialInstitutions.filter { $0.kind == .bank }
                 .filter(regionFilter.includes)
                 .filter { account in
                     searchTerm.isEmpty
@@ -198,7 +223,7 @@ struct HomeView: View {
         let inactiveAccounts = filteredAccounts.filter {
             isInactive($0, cards: cardsByAccountID[$0.id, default: []])
         }
-        let visibleAccounts = store.accounts.filter(regionFilter.includes).filter { account in
+        let visibleAccounts = store.financialInstitutions.filter { $0.kind == .bank }.filter(regionFilter.includes).filter { account in
             showsInactiveBanks
                 || !isInactive(account, cards: cardsByAccountID[account.id, default: []])
         }
@@ -224,7 +249,7 @@ struct HomeView: View {
         )
     }
 
-    private func accountMatches(_ account: BankAccount, searchTerm: String) -> Bool {
+    private func accountMatches(_ account: FinancialInstitution, searchTerm: String) -> Bool {
         let bankMatches = [account.region.title, account.bankName, account.branchName, account.swift, account.iban]
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
         let subaccountMatches = account.foreignSubaccounts.contains { subaccount in
@@ -250,32 +275,32 @@ struct HomeView: View {
             .contains { $0.localizedCaseInsensitiveContains(searchTerm) }
     }
 
-    private func financeRowSummary(_ account: BankAccount, cards: [BankCard]) -> String {
+    private func financeRowSummary(_ account: FinancialInstitution, cards: [BankCard]) -> String {
         let debit = cards.filter { $0.kind == .debit && $0.status != .closed }.count
         let credit = cards.filter { $0.kind == .credit && $0.status != .closed }.count
         let subs = account.activeSubaccountCount
         return "\(debit) 张借记卡 · \(credit) 张信用卡 · \(subs) 个子账户"
     }
 
-    private func isInactive(_ account: BankAccount, cards: [BankCard]) -> Bool {
+    private func isInactive(_ account: FinancialInstitution, cards: [BankCard]) -> Bool {
         account.isInactiveFinanceArchive(cards: cards)
     }
 
-    private func accountDisplayName(_ account: BankAccount) -> String {
+    private func accountDisplayName(_ account: FinancialInstitution) -> String {
         account.bankName.isEmpty ? "未命名银行" : account.bankName
     }
 }
 
 private struct FinanceViewSnapshot {
-    let activeAccounts: [BankAccount]
-    let inactiveAccounts: [BankAccount]
+    let activeAccounts: [FinancialInstitution]
+    let inactiveAccounts: [FinancialInstitution]
     let cardsByAccountID: [UUID: [BankCard]]
     let visibleAccountCount: Int
     let visibleSubaccountCount: Int
     let visibleDebitCount: Int
     let visibleCreditCount: Int
 
-    func cards(for account: BankAccount) -> [BankCard] {
+    func cards(for account: FinancialInstitution) -> [BankCard] {
         cardsByAccountID[account.id, default: []]
     }
 }
@@ -341,7 +366,7 @@ enum BankRegionFilter: String, CaseIterable, Identifiable {
         }
     }
 
-    func includes(_ account: BankAccount) -> Bool {
+    func includes(_ account: FinancialInstitution) -> Bool {
         switch self {
         case .all: return true
         case .domestic: return account.region == .domestic

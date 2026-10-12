@@ -10,17 +10,30 @@ enum AppStoreBackupMerger {
         let modules = imported.includedModules.intersection(
             CompiledToolModules.available(from: enabledModules)
         ).intersection(ToolModuleCatalog.backupModules)
+            // Imported backup data is an explicit recovery source. A local
+            // quarantine must not filter out the module being repaired. Each
+            // included module below is replaced as a whole; omitted modules
+            // remain untouched.
         var merged = localVault
 #if MYTOOLS_FEATURE_PARTNERSHIP
         if modules.contains(.partnership) {
-            merged.partnershipBooks = mergeByID(local: localVault.partnershipBooks, imported: imported.vault.partnershipBooks)
+            merged.partnershipBooks = imported.vault.partnershipBooks
         }
 #endif
 
 #if MYTOOLS_FEATURE_FINANCE
         if modules.contains(.personalFinance) {
-            merged.accounts = mergeByID(local: localVault.accounts, imported: imported.vault.accounts)
-            merged.cards = mergeByID(local: localVault.cards, imported: imported.vault.cards)
+            merged.financialInstitutions = imported.vault.financialInstitutions
+            // Strict backup decoding has already validated the imported module.
+            // Clear only Finance quarantine; unrelated modules retain their
+            // original recovery payloads and blocked status.
+            merged.unavailableModules.remove("personalFinance")
+            for key in ["financialInstitutions", "accounts", "cards", "financialProviders", "domesticBankLoginFieldTemplates", "overseasBankLoginFieldTemplates"] {
+                merged.preservedModulePayloads.removeValue(forKey: key)
+            }
+            for key in ["accounts", "cards", "financialProviders"] {
+                merged.unknownPayloads.removeValue(forKey: key)
+            }
         }
 #endif
 #if MYTOOLS_FEATURE_STOCKS
@@ -42,95 +55,51 @@ enum AppStoreBackupMerger {
             let validImportedStocks = imported.vault.stocks.filter {
                 $0.hasValidTransactionOrder
             }
-            merged.stocks = mergeByID(local: localVault.stocks, imported: validImportedStocks)
-            merged.stockCashFlowRecords = mergeByID(
-                local: localVault.stockCashFlowRecords,
-                imported: imported.vault.stockCashFlowRecords
-            )
-            merged.stockPriceAlerts = mergeByID(
-                local: localVault.stockPriceAlerts,
-                imported: imported.vault.stockPriceAlerts
-            )
-            merged.stockReturnAlerts = mergeByID(
-                local: localVault.stockReturnAlerts,
-                imported: imported.vault.stockReturnAlerts
-            )
+            guard validImportedStocks.count == imported.vault.stocks.count else { return VaultBackupPayload(vault: localVault, secrets: localSecrets, includedModules: modules) }
+            merged.stocks = validImportedStocks
+            merged.stockCashFlowRecords = imported.vault.stockCashFlowRecords
+            merged.stockPriceAlerts = imported.vault.stockPriceAlerts
+            merged.stockReturnAlerts = imported.vault.stockReturnAlerts
         }
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
         if modules.contains(.currencyExchange) {
-            merged.currencyExchangeRecords = mergeByID(
-                local: localVault.currencyExchangeRecords,
-                imported: imported.vault.currencyExchangeRecords
-            )
-            merged.currencyRateAlerts = mergeByID(
-                local: localVault.currencyRateAlerts,
-                imported: imported.vault.currencyRateAlerts
-            )
+            merged.currencyExchangeRecords = imported.vault.currencyExchangeRecords
+            merged.currencyRateAlerts = imported.vault.currencyRateAlerts
         }
 #endif
 #if MYTOOLS_FEATURE_HEALTH
         if modules.contains(.healthRecords) {
-            merged.medicalRecords = mergeByID(
-                local: localVault.medicalRecords,
-                imported: imported.vault.medicalRecords
-            )
-            merged.hospitalProfiles = mergeByID(
-                local: localVault.hospitalProfiles,
-                imported: imported.vault.hospitalProfiles
-            )
-            merged.medicalRecordTags = AppTagSupport.merged(
-                localVault.medicalRecordTags,
-                with: imported.vault.medicalRecordTags
-            )
+            merged.medicalRecords = imported.vault.medicalRecords
+            merged.hospitalProfiles = imported.vault.hospitalProfiles
+            merged.medicalRecordTags = imported.vault.medicalRecordTags
         }
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
         if modules.contains(.foodMap) {
-            merged.foodPlaces = mergeByID(
-                local: localVault.foodPlaces,
-                imported: imported.vault.foodPlaces
-            )
-            merged.foodPlaceTags = AppTagSupport.merged(
-                localVault.foodPlaceTags,
-                with: imported.vault.foodPlaceTags
-            )
+            merged.foodPlaces = imported.vault.foodPlaces
+            merged.foodPlaceTags = imported.vault.foodPlaceTags
         }
 #endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         if modules.contains(.documents) {
-            merged.credentialDocuments = mergeByID(
-                local: localVault.credentialDocuments,
-                imported: imported.vault.credentialDocuments
-            )
-            merged.credentialTags = AppTagSupport.merged(
-                localVault.credentialTags,
-                with: imported.vault.credentialTags
-            )
+            merged.credentialDocuments = imported.vault.credentialDocuments
+            merged.credentialTags = imported.vault.credentialTags
         }
 #endif
 #if MYTOOLS_FEATURE_BILLS
         if modules.contains(.bills) {
-            merged.billRecords = mergeByID(
-                local: localVault.billRecords,
-                imported: imported.vault.billRecords
-            )
-            merged.billTags = AppTagSupport.merged(
-                localVault.billTags,
-                with: imported.vault.billTags
-            )
+            merged.billRecords = imported.vault.billRecords
+            merged.billTags = imported.vault.billTags
         }
 #endif
 
 #if MYTOOLS_FEATURE_SECRETS
-        if modules.contains(.secrets), !imported.vault.secretFieldTemplates.isEmpty {
+        if modules.contains(.secrets) {
             merged.secretFieldTemplates = imported.vault.secretFieldTemplates
         }
         if modules.contains(.secrets) {
-            merged.secretTags = AppTagSupport.merged(
-                localVault.secretTags,
-                with: imported.vault.secretTags
-            )
+            merged.secretTags = imported.vault.secretTags
         }
         let importedSecrets: [SecretVaultValue] = modules.contains(.secrets)
             ? imported.secrets.map { item in
@@ -146,7 +115,7 @@ enum AppStoreBackupMerger {
             }
             : []
         let secrets = modules.contains(.secrets)
-            ? mergeByID(local: localSecrets, imported: importedSecrets)
+            ? importedSecrets
             : localSecrets
 #else
         let secrets = localSecrets

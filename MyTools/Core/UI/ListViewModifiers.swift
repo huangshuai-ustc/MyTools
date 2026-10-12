@@ -175,7 +175,9 @@ private struct AppNavigationTitleModifier: ViewModifier {
                 }
             }
 #else
-        content.navigationTitle(title)
+        content
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
 #endif
     }
 
@@ -705,6 +707,16 @@ extension View {
         modifier(AdaptiveLargeNavigationTitleModifier())
     }
 
+    /// Root feature titles stay in the navigation bar beside the toolbar
+    /// actions. This is the shared presentation used by the Finance archive.
+    func appTopAlignedNavigationTitle() -> some View {
+#if os(iOS)
+        navigationBarTitleDisplayMode(.inline)
+#else
+        self
+#endif
+    }
+
     @ViewBuilder
     func appSwipeActions(
         edge: HorizontalEdge = .trailing,
@@ -883,11 +895,7 @@ private struct AdaptiveLargeNavigationTitleModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
 #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad && isSidebarCollapsed {
-            content.navigationBarTitleDisplayMode(.inline)
-        } else {
-            content.navigationBarTitleDisplayMode(.large)
-        }
+        content.navigationBarTitleDisplayMode(.inline)
 #else
         content
 #endif

@@ -119,6 +119,7 @@ actor StockChartService: StockChartServing {
         var consumers: [UUID: StockChartResultWaiter] = [:]
     }
     private var flights: [StockChartCacheKey: Flight] = [:]
+    private var minuteWarmups: [StockChartStoreKey: (id: UUID, task: Task<Void, Never>)] = [:]
     private struct RenderedEntry {
         let day: Date
         let snapshot: StockChartSnapshot
@@ -127,15 +128,18 @@ actor StockChartService: StockChartServing {
     private var lastAttempt: [StockChartCacheKey: Date] = [:]
     private static let requestTimeout: Duration = .seconds(12)
     private let flightTimeout: Duration
+    private let nowProvider: @Sendable () -> Date
 
     init(
         diskStore: StockChartDiskStore = StockChartDiskStore(),
         providers: StockChartProviders = StockChartProviders(),
-        flightTimeout: Duration = .seconds(18)
+        flightTimeout: Duration = .seconds(18),
+        nowProvider: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.diskStore = diskStore
         self.providers = providers
         self.flightTimeout = flightTimeout
+        self.nowProvider = nowProvider
     }
 
     func cachedChart(
@@ -146,7 +150,7 @@ actor StockChartService: StockChartServing {
         guard !symbol.isEmpty else { return nil }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
         let cacheKey = StockChartCacheKey(market: stock.market, symbol: symbol, range: range)
-        let day = StockChartSeriesProcessor.marketCalendar(stock.market).startOfDay(for: Date())
+        let day = StockChartSeriesProcessor.marketCalendar(stock.market).startOfDay(for: nowProvider())
         if let cached = renderedCache[cacheKey], cached.day == day { return cached.snapshot }
         guard let store = diskStore.load(for: key) else { return nil }
         if range == .fiveDays, !diskStore.hasRequestedCoverage(in: store, for: range) { return nil }
@@ -226,7 +230,7 @@ actor StockChartService: StockChartServing {
             symbol: symbol,
             range: range
         )
-        let now = Date()
+        let now = nowProvider()
         let generation = cacheGeneration
         let stored = diskStore.load(for: stockKey)
         let cached = stored.flatMap {
@@ -275,32 +279,13 @@ actor StockChartService: StockChartServing {
             }
             // Providers may publish the closing minutes incrementally. Merge
             // useful partial data; isChartStale still requires the closing bar.
-            var scopedSnapshot = snapshotByUpdatingCurrentSession(
+            let scopedSnapshot = snapshotByUpdatingCurrentSession(
                 StockMarketTradingCalendar.session(for: stock.market, at: now),
                 remote: snapshot,
                 cached: cached,
                 market: stock.market,
                 at: now
             )
-            if range == .intraday,
-               needsMinuteTechnicalWarmup(
-                    in: scopedSnapshot,
-                    range: range,
-                    market: stock.market
-               ),
-               let warmupSnapshot = try? await fetchRemoteChartWithPermit(
-                    for: StockChartRequest(
-                        stock: stock,
-                        symbol: symbol,
-                        range: .fiveDays
-                    )
-               ) {
-                scopedSnapshot = snapshotByAddingMinuteIndicatorHistory(
-                    warmupSnapshot,
-                    to: scopedSnapshot,
-                    market: stock.market
-                )
-            }
             try Task.checkCancellation()
             let mergeStarted = Date()
             let updatedStore = diskStore.merging(
@@ -313,8 +298,25 @@ actor StockChartService: StockChartServing {
             try Task.checkCancellation()
             if generation == cacheGeneration {
                 let writeStarted = Date()
-                diskStore.save(updatedStore, for: stockKey)
-                DiagnosticLogger.shared.log(.stockQuote, "图表阶段=写盘 id=\(stock.id) ms=\(Int(Date().timeIntervalSince(writeStarted) * 1000))")
+                let persisted = diskStore.save(updatedStore, for: stockKey)
+                if range == .intraday,
+                   needsMinuteTechnicalWarmup(in: updatedStore, range: range, market: stock.market),
+                   minuteWarmups[stockKey] == nil {
+                    // Commit today's usable data before independently enriching
+                    // indicators. Reuse shared flights, cooldown and cancellation.
+                    let warmupID = UUID()
+                    let task = Task {
+                        defer {
+                            if self.minuteWarmups[stockKey]?.id == warmupID {
+                                self.minuteWarmups[stockKey] = nil
+                            }
+                        }
+                        guard !Task.isCancelled else { return }
+                        _ = try? await self.fetchChart(for: stock, range: .fiveDays)
+                    }
+                    minuteWarmups[stockKey] = (warmupID, task)
+                }
+                DiagnosticLogger.shared.log(.stockQuote, "图表阶段=写盘 id=\(stock.id) persisted=\(persisted) ms=\(Int(Date().timeIntervalSince(writeStarted) * 1000))")
                 renderedCache = renderedCache.filter { $0.key.market != stockKey.market || $0.key.symbol != stockKey.symbol }
                 if range.isKLineRange
                     || !StockMarketTradingCalendar.isSessionActive(stock.market, at: now) {
@@ -337,11 +339,16 @@ actor StockChartService: StockChartServing {
     }
 
     func refreshAfterFinalSession(for stock: StockHolding) async throws {
+        try Task.checkCancellation()
+        let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
+        guard !symbol.isEmpty else { throw StockChartError.invalidSymbol }
+        let stored = diskStore.load(for: StockChartStoreKey(market: stock.market, symbol: symbol))
+        let ranges = Self.closingRangesNeedingRefresh(in: stored, market: stock.market, at: nowProvider())
         var firstError: Error?
         // These are the canonical source series. The presentation layer
         // recalculates every MA/BOLL/MACD/RSI from them, while the disk store
         // derives weekly/monthly/quarterly/yearly K-lines from the daily set.
-        for range in [StockChartRange.intraday, .dayK] {
+        for range in ranges {
             do {
                 _ = try await fetchChart(
                     for: stock,
@@ -362,30 +369,43 @@ actor StockChartService: StockChartServing {
     func isChartStale(for stock: StockHolding) async -> Bool {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { return false }
-        guard let sessionEnd = StockMarketTradingCalendar
-            .latestCompletedFinalSessionEnd(for: stock.market) else { return false }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
-        guard let stored = diskStore.load(for: key) else { return true }
+        return !Self.closingRangesNeedingRefresh(
+            in: diskStore.load(for: key), market: stock.market, at: nowProvider()
+        ).isEmpty
+    }
+
+    static func closingRangesNeedingRefresh(
+        in stored: StockChartPersistedStore?, market: StockMarket, at now: Date
+    ) -> [StockChartRange] {
+        guard let sessionEnd = StockMarketTradingCalendar.latestCompletedFinalSessionEnd(for: market, at: now) else { return [] }
+        guard let stored else { return [.intraday, .dayK] }
         // The former `max(intradayFetchedAt, dayKFetchedAt)` check let a fresh
         // minute response hide a stale daily source. Verify both canonical
         // sources against the completed trading day instead; app-launch
         // catch-up can then repair whichever close pass was missed.
-        let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
+        let calendar = StockChartSeriesProcessor.marketCalendar(market)
         let dailyPoints = stored.series[StockChartSeriesKind.daily.rawValue] ?? []
         let minutePoints = stored.series[StockChartSeriesKind.intraday.rawValue] ?? []
-        let hasCompletedDailyBar = dailyPoints.contains {
+        let lastDailyFetch = StockChartSeriesProcessor.compatibleMetadataRanges(for: .dayK)
+            .compactMap { stored.rangeMetadata[$0.rawValue]?.fetchedAt }.max() ?? .distantPast
+        // A same-day bar downloaded before the close is not a settled daily bar.
+        let hasCompletedDailyBar = lastDailyFetch >= sessionEnd && dailyPoints.contains {
             calendar.isDate($0.date, inSameDayAs: sessionEnd)
         }
         let completedDayMinutes = minutePoints.filter {
             calendar.isDate($0.date, inSameDayAs: sessionEnd)
         }
         let hasCompletedMinuteSession = StockChartSeriesProcessor
-            .hasCompletedRegularSession(completedDayMinutes, market: stock.market)
-        return !hasCompletedDailyBar || !hasCompletedMinuteSession
+            .hasCompletedRegularSession(completedDayMinutes, market: market)
+        return (hasCompletedMinuteSession ? [] : [.intraday])
+            + (hasCompletedDailyBar ? [] : [.dayK])
     }
 
     func clearCache() {
         cacheGeneration += 1
+        for warmup in minuteWarmups.values { warmup.task.cancel() }
+        minuteWarmups.removeAll()
         renderedCache.removeAll()
         lastAttempt.removeAll()
         for (key, flight) in Array(flights) {
@@ -399,6 +419,7 @@ actor StockChartService: StockChartServing {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { return }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        minuteWarmups.removeValue(forKey: key)?.task.cancel()
         renderedCache = renderedCache.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
         lastAttempt = lastAttempt.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
         for flightKey in Array(flights.keys) where flightKey.market == key.market && flightKey.symbol == key.symbol {
@@ -419,45 +440,13 @@ actor StockChartService: StockChartServing {
         // so older listings such as VOO are not truncated.
         if request.stock.market == .unitedStates,
            request.range.isKLineRange {
-            if let yahooSnapshot = try? await providers.yahoo.fetchChart(for: request) {
-                return yahooSnapshot
-            }
-            if let nasdaqSnapshot = try? await providers.nasdaq.fetchChart(for: request) {
-                return nasdaqSnapshot
-            }
+            return try await racedUSChart(for: request, sources: [providers.yahoo, providers.nasdaq])
         }
         if request.stock.market == .unitedStates,
            request.range == .intraday {
-            // The two providers are independent. Starting Yahoo only after
-            // Tencent returned doubled every US row's latency and amplified it
-            // across a watchlist. Fetch both at once, then merge whichever
-            // successful coverage is available.
-            async let tencentResult = providerResult(
-                providers.tencent,
-                request: request
+            return try await racedUSChart(
+                for: request, sources: [providers.tencent, providers.yahoo, providers.nasdaq]
             )
-            async let yahooResult = providerResult(
-                providers.yahoo,
-                request: request
-            )
-            let (tencent, yahoo) = await (tencentResult, yahooResult)
-            switch (tencent, yahoo) {
-            case let (.success(primary), .success(fallback)):
-                return preferredUSIntradaySnapshot(
-                    primary: primary,
-                    fallback: fallback
-                )
-            case let (.success(snapshot), .failure):
-                return snapshot
-            case let (.failure, .success(snapshot)):
-                return snapshot
-            case let (.failure(firstError), .failure):
-                guard !Task.isCancelled else { throw CancellationError() }
-                if let fallback = try? await providers.nasdaq.fetchChart(for: request) {
-                    return fallback
-                }
-                throw firstError
-            }
         }
 
         do {
@@ -482,20 +471,7 @@ actor StockChartService: StockChartServing {
                 return fallback
             }
 
-            if request.stock.market == .unitedStates,
-               request.range == .intraday,
-               let fallback = try? await providers.yahoo.fetchChart(for: request) {
-                return fallback
-            }
-
-            if request.stock.market == .unitedStates,
-               request.range != .fiveDays,
-               let fallback = try? await providers.nasdaq.fetchChart(for: request) {
-                return fallback
-            }
-
-            if !(request.stock.market == .unitedStates && request.range == .intraday),
-               let fallback = try? await providers.yahoo.fetchChart(for: request) {
+            if let fallback = try? await providers.yahoo.fetchChart(for: request) {
                 return fallback
             }
 
@@ -504,14 +480,69 @@ actor StockChartService: StockChartServing {
         }
     }
 
-    private func providerResult(
-        _ provider: any StockChartProvider,
-        request: StockChartRequest
-    ) async -> Result<StockChartSnapshot, Error> {
-        do {
-            return .success(try await provider.fetchChart(for: request))
-        } catch {
-            return .failure(error)
+    private func racedUSChart(
+        for request: StockChartRequest,
+        sources: [any StockChartProvider]
+    ) async throws -> StockChartSnapshot {
+        // Hedge the fallback instead of spending the entire deadline waiting
+        // for a stalled primary. A short collection window retains complementary
+        // extended-hours data when both minute sources respond promptly.
+        let isMinute = request.range == .intraday
+        let now = nowProvider()
+        let session = StockMarketTradingCalendar.session(for: request.stock.market, at: now)
+        let calendar = StockChartSeriesProcessor.marketCalendar(request.stock.market)
+        return try await withThrowingTaskGroup(of: (Int, StockChartSnapshot?).self) { group in
+            defer { group.cancelAll() }
+            for (index, source) in sources.enumerated() {
+                group.addTask {
+                    do {
+                        if index == sources.count - 1 {
+                            try await Task.sleep(for: .milliseconds(500))
+                        }
+                        try Task.checkCancellation()
+                        return (index, try await source.fetchChart(for: request))
+                    } catch {
+                        return (index, nil)
+                    }
+                }
+            }
+            var received: [Int: StockChartSnapshot] = [:]
+            var completed = 0
+            var collecting = false
+            while let (index, snapshot) = try await group.next() {
+                try Task.checkCancellation()
+                if index == -1 { break }
+                completed += 1
+                if let snapshot,
+                   !snapshot.points.isEmpty || !snapshot.preMarketPoints.isEmpty || !snapshot.postMarketPoints.isEmpty {
+                    received[index] = snapshot
+                    if !isMinute { return snapshot }
+                    let sessionDate: Date?
+                    switch session {
+                    case .preMarket: sessionDate = snapshot.preMarketPoints.last?.date
+                    case .postMarket: sessionDate = snapshot.postMarketPoints.last?.date
+                    case .regular: sessionDate = snapshot.points.last?.date
+                    case .closed: sessionDate = now
+                    }
+                    // A fast regular-only (or yesterday's) response must not
+                    // cancel the source that can still supply today's post/pre.
+                    if !collecting, let sessionDate, calendar.isDate(sessionDate, inSameDayAs: now) {
+                        collecting = true
+                        group.addTask {
+                            try await Task.sleep(for: .milliseconds(150))
+                            return (-1, nil)
+                        }
+                    }
+                }
+                if completed == sources.count { break }
+            }
+            guard var result = received.sorted(by: { $0.key < $1.key }).first?.value else {
+                throw StockChartError.serviceUnavailable
+            }
+            for (_, snapshot) in received.sorted(by: { $0.key < $1.key }).dropFirst() {
+                result = preferredUSIntradaySnapshot(primary: result, fallback: snapshot)
+            }
+            return result
         }
     }
 
@@ -542,7 +573,9 @@ actor StockChartService: StockChartServing {
             await remoteRequestGate.release()
             return snapshot
         } catch {
-            DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider失败 symbol=\(request.symbol) range=\(request.range.rawValue) error=\(DiagnosticLogger.errorCode(error))", level: .warning)
+            if !(error is CancellationError) && !Task.isCancelled {
+                DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider失败 symbol=\(request.symbol) range=\(request.range.rawValue) error=\(DiagnosticLogger.errorCode(error))", level: .warning)
+            }
             await remoteRequestGate.release()
             throw error
         }
@@ -815,48 +848,6 @@ actor StockChartService: StockChartServing {
         )
     }
 
-    private func needsMinuteTechnicalWarmup(
-        in snapshot: StockChartSnapshot,
-        range: StockChartRange,
-        market: StockMarket
-    ) -> Bool {
-        guard range.isMinuteRange else { return false }
-        return needsMinuteTechnicalWarmup(
-            points: snapshot.indicatorPoints ?? snapshot.points,
-            market: market
-        )
-    }
-
-    private func snapshotByAddingMinuteIndicatorHistory(
-        _ warmup: StockChartSnapshot,
-        to snapshot: StockChartSnapshot,
-        market: StockMarket
-    ) -> StockChartSnapshot {
-        let existing = snapshot.indicatorPoints ?? snapshot.points
-        let supplemental = warmup.indicatorPoints ?? warmup.points
-        let merged = StockChartSeriesProcessor.mergedPoints(
-            existing,
-            with: supplemental,
-            kind: .intraday,
-            market: market
-        )
-        return StockChartSnapshot(
-            symbol: snapshot.symbol,
-            name: snapshot.name,
-            currencyCode: snapshot.currencyCode,
-            previousClose: snapshot.previousClose,
-            points: snapshot.points,
-            preMarketPoints: snapshot.preMarketPoints,
-            postMarketPoints: snapshot.postMarketPoints,
-            indicatorPoints: merged.isEmpty ? snapshot.indicatorPoints : merged,
-            dailyIndicatorPoints: snapshot.dailyIndicatorPoints,
-            quoteUpdatedAt: snapshot.quoteUpdatedAt,
-            fetchedAt: snapshot.fetchedAt,
-            source: snapshot.source,
-            supportsCandlesticks: snapshot.supportsCandlesticks
-        )
-    }
-
     private func snapshotByUpdatingCurrentSession(
         _ session: StockMarketSession,
         remote: StockChartSnapshot,
@@ -868,7 +859,16 @@ actor StockChartService: StockChartServing {
         let currentDayPoints: ([StockChartPoint]) -> [StockChartPoint] = { points in
             points.filter { calendar.isDate($0.date, inSameDayAs: now) }
         }
-        let hasCached = cached != nil
+        let mergedPreMarket = StockChartSeriesProcessor.mergedPoints(
+            currentDayPoints(cached?.preMarketPoints ?? []),
+            with: currentDayPoints(remote.preMarketPoints),
+            kind: .preMarketMinute, market: market
+        )
+        let mergedPostMarket = StockChartSeriesProcessor.mergedPoints(
+            currentDayPoints(cached?.postMarketPoints ?? []),
+            with: currentDayPoints(remote.postMarketPoints),
+            kind: .postMarketMinute, market: market
+        )
         let regularPoints: [StockChartPoint] = session == .regular
             ? remote.points
             : preferredRegularPoints(
@@ -888,22 +888,14 @@ actor StockChartService: StockChartServing {
 
         switch session {
         case .preMarket:
-            preMarketPoints = currentDayPoints(remote.preMarketPoints)
-            postMarketPoints = hasCached
-                ? currentDayPoints(cached?.postMarketPoints ?? [])
-                : []
+            preMarketPoints = mergedPreMarket
+            postMarketPoints = []
         case .regular:
-            preMarketPoints = hasCached
-                ? currentDayPoints(cached?.preMarketPoints ?? [])
-                : currentDayPoints(remote.preMarketPoints)
-            postMarketPoints = hasCached
-                ? currentDayPoints(cached?.postMarketPoints ?? [])
-                : []
+            preMarketPoints = mergedPreMarket
+            postMarketPoints = currentDayPoints(cached?.postMarketPoints ?? [])
         case .postMarket:
-            preMarketPoints = currentDayPoints(
-                cached?.preMarketPoints ?? remote.preMarketPoints
-            )
-            postMarketPoints = currentDayPoints(remote.postMarketPoints)
+            preMarketPoints = mergedPreMarket
+            postMarketPoints = mergedPostMarket
         case .closed:
             preMarketPoints = remote.preMarketPoints
             postMarketPoints = remote.postMarketPoints

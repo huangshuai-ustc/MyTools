@@ -218,7 +218,7 @@ struct SecretVaultView: View {
             }
         }
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
 #endif
@@ -751,44 +751,18 @@ private struct SecretFieldValueRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(field.label.isEmpty ? "未命名字段" : field.label)
-                    .appFont(.subheadline.weight(.medium))
-                Spacer()
-                if field.isSensitive, !field.value.isEmpty, canRevealSensitiveFields {
-                    Button {
-                        toggleReveal()
-                    } label: {
-                        Image(systemName: isRevealed ? "eye.slash" : "eye")
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(isRevealed ? "隐藏内容" : "显示内容")
+        AppAdaptiveRecordRowWithAccessory(
+            title: field.label.isEmpty ? "未命名字段" : field.label,
+            value: displayValue
+        ) {
+            if field.isSensitive, !field.value.isEmpty, canRevealSensitiveFields {
+                Button(action: toggleReveal) {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
                 }
-            }
-            if isRevealed,
-               field.inputType == .url,
-               !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let url = URL(string: field.value.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                Link(destination: url) {
-                    Text(displayValue)
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(.blue)
-                        .underline()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(2)
-                }
-                .copyableText(field.value)
-            } else {
-                Text(displayValue)
-                    .fontDesign(isRevealed ? .monospaced : .default)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineLimit(field.kind.isMultiline ? 8 : 2)
-                    .copyableText(isRevealed ? field.value : nil)
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isRevealed ? "隐藏内容" : "显示内容")
             }
         }
-        .padding(.vertical, 4)
     }
 
     private func toggleReveal() {
@@ -1012,10 +986,10 @@ struct SecretEditorView: View {
 
     @ViewBuilder
     private func fieldEditorRow(field: Binding<SecretField>) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            Text(field.wrappedValue.label.isEmpty ? "未命名字段" : field.wrappedValue.label)
-                .foregroundStyle(.secondary)
-                .frame(width: 76, alignment: .leading)
+        AppAdaptiveEditableRow(
+            title: field.wrappedValue.label.isEmpty ? "未命名字段" : field.wrappedValue.label,
+            prefersStacked: field.wrappedValue.kind.isMultiline
+        ) {
             switch field.wrappedValue.inputType {
             case .date:
                 DatePicker(
@@ -1045,8 +1019,6 @@ struct SecretEditorView: View {
                 }
             }
         }
-        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
-        .appListRowStyle()
         .onChange(of: field.wrappedValue.value) { _, value in
             if field.wrappedValue.inputType == .text,
                value.contains(where: { $0.isNewline }) {

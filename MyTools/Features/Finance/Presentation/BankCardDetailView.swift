@@ -23,8 +23,8 @@ struct CardDetailView: View {
         store.cards.first { $0.id == initialCard.id } ?? initialCard
     }
 
-    private var account: BankAccount? {
-        store.accounts.first { $0.id == card.accountID }
+    private var account: FinancialInstitution? {
+        store.financialInstitutions.first { $0.id == card.accountID }
     }
 
     private var canShowSensitiveInformation: Bool {
@@ -128,7 +128,7 @@ struct CardDetailView: View {
                 }
             }
             .sheet(item: $editingCard) { cardToEdit in
-                if let account = store.accounts.first(where: { $0.id == cardToEdit.accountID }) {
+                if let account = store.financialInstitutions.first(where: { $0.id == cardToEdit.accountID }) {
                     CardEditorView(card: cardToEdit, account: account, saveToStore: true) { _ in }
                     .iOSLargeSheet()
                 }

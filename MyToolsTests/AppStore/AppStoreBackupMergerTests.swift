@@ -3,6 +3,26 @@ import Testing
 @testable import MyTools
 
 struct AppStoreBackupMergerTests {
+    @Test func oldFinanceBackupRestoresInstitutionAndCardsTogether() {
+        var old = FinancialInstitution()
+        old.bankName = "Old institution"
+        var local = old
+        var profile = FinancialInstitution()
+        profile.name = "New institution"
+        local.financialProfile = profile
+        var oldCard = BankCard()
+        oldCard.accountID = old.id
+        oldCard.cardType = "Old card"
+        var localCard = oldCard
+        localCard.cardType = "New card"
+        let merged = AppStoreBackupMerger.merge(
+            localVault: VaultData(accounts: [local], cards: [localCard]), localSecrets: [],
+            imported: VaultBackupPayload(vault: VaultData(accounts: [old], cards: [oldCard]), includedModules: [.personalFinance])
+        )
+        #expect(merged.vault.financialInstitutions[0].name == "Old institution")
+        #expect(merged.vault.financialInstitutions[0].financialProfile != nil)
+        #expect(merged.vault.cards[0].cardType == "Old card")
+    }
     @Test func stockCashFlowsAreMergedOnlyWithStocksModule() {
         var local = StockCashFlowRecord()
         local.amount = 100
@@ -37,7 +57,7 @@ struct AppStoreBackupMergerTests {
         let currencyAlertID = UUID()
         let secretID = UUID()
 
-        var localAccount = BankAccount()
+        var localAccount = FinancialInstitution()
         localAccount.id = accountID
         localAccount.bankName = "Local account"
         var importedAccount = localAccount
@@ -89,7 +109,7 @@ struct AppStoreBackupMergerTests {
             imported: imported
         )
 
-        #expect(merged.vault.accounts == [localAccount])
+        #expect(merged.vault.financialInstitutions == [localAccount])
         #expect(merged.vault.stocks == [localStock])
         #expect(merged.vault.medicalRecords == [localRecord])
         #expect(merged.vault.currencyRateAlerts == [importedCurrencyAlert])
@@ -148,7 +168,7 @@ struct AppStoreBackupMergerTests {
         localHealth.hospital = "Local"
         var importedHealth = localHealth
         importedHealth.hospital = "Imported"
-        var importedAccount = BankAccount()
+        var importedAccount = FinancialInstitution()
         importedAccount.bankName = "Imported account"
 
         let merged = AppStoreBackupMerger.merge(
@@ -164,7 +184,7 @@ struct AppStoreBackupMergerTests {
             enabledModules: [.personalFinance]
         )
 
-        #expect(merged.vault.accounts == [importedAccount])
+        #expect(merged.vault.financialInstitutions == [importedAccount])
         #expect(merged.vault.medicalRecords == [localHealth])
         #expect(merged.includedModules == [.personalFinance])
     }

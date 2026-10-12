@@ -1602,7 +1602,7 @@ struct StockChartPresentation {
             ? (snapshot.indicatorPoints ?? snapshot.points)
             : snapshot.points)
             .sorted { $0.date < $1.date }
-        let intradayPlacements = range == .intraday
+        let intradayPlacements = range == .intraday || range == .fiveDays
             ? StockIntradayTransactionPlacement.resolve(
                 transactions: stock.transactions,
                 points: sourcePoints,
@@ -1649,13 +1649,10 @@ struct StockChartPresentation {
             guard !matchingPoints.isEmpty else { return nil }
             let markerPoint: StockChartPoint
             let markerPrice: Double
-            if range == .intraday {
+            if range == .intraday || range == .fiveDays {
                 let transactionPrice = NSDecimalNumber(decimal: transaction.unitPrice).doubleValue
                 markerPoint = intradayPlacements[transaction.id] ?? matchingPoints[0]
                 markerPrice = transactionPrice
-            } else if range == .fiveDays {
-                markerPoint = matchingPoints[matchingPoints.count / 2]
-                markerPrice = markerPoint.close
             } else {
                 markerPoint = matchingPoints.last ?? matchingPoints[0]
                 markerPrice = markerPoint.close

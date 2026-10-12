@@ -182,7 +182,7 @@ struct DocumentsView: View {
         .searchable(text: $query, prompt: "搜索名称、号码、持有人或标签")
 #endif
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
         .listStyle(.insetGrouped)
 #endif
         .toolbar {

@@ -194,10 +194,12 @@ enum StockChartSeriesProcessor {
             }
         }
 
-        // Allow a pre-market-only snapshot (empty regular-session visible bars) as
-        // long as preMarketPoints carries live data. The service layer will merge
-        // cached regular bars back in via snapshotByUpdatingCurrentSession.
-        let latestDate = visible.last?.date ?? snapshot.preMarketPoints.last?.date
+        // Extended-hours-only responses are useful even before a regular
+        // session has been cached. Never reject valid post-market minutes.
+        let latestDate = range.isMinuteRange
+            ? [visible.last?.date, snapshot.preMarketPoints.last?.date, snapshot.postMarketPoints.last?.date]
+                .compactMap { $0 }.max()
+            : visible.last?.date
         guard let latestDate else { return nil }
         return StockChartSnapshot(
             symbol: snapshot.symbol,

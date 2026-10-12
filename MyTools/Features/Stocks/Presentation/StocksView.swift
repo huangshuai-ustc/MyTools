@@ -167,17 +167,17 @@ struct StocksView: View {
     }
 
     private var displayedStocks: [StockHolding] {
-        alphabeticallySorted(searchFilteredStocks.filter { $0.currentShares > 0 })
+        symbolSorted(searchFilteredStocks.filter { $0.currentShares > 0 })
     }
 
     /// The watchlist covers every active stock, holdings included, so a position
     /// can be watched without leaving the positions table.
     private var watchlistStocks: [StockHolding] {
-        alphabeticallySorted(searchFilteredStocks.filter { !$0.isArchived })
+        symbolSorted(searchFilteredStocks.filter { !$0.isArchived })
     }
 
     private var archivedStocks: [StockHolding] {
-        alphabeticallySorted(searchFilteredStocks.filter(\.isArchived))
+        symbolSorted(searchFilteredStocks.filter(\.isArchived))
     }
 
     private var summaryMarkets: [StockMarket] {
@@ -384,7 +384,7 @@ struct StocksView: View {
         }
 
 #if os(iOS)
-        .appAdaptiveLargeNavigationTitle()
+        .appTopAlignedNavigationTitle()
 #endif
         .sheet(item: $editingStock) { stock in
             StockEditorView(stock: stock, isNew: true)
@@ -438,15 +438,8 @@ struct StocksView: View {
         }
     }
 
-    private func alphabeticallySorted(_ stocks: [StockHolding]) -> [StockHolding] {
-        stocks.sorted { lhs, rhs in
-            AppAlphabeticalSort.isOrderedBefore(
-                lhs.displayName,
-                rhs.displayName,
-                lhsTieBreaker: "\(lhs.symbol)|\(lhs.id.uuidString)",
-                rhsTieBreaker: "\(rhs.symbol)|\(rhs.id.uuidString)"
-            )
-        }
+    private func symbolSorted(_ stocks: [StockHolding]) -> [StockHolding] {
+        stocks.sorted(by: StockCodeOrdering.precedes)
     }
 
     private func autoSelectMarketIfNeeded() {

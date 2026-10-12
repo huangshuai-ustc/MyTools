@@ -9,6 +9,9 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
     ) async throws -> Data {
         let includedModules = CompiledToolModules.available(from: includedModules)
             .intersection(ToolModuleCatalog.backupModules)
+        guard includedModules.isDisjoint(with: Set(vault.unavailableModules.compactMap(ToolModule.init(rawValue:)))) else {
+            throw VaultBackupError.moduleUnavailable
+        }
         return try await Task.detached(priority: .userInitiated) {
             let attachments = BackupAttachmentMapper(store: AttachmentStore())
             var snapshot = Self.snapshot(from: vault, includedModules: includedModules)
@@ -18,6 +21,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
             )
 #endif
 #if MYTOOLS_FEATURE_FINANCE
+            snapshot.financialInstitutions = try attachments.institutionsForBackup(snapshot.financialInstitutions)
             snapshot.cards = try attachments.cardsForBackup(snapshot.cards)
 #endif
 #if MYTOOLS_FEATURE_FOOD_MAP
@@ -67,6 +71,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
 #endif
 #if MYTOOLS_FEATURE_FINANCE
             if payload.includedModules.contains(.personalFinance) {
+                payload.vault.financialInstitutions = try attachments.restoreInstitutionAttachments(payload.vault.financialInstitutions)
                 payload.vault.cards = try attachments.restoreAttachments(
                     in: payload.vault.cards
                 )
@@ -113,8 +118,13 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         includedModules: Set<ToolModule>
     ) -> VaultData {
         var snapshot = vault
+        // Excluded/quarantined payloads belong to local recovery, not this selected-module backup.
+        snapshot.unavailableModules = []
+        snapshot.preservedModulePayloads = [:]
+        snapshot.preservedSecrets = nil
+        snapshot.unknownPayloads = [:]
         if !includedModules.contains(.personalFinance) {
-            snapshot.accounts = []
+            snapshot.financialInstitutions = []
             snapshot.cards = []
         }
         if !includedModules.contains(.myStocks) {
@@ -162,6 +172,22 @@ private struct BackupAttachmentMapper {
 #endif
 
 #if MYTOOLS_FEATURE_FINANCE
+    func institutionsForBackup(_ institutions: [FinancialInstitution]) throws -> [FinancialInstitution] {
+        try institutions.map { institution in
+            var value = institution
+            for index in value.documents.indices { value.documents[index].attachment = try attachmentForBackup(value.documents[index].attachment) }
+            return value
+        }
+    }
+
+    func restoreInstitutionAttachments(_ institutions: [FinancialInstitution]) throws -> [FinancialInstitution] {
+        try institutions.map { institution in
+            var value = institution
+            for index in value.documents.indices { value.documents[index].attachment = try restoredAttachment(value.documents[index].attachment) }
+            return value
+        }
+    }
+
     func cardsForBackup(_ cards: [BankCard]) throws -> [BankCard] {
         try cards.map { card in
             var copy = card

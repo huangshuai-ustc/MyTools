@@ -19,20 +19,21 @@ struct CardEditorView: View {
     @State private var editingCredential: BankCardCredential?
     @State private var showingBranchLocationPicker = false
     @State private var didSave = false
-    let account: BankAccount
+    let account: FinancialInstitution
     let onSave: (BankCard) -> Void
     private let navigationTitle: String
     private let originalAttachmentIDs: Set<UUID>
+    @State private var attachmentSession: AttachmentEditSession
     var saveToStore: Bool = false
     @State private var conflict = false
 
-    init(card: BankCard, account: BankAccount, saveToStore: Bool = false, onSave: @escaping (BankCard) -> Void) {
+    init(card: BankCard, account: FinancialInstitution, saveToStore: Bool = false, onSave: @escaping (BankCard) -> Void) {
         self.saveToStore = saveToStore
         var initialCard = card
         let isNewCard = card.accountID == nil
-        if account.region == .domestic {
+        if isNewCard {
             initialCard.applyDefaultOpeningBranch(from: account)
-            if isNewCard, initialCard.currencies.isEmpty {
+            if account.loginTemplateRegion == .domestic, initialCard.currencies.isEmpty {
                 initialCard.currencies = [.cny]
             }
         }
@@ -40,6 +41,7 @@ struct CardEditorView: View {
         self.account = account
         self.onSave = onSave
         originalAttachmentIDs = Set(card.statements.compactMap { $0.attachment?.id })
+        _attachmentSession = State(initialValue: AttachmentEditSession(originalAttachments: card.statements.compactMap(\.attachment)))
         navigationTitle = isNewCard ? "新增银行卡" : "编辑银行卡"
     }
 
@@ -65,8 +67,12 @@ struct CardEditorView: View {
                             .buttonStyle(.plain)
                         }
                     } label: {
-                        Text("发卡组织")
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("发卡组织").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(draft.card.networks.isEmpty ? "未选择" : CardNetwork.allCases.filter { draft.card.networks.contains($0) }.map(\.title).joined(separator: " · "))
+                                .foregroundStyle(.primary).lineLimit(1)
+                        }
                     }
                     FieldEditorRow(title: "卡片名称：", prompt: "可选，如 Visa 白金卡", text: $draft.card.cardType)
                     if account.region == .domestic {
@@ -154,7 +160,7 @@ struct CardEditorView: View {
                     }
                 }
                 Section {
-                    Text("归属银行：\(account.bankName.isEmpty ? "未命名银行" : account.bankName)")
+                    Text("归属银行：\(account.name.isEmpty ? "未命名银行" : account.name)")
                         .appFont(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -217,14 +223,10 @@ struct CardEditorView: View {
         commitPendingTextInput {
             let branchName = draft.card.branchName?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if account.isOnlineBank {
-                draft.card.branchName = nil
-                draft.card.branchLocation = nil
-            } else if account.region == .domestic {
-                draft.card.branchName = branchName.isEmpty ? nil : branchName
+            if account.isOnlineBank || account.region == .overseas {
+                draft.card.branchName = nil; draft.card.branchLocation = nil
             } else {
-                draft.card.branchName = nil
-                draft.card.branchLocation = nil
+                draft.card.branchName = branchName.isEmpty ? nil : branchName
             }
             draft.card.expiryPrecision = .yearMonth
             if saveToStore {
@@ -257,6 +259,7 @@ struct CardEditorView: View {
     }
 
     private func upsertStatement(_ statement: CreditCardStatement) {
+        if let file = statement.attachment { attachmentSession.trackRename(file) }
         if let index = draft.card.statements.firstIndex(where: { $0.id == statement.id }) {
             draft.card.statements[index] = statement
         } else {
@@ -297,10 +300,8 @@ struct CardEditorView: View {
 
     private func cleanUpUncommittedAttachments() {
         guard !didSave else { return }
-        for attachment in draft.card.statements.compactMap(\.attachment)
-        where !originalAttachmentIDs.contains(attachment.id) {
-            store.deleteUncommittedAttachment(attachment)
-        }
+        let failures = attachmentSession.rollback(currentAttachments: draft.card.statements.compactMap(\.attachment), delete: store.deleteUncommittedAttachment, restoreLocation: store.restoreAttachmentLocation)
+        if !failures.isEmpty { DiagnosticLogger.shared.log(.data, "卡片草稿附件恢复失败 count=\(failures.count)", level: .error) }
     }
 }
 
@@ -367,8 +368,12 @@ private struct BankCardCredentialEditorView: View {
                             .buttonStyle(.plain)
                         }
                     } label: {
-                        Text("发卡组织")
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("发卡组织").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(credential.networks.isEmpty ? "未选择" : CardNetwork.allCases.filter { credential.networks.contains($0) }.map(\.title).joined(separator: " · "))
+                                .foregroundStyle(.primary).lineLimit(1)
+                        }
                     }
                     FieldEditorRow(title: "CVV：", prompt: "未填写", text: $credential.cvv)
                     YearMonthPicker(date: $credential.expiryDate)
@@ -413,11 +418,12 @@ private struct BankCardCredentialEditorView: View {
     }
 }
 
-private struct CardStatusDisclosurePicker: View {
+struct CardStatusDisclosurePicker: View {
+    var title = "卡片状态"
     @Binding var status: CardStatus
 
     var body: some View {
-        AppLabeledContentRow("卡片状态") {
+        AppLabeledContentRow(title) {
             Menu {
                 ForEach(CardStatus.allCases) { option in
                     Button { status = option } label: {
@@ -503,6 +509,7 @@ private struct CreditCardStatementEditorView: View {
     @State private var errorMessage = ""
     @State private var didSave = false
     private let originalAttachmentID: UUID?
+    @State private var attachmentSession: AttachmentEditSession
     let onSave: (CreditCardStatement) -> Void
 
     init(
@@ -511,6 +518,7 @@ private struct CreditCardStatementEditorView: View {
     ) {
         _statement = State(initialValue: statement)
         originalAttachmentID = statement.attachment?.id
+        _attachmentSession = State(initialValue: AttachmentEditSession(originalAttachments: [statement.attachment].compactMap { $0 }))
         self.onSave = onSave
     }
 
@@ -645,6 +653,7 @@ private struct CreditCardStatementEditorView: View {
 
         do {
             statement.attachment = try store.renameAttachment(attachment, to: renameText)
+            if let updated = statement.attachment { attachmentSession.trackRename(updated) }
             renamingAttachment = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -653,10 +662,9 @@ private struct CreditCardStatementEditorView: View {
     }
 
     private func cleanUpUncommittedAttachment() {
-        guard !didSave,
-              let attachment = statement.attachment,
-              attachment.id != originalAttachmentID else { return }
-        store.deleteUncommittedAttachment(attachment)
+        guard !didSave else { return }
+        let failures = attachmentSession.rollback(currentAttachments: [statement.attachment].compactMap { $0 }, delete: store.deleteUncommittedAttachment, restoreLocation: store.restoreAttachmentLocation)
+        if !failures.isEmpty { DiagnosticLogger.shared.log(.data, "账单草稿附件恢复失败 count=\(failures.count)", level: .error) }
     }
 }
 
