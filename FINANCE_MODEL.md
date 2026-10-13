@@ -14,6 +14,8 @@
 
 ## 数据与同步
 
+券商机构编辑页通过独立的 `BrokerageAccountEditorView` 新建和修改账户，完成子编辑后加入机构草稿；取消不新增空记录。账户和入金资料可在机构编辑页滑动删除，再保存机构。删除账户解除入金、登录及文件的关联，保留独立入金资料；删除入金资料清除账户及文件对该资料的引用。账户详情可直接编辑，保存以打开编辑页时的机构快照校验冲突，错误保留草稿并提示。机构详情提供确认后删除整个券商档案的入口。
+
 Vault、加密备份和 CloudKit 只使用 `financialInstitutions`。旧的 `accounts`、`cards`、`financialProviders` 顶层载荷会被拒绝，不再作为运行时兼容输入。银行卡和金融文件随所属机构原子保存、导出和同步。
 
 备份导入按 `includedModules` 做模块级覆盖：包含的模块即使是空快照也会清空本地同模块；未包含的模块保持不变。金融档案可以通过 `AppStore.makeBackupDocument(password:includedModules:)` 单独导出。

@@ -210,6 +210,7 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
         values.removeAll { $0.id == id }
         for i in values.indices { values[i].subaccounts.removeAll { $0.id == id } }
         accounts = values
+        brokerageAccounts.removeAll { $0.id == id }
         var routes = receivingMethods
         for i in routes.indices where routes[i].accountID.map(removedIDs.contains) == true { routes[i].accountID = nil }
         receivingMethods = routes
@@ -223,6 +224,7 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
     mutating func removeReceivingMethod(id: UUID) {
         var values = receivingMethods
         values.removeAll { $0.id == id }; receivingMethods = values
+        for i in brokerageAccounts.indices { brokerageAccounts[i].fundingProfileIDs.removeAll { $0 == id } }
         for i in documents.indices where documents[i].receivingMethodID == id { documents[i].receivingMethodID = nil }
     }
     func validate(cards: [BankCard]) throws {

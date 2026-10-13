@@ -3,6 +3,39 @@ import Testing
 @testable import MyTools
 
 struct StockPortfolioEditorTests {
+    @Test func morningPurchaseDoesNotWaitForNoonDateCarrier() throws {
+        let calendar = Calendar.autoupdatingCurrent
+        let start = calendar.startOfDay(for: Date())
+        let morning = start.addingTimeInterval(11 * 3600)
+        var buy = StockTransaction()
+        buy.tradedAt = start.addingTimeInterval(12 * 3600)
+        buy.executedAt = start.addingTimeInterval(55 * 60)
+        buy.quantity = 4
+        buy.unitPrice = 208
+        buy.fees = Decimal(string: "0.99")!
+        var stock = StockHolding(market: .unitedStates, symbol: "NBIS")
+        stock.transactions = [buy]
+        #expect(stock.sharePosition(asOf: morning).shares == 4)
+        #expect(stock.performance(asOf: morning).holdingCost == Decimal(string: "832.99")!)
+        stock.transactions[0].executedAt = nil
+        #expect(stock.sharePosition(asOf: morning).shares == 4)
+        stock.transactions[0].tradedAt = start.addingTimeInterval(36 * 3600)
+        #expect(stock.sharePosition(asOf: morning).shares == 0)
+    }
+
+    @Test func explicitFutureExecutionInvalidatesPerformanceCacheAtExecution() {
+        let now = Date()
+        var buy = StockTransaction()
+        buy.tradedAt = StockTransaction.normalizedDate(now)
+        buy.executedAt = now.addingTimeInterval(60)
+        buy.quantity = 4
+        buy.unitPrice = 208
+        var stock = StockHolding(market: .unitedStates, symbol: "NBIS")
+        stock.transactions = [buy]
+        var cache = StockPerformanceCache()
+        #expect(cache.performance(for: stock, at: now).shares == 0)
+        #expect(cache.performance(for: stock, at: now.addingTimeInterval(60)).shares == 4)
+    }
     @Test func xirrUsesActualRenminbiBoundaryCashFlows() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

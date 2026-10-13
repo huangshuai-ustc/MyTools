@@ -103,7 +103,7 @@ enum StockCashLedger {
 
         for stock in stocks {
             guard let currency = CurrencyCode(rawValue: stock.market.currencyCode) else { continue }
-            for transaction in stock.transactions where transaction.tradedAt <= date {
+            for transaction in stock.transactions where StockHolding.transactionIsEffective(transaction, at: date) {
                 switch transaction.type {
                 case .buy:
                     balances[currency, default: 0] -= transaction.buyTotalCost

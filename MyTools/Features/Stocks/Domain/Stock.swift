@@ -344,6 +344,15 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Transaction dates are stored as a market business date carrier (noon),
+    /// while an optional execution instant records the actual wall-clock time.
+    /// A buy entered after a US session closes must be effective immediately;
+    /// comparing the noon carrier with `now` incorrectly hid it until noon.
+    static func transactionIsEffective(_ transaction: StockTransaction, at now: Date) -> Bool {
+        if let executedAt = transaction.executedAt { return executedAt <= now }
+        return transaction.tradedAt <= now || Calendar.autoupdatingCurrent.isDate(transaction.tradedAt, inSameDayAs: now)
+    }
+
     var totalBuyCost: Decimal {
         sharePosition().totalBuyCost
     }
@@ -513,7 +522,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     func sharePosition(asOf now: Date = Date()) -> SharePosition {
         var result = SharePosition()
-        for transaction in transactions where transaction.tradedAt <= now {
+        for transaction in transactions where Self.transactionIsEffective(transaction, at: now) {
             result.shares += transaction.signedShares
             guard transaction.type == .buy else { continue }
             result.totalBuyCost += transaction.grossAmount + transaction.fees
@@ -564,7 +573,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         // 交给下面的排序回放，拆成两趟反而多走一遍全部交易。
         var effectiveTransactions: [StockTransaction] = []
         effectiveTransactions.reserveCapacity(transactions.count)
-        for transaction in transactions where transaction.tradedAt <= now {
+        for transaction in transactions where Self.transactionIsEffective(transaction, at: now) {
             effectiveTransactions.append(transaction)
             result.shares += transaction.signedShares
             guard transaction.type == .buy else { continue }

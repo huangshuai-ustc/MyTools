@@ -20,24 +20,18 @@ struct HomeView: View {
     var body: some View {
         let snapshot = financeSnapshot
         List {
-            Section {
+            Section("银行") {
                 Picker("银行地区", selection: $regionFilter) {
                     ForEach(availableRegionFilters) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
                 .pickerStyle(.segmented)
-            }
-
-            Section {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { financeMetrics(snapshot) }
                     VStack(alignment: .leading, spacing: 10) { financeMetrics(snapshot) }
                 }
                 .appListRowStyle()
-            }
-
-            Section("银行") {
                 if snapshot.activeAccounts.isEmpty, snapshot.inactiveAccounts.isEmpty {
                     ContentUnavailableView(
                         query.isEmpty ? "暂无银行" : "没有搜索结果",
@@ -75,8 +69,17 @@ struct HomeView: View {
                                 default: FinanceInstitutionDetailView(institutionID: institution.id)
                                 }
                             } label: {
-                                Label(institution.name.isEmpty ? "未命名机构" : institution.name, systemImage: kind == .brokerage ? "chart.line.uptrend.xyaxis" : "wallet.bifold")
+                                VStack(alignment: .leading, spacing: AppListMetrics.recordContentSpacing(fontScale: fontScale)) {
+                                    Label(institution.name.isEmpty ? "未命名机构" : institution.name, systemImage: kind == .brokerage ? "chart.line.uptrend.xyaxis" : "wallet.bifold")
+                                        .appFont(.headline)
+                                    Text(institutionSummary(institution))
+                                        .appFont(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
+                            .appListRowStyle()
                         }
                     }
                 }
@@ -86,9 +89,9 @@ struct HomeView: View {
         .diagnosticScreen("个人财务")
         .iOSLabeledBackButton("工具")
 #if os(iOS)
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索银行、支行、卡种或持卡人")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索机构、账户、支行、卡种或持卡人")
 #else
-        .searchable(text: $query, prompt: "搜索银行、支行、卡种或持卡人")
+        .searchable(text: $query, prompt: "搜索机构、账户、支行、卡种或持卡人")
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -103,7 +106,7 @@ struct HomeView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .accessibilityLabel("添加银行账户")
+                .accessibilityLabel("添加金融机构")
             }
         }
 #if os(iOS)
@@ -168,8 +171,17 @@ struct HomeView: View {
         }
     }
 
-    private func deleteAccount(id: UUID) {
-        store.deleteAccount(id: id)
+    private func institutionSummary(_ institution: FinancialInstitution) -> String {
+        switch institution.kind {
+        case .brokerage:
+            return "\(institution.brokerageAccounts.count) 个账户 · \(institution.receivingMethods.count) 份入金资料"
+        case .payment:
+            return "\(institution.paymentAccounts.count) 个币种账户 · \(institution.paymentAccounts.filter { $0.receivingProfile != nil }.count) 份收款资料"
+        case .other:
+            return "\(institution.other?.accounts.count ?? 0) 个账户"
+        case .bank:
+            return ""
+        }
     }
 
     @ViewBuilder

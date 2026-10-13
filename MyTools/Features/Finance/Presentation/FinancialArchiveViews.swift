@@ -423,12 +423,14 @@
     let institutionID: UUID
     @EnvironmentObject private var store: FinanceStore
     @State private var editing: FinancialInstitution?
+    @State private var confirmsDeletion = false
+    @Environment(\.dismiss) private var dismiss
     private var institution: FinancialInstitution? { store.financialInstitutions.first { $0.id == institutionID } }
     var body: some View {
       Group {
         if let institution {
           List {
-            Section("IBKR 券商资料") {
+            Section("券商资料") {
               FinanceInfoRow(title: "机构", value: institution.name)
               FinanceInfoRow(title: "平台", value: institution.brokerage?.platform ?? "IBKR")
               FinanceInfoRow(title: "国家／地区", value: institution.country)
@@ -446,18 +448,28 @@
               }
             }
             if !institution.receivingMethods.isEmpty {
-              Section("IBKR 入金资料") {
+              Section("入金资料") {
                 ForEach(institution.receivingMethods) { method in
-                  FinanceReceivingRow(method: method, accounts: [])
+                  NavigationLink { FinanceReceivingInfoView(institutionID: institutionID, methodID: method.id) } label: {
+                    FinanceReceivingRow(method: method, accounts: [], linkedAccountName: institution.brokerageAccounts.first { $0.id == method.accountID }?.displayName)
+                      .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                  }
                 }
               }
             }
           }
-          .toolbar { ToolbarItem(placement: .primaryAction) { Button { editing = institution } label: { Image(systemName: "square.and.pencil") } } }
+          .toolbar {
+            ToolbarItem(placement: .primaryAction) { Button { editing = institution } label: { Image(systemName: "square.and.pencil") } }
+            ToolbarItem(placement: .secondaryAction) { Button("删除券商档案", role: .destructive) { confirmsDeletion = true } }
+          }
         } else { ContentUnavailableView("券商档案已不存在", systemImage: "chart.line.uptrend.xyaxis") }
       }
       .appNavigationTitle(institution?.name ?? "券商详情")
       .diagnosticScreen("券商机构详情")
+      .alert("删除券商档案？", isPresented: $confirmsDeletion) {
+        Button("删除", role: .destructive) { store.deleteAccount(id: institutionID); dismiss() }
+        Button("取消", role: .cancel) {}
+      } message: { Text("将删除此券商及其账户、入金资料和附件。此操作无法撤回。") }
       .sheet(item: $editing) { BrokerageInstitutionEditorView(institution: $0, isNew: false).iOSLargeSheet() }
     }
   }
@@ -466,24 +478,38 @@
     let institutionID: UUID
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
+    @State private var editingInstitution: FinancialInstitution?
     private var account: BrokerageAccount? { store.financialInstitutions.first { $0.id == institutionID }?.brokerageAccounts.first { $0.id == accountID } }
     var body: some View {
       List {
         if let account {
-          Section("IBKR 账户资料") {
+          Section("账户资料") {
             AppAdaptiveRecordRow(title: "名称", value: account.displayName)
             if !account.accountNumber.isEmpty { AppAdaptiveRecordRow(title: "账户号", value: account.accountNumber) }
+            if !account.holderName.isEmpty { AppAdaptiveRecordRow(title: "持有人", value: account.holderName) }
+            if let date = account.openedAt { AppAdaptiveRecordRow(title: "开户日期", value: AppDateFormatter.string(from: date)) }
             AppAdaptiveRecordRow(title: "账户类型", value: account.accountType.title)
             AppAdaptiveRecordRow(title: "基准币种", value: account.baseCurrency.title)
             if !account.legalEntity.isEmpty { AppAdaptiveRecordRow(title: "开户实体", value: account.legalEntity) }
             if !account.ownership.isEmpty { AppAdaptiveRecordRow(title: "持有形式", value: account.ownership) }
-            AccountStatusText(status: account.status)
+            AppLabeledContentRow("状态") { AccountStatusText(status: account.status) }
             if !account.note.isEmpty { AppAdaptiveRecordRow(title: "备注", value: account.note) }
           }
         } else { ContentUnavailableView("券商账户已不存在", systemImage: "chart.line.uptrend.xyaxis") }
       }
       .appNavigationTitle(account?.displayName ?? "券商账户")
       .diagnosticScreen("券商账户详情")
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            editingInstitution = store.financialInstitutions.first { $0.id == institutionID }
+          } label: { Image(systemName: "square.and.pencil") }
+          .disabled(account == nil)
+        }
+      }
+      .sheet(item: $editingInstitution) { original in
+        BrokerageAccountSaveView(original: original, accountID: accountID).iOSLargeSheet()
+      }
     }
   }
 
@@ -555,7 +581,6 @@
     var body: some View {
       List {
         if let account {
-          let platform = store.financialInstitutions.first { $0.id == institutionID }?.payment?.platform.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
           Section("账户资料") {
             AppAdaptiveRecordRow(title: "名称", value: account.displayName)
             if !account.accountNumber.isEmpty { AppAdaptiveRecordRow(title: "账户号", value: account.accountNumber) }

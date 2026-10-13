@@ -634,7 +634,7 @@ enum PortfolioValueHistoryBuilder {
 
     static func sharesHeld(for stock: StockHolding, on date: Date) -> Decimal {
         stock.transactions
-            .filter { $0.tradedAt <= date }
+            .filter { StockHolding.transactionIsEffective($0, at: date) }
             .reduce(Decimal.zero) { $0 + $1.signedShares }
     }
 
@@ -644,7 +644,7 @@ enum PortfolioValueHistoryBuilder {
     /// held as of `date`.
     static func holdingCost(for stock: StockHolding, on date: Date) -> Decimal? {
         var ledger = StockMovingAverageCostLedger()
-        let effectiveTransactions = stock.transactions.filter { $0.tradedAt <= date }
+        let effectiveTransactions = stock.transactions.filter { StockHolding.transactionIsEffective($0, at: date) }
         for transaction in StockHolding.orderedTransactions(effectiveTransactions) where transaction.quantity > 0 {
             ledger.apply(transaction)
         }

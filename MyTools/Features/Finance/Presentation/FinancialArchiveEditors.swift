@@ -50,10 +50,9 @@
             save { replace(value, in: &$0.accounts) }
           }
         case .receiving(let method):
-          FinanceReceivingEditorView(method: method, accounts: profile.accounts, isBank: false) {
-            value in
+          FinanceReceivingEditorView(method: method, accounts: profile.accounts, isBank: false, onSave: { value in
             save { replace(value, in: &$0.receivingMethods) }
-          }
+          }, brokerageAccounts: profile.brokerageAccounts)
         case .login(let login):
           FinanceLoginEditorView(
             login: login, accounts: profile.accounts, region: profile.loginTemplateRegion
@@ -442,47 +441,142 @@
     }
   }
 
+  /// Captures the institution when editing starts, so concurrent changes cannot be overwritten.
+  struct BrokerageAccountSaveView: View {
+    @EnvironmentObject private var store: FinanceStore
+    let original: FinancialInstitution
+    let accountID: UUID
+    @State private var errorMessage: String?
+    var body: some View {
+      Group {
+        if let account = original.brokerageAccounts.first(where: { $0.id == accountID }) {
+          BrokerageAccountEditorView(account: account) { updated in
+            var value = original
+            guard let index = value.brokerageAccounts.firstIndex(where: { $0.id == accountID }) else { return false }
+            value.brokerageAccounts[index] = updated
+            do { return try store.saveInstitution(value, cards: [], expected: original, expectedCards: []) }
+            catch { errorMessage = error.localizedDescription; return false }
+          }
+        }
+      }
+      .alert("无法保存", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        Button("确定", role: .cancel) {}
+      } message: { Text(errorMessage ?? "") }
+    }
+  }
+
+  struct BrokerageAccountEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State var account: BrokerageAccount
+    let onSave: (BrokerageAccount) -> Bool
+    var body: some View {
+      NavigationStack {
+        Form {
+          Section("账户资料") {
+            FieldEditorRow(title: "名称", prompt: "账户名称", text: $account.name)
+            FieldEditorRow(title: "账户号", prompt: "例如 U1234567", text: $account.accountNumber)
+            FieldEditorRow(title: "持有人", prompt: "可选", text: $account.holderName)
+            PickerFieldRow(title: "账户类型", selection: $account.accountType) {
+              ForEach(BrokerageAccountType.allCases) { Text($0.title).tag($0) }
+            }
+            PickerFieldRow(title: "基准币种", selection: $account.baseCurrency) {
+              ForEach(CurrencyCode.selectableCases(including: account.baseCurrency)) { Text($0.title).tag($0) }
+            }
+            FieldEditorRow(title: "开户实体", prompt: "可选", text: $account.legalEntity)
+            FieldEditorRow(title: "持有形式", prompt: "个人或联名", text: $account.ownership)
+            OptionalOpeningDateRow(date: $account.openedAt)
+            CardStatusDisclosurePicker(title: "状态", status: $account.status)
+          }
+          Section("备注") { AppMultilineFieldRow(title: "备注", text: $account.note) }
+        }
+        .appNavigationTitle("券商账户")
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+          ToolbarItem(placement: .confirmationAction) {
+            Button("保存") { commitPendingTextInput { if onSave(account) { dismiss() } } }
+          }
+        }
+      }.diagnosticScreen("券商账户编辑")
+    }
+  }
+
   struct BrokerageInstitutionEditorView: View {
     @EnvironmentObject private var store: FinanceStore
     @Environment(\.dismiss) private var dismiss
     @State var institution: FinancialInstitution
     let isNew: Bool
     let original: FinancialInstitution
+    @State private var editingAccount: BrokerageAccount?
+    @State private var editingMethod: FinanceReceivingMethod?
+    @State private var errorMessage: String?
     init(institution: FinancialInstitution, isNew: Bool) { _institution = State(initialValue: institution); self.isNew = isNew; self.original = institution }
     var body: some View {
       NavigationStack {
         Form {
-          Section("IBKR 券商") {
+          Section("券商资料") {
             FieldEditorRow(title: "机构名称", prompt: "例如 Interactive Brokers", text: $institution.name)
             FieldEditorRow(title: "国家／地区", prompt: "可选", text: $institution.country)
             FieldEditorRow(title: "官网", prompt: "可选", text: $institution.website)
-            FieldEditorRow(title: "平台", prompt: "IBKR", text: Binding(get: { institution.brokerage?.platform ?? "IBKR" }, set: { institution.brokerage?.platform = $0 }))
+            FieldEditorRow(title: "平台", prompt: "例如 IBKR", text: Binding(get: { institution.brokerage?.platform ?? "" }, set: { institution.brokerage?.platform = $0 }))
           }
           Section("账户") {
             ForEach(institution.brokerageAccounts) { account in
-              NavigationLink { BrokerageAccountDetailView(institutionID: institution.id, accountID: account.id) } label: {
-                VStack(alignment: .leading) { Text(account.displayName).appFont(.headline); Text(account.maskedAccountNumber).foregroundStyle(.secondary) }
+              Button { editingAccount = account } label: {
+                AppAdaptiveRecordRow(title: account.displayName, value: account.maskedAccountNumber)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .contentShape(Rectangle())
               }
+              .buttonStyle(.plain)
+              .appDeleteSwipeAction { institution.removeAccount(id: account.id) }
             }
-            Button {
-              institution.brokerageAccounts.append(BrokerageAccount())
-            } label: { Label("添加 IBKR 账户", systemImage: "plus.circle") }
+            Button { editingAccount = BrokerageAccount() } label: { Label("添加券商账户", systemImage: "plus.circle") }
           }
           Section("入金资料") {
-            ForEach(institution.receivingMethods) { method in FinanceReceivingRow(method: method, accounts: []) }
+            ForEach(institution.receivingMethods) { method in
+              Button { editingMethod = method } label: {
+                FinanceReceivingRow(method: method, accounts: [], linkedAccountName: institution.brokerageAccounts.first { $0.id == method.accountID }?.displayName)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .appDeleteSwipeAction { institution.removeReceivingMethod(id: method.id) }
+            }
             Button {
-              var method = FinanceReceivingMethod(); method.details.fields = FinanceReceivingTemplates.brokerageDeposit().map { FinanceReceivingField(kind: $0) }; institution.receivingMethods.append(method)
+              var method = FinanceReceivingMethod()
+              method.details.fields = FinanceReceivingTemplates.brokerageDeposit().map { FinanceReceivingField(kind: $0) }
+              editingMethod = method
             } label: { Label("添加入金资料", systemImage: "plus.circle") }
           }
           Section("备注") { AppMultilineFieldRow(title: "备注", text: $institution.note) }
         }
         .appNavigationTitle(isNew ? "添加券商档案" : "编辑券商档案")
+        .sheet(item: $editingAccount) { account in
+          BrokerageAccountEditorView(account: account) { value in
+            if let index = institution.brokerageAccounts.firstIndex(where: { $0.id == value.id }) { institution.brokerageAccounts[index] = value }
+            else { institution.brokerageAccounts.append(value) }
+            return true
+          }.iOSLargeSheet()
+        }
+        .sheet(item: $editingMethod) { method in
+          FinanceReceivingEditorView(method: method, accounts: [], isBank: false, onSave: { value in
+            if let index = institution.receivingMethods.firstIndex(where: { $0.id == value.id }) { institution.receivingMethods[index] = value }
+            else { institution.receivingMethods.append(value) }
+            return true
+          }, brokerageAccounts: institution.brokerageAccounts).iOSLargeSheet()
+        }
         .toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
           ToolbarItem(placement: .confirmationAction) {
-            Button("保存") { commitPendingTextInput { do { try store.saveInstitution(institution, cards: [], expected: isNew ? nil : original, expectedCards: []); dismiss() } catch {} } }
+            Button("保存") { commitPendingTextInput {
+              do {
+                if try store.saveInstitution(institution, cards: [], expected: isNew ? nil : original, expectedCards: []) { dismiss() }
+              } catch { errorMessage = error.localizedDescription }
+            } }
           }
         }
+        .alert("无法保存", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+          Button("确定", role: .cancel) {}
+        } message: { Text(errorMessage ?? "") }
       }.diagnosticScreen("券商机构编辑")
     }
   }
@@ -753,6 +847,7 @@
     let onSave: (FinanceReceivingMethod) -> Bool
     var isWise = false
     var isBoundToAccount = false
+    var brokerageAccounts: [BrokerageAccount] = []
     private var isInlinePaymentProfile: Bool {
       isBoundToAccount || (accounts.count == 1 && accounts.first?.kind == .payment)
     }
@@ -765,6 +860,7 @@
               Picker("转入账户", selection: $method.accountID) {
                 Text("暂未关联").tag(nil as UUID?)
                 ForEach(accounts) { Text($0.displayName).tag(Optional($0.id)) }
+                ForEach(brokerageAccounts) { Text($0.displayName).tag(Optional($0.id)) }
               }
               .pickerStyle(.menu)
             }
@@ -835,7 +931,7 @@
         .toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
           ToolbarItem(placement: .confirmationAction) {
-            Button("完成") { commitPendingTextInput { if isInlinePaymentProfile, method.accountID == nil { method.accountID = accounts[0].id }; if onSave(method) { dismiss() } } }
+            Button("完成") { commitPendingTextInput { if isInlinePaymentProfile, method.accountID == nil { method.accountID = accounts.first?.id }; if onSave(method) { dismiss() } } }
           }
         }
       }.diagnosticScreen("收款方式编辑")

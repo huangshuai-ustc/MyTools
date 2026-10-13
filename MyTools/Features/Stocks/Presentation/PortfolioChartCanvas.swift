@@ -346,6 +346,28 @@ enum PortfolioCostLabelLayout {
             )
         }
     }
+
+    /// Keeps the cost line fully detailed while thinning labels that cannot fit
+    /// beside their neighbors. Labels are placed in x order and the minimum
+    /// gap includes a small estimate of the rendered text width.
+    static func nonOverlapping(
+        _ labels: [PortfolioCostLabel],
+        minimumGap: Double = 110
+    ) -> [PortfolioCostLabel] {
+        guard labels.count > 2 else { return labels }
+        var result: [PortfolioCostLabel] = [labels[0]]
+        for label in labels.dropFirst().dropLast() {
+            guard let previous = result.last else { continue }
+            let required = max(minimumGap, Double(max(previous.text.count, label.text.count)) * 7)
+            if label.x - previous.x >= required {
+                result.append(label)
+            }
+        }
+        if let last = labels.last, let previous = result.last, last.id != previous.id {
+            result.append(last)
+        }
+        return result
+    }
 }
 
 private struct PortfolioChartData {
@@ -771,7 +793,7 @@ struct PortfolioChartCanvas: View {
         let resolvedYDomain = yDomain
         let resolvedXAxisLayout = xAxisLayout
         let resolvedProfitYDomain = profitYDomain
-        let costLabels = fiveDayCostLabels
+        let costLabels = costBasisLabels
         VStack(alignment: .leading, spacing: 0) {
             selectionSummary
                 .frame(height: 68, alignment: .topLeading)
@@ -801,21 +823,6 @@ struct PortfolioChartCanvas: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if range == .intraday, let segment = data.costBasisSegments.last,
-                   let finalPoint = segment.points.last {
-                    PointMark(
-                        x: .value("行情序号", finalPoint.x),
-                        y: .value("成本", clampedCost(segment.cost, to: resolvedYDomain))
-                    )
-                    .foregroundStyle(.blue.opacity(0.35))
-                    .symbolSize(1)
-                    .annotation(position: .top, alignment: .trailing, spacing: 2) {
-                        Text("成本 \(yLabel(segment.cost))")
-                            .appFont(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
                 if style == .line {
                     ForEach(data.renderedPoints) { point in
                         LineMark(
@@ -1192,12 +1199,12 @@ struct PortfolioChartCanvas: View {
         let profitRate = (point.value - cost) / cost * 100
         let sign = profitRate >= 0 ? "+" : ""
         let rateText = String(format: "%@%.2f%%", sign, NSDecimalNumber(decimal: profitRate).doubleValue)
-        return "（成本 \(formatted(cost, currencyCode: currencyCode))，\(rateText)）"
+        return "（\(formatted(cost, currencyCode: currencyCode))，\(rateText)）"
     }
     private func yLabel(_ value: Double) -> String { abs(value) >= 10_000 ? String(format: "%.1f万", value / 10_000) : String(format: "%.0f", value) }
 
-    private var fiveDayCostLabels: [PortfolioCostLabel] {
-        guard range == .fiveDays else { return [] }
+    private var costBasisLabels: [PortfolioCostLabel] {
+        guard range.isMinuteRange else { return [] }
         let inputs = data.costBasisSegments.compactMap { segment -> PortfolioCostLabelInput? in
             guard let first = segment.points.first, let last = segment.points.last else { return nil }
             return PortfolioCostLabelInput(
@@ -1208,7 +1215,18 @@ struct PortfolioChartCanvas: View {
                 endX: last.x
             )
         }
-        return PortfolioCostLabelLayout.merged(inputs, formatter: yLabel)
+        return PortfolioCostLabelLayout.nonOverlapping(
+            PortfolioCostLabelLayout.merged(inputs, formatter: fullCostLabel)
+        )
+    }
+
+    private func fullCostLabel(_ value: Double) -> String {
+        let number = NumberFormatter()
+        number.numberStyle = .decimal
+        number.minimumFractionDigits = 2
+        number.maximumFractionDigits = 2
+        number.usesGroupingSeparator = true
+        return number.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
     }
 }
 

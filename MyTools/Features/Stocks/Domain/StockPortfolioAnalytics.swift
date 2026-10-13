@@ -376,7 +376,9 @@ struct StockPerformanceCache {
             return entry.performance
         }
         let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now
-        let nextTransaction = stock.transactions.lazy.map(\.tradedAt).filter { $0 > now }.min() ?? nextDay
+        let nextTransaction = stock.transactions.lazy.map {
+            $0.executedAt ?? calendar.startOfDay(for: $0.tradedAt)
+        }.filter { $0 > now }.min() ?? nextDay
         let performance = stock.performance(asOf: now, calendar: calendar)
         entries[stock.id] = Entry(transactions: stock.transactions, dividends: stock.dividends,
                                   calendar: calendar, computedAt: now, validUntil: min(nextDay, nextTransaction),
