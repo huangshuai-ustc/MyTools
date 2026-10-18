@@ -206,6 +206,7 @@ private struct StockWatchContent: View {
         Group {
             if let stock {
                 watchList(for: stock)
+                    .refreshable { await refreshChart() }
             } else {
                 ContentUnavailableView(
                     "股票已不存在",
@@ -230,17 +231,7 @@ private struct StockWatchContent: View {
                     .accessibilityLabel("持仓与交易记录")
                     .help("持仓与交易记录")
                 }
-                Button {
-                    Task { await refreshChart() }
-                } label: {
-                    if isRefreshing {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(isRefreshing || stock == nil)
-                .accessibilityLabel("刷新看盘行情")
+
             }
         }
         .task(id: loadKey) {
@@ -291,7 +282,10 @@ private struct StockWatchContent: View {
             }
         }
         .onChange(of: observation.chartError) { _, error in
-            errorMessage = error
+            if selectedRange != .fiveDays { errorMessage = error }
+        }
+        .onChange(of: observation.fiveDayChartError) { _, error in
+            if selectedRange == .fiveDays { errorMessage = error }
         }
         .onDisappear {
             StockRefreshCoordinator.shared.setStockScreen(
@@ -894,7 +888,7 @@ private struct StockWatchContent: View {
                     removeUnavailableChartModes(for: updated)
                     errorMessage = nil
                 } else if !Task.isCancelled, loadKey == requestedKey {
-                    errorMessage = observation.chartError ?? "暂未取得行情数据，请稍后重试"
+                    errorMessage = minuteChartError(for: requestedRange) ?? "暂未取得行情数据，请稍后重试"
                 }
             }
             return
@@ -997,15 +991,21 @@ private struct StockWatchContent: View {
     }
 
     private func refreshChart() async {
-        guard let stock else { return }
+        guard let stock, !isRefreshing else { return }
         errorMessage = nil
         isRefreshing = true
         defer { isRefreshing = false }
         await StockRefreshCoordinator.shared.refreshManually(
             for: stock.market,
-            prioritizedStockID: stock.id
+            prioritizedStockID: stock.id,
+            refreshFiveDayCharts: true
         )
         await reloadFromChartCache(stock: stock)
+    }
+
+    /// 分时与五日的刷新错误分开记录，只显示当前所选周期那一条。
+    private func minuteChartError(for range: StockChartRange) -> String? {
+        range == .fiveDays ? observation.fiveDayChartError : observation.chartError
     }
 
 

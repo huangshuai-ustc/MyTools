@@ -19,6 +19,7 @@ struct CredentialEditorView: View {
     @State private var showingFieldNameEditor = false
     @State private var showingNewFieldNameEditor = false
     @State private var showingTemplateEditor = false
+    @State private var newVersion: CredentialDocument?
     @State private var editingFieldID: UUID?
     @State private var fieldNameDraft = ""
     @State private var newFieldNameDraft = ""
@@ -57,6 +58,19 @@ struct CredentialEditorView: View {
                 validitySection
                 customFieldsSection
                 attachmentSection
+                if isExisting {
+                    Section("子证照") {
+                        Button {
+                            commitPendingTextInput {
+                                var source = draft
+                                source.tags = AppTagSupport.parse(tagsText)
+                                newVersion = CredentialDocument(versionOf: source)
+                            }
+                        } label: {
+                            Label("新增子证照", systemImage: "doc.badge.plus")
+                        }
+                    }
+                }
                 Section("标签") {
                     AppTagEditor(text: $tagsText, suggestions: store.knownTags)
                 }
@@ -66,6 +80,12 @@ struct CredentialEditorView: View {
             }
             .appListSpacing()
             .appNavigationTitle(isExisting ? "编辑证照" : "新增证照")
+            .diagnosticScreen("证照编辑")
+            .sheet(item: $newVersion) { version in
+                CredentialEditorView(document: version)
+                    .id(version.id)
+                    .iOSLargeSheet()
+            }
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -91,10 +111,12 @@ struct CredentialEditorView: View {
                 .iOSLargeSheet()
             }
             .sheet(isPresented: $showingTemplateEditor) {
-                CredentialFieldTemplateEditorView(
-                    documentType: draft.type,
-                    template: store.fieldTemplate(for: draft.type)
-                ) { template in
+                FieldTemplateEditorView(
+                    title: draft.type.title,
+                    recordNoun: "证照",
+                    fields: store.fieldTemplate(for: draft.type).fields
+                ) { fields in
+                    let template = CredentialFieldTemplate(documentType: draft.type, fields: fields)
                     let previousTemplate = store.fieldTemplate(for: draft.type)
                     let shouldRefreshDraft = !isExisting
                         && fieldsMatchTemplate(draft.fields, template: previousTemplate)
@@ -499,14 +521,7 @@ struct CredentialEditorView: View {
         _ fields: [CredentialField],
         template: CredentialFieldTemplate
     ) -> Bool {
-        let normalizedFields = fields
-            .filter { $0.value.isEmpty }
-            .map { "\($0.label)|\($0.isMultiline)|\($0.inputType.rawValue)|\($0.isSensitive)" }
-            .sorted()
-        let normalizedTemplate = template.fields
-            .map { "\($0.label)|\($0.isMultiline)|\($0.inputType.rawValue)|\($0.isSensitive)" }
-            .sorted()
-        return fields.count == template.fields.count && normalizedFields == normalizedTemplate
+        FieldTemplateMatching.fieldsMatchTemplate(fields, templateFields: template.fields)
     }
 
     private func fieldsMatchTemplate(
@@ -523,16 +538,7 @@ struct CredentialEditorView: View {
         to fields: [CredentialField],
         matching template: CredentialFieldTemplate
     ) -> [CredentialField] {
-        fields.map { field in
-            guard let templateField = template.fields.first(where: {
-                $0.label == field.label && $0.inputType == field.inputType
-            }) else {
-                return field
-            }
-            var updated = field
-            updated.isSensitive = templateField.isSensitive
-            return updated
-        }
+        FieldTemplateMatching.applyingSensitivity(to: fields, matching: template.fields)
     }
 
     private func attachmentBinding(

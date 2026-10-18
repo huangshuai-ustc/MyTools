@@ -6,63 +6,131 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ModuleStoreTests {
-    @Test func financialFoundationAllowsMultipleServicesAndPreservesLegacyIDs() throws {
-        var institution = FinancialInstitution()
-        institution.bankName = "Example Bank"
-        var profile = FinancialInstitution()
-        profile.services = [.banking, .securities, .payments]
-        var bank = FinancialAccount(kind: .savings)
-        bank.name = "储蓄"
-        var brokerage = FinancialAccount(kind: .securities)
-        brokerage.name = "证券"
-        profile.accounts = [bank, brokerage]
-        institution.financialProfile = profile
-        var card = BankCard()
-        card.accountID = institution.id
+    // Sanitized published v3 shape, kept literal so new encoders cannot redefine the fixture.
+    private var paymentV3Fixture: Data { Data("""
+    {"id":"11111111-1111-1111-1111-111111111111","name":"美元账户","currencies":["USD"],"accountNumber":"TEST1234","status":"normal","note":"历史备注","receivingProfile":{"id":"22222222-2222-2222-2222-222222222222","accountID":"11111111-1111-1111-1111-111111111111","details":{"name":"旧收款资料","currencies":["USD"],"fields":[],"note":"旧资料备注"}}}
+    """.utf8) }
 
-        let providers = try FinancialFoundationMigration.providers(from: [institution], cards: [card])
-        let provider = try #require(providers.first)
-        #expect(provider.id == institution.id)
-        #expect(provider.legacyInstitutionID == institution.id)
-        #expect(provider.kind == .brokerage)
-        #expect(provider.services.contains { $0.kind == .banking && $0.cardIDs == [card.id] })
-        #expect(provider.services.contains { $0.kind == .brokerage })
-        #expect(provider.services.contains { $0.kind == .paymentWallet })
-        try provider.validate()
+    @Test func paymentProfilesMigrateAndRoundTripWithoutLosingIdentity() async throws {
+        var account = try JSONDecoder().decode(PaymentAccount.self, from: paymentV3Fixture)
+        #expect(account.receivingProfiles.count == 1)
+        let first = try #require(account.receivingProfiles.first)
+        #expect(first.id.uuidString == "22222222-2222-2222-2222-222222222222")
+        #expect(first.accountID == account.id)
+        var second = FinanceReceivingMethod(accountID: account.id)
+        second.details.name = "另一套收款"
+        account.receivingProfiles.append(second)
+        var institution = FinancialInstitution(kind: .payment)
+        institution.paymentAccounts = [account]
+        try institution.validate()
+        let restored = try JSONDecoder().decode(FinancialInstitution.self, from: JSONEncoder().encode(institution))
+        #expect(restored == institution)
+        #expect(restored.receivingMethods.map(\.id) == [first.id, second.id])
+        var edited = restored
+        edited.removeReceivingMethod(id: first.id)
+        #expect(edited.receivingMethods == [second])
+        try edited.validate()
+        let snapshot = try CloudSyncSnapshotBuilder.make(vault: VaultData(financialInstitutions: [institution]), secrets: [], attachmentStore: AttachmentStore(), enabledModules: [.personalFinance])
+        let item = try #require(snapshot.items.first { $0.kind == .financialInstitution })
+        let merged = try CloudSyncMerger.apply([.upsert(kind: item.kind, id: item.id, payload: item.payload)], to: VaultData(), secrets: [], enabledModules: [.personalFinance])
+        #expect(merged.vault.financialInstitutions.first?.paymentAccounts == [account])
+        let processor = AppStoreBackupProcessor()
+        let backup = try await processor.makeBackup(vault: VaultData(financialInstitutions: [institution]), secrets: [], includedModules: [.personalFinance], password: "test-password")
+        let restoredBackup = try await processor.restorePayload(from: backup, password: "test-password")
+        #expect(restoredBackup.vault.financialInstitutions.first?.paymentAccounts == [account])
     }
 
-    @Test func financialCustomFieldsRoundTripAndKeepSensitiveFlag() throws {
-        var field = FinancialCustomField(key: "routing", label: "Routing Number", value: "123", isSensitive: true)
-        var provider = FinancialProvider(name: "Wise", kind: .payment)
-        provider.fields = [field]
-        let restored = try JSONDecoder().decode(FinancialProvider.self, from: JSONEncoder().encode(provider))
-        #expect(restored.fields == [field])
+    @Test func paymentProfilesMissingEmptyUnknownAndCorruptFields() throws {
+        var json = try #require(JSONSerialization.jsonObject(with: paymentV3Fixture) as? [String: Any])
+        json["unknownFutureField"] = "preserves decoding compatibility"
+        json.removeValue(forKey: "receivingProfile")
+        let missing = try JSONDecoder().decode(PaymentAccount.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(missing.receivingProfiles.isEmpty)
+        json = try #require(JSONSerialization.jsonObject(with: paymentV3Fixture) as? [String: Any])
+        json["receivingProfiles"] = []
+        #expect(try JSONDecoder().decode(PaymentAccount.self, from: JSONSerialization.data(withJSONObject: json)).receivingProfiles.isEmpty)
+        json["receivingProfiles"] = [["id": "broken"]]
+        let corrupt = try JSONSerialization.data(withJSONObject: json)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(PaymentAccount.self, from: corrupt) }
+        // The institution decoder must not retry a malformed current collection as a legacy account.
+        let details = try JSONSerialization.data(withJSONObject: ["accounts": [json]])
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(PaymentInstitutionDetails.self, from: details) }
     }
-    @Test func financeV2CanSaveAndRoundTripAndV1ProjectsInstitutionMetadata() throws {
-        let oldProfileData = Data(#"{"schemaVersion":1,"name":"Example","services":["banking"],"country":"","website":"","phone":"","isArchived":false,"note":"","accounts":[],"receivingMethods":[],"logins":[],"documents":[]}"#.utf8)
+
+    @Test func mapsUseCoordinatePinsAndOnlyAvailableApplications() throws {
+        let target = AppMapNavigationTarget(name: "测试开户网点", latitude: 31.2, longitude: 121.5)
+        let baidu = try #require(AppMapNavigationService.url(for: .baiduMaps, target: target))
+        #expect(baidu.host == "map")
+        #expect(baidu.path == "/marker")
+        let google = try #require(AppMapNavigationService.url(for: .googleMaps, target: target))
+        #expect(google.absoluteString.hasPrefix("comgooglemaps://?"))
+        let items = try #require(URLComponents(url: google, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(items.first { $0.name == "q" }?.value == "31.2,121.5")
+        let available = AppMapNavigationService.applications { ["maps", "baidumap"].contains($0.scheme ?? "") }
+        #expect(available == [.appleMaps, .baiduMaps])
+        #expect(AppMapNavigationService.url(for: .googleMaps, target: .init(name: "bad", latitude: .nan, longitude: 0)) == nil)
+    }
+
+    @Test func financeSchema3InstitutionSavesRoundTripsAndRejectsUnknownVersion() throws {
         var institution = FinancialInstitution()
+        institution.name = "Example"
         institution.branchName = "Existing branch"
-        institution.financialProfile = try JSONDecoder().decode(FinancialInstitution.self, from: oldProfileData)
-        let projected = institution
-        #expect(projected.schemaVersion == 2)
-        #expect(projected.branchName == "Existing branch")
-        var updated = institution
-        updated.financialProfile = projected
-        let store = FinanceStore(accounts: [institution], attachmentStore: AttachmentStore())
-        #expect(try store.saveInstitution(updated, cards: [], expected: institution, expectedCards: []))
+        let store = FinanceStore(attachmentStore: AttachmentStore())
+        #expect(try store.saveInstitution(institution, cards: [], expected: nil, expectedCards: []))
         let restored = try JSONDecoder().decode(FinancialInstitution.self, from: JSONEncoder().encode(store.financialInstitutions[0]))
-        #expect(restored == projected)
-        var invalid = projected
+        #expect(restored == institution)
+        #expect(restored.schemaVersion == FinancialInstitution.currentSchemaVersion)
+        var invalid = restored
         invalid.schemaVersion = 999
         #expect(throws: (any Error).self) { try invalid.validate() }
+        invalid.schemaVersion = FinancialInstitution.currentSchemaVersion - 1
+        try invalid.validate()
+    }
+
+    // AUDIT-088：券商账户只有 BrokerageAccount 一种类型；旧版借用银行账户结构的数据仍可迁移。
+    @Test func legacyBrokerageAccountsMigrateIntoBrokerageAccount() throws {
+        let id = UUID()
+        let json = """
+        {"platform":"IBKR","accounts":[{"id":"\(id.uuidString)","name":"主账户","kind":"securities","accountNumber":"U1234567",
+        "currencies":["HKD"],"status":"normal","brokerage":{"accountType":"margin","baseCurrency":"USD","legalEntity":"","ownership":"联名"}}]}
+        """
+        let details = try JSONDecoder().decode(BrokerageInstitutionDetails.self, from: Data(json.utf8))
+        let account = try #require(details.accounts.first)
+        #expect(account.id == id)
+        #expect(account.accountNumber == "U1234567")
+        #expect(account.accountType == .margin)
+        #expect(account.baseCurrency == .usd)
+        #expect(account.ownership == "联名")
+    }
+
+    // AUDIT-062：悬挂的入金资料引用、重复附件 ID 均被拒绝。
+    @Test func financeValidateRejectsDanglingFundingProfilesAndDuplicateAttachments() throws {
+        var brokerage = FinancialInstitution(kind: .brokerage)
+        var account = BrokerageAccount()
+        account.fundingProfileIDs = [UUID()]
+        brokerage.brokerageAccounts = [account]
+        #expect(throws: (any Error).self) { try brokerage.validate() }
+        let route = FinanceReceivingMethod()
+        brokerage.receivingMethods = [route]
+        brokerage.brokerageAccounts[0].fundingProfileIDs = [route.id]
+        try brokerage.validate()
+
+        let attachment = FileAttachment()
+        brokerage.documents = [
+            FinanceDocument(title: "A", attachment: attachment),
+            FinanceDocument(title: "B", attachment: attachment)
+        ]
+        #expect(throws: (any Error).self) { try brokerage.validate() }
     }
 
     @Test func financeCardReplacementCyclesAreRejected() throws {
+        let profile = FinancialInstitution()
         var first = BankCard()
         var second = BankCard()
+        first.accountID = profile.id
+        second.accountID = profile.id
         first.replacedByCardID = second.id
         second.replacedByCardID = first.id
-        let profile = FinancialInstitution()
         #expect(throws: (any Error).self) { try profile.validate(cards: [first, second]) }
         second.replacedByCardID = nil
         try profile.validate(cards: [first, second])
@@ -123,6 +191,16 @@ struct ModuleStoreTests {
         #expect(query["lat"] == "39.9042")
         #expect(query["lon"] == "116.4074")
     }
+
+    // AUDIT-026：无坐标时按名称搜索，不再导航到天安门默认点。
+    @Test func branchWithoutCoordinateSearchesByNameInsteadOfDefaultPoint() throws {
+        let url = try #require(BankBranchNavigationService.url(for: .amap, branchName: "测试支行", location: nil))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.host == "poi")
+        #expect(components.queryItems?.contains { $0.name == "lat" } == false)
+        #expect(components.queryItems?.first { $0.name == "name" }?.value == "测试支行")
+        #expect(BankBranchNavigationService.url(for: .appleMaps, branchName: " ", location: nil) == nil)
+    }
     @Test func financeDraftConflictDoesNotOverwriteUpdatedCardsOrRecreateDeletedAccount() {
         let account = FinancialInstitution()
         var card = BankCard()
@@ -130,7 +208,7 @@ struct ModuleStoreTests {
         let store = FinanceStore(accounts: [account], cards: [card], attachmentStore: AttachmentStore())
         var updated = card
         updated.holderName = "Changed elsewhere"
-        store.replaceAccount(account, cards: [updated])
+        store.replaceAccount(account, cards: [updated], expected: store.financialInstitutions[0])
         let accepted = store.replaceAccount(account, cards: [card], expected: account, expectedCards: [card])
         #expect(!accepted)
         #expect(store.cards == [updated])
@@ -147,7 +225,7 @@ struct ModuleStoreTests {
         let vault = VaultData(domesticBankLoginFieldTemplates: store.domesticLoginFieldTemplates,
                               overseasBankLoginFieldTemplates: store.overseasLoginFieldTemplates)
         let restored = try JSONDecoder().decode(VaultData.self, from: JSONEncoder().encode(vault))
-        store.replace(accounts: [], cards: [], domesticLoginFieldTemplates: restored.domesticBankLoginFieldTemplates,
+        store.replace(financialInstitutions: [], domesticLoginFieldTemplates: restored.domesticBankLoginFieldTemplates,
                       overseasLoginFieldTemplates: restored.overseasBankLoginFieldTemplates)
         #expect(store.domesticLoginFieldTemplates.isEmpty)
         #expect(!store.overseasLoginFieldTemplates.isEmpty)
@@ -165,6 +243,7 @@ struct ModuleStoreTests {
             "外汇账户",
             "个人养老金账户",
             "社保账户",
+            "公积金账户",
             "其他账户"
         ])
         #expect(ForeignAccountType.allCases.map(\.title) == [
@@ -180,7 +259,7 @@ struct ModuleStoreTests {
     }
 
     @Test func removedDomesticPresetRemainsEditableAsACustomType() {
-        #expect(DomesticAccountType.selection(for: "公积金账户") == .other)
+        #expect(DomesticAccountType.selection(for: "公积金账户") == .providentFund)
         #expect(DomesticAccountType.selection(for: "支票账户") == .other)
         #expect(DomesticAccountType.selection(for: "") == .savings)
     }
@@ -213,7 +292,11 @@ struct ModuleStoreTests {
         financialAccount.status = .closed
         profile.accounts = [financialAccount]
         institution.financialProfile = profile
+        // AUDIT-061 以代码为准：银行归档以卡片为准；没有卡片且机构状态正常时，唯一账户销户也不归档。
+        #expect(!institution.isInactiveFinanceArchive(cards: []))
+        institution.status = .closed
         #expect(institution.isInactiveFinanceArchive(cards: []))
+        institution.status = .normal
 
         var card = BankCard()
         card.status = .normal
@@ -401,8 +484,8 @@ struct ModuleStoreTests {
         }
 
         #expect(settings.orderedModules == CompiledToolModules.ordered)
-        #expect(settings.syncedModuleOrder == CompiledToolModules.ordered)
-        #expect(Set(settings.syncedModuleVisibility.keys) == Set(CompiledToolModules.ordered.map(\.rawValue)))
+        #expect(settings.syncedModuleOrder.isEmpty)
+        #expect(settings.syncedModuleVisibility.isEmpty)
 
         for module in ToolModule.allCases where !CompiledToolModules.contains(module) {
             settings.setVisible(true, for: module)
@@ -410,6 +493,28 @@ struct ModuleStoreTests {
             #expect(defaults.object(forKey: module.visibilityKey) == nil)
         }
         #expect(visibilityChanges.isEmpty)
+    }
+
+    // AUDIT-033：新设备只上传显式设置，默认值不会覆盖另一台设备的选择。
+    @Test func moduleSettingsSyncOnlyExplicitChoices() throws {
+        let module = try #require(CompiledToolModules.ordered.first)
+        let deviceA = ToolModuleSettings(defaults: UserDefaults(suiteName: "MyToolsTests.\(UUID().uuidString)")!)
+        let deviceB = ToolModuleSettings(defaults: UserDefaults(suiteName: "MyToolsTests.\(UUID().uuidString)")!)
+        deviceA.setVisible(!module.defaultIsVisible, for: module)
+
+        deviceA.applySyncedPreferences(
+            order: deviceB.syncedModuleOrder,
+            visibility: deviceB.syncedModuleVisibility
+        )
+        #expect(deviceA.isVisible(module) == !module.defaultIsVisible)
+
+        deviceB.applySyncedPreferences(
+            order: deviceA.syncedModuleOrder,
+            visibility: deviceA.syncedModuleVisibility
+        )
+        #expect(deviceB.isVisible(module) == !module.defaultIsVisible)
+        #expect(deviceB.syncedModuleVisibility == [module.rawValue: !module.defaultIsVisible])
+        #expect(deviceB.syncedModuleOrder.isEmpty)
     }
 
     @Test func moduleSettingsUseCompileTimeDefaultsUntilOverridden() {
@@ -497,7 +602,7 @@ struct ModuleStoreTests {
             attachmentStore: attachmentStore
         )
 
-        store.replaceAccount(account, cards: [])
+        store.replaceAccount(account, cards: [], expected: store.financialInstitutions[0])
 
         #expect(store.cards.isEmpty)
         #expect(fileManager.fileExists(atPath: attachmentStore.url(for: attachment).path))
@@ -505,40 +610,64 @@ struct ModuleStoreTests {
 
     @Test func financeCleanupRemovesOnlyFieldsThatDoNotApplyToTheCurrentType() throws {
         var domestic = FinancialInstitution()
+        domestic.name = "境内银行"
         domestic.region = .domestic
         domestic.swift = "SWIFT"
         domestic.correspondenceAddressChinese = "境外通讯地址"
         domestic.remittanceInstructions = "汇款说明"
-        domestic.foreignSubaccounts = [
-            ForeignSubaccount(type: .savings, customType: "旧类型"),
-            ForeignSubaccount(type: .other, customType: "贵金属账户")
-        ]
+        var stale = FinancialAccount()
+        stale.kind = .savings
+        stale.customType = "旧类型"
+        var custom = FinancialAccount()
+        custom.kind = .other
+        custom.customType = "贵金属账户"
+        var staleChild = FinancialAccount()
+        staleChild.kind = .termDeposit
+        staleChild.customType = "旧子类型"
+        stale.subaccounts = [staleChild]
+        domestic.accounts = [stale, custom]
         var overseas = FinancialInstitution()
         overseas.region = .overseas
         overseas.swift = "KEEP"
         overseas.correspondenceAddressEnglish = "Keep address"
+        var other = FinancialInstitution(kind: .other)
+        var otherAccount = FinancialAccount()
+        otherAccount.kind = .pension
+        otherAccount.customType = "旧养老金类型"
+        other.accounts = [otherAccount]
         let store = FinanceStore(
-            accounts: [domestic, overseas],
+            accounts: [domestic, overseas, other],
             attachmentStore: AttachmentStore()
         )
 
         let report = RedundantDataCleanupReport(findings: store.scanRedundantData())
-        store.cleanupRedundantData()
-
         #expect(report.findings.map(\.ruleID) == [
-            "non-custom-foreign-account-type",
+            "non-custom-account-type",
             "domestic-overseas-details"
         ])
-        #expect(report.affectedFieldCount == 4)
+        #expect(report.findings[0].items.map(\.id) == [
+            "\(domestic.id.uuidString).\(stale.id.uuidString)",
+            "\(domestic.id.uuidString).\(staleChild.id.uuidString)",
+            "\(other.id.uuidString).\(otherAccount.id.uuidString)"
+        ])
+        #expect(report.findings[1].items.map(\.recordTitle) == ["境内银行"])
+        #expect(report.findings[1].items.first?.fieldNames == ["SWIFT", "汇款说明", "通讯地址（中文）"])
+        #expect(report.affectedFieldCount == 6)
+
+        store.cleanupRedundantData()
+
         let cleanedDomestic = try #require(store.financialInstitutions.first)
         #expect(cleanedDomestic.swift.isEmpty)
         #expect(cleanedDomestic.correspondenceAddressChinese.isEmpty)
         #expect(cleanedDomestic.remittanceInstructions.isEmpty)
-        #expect(cleanedDomestic.foreignSubaccounts[0].customType == nil)
-        #expect(cleanedDomestic.foreignSubaccounts[1].customType == "贵金属账户")
-        let retainedOverseas = try #require(store.financialInstitutions.last)
+        #expect(cleanedDomestic.accounts[0].customType.isEmpty)
+        #expect(cleanedDomestic.accounts[0].subaccounts[0].customType.isEmpty)
+        #expect(cleanedDomestic.accounts[1].customType == "贵金属账户")
+        let retainedOverseas = try #require(store.financialInstitutions.dropFirst().first)
         #expect(retainedOverseas.swift == "KEEP")
         #expect(retainedOverseas.correspondenceAddressEnglish == "Keep address")
+        #expect(store.financialInstitutions.last?.accounts.first?.customType.isEmpty == true)
+        #expect(store.scanRedundantData().isEmpty)
     }
 
     @Test func financeLoginTemplatesAreRegionSpecificAndPersistent() throws {
@@ -559,10 +688,11 @@ struct ModuleStoreTests {
         #expect(store.makeLoginFields(for: .overseas).map(\.name) == ["海外安全问题"])
         #expect(store.makeLoginFields(for: .overseas).first?.isSensitive == true)
 
+        // Schema 3 keeps the legacy accessors as views over additionalLoginFields.
         let migratedAccount = try #require(store.financialInstitutions.first)
-        #expect(migratedAccount.boundPhoneNumber.isEmpty)
-        #expect(migratedAccount.loginAccount.isEmpty)
-        #expect(migratedAccount.loginPassword.isEmpty)
+        #expect(migratedAccount.boundPhoneNumber == "13800138000")
+        #expect(migratedAccount.loginAccount == "legacy-user")
+        #expect(migratedAccount.loginPassword == "legacy-password")
         #expect(migratedAccount.additionalLoginFields.contains {
             $0.name == "绑定手机号" && $0.value == "13800138000" && !$0.isSensitive
         })

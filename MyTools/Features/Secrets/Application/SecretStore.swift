@@ -117,12 +117,11 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
         knownTags = AppTagSupport.merged(knownTags, with: tags)
         storedItem.updatedAt = Date()
         let isUpdate: Bool
+        var removedAttachments: [FileAttachment] = []
         if let index = secretItems.firstIndex(where: { $0.id == storedItem.id }) {
             let retainedAttachmentIDs = Set(storedItem.attachments.map(\.id))
-            for attachment in secretItems[index].attachments
-            where !retainedAttachmentIDs.contains(attachment.id) {
-                attachmentStore.delete(attachment)
-            }
+            removedAttachments = secretItems[index].attachments
+                .filter { !retainedAttachmentIDs.contains($0.id) }
             storedItem.createdAt = secretItems[index].createdAt
             secretItems[index] = storedItem
             isUpdate = true
@@ -131,17 +130,17 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
             isUpdate = false
         }
         DiagnosticLogger.shared.log(.data, "密码\(isUpdate ? "更新" : "新增") id=\(storedItem.id)")
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     func deleteSecrets(ids: Set<UUID>) {
         guard !ids.isEmpty, !isRestoringBackup else { return }
-        for item in secretItems where ids.contains(item.id) {
-            item.attachments.forEach(attachmentStore.delete)
-        }
+        let removedAttachments = secretItems
+            .filter { ids.contains($0.id) }
+            .flatMap(\.attachments)
         secretItems.removeAll { ids.contains($0.id) }
         DiagnosticLogger.shared.log(.data, "密码删除 count=\(ids.count)")
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     func importSecrets(_ items: [SecretItem]) -> (inserted: Int, skipped: Int) {
@@ -196,8 +195,15 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
     // deleteUncommittedAttachment, renameAttachment, attachmentURL
     // are provided by the AttachmentManaging protocol extension.
 
-    private func didMutate() {
+    private func didMutate(removing attachments: [FileAttachment] = []) {
         mutationNotifier?.moduleStoreDidMutate()
+        // Files go only after the Vault no longer referencing them is on disk
+        // (AUDIT-017). A store without a Vault behind it deletes immediately.
+        if let mutationNotifier {
+            mutationNotifier.scheduleAttachmentRemovalAfterPersistence(attachments)
+        } else {
+            attachments.forEach(attachmentStore.delete)
+        }
     }
 
     private static func normalizedTags(in item: SecretItem) -> SecretItem {
@@ -218,16 +224,7 @@ final class SecretStore: ObservableObject, BackupRestoreParticipant, AttachmentM
         for field: SecretField,
         in template: SecretFieldTemplate
     ) -> SecretField? {
-        if let exactMatch = template.fields.first(where: {
-            $0.label == field.label && $0.inputType == field.inputType
-        }) {
-            return exactMatch
-        }
-
-        let kindMatches = template.fields.filter {
-            $0.kind == field.kind && $0.inputType == field.inputType
-        }
-        return kindMatches.count == 1 ? kindMatches.first : nil
+        FieldTemplateMatching.matchingField(for: field, in: template.fields)
     }
 
     private static func importSignature(_ item: SecretItem) -> String {

@@ -17,6 +17,19 @@ enum CurrencyExchangeQuoteConvention: String, Codable, CaseIterable, Identifiabl
     }
 }
 
+struct CurrencyExchangeLossSummary: Equatable, Sendable {
+    /// Sum over priced records; nil only when records exist but none is priced.
+    let total: Decimal?
+    let missingCount: Int
+
+    init(records: [CurrencyExchangeRecord], buyingRates: [CurrencyCode: Decimal]) {
+        let losses = records.map { $0.renminbiLoss(using: buyingRates) }
+        let priced = losses.compactMap { $0 }
+        missingCount = losses.count - priced.count
+        total = records.isEmpty || !priced.isEmpty ? priced.reduce(0, +) : nil
+    }
+}
+
 struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var exchangedAt = Date()
@@ -50,9 +63,60 @@ struct CurrencyExchangeRecord: Identifiable, Codable, Equatable, Sendable {
         self.fee = fee
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, exchangedAt, soldCurrency, boughtCurrency, quoteConvention
+        case quotedRate, soldAmount, boughtAmount, fee
+    }
+
+    /// 旧数据可能缺少后加的键，或仍使用已删除的 `oneSoldToBought`
+    /// （“1 卖出币种 = ? 买入币种”），这里补默认值并换算成百元口径，
+    /// 避免一条旧记录让整个换汇模块无法读取（AUDIT-077）。
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        exchangedAt = Self.noon(on: try values.decodeIfPresent(Date.self, forKey: .exchangedAt) ?? Date())
+        soldCurrency = try values.decodeIfPresent(CurrencyCode.self, forKey: .soldCurrency) ?? .cny
+        boughtCurrency = try values.decodeIfPresent(CurrencyCode.self, forKey: .boughtCurrency) ?? .usd
+        let rate = try values.decodeIfPresent(Decimal.self, forKey: .quotedRate) ?? 0
+        switch try values.decodeIfPresent(String.self, forKey: .quoteConvention) {
+        case "oneSoldToBought":
+            quoteConvention = .hundredSoldToBought
+            quotedRate = rate * 100
+        case let raw?:
+            guard let convention = CurrencyExchangeQuoteConvention(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .quoteConvention,
+                    in: values,
+                    debugDescription: "Unknown quote convention \(raw)"
+                )
+            }
+            quoteConvention = convention
+            quotedRate = rate
+        case nil:
+            quoteConvention = .hundredSoldToBought
+            quotedRate = rate
+        }
+        soldAmount = try values.decodeIfPresent(Decimal.self, forKey: .soldAmount) ?? 0
+        boughtAmount = try values.decodeIfPresent(Decimal.self, forKey: .boughtAmount) ?? 0
+        fee = try values.decodeIfPresent(Decimal.self, forKey: .fee) ?? 0
+    }
+
+    /// 存储、按月分组、年份筛选与行内日期共用这一个日历（AUDIT-076）。
+    /// 与日期选择器一致使用本地时区；存成中午后，时区变化 ±12 小时内日期不变。
+    static var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
+    }
+
     /// 换汇只记录日期；统一存成当地中午，避免时区变化或夏令时把日期推到前后一天。
-    static func noon(on date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
+    static func noon(on date: Date, calendar: Calendar = Self.calendar) -> Date {
         calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
+    }
+
+    static func monthStart(of date: Date, calendar: Calendar = Self.calendar) -> Date {
+        calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
     }
 
     /// 统一换算为：1 单位卖出币种可买入多少单位买入币种。

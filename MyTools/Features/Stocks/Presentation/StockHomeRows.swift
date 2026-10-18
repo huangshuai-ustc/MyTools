@@ -31,7 +31,7 @@ enum StockPositionColumnMetrics {
     /// 下面空出一截，整张持仓表因此比看盘页松散得多。看盘行同样只在 iPad 上测宽
     /// （`StockWatchlistRow.body`），两页保持一致的行高观感。iPad 仍然需要测宽——分屏时
     /// 宽度可能落在阈值以下。
-    static var usesWidthAdaptiveColumns: Bool {
+    @MainActor static var usesWidthAdaptiveColumns: Bool {
 #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad
 #else

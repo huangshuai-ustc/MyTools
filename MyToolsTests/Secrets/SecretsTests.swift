@@ -42,6 +42,13 @@ struct SecretsTests {
         #expect(item.note == "line one\nline two")
     }
 
+    // AUDIT-019：重复表头不再触发 Dictionary 崩溃，取第一列。
+    @Test func applePasswordCSVWithDuplicateHeadersKeepsFirstColumn() throws {
+        let csv = "Title,URL,Username,Password,Notes,Notes\nExample,https://example.com,user,secret,first,second"
+        let preview = try ApplePasswordImporter.decode(data: Data(csv.utf8), fileName: "passwords.csv")
+        #expect(preview.items.first?.note == "first")
+    }
+
     @Test func oldSecretItemDefaultsPurposeToPersonal() throws {
         let data = Data("{\"title\":\"Legacy\",\"category\":\"login\",\"fields\":[]}".utf8)
         let item = try JSONDecoder().decode(SecretItem.self, from: data)
@@ -152,6 +159,22 @@ struct SecretsTests {
         #expect(effectiveFields.first(where: { $0.label == "URL" })?.isSensitive == false)
     }
 
+    // AUDIT-018：模板显隐只影响同名字段，不再按 kind 回退匹配自定义字段。
+    @Test @MainActor func templateSensitivityIgnoresCustomFieldsOfTheSameKind() throws {
+        let custom = SecretField(label: "备用密码", value: "x", kind: .password)
+        let item = SecretItem(category: .login, fields: [custom])
+        let store = SecretStore(secretItems: [item], attachmentStore: AttachmentStore())
+        var template = store.fieldTemplate(for: .login)
+        template.fields = template.fields.map { field in
+            var updated = field
+            updated.isSensitive = false
+            return updated
+        }
+        store.upsertFieldTemplate(template)
+        #expect(store.secretItems.first?.fields.first?.isSensitive == true)
+        #expect(store.effectiveFields(for: try #require(store.secretItems.first)).first?.isSensitive == true)
+    }
+
     @Test @MainActor func makeFieldsUsesTheSelectedCategoryTemplate() {
         let template = SecretFieldTemplate(
             category: .email,
@@ -178,6 +201,26 @@ struct SecretsTests {
             attachmentStore: AttachmentStore()
         )
         #expect(store.fieldTemplates.count == SecretCategory.allCases.count)
+    }
+}
+
+/// AUDIT-007: editors display plain text, so a locked item requires verification first.
+@MainActor
+struct SensitiveEditAccessTests {
+    @Test func lockedEditorRequiresVerification() async {
+        var verifyCount = 0
+        let denied = await SensitiveEditAccess.isGranted(isUnlocked: false) { verifyCount += 1; return false }
+        let granted = await SensitiveEditAccess.isGranted(isUnlocked: false) { verifyCount += 1; return true }
+        #expect(!denied)
+        #expect(granted)
+        #expect(verifyCount == 2)
+    }
+
+    @Test func unlockedEditorSkipsVerification() async {
+        var verifyCount = 0
+        let granted = await SensitiveEditAccess.isGranted(isUnlocked: true) { verifyCount += 1; return false }
+        #expect(granted)
+        #expect(verifyCount == 0)
     }
 }
 #endif

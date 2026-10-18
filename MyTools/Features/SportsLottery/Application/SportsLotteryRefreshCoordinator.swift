@@ -16,10 +16,24 @@ final class SportsLotteryRefreshCoordinator {
 
     private var foregroundTask: Task<Void, Never>?
     private var currentScenePhase: ScenePhase = .inactive
+    /// 首页隐藏体彩后，前台定时检查与系统后台刷新都停止，避免继续联网。
+    private(set) var isModuleVisible = true
     private let defaults: UserDefaults
 
     private init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    func updateModuleVisibility(_ isVisible: Bool) {
+        isModuleVisible = isVisible
+        if isVisible {
+            if currentScenePhase == .active { startForegroundChecks() }
+        } else {
+            stopForegroundChecks()
+#if os(iOS)
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
+#endif
+        }
     }
 
     func update(scenePhase: ScenePhase) {
@@ -41,7 +55,7 @@ final class SportsLotteryRefreshCoordinator {
     }
 
     private func startForegroundChecks() {
-        guard foregroundTask == nil else { return }
+        guard isModuleVisible, foregroundTask == nil else { return }
         foregroundTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.refreshIfDue()
@@ -61,6 +75,7 @@ final class SportsLotteryRefreshCoordinator {
     }
 
     private func refreshIfDue() async {
+        guard isModuleVisible else { return }
         let leagues = SportsLotteryLeaguePreferences.load(from: defaults)
         guard !leagues.isEmpty else { return }
         do {
@@ -72,6 +87,7 @@ final class SportsLotteryRefreshCoordinator {
 
     private func scheduleBackgroundRefresh() {
 #if os(iOS)
+        guard isModuleVisible else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = SportsLotteryService.nextAutomaticRefreshDate(after: Date())
         do {
@@ -107,15 +123,4 @@ final class SportsLotteryRefreshCoordinator {
 #endif
 }
 
-#if os(iOS) && !MYTOOLS_FEATURE_STOCKS
-final class SportsLotteryRefreshAppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
-    ) -> Bool {
-        SportsLotteryRefreshCoordinator.registerBackgroundTask()
-        return true
-    }
-}
-#endif
 #endif

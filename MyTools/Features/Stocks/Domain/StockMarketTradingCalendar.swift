@@ -10,7 +10,8 @@ enum StockMarketSession: String, Sendable {
 
 enum StockMarketTradingCalendar {
     /// 内置休市表之外的零散休市日，用于还没抓到 `AShareHolidayService` 数据的年份。
-    /// 数据到位后这里的条目只是多一层保险：两张表都只说「这天休市」，取并集即可。
+    /// 数据到位后这里的条目只是多一层保险：两张表都只说「这天休市」，取并集即可；
+    /// 内置的农历推算规则则只在没有官方表的年份使用（AUDIT-014）。
     private static let additionalAShareClosures: [Int: Set<Int>] = [
         2025: [602, 1008],
         2026: [102, 406]
@@ -300,10 +301,17 @@ enum StockMarketTradingCalendar {
             //
             // snapshot 是引用类型，其内容只在 actor 内部发布前写入，因此这里的同步
             // 读取在任意线程都安全。
+            // 官方休市表覆盖的年份只认官方表；内置规则只是没数据时的兜底，
+            // 与官方表取并集只能多休、无法纠错（AUDIT-014）。例外是除夕：
+            // holiday-cn 在除夕为工作日的年份（如 2024-02-09）不标休，交易所却休市。
             return { date, calendar in
-                isWeekday(date, calendar)
-                    && !snapshot.isMandatedHoliday(for: date, calendar: calendar)
-                    && !isAShareHoliday(date, calendar)
+                guard isWeekday(date, calendar) else { return false }
+                if snapshot.hasData(forYear: calendar.component(.year, from: date)) {
+                    return !snapshot.isMandatedHoliday(for: date, calendar: calendar)
+                        && !isAdditionalAShareClosure(date, calendar)
+                        && !isLunarNewYearEve(date, calendar)
+                }
+                return !isAShareHoliday(date, calendar)
             }
         case .hongKong:
             return { date, calendar in
@@ -387,6 +395,19 @@ enum StockMarketTradingCalendar {
         return calendar
     }
 
+    /// 除夕：下一天是正月初一。腊月可能只有二十九天，不能按日期数字判断。
+    private static func isLunarNewYearEve(_ date: Date, _ calendar: Calendar) -> Bool {
+        guard let next = calendar.date(byAdding: .day, value: 1, to: date) else { return false }
+        let lunar = lunarComponents(for: next, timeZone: calendar.timeZone)
+        return lunar.month == 1 && lunar.day == 1 && !lunar.isLeapMonth
+    }
+
+    private static func isAdditionalAShareClosure(_ date: Date, _ calendar: Calendar) -> Bool {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year, let month = components.month, let day = components.day else { return false }
+        return additionalAShareClosures[year]?.contains(month * 100 + day) == true
+    }
+
     private static func isAShareHoliday(_ date: Date, _ calendar: Calendar) -> Bool {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = components.year,
@@ -411,7 +432,10 @@ enum StockMarketTradingCalendar {
         }
 
         let lunar = lunarComponents(for: date, timeZone: calendar.timeZone)
-        if lunar.month == 12, lunar.day >= 29 {
+        // 闰月里的同名日期不是节日（如闰五月初五不是端午）。
+        guard !lunar.isLeapMonth else { return false }
+        // 腊月只休除夕；腊月有三十天时廿九照常交易（2024-02-08）。
+        if isLunarNewYearEve(date, calendar) {
             return true
         }
         if lunar.month == 1, (1...7).contains(lunar.day) {
@@ -433,10 +457,12 @@ enum StockMarketTradingCalendar {
               let day = components.day else { return true }
 
         for fixedDate in [(1, 1), (5, 1), (7, 1), (10, 1), (12, 25), (12, 26)] {
+            // 港交所的周六假日不补休，周日假日顺延到周一（AUDIT-013）。
             if isObservedFixedHoliday(
                 date,
                 month: fixedDate.0,
                 day: fixedDate.1,
+                saturdayObservedOnFriday: false,
                 calendar: calendar
             ) {
                 return true
@@ -446,6 +472,20 @@ enum StockMarketTradingCalendar {
             return true
         }
         let lunar = lunarComponents(for: date, timeZone: calendar.timeZone)
+        if !lunar.isLeapMonth, isHongKongLunarHoliday(lunar) {
+            return true
+        }
+
+        guard let easter = easterSunday(year: year, calendar: calendar) else { return false }
+        let goodFriday = calendar.date(byAdding: .day, value: -2, to: easter)
+        let easterMonday = calendar.date(byAdding: .day, value: 1, to: easter)
+        return [goodFriday, easterMonday].contains {
+            guard let holiday = $0 else { return false }
+            return sameDay(date, holiday, calendar: calendar)
+        }
+    }
+
+    private static func isHongKongLunarHoliday(_ lunar: (month: Int, day: Int, isLeapMonth: Bool)) -> Bool {
         if lunar.month == 1, (1...3).contains(lunar.day) {
             return true
         }
@@ -461,21 +501,15 @@ enum StockMarketTradingCalendar {
         if lunar.month == 9, lunar.day == 9 {
             return true
         }
-
-        guard let easter = easterSunday(year: year, calendar: calendar) else { return false }
-        let goodFriday = calendar.date(byAdding: .day, value: -2, to: easter)
-        let easterMonday = calendar.date(byAdding: .day, value: 1, to: easter)
-        return [goodFriday, easterMonday].contains {
-            guard let holiday = $0 else { return false }
-            return sameDay(date, holiday, calendar: calendar)
-        }
+        return false
     }
 
     private static func isUnitedStatesHoliday(_ date: Date, _ calendar: Calendar) -> Bool {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = components.year else { return true }
 
-        if isObservedFixedHoliday(date, month: 1, day: 1, calendar: calendar)
+        // NYSE Rule 7.2：元旦落在周六时前一周五照常交易（年末结算日），其他节日提前到周五（AUDIT-013）。
+        if isObservedFixedHoliday(date, month: 1, day: 1, saturdayObservedOnFriday: false, calendar: calendar)
             || isObservedFixedHoliday(date, month: 6, day: 19, calendar: calendar)
             || isObservedFixedHoliday(date, month: 7, day: 4, calendar: calendar)
             || isObservedFixedHoliday(date, month: 12, day: 25, calendar: calendar) {
@@ -499,11 +533,11 @@ enum StockMarketTradingCalendar {
     private static func lunarComponents(
         for date: Date,
         timeZone: TimeZone
-    ) -> (month: Int, day: Int) {
+    ) -> (month: Int, day: Int, isLeapMonth: Bool) {
         var calendar = Calendar(identifier: .chinese)
         calendar.timeZone = timeZone
         let components = calendar.dateComponents([.month, .day], from: date)
-        return (components.month ?? 0, components.day ?? 0)
+        return (components.month ?? 0, components.day ?? 0, components.isLeapMonth ?? false)
     }
 
     private static func qingmingDay(in year: Int) -> Int {
@@ -515,6 +549,7 @@ enum StockMarketTradingCalendar {
         _ date: Date,
         month: Int,
         day: Int,
+        saturdayObservedOnFriday: Bool = true,
         calendar: Calendar
     ) -> Bool {
         let year = calendar.component(.year, from: date)
@@ -528,7 +563,9 @@ enum StockMarketTradingCalendar {
             let weekday = calendar.component(.weekday, from: holiday)
             let offset: Int
             switch weekday {
-            case 7: offset = -1
+            case 7:
+                guard saturdayObservedOnFriday else { continue }
+                offset = -1
             case 1: offset = 1
             default: offset = 0
             }
@@ -616,6 +653,62 @@ enum StockMarketTradingCalendar {
 
     private static func sameDay(_ lhs: Date, _ rhs: Date, calendar: Calendar) -> Bool {
         calendar.isDate(lhs, inSameDayAs: rhs)
+    }
+}
+
+/// 股票模块的统一时间口径：用户在本地填写的日期与时刻一律按北京时间解释。
+///
+/// - `tradedAt`、`receivedAt` 以北京时间中午承载一个北京日期；
+/// - `executedAt` 是「北京日期 + 北京时刻」组装出的绝对时刻；
+/// - 需要市场当地时间的地方（交易日归属、K 线分组、导出）只能经由这里从北京时间换算到
+///   `StockChartSeriesProcessor.marketTimeZone`，不得再读设备时区。
+enum StockMarketClock {
+    static let beijingTimeZone = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3_600)!
+
+    static let beijingCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = beijingTimeZone
+        return calendar
+    }()
+
+    /// 北京日期取自 `beijingDate`，时分取自 `beijingTime`，组装成绝对时刻。
+    static func instant(beijingDate: Date, beijingTime: Date) -> Date? {
+        let day = beijingCalendar.dateComponents([.year, .month, .day], from: beijingDate)
+        let time = beijingCalendar.dateComponents([.hour, .minute], from: beijingTime)
+        return beijingCalendar.date(from: DateComponents(
+            year: day.year,
+            month: day.month,
+            day: day.day,
+            hour: time.hour,
+            minute: time.minute,
+            second: 0
+        ))
+    }
+
+    /// 把一个北京时间时刻换算成市场当地的年、月、日、时、分。
+    static func marketLocalComponents(of instant: Date, market: StockMarket) -> DateComponents {
+        StockChartSeriesProcessor.marketCalendar(market)
+            .dateComponents([.year, .month, .day, .hour, .minute], from: instant)
+    }
+
+    /// 北京日期换算成同一日期的市场交易日零点（市场时区）。
+    static func marketDayStart(forBeijingDate date: Date, market: StockMarket) -> Date {
+        let marketCalendar = StockChartSeriesProcessor.marketCalendar(market)
+        let day = beijingCalendar.dateComponents([.year, .month, .day], from: date)
+        return marketCalendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
+            ?? marketCalendar.startOfDay(for: date)
+    }
+
+    /// 交易所属市场交易日的零点（市场时区）。
+    ///
+    /// 有成交时间时按成交时刻在市场时区的日期归属；只有日期时，所填北京日期按同一日期的
+    /// 市场交易日解释。美股在北京时间凌晨的成交属于前一个美东交易日，只有填写成交时间才能
+    /// 区分，所以界面会提示美股填写成交时间。
+    static func marketBusinessDayStart(of transaction: StockTransaction, market: StockMarket) -> Date {
+        if let executedAt = transaction.executedAt {
+            return StockChartSeriesProcessor.marketCalendar(market).startOfDay(for: executedAt)
+        }
+        return marketDayStart(forBeijingDate: transaction.tradedAt, market: market)
     }
 }
 

@@ -35,8 +35,8 @@ final class BillsStore: ObservableObject {
     }
 
     func upsert(_ record: BillRecord) {
+        // 0 元记录（如优惠券全额抵扣）可以导入，也允许编辑保存（AUDIT-075）。
         var stored = normalized(record)
-        guard stored.amount > 0 else { return }
         knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
         stored.updatedAt = Date()
         let isUpdate: Bool
@@ -71,10 +71,7 @@ final class BillsStore: ObservableObject {
             var stored = normalized(incoming)
             knownTags = AppTagSupport.merged(knownTags, with: stored.tags)
             if let index = matchingIndex(for: stored) {
-                stored.id = records[index].id
-                stored.createdAt = records[index].createdAt
-                stored.updatedAt = Date()
-                records[index] = stored
+                records[index] = Self.merged(stored, into: records[index])
                 updatedCount += 1
             } else {
                 stored.createdAt = Date()
@@ -108,7 +105,30 @@ final class BillsStore: ObservableObject {
             .reduce(Decimal.zero) { $0 + $1.amount }
     }
 
+    /// Re-importing only refreshes platform fields. Category, tags and note are what the user
+    /// edits after importing, so the stored values win (tags are merged, an empty note is
+    /// filled in). The local origin is kept when the file is the app's own export (AUDIT-042).
+    static func merged(_ incoming: BillRecord, into existing: BillRecord) -> BillRecord {
+        var result = incoming
+        result.id = existing.id
+        result.createdAt = existing.createdAt
+        result.updatedAt = Date()
+        result.category = existing.category
+        result.tags = AppTagSupport.merged(existing.tags, with: incoming.tags)
+        if !existing.note.isEmpty { result.note = existing.note }
+        if incoming.origin.providerIdentifier == BillExchangeSource.myTools.providerIdentifier {
+            result.origin = existing.origin
+        }
+        return result
+    }
+
     private func matchingIndex(for incoming: BillRecord) -> Int? {
+        // The app's own export carries the local id as the transaction id, while the stored
+        // record keeps its original source, so match by id first (AUDIT-010).
+        if incoming.origin.providerIdentifier == BillExchangeSource.myTools.providerIdentifier,
+           let index = records.firstIndex(where: { $0.id == incoming.id }) {
+            return index
+        }
         if let externalID = incoming.origin.externalTransactionID {
             return records.firstIndex {
                 $0.origin.providerIdentifier == incoming.origin.providerIdentifier

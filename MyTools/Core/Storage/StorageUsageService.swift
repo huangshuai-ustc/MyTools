@@ -31,6 +31,8 @@ struct StorageUsageSnapshot: Sendable, Equatable {
 struct OrphanAttachmentInfo: Identifiable, Sendable, Equatable {
     let storedFileName: String
     let byteCount: Int64
+    /// Orphans carry no back-reference to a record; the file date helps the user recognize them.
+    var modifiedAt: Date?
 
     var id: String { storedFileName }
 }
@@ -51,6 +53,7 @@ final class StorageUsageService: @unchecked Sendable {
     private let fileManager: FileManager
     private let applicationSupportDirectory: URL
     private let cachesDirectory: URL
+    private let diagnosticsDirectory: URL
 
     init(
         fileManager: FileManager = .default,
@@ -64,6 +67,11 @@ final class StorageUsageService: @unchecked Sendable {
         self.cachesDirectory = cachesDirectory
             ?? fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
+        // The live location comes from DiagnosticPaths (AGENTS: one owner for
+        // diagnostic paths); an injected root mirrors its layout for tests.
+        self.diagnosticsDirectory = applicationSupportDirectory.map {
+            $0.appendingPathComponent("MyTools/Diagnostics", isDirectory: true)
+        } ?? DiagnosticPaths.directoryURL
     }
 
     private var appDirectory: URL {
@@ -76,14 +84,6 @@ final class StorageUsageService: @unchecked Sendable {
 
     private var attachmentsDirectory: URL {
         appDirectory.appendingPathComponent("Attachments", isDirectory: true)
-    }
-
-    private var diagnosticsDirectory: URL {
-        appDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
-    }
-
-    private var diagnosticsURL: URL {
-        diagnosticsDirectory.appendingPathComponent("MyTools-Diagnostics.log", isDirectory: false)
     }
 
     private var cloudSyncStateURL: URL {
@@ -115,7 +115,8 @@ final class StorageUsageService: @unchecked Sendable {
                 guard let byteCount = fileSize(at: fileURL) else { return nil }
                 return OrphanAttachmentInfo(
                     storedFileName: fileURL.lastPathComponent,
-                    byteCount: byteCount
+                    byteCount: byteCount,
+                    modifiedAt: try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
                 )
             }
             .sorted { $0.storedFileName < $1.storedFileName }
@@ -138,7 +139,8 @@ final class StorageUsageService: @unchecked Sendable {
             cloudSyncStateBytes: fileSize(at: cloudSyncStateURL) ?? 0,
             localCacheBytes: localCacheBytes,
             systemCloudKitCacheBytes: try directorySize(at: cloudKitCachesDirectory),
-            diagnosticsBytes: fileSize(at: diagnosticsURL) ?? 0,
+            // Event log, system-log copy and CallStacks all count (AUDIT-084).
+            diagnosticsBytes: try directorySize(at: diagnosticsDirectory),
             otherBytes: otherBytes
         )
         return StorageScanResult(

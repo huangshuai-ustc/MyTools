@@ -1,4 +1,5 @@
 #if MYTOOLS_FEATURE_BILLS
+import Compression
 import CoreFoundation
 import Foundation
 import Testing
@@ -382,6 +383,20 @@ struct BillsTests {
         #expect(components.second == 16)
     }
 
+    @Test func deflatedXLSXDecodesLikeStoredXLSX() throws {
+        let headers = ["交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)", "支付方式", "当前状态", "交易单号", "商户单号", "备注"]
+        let values = ["", "商户消费", "测试商户", "咖啡", "支出", "", "零钱", "支付成功", "wx-009", "m-009", "/"]
+        let stored = Self.makeStoredXLSX(headers: headers, values: values, excelDate: "46245.5", amount: "12.5")
+        let deflated = Self.makeStoredXLSX(headers: headers, values: values, excelDate: "46245.5", amount: "12.5", deflated: true)
+        #expect(deflated.count < stored.count)
+
+        let registry = BillImportAdapterRegistry()
+        let expected = try BillExchangeMapper.records(from: registry.decode(data: stored, fileName: "微信支付账单.xlsx"))
+        let actual = try BillExchangeMapper.records(from: registry.decode(data: deflated, fileName: "微信支付账单.xlsx"))
+        #expect(actual.map(\.amount) == [12.5])
+        #expect(actual.map(\.origin.externalTransactionID) == expected.map(\.origin.externalTransactionID))
+    }
+
     @Test func bankCSVStillWaitsForProviderSpecificSchema() throws {
         let registry = BillImportAdapterRegistry()
 
@@ -429,7 +444,7 @@ struct BillsTests {
             includedModules: [.bills]
         )
 
-        let disabledMerge = AppStoreBackupMerger.merge(
+        let disabledMerge = try AppStoreBackupMerger.merge(
             localVault: VaultData(billRecords: [local]),
             localSecrets: [],
             imported: payload,
@@ -437,13 +452,14 @@ struct BillsTests {
         )
         #expect(disabledMerge.vault.billRecords == [local])
 
-        let enabledMerge = AppStoreBackupMerger.merge(
+        let enabledMerge = try AppStoreBackupMerger.merge(
             localVault: VaultData(billRecords: [local]),
             localSecrets: [],
             imported: payload,
             enabledModules: [.bills]
         )
-        #expect(Set(enabledMerge.vault.billRecords.map(\.id)) == Set([local.id, imported.id]))
+        // AUDIT-006 裁决：所选模块整体替换，本地账单被导入内容取代。
+        #expect(enabledMerge.vault.billRecords.map(\.id) == [imported.id])
 
         let attachmentStore = AttachmentStore()
         let excludedSnapshot = try CloudSyncSnapshotBuilder.make(
@@ -479,6 +495,92 @@ struct BillsTests {
         #expect(vault.billRecords.isEmpty)
         #expect(ToolModule.bills.definition.participatesInBackup)
         #expect(ToolModule.bills.definition.participatesInCloudSync)
+    }
+
+    @Test func reimportingOwnExportIsIdempotentAndKeepsUserEdits() throws {
+        let store = BillsStore()
+        store.upsert(BillRecord(amount: 30, merchant: "咖啡店", category: .dining, tags: ["早餐"], note: "和同事"))
+        let original = try #require(store.records.first)
+
+        let exported = BillExchangeMapper.document(from: store.records)
+        let first = try store.importExchange(exported)
+        let second = try store.importExchange(exported)
+
+        #expect(first == BillImportOutcome(insertedCount: 0, updatedCount: 1))
+        #expect(second == BillImportOutcome(insertedCount: 0, updatedCount: 1))
+        #expect(store.records.count == 1)
+        let stored = try #require(store.records.first)
+        #expect(stored.id == original.id)
+        #expect(stored.origin.kind == .manual)
+        #expect(stored.category == .dining)
+        #expect(stored.note == "和同事")
+    }
+
+    @Test func platformReimportOnlyRefreshesPlatformFields() throws {
+        let source = BillExchangeSource(providerIdentifier: "wechat", providerName: "微信支付", schemaVersion: "v1")
+        var transaction = Self.exchangeTransaction(id: "wx-200", amount: 20, occurredAt: Date(timeIntervalSince1970: 1_700_000_000))
+        transaction.category = BillCategory.other.rawValue
+        let store = BillsStore()
+        try store.importExchange(BillExchangeDocument(source: source, transactions: [transaction]))
+        var edited = try #require(store.records.first)
+        edited.category = .dining
+        edited.tags = ["午餐"]
+        edited.note = "报销"
+        store.upsert(edited)
+
+        transaction.providerStatus = "已退款"
+        try store.importExchange(BillExchangeDocument(source: source, transactions: [transaction]))
+
+        let stored = try #require(store.records.first)
+        #expect(store.records.count == 1)
+        #expect(stored.category == .dining)
+        #expect(stored.tags == ["午餐"])
+        #expect(stored.note == "报销")
+        #expect(stored.providerStatus == "已退款")
+    }
+
+    @Test func alipayClosedExpenseWithRefundIsNotSubtractedTwice() throws {
+        let csv = """
+        交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注
+        2026-08-11 10:00:00,日用百货,测试商户,/,商品,支出,50.00,余额,交易关闭,2026081100001\t,m-001\t,
+        2026-08-12 10:00:00,退款,测试商户,/,退款-商品,不计收支,50.00,余额,退款成功,2026081100001_r1\t,m-001\t,
+        2026-08-13 10:00:00,日用百货,测试商户,/,未付款订单,支出,20.00,,交易关闭,2026081300002\t,m-002\t,
+        """
+        let document = try BillImportAdapterRegistry().decode(data: Data(csv.utf8), fileName: "支付宝.csv")
+        let records = try BillExchangeMapper.records(from: document)
+        let refunded = try #require(records.first { $0.origin.externalTransactionID == "2026081100001" })
+        let unpaid = try #require(records.first { $0.origin.externalTransactionID == "2026081300002" })
+        #expect(refunded.status == .refunded)
+        #expect(refunded.relatedTransactionID == "2026081100001_r1")
+        #expect(unpaid.status == .cancelled)
+
+        let store = BillsStore(records: records)
+        let expense = store.total(direction: .expense, in: refunded.occurredAt, calendar: Self.calendar)
+        let refund = store.total(direction: .refund, in: refunded.occurredAt, calendar: Self.calendar)
+        #expect(expense - refund == 0)
+    }
+
+    @Test func spreadsheetLimitsRejectOverflowingReferences() throws {
+        for cell in ["<c r=\"ZZZZZZZZZZZZZZZ1\"><v>1</v></c>", "<c r=\"XFE1\"><v>1</v></c>"] {
+            let sheet = "<worksheet><sheetData><row r=\"1\">\(cell)</row></sheetData></worksheet>"
+            let data = Self.makeStoredZIP(entries: [("xl/worksheets/sheet1.xml", Data(sheet.utf8))])
+            #expect(throws: BillSpreadsheetReaderError.self) { try BillXLSXReader.worksheetRows(from: data) }
+        }
+        let tall = "<worksheet><sheetData><row r=\"900000000\"><c r=\"A900000000\"><v>1</v></c></row></sheetData></worksheet>"
+        let tallData = Self.makeStoredZIP(entries: [("xl/worksheets/sheet1.xml", Data(tall.utf8))])
+        #expect(throws: BillSpreadsheetReaderError.self) { try BillXLSXReader.worksheetRows(from: tallData) }
+        let huge = Data(repeating: 0x7B, count: BillImportAdapterRegistry.maximumFileSize + 1)
+        #expect(throws: BillSpreadsheetReaderError.self) {
+            try BillImportAdapterRegistry().decode(data: huge, fileName: "bills.json")
+        }
+    }
+
+    @Test func zeroAmountRecordsCanBeSavedAndComparisonsHandleNegativeBase() {
+        let store = BillsStore()
+        store.upsert(BillRecord(amount: 0, merchant: "优惠券抵扣"))
+        #expect(store.records.count == 1)
+        #expect(BillAnalysisView.comparisonText(current: 100, previous: -50) == "增加 300%")
+        #expect(BillAnalysisView.comparisonText(current: -100, previous: -50) == "减少 100%")
     }
 
     @Test func billTimeDisplayDefaultsToMinutePrecision() {
@@ -575,7 +677,8 @@ struct BillsTests {
         headers: [String],
         values: [String],
         excelDate: String,
-        amount: String
+        amount: String,
+        deflated: Bool = false
     ) -> Data {
         var sharedStrings: [String] = []
         for value in ["共1笔记录"] + headers + values where !value.isEmpty && !sharedStrings.contains(value) {
@@ -606,29 +709,46 @@ struct BillsTests {
         return makeStoredZIP(entries: [
             ("xl/sharedStrings.xml", Data(sharedXML.utf8)),
             ("xl/worksheets/sheet1.xml", Data(worksheetXML.utf8))
-        ])
+        ], deflated: deflated)
     }
 
-    private static func makeStoredZIP(entries: [(String, Data)]) -> Data {
+    /// Raw DEFLATE（ZIP 方法 8），Apple 的 COMPRESSION_ZLIB 输出不带 zlib 头。
+    private static func deflate(_ data: Data) -> Data {
+        var output = Data(count: data.count + 1_024)
+        let size = output.withUnsafeMutableBytes { destination in
+            data.withUnsafeBytes { source in
+                compression_encode_buffer(
+                    destination.bindMemory(to: UInt8.self).baseAddress!, data.count + 1_024,
+                    source.bindMemory(to: UInt8.self).baseAddress!, data.count,
+                    nil, COMPRESSION_ZLIB
+                )
+            }
+        }
+        return output.prefix(size)
+    }
+
+    private static func makeStoredZIP(entries: [(String, Data)], deflated: Bool = false) -> Data {
         var archive = Data()
-        var directory: [(name: Data, size: UInt32, offset: UInt32)] = []
+        var directory: [(name: Data, compressed: UInt32, size: UInt32, offset: UInt32)] = []
+        let method = UInt16(deflated ? 8 : 0)
         for (name, contents) in entries {
             let nameData = Data(name.utf8)
+            let payload = deflated ? deflate(contents) : contents
             let offset = UInt32(archive.count)
             append(UInt32(0x04034B50), to: &archive)
             append(UInt16(20), to: &archive)
             append(UInt16(0), to: &archive)
-            append(UInt16(0), to: &archive)
+            append(method, to: &archive)
             append(UInt16(0), to: &archive)
             append(UInt16(0), to: &archive)
             append(UInt32(0), to: &archive)
-            append(UInt32(contents.count), to: &archive)
+            append(UInt32(payload.count), to: &archive)
             append(UInt32(contents.count), to: &archive)
             append(UInt16(nameData.count), to: &archive)
             append(UInt16(0), to: &archive)
             archive.append(nameData)
-            archive.append(contents)
-            directory.append((nameData, UInt32(contents.count), offset))
+            archive.append(payload)
+            directory.append((nameData, UInt32(payload.count), UInt32(contents.count), offset))
         }
         let directoryOffset = UInt32(archive.count)
         for entry in directory {
@@ -636,11 +756,11 @@ struct BillsTests {
             append(UInt16(20), to: &archive)
             append(UInt16(20), to: &archive)
             append(UInt16(0), to: &archive)
-            append(UInt16(0), to: &archive)
+            append(method, to: &archive)
             append(UInt16(0), to: &archive)
             append(UInt16(0), to: &archive)
             append(UInt32(0), to: &archive)
-            append(entry.size, to: &archive)
+            append(entry.compressed, to: &archive)
             append(entry.size, to: &archive)
             append(UInt16(entry.name.count), to: &archive)
             append(UInt16(0), to: &archive)

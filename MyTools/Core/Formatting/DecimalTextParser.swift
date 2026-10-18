@@ -8,8 +8,13 @@ enum DecimalTextParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: ",", with: "")
             .replacingOccurrences(of: "，", with: "")
-        guard !normalized.isEmpty else { return nil }
-        return Decimal(string: normalized, locale: locale)
+        // Decimal(string:) stops at the first invalid character ("100元" → 100),
+        // so the whole string must match a plain number before parsing.
+        guard !normalized.isEmpty,
+              normalized.wholeMatch(of: /[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?/) != nil
+        else { return nil }
+        guard let value = Decimal(string: normalized, locale: locale), !value.isNaN else { return nil }
+        return value
     }
 
     static func optionalDecimal(from text: String) -> Decimal? {
@@ -59,7 +64,8 @@ private struct DecimalExpressionParser {
     var index = 0
 
     mutating func parse() -> Decimal? {
-        guard let value = parseExpression(), index == characters.count else { return nil }
+        // Decimal overflow yields NaN, which propagates through later operations.
+        guard let value = parseExpression(), index == characters.count, !value.isNaN else { return nil }
         return value
     }
 

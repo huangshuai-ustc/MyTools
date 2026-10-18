@@ -1,11 +1,7 @@
 #if MYTOOLS_FEATURE_STOCKS
 import SwiftUI
 
-/// 组合总览：折叠态只给净清算价值与当日盈亏两个大字，展开后补齐四项汇总、
-/// 各市场概况和折算说明。
-///
-/// 折算逻辑沿用原「人民币总览」：无论筛选哪个市场，合计一律按中国银行现汇
-/// 买入价折成人民币，缺牌价时只提示待同步而不显示零值。
+/// 常驻展开的组合总览；标题旁和市值行进入持仓总价值走势。
 struct StockPortfolioOverviewRow: View {
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
@@ -15,9 +11,7 @@ struct StockPortfolioOverviewRow: View {
     let summaryStocks: [StockHolding]
     let summaryMarkets: [StockMarket]
     let allocations: StockAllocationSnapshot
-    /// Expanded by default: the market breakdown is the reason to open this row,
-    /// and collapsing it hides the only place the per-market numbers live.
-    @State private var isExpanded = false
+    let onShowValueHistory: () -> Void
     @State private var showingConversionInfo = false
 
     private var selectedStocks: [StockHolding] {
@@ -85,7 +79,7 @@ struct StockPortfolioOverviewRow: View {
                     .foregroundStyle(.orange)
             }
 
-            if isExpanded {
+            Group {
                 Divider()
                 if missingCurrencies.isEmpty { metricsGrid(summary: summary) }
                 if !summaryMarkets.isEmpty {
@@ -111,8 +105,7 @@ struct StockPortfolioOverviewRow: View {
         }
     }
 
-    /// 标题行不放进展开按钮里：折算说明是独立按钮，嵌套在另一个按钮里点击判定不可靠。
-    /// 展开/收起由 chevron 按钮和下面那行大字各自触发。
+    /// 折算说明保持独立，避免嵌套在导航链接中。
     private func headline(summary: StockConvertedPortfolioSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -124,26 +117,22 @@ struct StockPortfolioOverviewRow: View {
                     .foregroundStyle(.secondary)
                 if usesRenminbi { conversionInfoButton }
                 Spacer(minLength: 4)
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                Button(action: onShowValueHistory) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(isExpanded ? "收起明细" : "展开明细")
+                .accessibilityLabel("持仓总价值走势")
             }
 
-            Button {
-                isExpanded.toggle()
-            } label: {
+            Button(action: onShowValueHistory) {
                 valueRow(summary: summary)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(headlineAccessibilityLabel(summary: summary))
-            .accessibilityHint(isExpanded ? "收起明细" : "展开明细")
+            .accessibilityHint("查看持仓总价值走势")
         }
     }
 

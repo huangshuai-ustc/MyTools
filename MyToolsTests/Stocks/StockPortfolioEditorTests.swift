@@ -3,6 +3,39 @@ import Testing
 @testable import MyTools
 
 struct StockPortfolioEditorTests {
+    @Test func watchlistRegistersAllSelectedMarketsWithoutDependingOnHoldings() {
+        let hk = StockHolding(market: .hongKong, symbol: "03033")
+        let us = StockHolding(market: .unitedStates, symbol: "AAPL")
+        var archived = StockHolding(market: .unitedStates, symbol: "MSFT")
+        archived.archivedAt = Date()
+        let stocks = [hk, us, archived]
+        #expect(StocksHomePage.watchlist.chartStockIDs(stocks: stocks, market: nil) == [hk.id, us.id])
+        #expect(StocksHomePage.watchlist.chartStockIDs(stocks: stocks, market: .unitedStates) == [us.id])
+        #expect(StocksHomePage.positions.chartStockIDs(stocks: stocks, market: nil).isEmpty)
+    }
+
+    @Test func closedPositionRetainsHistoricalOverviewWithoutQuote() {
+        var buy = StockTransaction()
+        buy.tradedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        buy.quantity = 10
+        buy.unitPrice = 100
+        var sell = buy
+        sell.id = UUID()
+        sell.type = .sell
+        sell.tradedAt = buy.tradedAt.addingTimeInterval(86_400)
+        sell.unitPrice = 120
+        var stock = StockHolding(market: .unitedStates, symbol: "TEST")
+        stock.transactions = [buy, sell]
+        stock.latestPrice = nil
+        let metrics = stock.metrics()
+        #expect(stock.hasHistoricalActivity)
+        #expect(metrics.performance.shares == 0)
+        #expect(metrics.performance.totalBuyCost == 1000)
+        #expect(metrics.performance.realizedProfitLoss == 200)
+        #expect(metrics.totalProfitLoss == 200)
+        #expect(metrics.marketValue == 0)
+    }
+
     @Test func morningPurchaseDoesNotWaitForNoonDateCarrier() throws {
         let calendar = Calendar.autoupdatingCurrent
         let start = calendar.startOfDay(for: Date())
@@ -270,9 +303,8 @@ struct StockPortfolioEditorTests {
         #expect(result.balances[.usd] == 14)
     }
 
-    @Test func newTransactionDateDefaultsToTheMarketsBusinessDate() throws {
-        var shanghaiCalendar = Calendar(identifier: .gregorian)
-        shanghaiCalendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+    @Test func newTransactionDateDefaultsToTheBeijingDate() throws {
+        let shanghaiCalendar = StockMarketClock.beijingCalendar
         let instant = try #require(shanghaiCalendar.date(from: DateComponents(
             year: 2026,
             month: 9,
@@ -280,28 +312,10 @@ struct StockPortfolioEditorTests {
             hour: 1
         )))
 
-        let usDate = StockTransaction.defaultTradingDate(
-            at: instant,
-            market: .unitedStates,
-            displayCalendar: shanghaiCalendar
-        )
-        let aShareDate = StockTransaction.defaultTradingDate(
-            at: instant,
-            market: .aShare,
-            displayCalendar: shanghaiCalendar
-        )
-        let hongKongDate = StockTransaction.defaultTradingDate(
-            at: instant,
-            market: .hongKong,
-            displayCalendar: shanghaiCalendar
-        )
-
-        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: usDate)
-            == DateComponents(year: 2026, month: 9, day: 28))
-        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: aShareDate)
-            == DateComponents(year: 2026, month: 9, day: 29))
-        #expect(shanghaiCalendar.dateComponents([.year, .month, .day], from: hongKongDate)
-            == DateComponents(year: 2026, month: 9, day: 29))
+        // 本地填写的日期一律按北京时间；美股所属交易日由 StockMarketClock 换算。
+        let date = StockTransaction.defaultTradingDate(at: instant)
+        #expect(shanghaiCalendar.dateComponents([.year, .month, .day, .hour], from: date)
+            == DateComponents(year: 2026, month: 9, day: 29, hour: 12))
     }
 
     @Test func fiveDayPortfolioAxisUsesFiveEqualIntervals() throws {
@@ -349,6 +363,20 @@ struct StockPortfolioEditorTests {
 
         #expect(labels.map(\.text) == ["5725", "1.2万"])
         #expect(labels.map(\.x) == [3, 7])
+    }
+
+    // AUDIT-058：间距按屏幕点计算；末尾（当前成本）必定保留且不与前一个重叠。
+    @Test func costLabelsAreThinnedInScreenSpaceAndKeepTheLastLabel() {
+        let labels = [0.0, 10, 20, 21].enumerated().map { index, x in
+            PortfolioCostLabel(id: "\(index)", cost: x, text: "12,345.67", x: x)
+        }
+        // 9 字符 × 6.5pt + 8pt ≈ 66.5pt：每单位 10pt 时 0/10/20 互不重叠，末尾 21 挤掉 20。
+        let wide = PortfolioCostLabelLayout.nonOverlapping(labels, pointsPerUnit: 10)
+        #expect(wide.map(\.id) == ["0", "1", "3"])
+        // 屏幕变窄后同样的数据只剩末尾标签。
+        let narrow = PortfolioCostLabelLayout.nonOverlapping(labels, pointsPerUnit: 2)
+        #expect(narrow.map(\.id) == ["3"])
+        #expect(PortfolioCostLabelLayout.nonOverlapping([], pointsPerUnit: 10).isEmpty)
     }
 
     @Test func otherPortfolioAxesKeepExistingFourIntervals() {
@@ -453,12 +481,15 @@ struct StockPortfolioEditorTests {
             extendedHours: [:],
             at: Self.date(day: 4)
         )
+#if MYTOOLS_FEATURE_BILLS
+        // The worksheet reader lives in the Bills module.
         let rawRows = try BillXLSXReader.worksheetRows(from: data)
 
         #expect(rawRows.first?.contains("记录类型") == true)
         #expect(rawRows.contains { $0.contains("交易") && $0.contains("12.34") && $0.contains("0.56") })
         #expect(rawRows.contains { $0.contains("分红") && $0.contains("0.16") && $0.contains("季度分红") })
         #expect(rawRows.first?.contains("持仓盈亏") == false)
+#endif
         #expect(data.range(of: Data("持仓汇总".utf8)) != nil)
         #expect(data.range(of: Data("累计总收益".utf8)) != nil)
     }
@@ -546,7 +577,9 @@ struct StockPortfolioEditorTests {
         let now = Self.date(day: 3)
         var stock = StockHolding(symbol: "TEST")
         var buy = Self.transaction(type: .buy, day: 3, quantity: 2)
-        buy.tradedAt = now.addingTimeInterval(60)
+        // Date-only trades count for the whole day; only an explicit execution
+        // time can make a same-day trade take effect later.
+        buy.executedAt = now.addingTimeInterval(60)
         stock.transactions = [buy]
         var cache = StockPerformanceCache()
         #expect(cache.performance(for: stock, at: now).shares == 0)
@@ -998,6 +1031,40 @@ struct StockPortfolioEditorTests {
         #expect(try #require(combined.costBasisPoints.first).cost == 170)
     }
 
+    // AUDIT-060：实时价只在交易日补成今天的 K 线，并把高低扩到包含实时价。
+    @Test func liveDailyBarSkipsNonTradingDayAndKeepsCloseWithinRange() throws {
+        var stock = StockHolding(market: .aShare, symbol: "600000")
+        stock.transactions = [Self.transaction(type: .buy, day: 3, quantity: 2)]
+        let bars = (3...7).map { day in
+            StockChartPoint(date: Self.date(day: day), open: 10, high: 11, low: 9, close: 10, volume: 1)
+        }
+        let calendar = StockChartSeriesProcessor.marketCalendar(.aShare)
+
+        let weekend = PortfolioValueHistoryBuilder.buildSeries(
+            for: .aShare,
+            stocks: [stock],
+            dailyPointsBySymbol: ["600000": bars],
+            todayPriceOverrides: ["600000": 12],
+            now: Self.date(day: 8)
+        )
+        #expect(weekend.points.last?.date == calendar.startOfDay(for: Self.date(day: 7)))
+        #expect(weekend.points.last?.value == 20)
+
+        let tradingDay = PortfolioValueHistoryBuilder.buildSeries(
+            for: .aShare,
+            stocks: [stock],
+            dailyPointsBySymbol: ["600000": bars],
+            todayPriceOverrides: ["600000": 12],
+            now: Self.date(day: 7)
+        )
+        let today = try #require(tradingDay.points.last)
+        #expect(today.date == calendar.startOfDay(for: Self.date(day: 7)))
+        #expect(today.value == 24)
+        #expect(today.candleOpen == 20)
+        #expect(today.candleHigh == 24)
+        #expect(today.candleLow == 18)
+    }
+
     private static func transaction(
         type: StockTransactionType,
         day: Int,
@@ -1013,7 +1080,7 @@ struct StockPortfolioEditorTests {
 
     private static func date(day: Int) -> Date {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
+        calendar.timeZone = StockMarketClock.beijingTimeZone
         return calendar.date(from: DateComponents(
             calendar: calendar,
             timeZone: calendar.timeZone,

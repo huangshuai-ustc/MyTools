@@ -107,51 +107,51 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
     func scanRedundantData() -> [RedundantDataFinding] {
         var findings: [RedundantDataFinding] = []
 
-        let birthDateRecords = documents.filter { $0.legacyDateOfBirth != nil }.count
         appendFinding(
             to: &findings,
             ruleID: "legacy-date-of-birth",
             title: "旧版基本信息中的出生日期",
             detail: "出生日期不再属于证照基本信息，清理时会保留为同名自定义字段。",
-            recordCount: birthDateRecords,
-            fieldCount: birthDateRecords
+            items: documents.filter { $0.legacyDateOfBirth != nil }
+                .map { redundantItem($0, fields: ["出生日期"]) }
         )
 
-        let customTypeRecords = documents.filter {
-            $0.type != .other && !$0.customTypeName.isEmpty
-        }.count
         appendFinding(
             to: &findings,
             ruleID: "non-custom-type-name",
             title: "非自定义证照的类型名称",
             detail: "只有自定义证照会使用类型名称。",
-            recordCount: customTypeRecords,
-            fieldCount: customTypeRecords
+            items: documents.filter { $0.type != .other && !$0.customTypeName.isEmpty }
+                .map { redundantItem($0, fields: ["类型名称"]) }
         )
 
-        let staleValidityRecords = documents.filter { staleValidityFieldCount(in: $0) > 0 }
         appendFinding(
             to: &findings,
             ruleID: "inapplicable-validity-dates",
             title: "与期限类型不匹配的日期",
             detail: "清除当前期限类型不会读取的有效期开始日或结束日。",
-            recordCount: staleValidityRecords.count,
-            fieldCount: staleValidityRecords.reduce(0) { $0 + staleValidityFieldCount(in: $1) }
+            items: documents.filter { !staleValidityFieldNames(in: $0).isEmpty }
+                .map { redundantItem($0, fields: staleValidityFieldNames(in: $0)) }
         )
 
-        let reminderRecords = documents.filter {
-            $0.expiryReminder.isEnabled && $0.expirationDate() == nil
-        }.count
         appendFinding(
             to: &findings,
             ruleID: "unusable-expiry-reminder",
             title: "无到期日的提醒开关",
             detail: "没有可计算到期日的证照无法触发到期提醒。",
-            recordCount: reminderRecords,
-            fieldCount: reminderRecords
+            items: documents.filter { $0.expiryReminder.isEnabled && $0.expirationDate() == nil }
+                .map { redundantItem($0, fields: ["到期提醒"]) }
         )
 
         return findings
+    }
+
+    private func redundantItem(_ document: CredentialDocument, fields: [String]) -> RedundantDataItem {
+        RedundantDataItem(
+            id: document.id.uuidString,
+            recordTitle: document.listDisplayTitle,
+            fieldNames: fields
+        )
     }
 
     func cleanupRedundantData() {
@@ -172,11 +172,12 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         var stored = normalized(document)
         stored.updatedAt = Date()
         let isUpdate: Bool
+        var removedAttachments: [FileAttachment] = []
         if let index = documents.firstIndex(where: { $0.id == stored.id }) {
             let retainedIDs = Set(stored.attachments.map(\.id))
-            for attachment in documents[index].attachments where !retainedIDs.contains(attachment.id) {
-                attachmentStore.delete(attachment.file)
-            }
+            removedAttachments = documents[index].attachments
+                .filter { !retainedIDs.contains($0.id) }
+                .map(\.file)
             stored.createdAt = documents[index].createdAt
             documents[index] = stored
             isUpdate = true
@@ -187,7 +188,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         }
         DiagnosticLogger.shared.log(.data, "证照\(isUpdate ? "更新" : "新增") id=\(stored.id)")
         reconcileExpiryNotifications()
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     func delete(ids: Set<UUID>) {
@@ -198,13 +199,13 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
                 documents.lazy.filter { $0.parentDocumentID == id }.map(\.id)
             )
         }
-        for document in documents where deletionIDs.contains(document.id) {
-            document.attachments.forEach { attachmentStore.delete($0.file) }
-        }
+        let removedAttachments = documents
+            .filter { deletionIDs.contains($0.id) }
+            .flatMap { $0.attachments.map(\.file) }
         documents.removeAll { deletionIDs.contains($0.id) }
         DiagnosticLogger.shared.log(.data, "证照删除 requested=\(ids.count) total=\(deletionIDs.count)")
         reconcileExpiryNotifications()
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     func versionGroup(for document: CredentialDocument) -> [CredentialDocument] {
@@ -301,16 +302,16 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         document.validity.normalize()
     }
 
-    private func staleValidityFieldCount(in document: CredentialDocument) -> Int {
+    private func staleValidityFieldNames(in document: CredentialDocument) -> [String] {
+        let start = document.validity.startDate == nil ? nil : "有效期开始日"
+        let end = document.validity.endDate == nil ? nil : "有效期结束日"
         switch document.validity.kind {
         case .dateRange:
-            return 0
+            return []
         case .permanent:
-            return (document.type == .identityCard && document.validity.startDate != nil ? 1 : 0)
-                + (document.validity.endDate != nil ? 1 : 0)
+            return [document.type == .identityCard ? start : nil, end].compactMap { $0 }
         case .unspecified, .fiveYears, .sixYears, .tenYears, .twentyYears:
-            return (document.validity.startDate != nil ? 1 : 0)
-                + (document.validity.endDate != nil ? 1 : 0)
+            return [start, end].compactMap { $0 }
         }
     }
 
@@ -360,15 +361,7 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
         for field: CredentialField,
         in template: CredentialFieldTemplate
     ) -> CredentialField? {
-        if let exactMatch = template.fields.first(where: {
-            $0.label == field.label && $0.inputType == field.inputType
-        }) {
-            return exactMatch
-        }
-        let kindMatches = template.fields.filter {
-            $0.kind == field.kind && $0.inputType == field.inputType
-        }
-        return kindMatches.count == 1 ? kindMatches.first : nil
+        FieldTemplateMatching.matchingField(for: field, in: template.fields)
     }
 
     private func reconcileExpiryNotifications(forceEnabled: Bool? = nil, now: Date = Date()) {
@@ -394,18 +387,49 @@ final class DocumentsStore: ObservableObject, ModuleLifecycleParticipant, Module
             value: -document.expiryReminder.daysBefore,
             to: expiryDay
         ),
-        let fireDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: reminderDay),
-        fireDate > now else { return nil }
+        let scheduledFireDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: reminderDay),
+        let expiryFireDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: expiryDay),
+        let fireDate = Self.reminderFireDate(
+            scheduled: scheduledFireDate,
+            expiry: expiryFireDate,
+            now: now,
+            calendar: calendar
+        ) else { return nil }
         return ScheduledLocalNotification(
             identifier: Self.notificationIdentifierPrefix + document.id.uuidString.lowercased(),
             title: "证照到期提醒",
-            body: "\(document.displayTitle)将于\(AppDateFormatter.string(from: endDate))到期。",
+            // 锁屏可见，正文不含持有人姓名（AUDIT-069）。
+            body: "\(document.typeTitle)将于\(AppDateFormatter.string(from: endDate))到期。",
             fireDate: fireDate
         )
     }
 
-    private func didMutate() {
+    /// 已进入提前提醒窗口时，改在下一个 9:00 提醒，最晚到期当天（AUDIT-070）。
+    static func reminderFireDate(
+        scheduled: Date,
+        expiry: Date,
+        now: Date,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> Date? {
+        if scheduled > now { return scheduled }
+        guard expiry > now,
+              let next = calendar.nextDate(
+                  after: now,
+                  matching: DateComponents(hour: 9, minute: 0, second: 0),
+                  matchingPolicy: .nextTime
+              ) else { return nil }
+        return min(next, expiry)
+    }
+
+    private func didMutate(removing attachments: [FileAttachment] = []) {
         mutationNotifier?.moduleStoreDidMutate()
+        // Files go only after the Vault no longer referencing them is on disk
+        // (AUDIT-017). A store without a Vault behind it deletes immediately.
+        if let mutationNotifier {
+            mutationNotifier.scheduleAttachmentRemovalAfterPersistence(attachments)
+        } else {
+            attachments.forEach(attachmentStore.delete)
+        }
     }
 
 }

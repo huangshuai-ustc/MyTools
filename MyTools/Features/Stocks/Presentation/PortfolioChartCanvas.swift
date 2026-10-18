@@ -348,24 +348,30 @@ enum PortfolioCostLabelLayout {
     }
 
     /// Keeps the cost line fully detailed while thinning labels that cannot fit
-    /// beside their neighbors. Labels are placed in x order and the minimum
-    /// gap includes a small estimate of the rendered text width.
+    /// beside their neighbors. Labels arrive in x order (bar index); the gap is
+    /// measured on screen through `pointsPerUnit`, so the result follows the
+    /// rendered width rather than the number of bars (AUDIT-058). The last label
+    /// is the current cost and always wins against earlier neighbors.
     static func nonOverlapping(
         _ labels: [PortfolioCostLabel],
-        minimumGap: Double = 110
+        pointsPerUnit: Double,
+        characterWidth: Double = 6.5,
+        padding: Double = 8
     ) -> [PortfolioCostLabel] {
-        guard labels.count > 2 else { return labels }
-        var result: [PortfolioCostLabel] = [labels[0]]
-        for label in labels.dropFirst().dropLast() {
-            guard let previous = result.last else { continue }
-            let required = max(minimumGap, Double(max(previous.text.count, label.text.count)) * 7)
-            if label.x - previous.x >= required {
-                result.append(label)
-            }
+        guard let last = labels.last else { return [] }
+        guard pointsPerUnit > 0 else { return [last] }
+        func fits(_ lhs: PortfolioCostLabel, _ rhs: PortfolioCostLabel) -> Bool {
+            let halfWidths = Double(lhs.text.count + rhs.text.count) * characterWidth / 2
+            return abs(rhs.x - lhs.x) * pointsPerUnit >= halfWidths + padding
         }
-        if let last = labels.last, let previous = result.last, last.id != previous.id {
-            result.append(last)
+        var result: [PortfolioCostLabel] = []
+        for label in labels.dropLast() where result.last.map({ fits($0, label) }) ?? true {
+            result.append(label)
         }
+        while let previous = result.last, !fits(previous, last) {
+            result.removeLast()
+        }
+        result.append(last)
         return result
     }
 }
@@ -543,12 +549,11 @@ private struct PortfolioChartData {
     }
 
     /// Builds the cost-basis reference line for one series over the visible
-    /// range: for `.fiveDays` each transaction-driven change in holding cost
+    /// range: for minute ranges each transaction-driven change in holding cost
     /// becomes its own flat horizontal run at the actual event timestamp so it
-    /// can carry its own value label; for `.dayK` the cost is drawn as a
-    /// continuous polyline since the holding cost can change daily; for
-    /// week-K and coarser, one point per aggregated bucket mirrors
-    /// `aggregatedPoints`' own bucketing so the two lines share x positions.
+    /// can carry its own value label; for every K range (day-K and coarser) the
+    /// cost is one point per bar, drawn as a continuous polyline that shares the
+    /// value line's x positions.
     private static func costBasisSegment(
         for item: PortfolioValueSeries,
         range: StockChartRange,
@@ -627,8 +632,11 @@ private struct PortfolioChartData {
         guard !points.isEmpty, range != .intraday, range != .fiveDays, range != .dayK else {
             return points.sorted { $0.date < $1.date }
         }
+        // 周 K 统一按周一起始，与单股 K 线聚合一致（AUDIT-059）。
         var calendar = Calendar(identifier: .gregorian)
-        if let market { calendar.timeZone = StockChartSeriesProcessor.marketTimeZone(market) }
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        if let market { calendar = StockChartSeriesProcessor.marketCalendar(market) }
         var grouped: [Date: [PortfolioValuePoint]] = [:]
         for point in points.sorted(by: { $0.date < $1.date }) {
             let components = calendar.dateComponents([.year, .month], from: point.date)
@@ -763,6 +771,7 @@ struct PortfolioChartCanvas: View {
     @State private var lastSelectionUpdateTime: TimeInterval = 0
     @State private var data: PortfolioChartData
     @State private var preparationTask: Task<Void, Never>?
+    @State private var chartWidth: Double = 0
 
     init(
         series: [PortfolioValueSeries],
@@ -806,7 +815,9 @@ struct PortfolioChartCanvas: View {
                             series: .value("成本系列", segment.id)
                         )
                         .foregroundStyle(.blue.opacity(0.35))
-                        .interpolationMethod(range == .dayK ? .linear : .stepEnd)
+                        // #25: only minute ranges are stepped (transaction events with labels);
+                        // every K range shares the day-K polyline, one point per bar.
+                        .interpolationMethod(range.isMinuteRange ? .stepEnd : .linear)
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     }
                 }
@@ -859,6 +870,7 @@ struct PortfolioChartCanvas: View {
             .chartXScale(domain: chartXDomain)
             .chartYScale(domain: resolvedYDomain)
             .chartLegend(.hidden)
+            .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { chartWidth = $0 }
             .chartXAxis {
                 AxisMarks(values: resolvedXAxisLayout.gridValues) { _ in
                     AxisGridLine()
@@ -1215,8 +1227,12 @@ struct PortfolioChartCanvas: View {
                 endX: last.x
             )
         }
+        let domain = chartXDomain
+        // The y-axis labels take part of the chart width; 40pt is a conservative estimate.
+        let plotWidth = max(0, chartWidth - 40)
         return PortfolioCostLabelLayout.nonOverlapping(
-            PortfolioCostLabelLayout.merged(inputs, formatter: fullCostLabel)
+            PortfolioCostLabelLayout.merged(inputs, formatter: fullCostLabel),
+            pointsPerUnit: plotWidth / (domain.upperBound - domain.lowerBound)
         )
     }
 

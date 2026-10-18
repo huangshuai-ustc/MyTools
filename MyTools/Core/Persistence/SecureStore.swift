@@ -149,6 +149,15 @@ final class SecureStore {
 
                 let decodeStartedAt = ProcessInfo.processInfo.systemUptime
                 let document = try decodeDocument(from: data)
+#if MYTOOLS_FEATURE_FINANCE
+                if !document.vault.unavailableModules.contains("personalFinance"),
+                   try requiresPaymentSchemaMigration(data) {
+                    // Do not expose migrated data to CloudKit until staging, validation,
+                    // recovery snapshot and atomic replacement have all succeeded.
+                    let migrated = try JSONEncoder().encode(LocalVaultDocument(vault: document.vault, secrets: document.secrets))
+                    try writeVaultFile(migrated)
+                }
+#endif
                 if document.schemaVersion < 2 || !document.vault.unavailableModules.isEmpty {
                     try preserveRecoverySnapshot(data, vault: document.vault)
                 }
@@ -186,7 +195,9 @@ final class SecureStore {
         )
     }
 
-    func saveVault(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
+    /// `preservingOriginal` keeps an encrypted copy of the file being replaced
+    /// (used by backup import, which replaces whole modules).
+    func saveVault(_ vault: VaultData, secrets: [SecretVaultValue] = [], preservingOriginal: Bool = false) throws {
 #if MYTOOLS_FEATURE_FINANCE
         if !vault.unavailableModules.contains("personalFinance") {
             for institution in vault.financialInstitutions { try institution.validate() }
@@ -194,6 +205,9 @@ final class SecureStore {
 #endif
         let document = LocalVaultDocument(vault: vault, secrets: secrets)
         let payload = try JSONEncoder().encode(document)
+        if preservingOriginal, fileManager.fileExists(atPath: localVaultURL.path) {
+            try preserveRecoverySnapshot(Data(contentsOf: localVaultURL), vault: VaultData(), prefix: "pre-restore", requireSnapshot: true)
+        }
         try writeVaultFile(payload)
     }
 
@@ -252,7 +266,7 @@ final class SecureStore {
             }
         }
 
-        // 旧版明文格式：正常解码，并尽可能立即原地升级为加密信封。
+        // 旧版明文格式：正常解码，并尽可能立即升级为加密信封（先留加密副本，再安全替换）。
         let document = try decoder.decode(LocalVaultDocument.self, from: data)
         if document.vault.unavailableModules.isEmpty, let migratedSource = migratePlaintextToEncryption(data) {
             return DecodedVaultDocument(
@@ -270,19 +284,16 @@ final class SecureStore {
         )
     }
 
-    /// 把已读入的明文档案原地升级为加密信封。失败时返回 nil，继续以明文运行，
-    /// 下一次保存会再次尝试加密，不会因为升级失败而丢失数据。
+    /// 把已读入的明文档案升级为加密信封。先生成加密的恢复快照，再走常规的
+    /// “临时文件 → 解密回读比对 → 替换”写入（AUDIT-031）。失败时返回 nil，
+    /// 继续以明文运行，下一次保存会再次尝试加密，不会因为升级失败而丢失数据。
     private func migratePlaintextToEncryption(_ plaintext: Data) -> String? {
         do {
-            let key: SymmetricKey
-            if let existing = try keyProvider.loadKey() {
-                key = existing
-            } else {
-                key = try keyProvider.createAndStoreKey()
+            if try keyProvider.loadKey() == nil {
+                _ = try keyProvider.createAndStoreKey()
             }
-            let encrypted = try VaultCrypto.encrypt(plaintext, using: key)
-            try encrypted.write(to: localVaultURL, options: .atomic)
-            applyFileProtectionIfNeeded()
+            try preserveRecoverySnapshot(plaintext, vault: VaultData(), prefix: "pre-encryption", requireSnapshot: true)
+            try writeVaultFile(plaintext)
             return "Application Support（已升级加密）"
         } catch {
             DiagnosticLogger.shared.log(
@@ -298,7 +309,12 @@ final class SecureStore {
 
     /// Keep the exact pre-upgrade/quarantined document, encrypted at rest. A content
     /// hash avoids another whole-vault snapshot on each launch of the same file.
-    private func preserveRecoverySnapshot(_ original: Data, vault: VaultData) throws {
+    private func preserveRecoverySnapshot(
+        _ original: Data,
+        vault: VaultData,
+        prefix: String = "recovery",
+        requireSnapshot: Bool = false
+    ) throws {
         var identity = original
         if !vault.unavailableModules.isEmpty {
             var quarantined = vault.preservedModulePayloads
@@ -308,14 +324,17 @@ final class SecureStore {
             identity = try encoder.encode(quarantined)
         }
         let digest = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
-        let url = localVaultDirectory.appendingPathComponent("recovery-\(digest).snapshot")
+        let url = localVaultDirectory.appendingPathComponent("\(prefix)-\(digest).snapshot")
         guard !fileManager.fileExists(atPath: url.path) else { return }
         let bytes: Data
         if VaultCrypto.isEncryptedEnvelope(original) { bytes = original }
         else {
             // A plaintext document remains readable when Keychain is unavailable;
             // saveVault still refuses to write without an encryption key.
-            guard let key = try? keyProvider.loadKey() else { return }
+            guard let key = try? keyProvider.loadKey() else {
+                if requireSnapshot { throw VaultCryptoError.keyDerivationFailed }
+                return
+            }
             bytes = try VaultCrypto.encrypt(original, using: key)
         }
         try bytes.write(to: url, options: .atomic)
@@ -323,6 +342,20 @@ final class SecureStore {
         try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path)
 #endif
     }
+
+#if MYTOOLS_FEATURE_FINANCE
+    private func requiresPaymentSchemaMigration(_ original: Data) throws -> Bool {
+        let payload: Data
+        if VaultCrypto.isEncryptedEnvelope(original) {
+            guard let key = try keyProvider.loadKey() else { throw VaultReadError.keyUnavailable }
+            payload = try VaultCrypto.decrypt(original, using: key)
+        } else { payload = original }
+        let json = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
+        let vault = json?["vault"] as? [String: Any]
+        let institutions = vault?["financialInstitutions"] as? [[String: Any]] ?? []
+        return institutions.contains { ($0["kind"] as? String) == "payment" && ($0["schemaVersion"] as? Int ?? 1) < FinancialInstitution.currentSchemaVersion }
+    }
+#endif
 
     private func writeVaultFile(_ payload: Data) throws {
         let key: SymmetricKey
@@ -339,9 +372,24 @@ final class SecureStore {
         let staging = localVaultDirectory.appendingPathComponent("vault-write-\(UUID().uuidString).tmp")
         defer { try? fileManager.removeItem(at: staging) }
         try dataToWrite.write(to: staging, options: .atomic)
-        guard try VaultCrypto.decrypt(Data(contentsOf: staging), using: key) == payload else {
-            throw VaultReadError.invalidPayload
+        let stagedPayload = try VaultCrypto.decrypt(Data(contentsOf: staging), using: key)
+        guard stagedPayload == payload else { throw VaultReadError.invalidPayload }
+#if MYTOOLS_FEATURE_FINANCE
+        // Inspect the original bytes, not the already-normalized in-memory schema.
+        // Snapshot only a real payment-schema upgrade, after staging has been verified.
+        if fileManager.fileExists(atPath: localVaultURL.path) {
+            let original = try Data(contentsOf: localVaultURL)
+            if try requiresPaymentSchemaMigration(original) {
+                let decoder = JSONDecoder()
+                decoder.userInfo[.isolateVaultModules] = true
+                let verified = try decoder.decode(LocalVaultDocument.self, from: stagedPayload)
+                if !verified.vault.unavailableModules.contains("personalFinance") {
+                    for institution in verified.vault.financialInstitutions { try institution.validate() }
+                    try preserveRecoverySnapshot(original, vault: VaultData(), prefix: "pre-finance-v4", requireSnapshot: true)
+                }
+            }
         }
+#endif
 #if os(iOS)
         try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: staging.path)
 #endif
@@ -493,13 +541,13 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
     }
 
     /// Used by restore operations that must report a write failure before replacing live data.
-    func saveImmediately(_ vault: VaultData, secrets: [SecretVaultValue] = []) throws {
+    func saveImmediately(_ vault: VaultData, secrets: [SecretVaultValue] = [], preservingOriginal: Bool) throws {
         let result: Result<Void, Error> = queue.sync {
             lock.lock()
             pendingWrite = nil
             lastErrorCode = nil
             lock.unlock()
-            let result = Result { try secureStore.saveVault(vault, secrets: secrets) }
+            let result = Result { try secureStore.saveVault(vault, secrets: secrets, preservingOriginal: preservingOriginal) }
             lock.lock()
             pendingWrite = nil
             if case .success = result {
@@ -551,10 +599,9 @@ final class VaultPersistenceCoordinator: @unchecked Sendable {
 
                     if !didLogTemporaryKeyFailure {
                         didLogTemporaryKeyFailure = true
-                        DiagnosticLogger.shared.log(
-                            .persistence,
-                            "本地加密密钥暂不可用，待解锁后重试加密写入",
-                            level: .warning
+                        DiagnosticLogger.shared.logOncePerSession(
+                            "vault-write-key-locked", .persistence,
+                            "本地加密密钥暂不可用，待解锁后重试加密写入"
                         )
                     }
                     let delay = temporaryRetryDelay

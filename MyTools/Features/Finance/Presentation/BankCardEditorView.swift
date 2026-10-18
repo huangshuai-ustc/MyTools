@@ -101,7 +101,7 @@ struct CardEditorView: View {
                         mode: account.region == .overseas ? .asciiUppercase : .text
                     )
                     FieldEditorRow(title: "完整卡号：", prompt: "未填写", text: $draft.card.cardNumber)
-                    FieldEditorRow(title: "CVV：", prompt: "未填写", text: $draft.card.cvv)
+                    FieldEditorRow(title: "CVV：", prompt: "未填写", text: $draft.card.cvv, isSecure: true)
                         .focused($focusedField, equals: .cvv)
                     YearMonthPicker(date: $draft.card.expiryDate)
                     DateFieldRow(title: "开卡时间：", date: $draft.card.openedAt)
@@ -375,7 +375,7 @@ private struct BankCardCredentialEditorView: View {
                                 .foregroundStyle(.primary).lineLimit(1)
                         }
                     }
-                    FieldEditorRow(title: "CVV：", prompt: "未填写", text: $credential.cvv)
+                    FieldEditorRow(title: "CVV：", prompt: "未填写", text: $credential.cvv, isSecure: true)
                     YearMonthPicker(date: $credential.expiryDate)
                     CardStatusDisclosurePicker(status: $credential.status)
                     FieldEditorRow(title: "持卡人：", prompt: "未填写", text: $credential.holderName)

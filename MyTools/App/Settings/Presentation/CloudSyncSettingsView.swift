@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CloudSyncSettingsView: View {
     @EnvironmentObject private var cloudSync: CloudSyncCoordinator
+    @State private var isConfirmingPausedDeletions = false
 
     var body: some View {
         List {
@@ -43,6 +44,25 @@ struct CloudSyncSettingsView: View {
                     Text(detail)
                         .appFont(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                if case .deletionPaused = cloudSync.status {
+                    Button(role: .destructive) {
+                        isConfirmingPausedDeletions = true
+                    } label: {
+                        Label("确认删除", systemImage: "trash")
+                    }
+                    .confirmationDialog(
+                        "确认删除 iCloud 中的这些记录？",
+                        isPresented: $isConfirmingPausedDeletions,
+                        titleVisibility: .visible
+                    ) {
+                        Button("删除", role: .destructive) {
+                            cloudSync.confirmPausedDeletions()
+                        }
+                    } message: {
+                        Text("删除会同步到同一账户的其他设备。如不确定，请先导出加密备份。")
+                    }
                 }
             }
         }

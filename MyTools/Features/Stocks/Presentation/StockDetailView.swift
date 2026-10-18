@@ -36,6 +36,13 @@ struct StockDetailView: View {
         Group {
             if let stock {
                 stockList(stock)
+                    .refreshable {
+                        await StockRefreshCoordinator.shared.refreshManually(
+                            for: stock.market,
+                            prioritizedStockID: stock.id,
+                            refreshFiveDayCharts: true
+                        )
+                    }
             } else {
                 ContentUnavailableView("股票已不存在", systemImage: "chart.line.downtrend.xyaxis")
             }
@@ -89,26 +96,6 @@ struct StockDetailView: View {
                     .accessibilityLabel("查看股票行情")
                     .help("查看股票行情")
                 }
-                Button {
-                    Task {
-                        await StockRefreshCoordinator.shared.refreshManually(
-                            for: stock?.market,
-                            prioritizedStockID: stock?.id
-                        )
-                    }
-                } label: {
-                    if store.isRefreshingQuotes || store.isRefreshingCharts {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(
-                    store.isRefreshingQuotes
-                        || store.isRefreshingCharts
-                        || stock == nil
-                )
-                .accessibilityLabel("刷新股票行情")
 
             }
         }
@@ -163,7 +150,7 @@ struct StockDetailView: View {
                 .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
-            if stock.currentShares > 0 {
+            if stock.hasHistoricalActivity {
                 Section("持仓总览") {
                     StockHoldingOverview(
                         stock: stock,
@@ -190,9 +177,7 @@ struct StockDetailView: View {
                 }
                 Button {
                     var transaction = StockTransaction()
-                    transaction.tradedAt = StockTransaction.defaultTradingDate(
-                        market: stock.market
-                    )
+                    transaction.tradedAt = StockTransaction.defaultTradingDate()
                     editorRoute = .transaction(transaction)
                 } label: {
                     Label("添加买入或卖出记录", systemImage: "plus.circle")
@@ -417,7 +402,7 @@ private struct StockHoldingOverview: View {
             )
             StockDetailMetricCell(
                 title: "已实现收益（含分红）",
-                value: StockValueFormatter.money(
+                value: StockValueFormatter.signedMoney(
                     performance.realizedProfitLoss,
                     currencyCode: currencyCode
                 ),
@@ -426,7 +411,7 @@ private struct StockHoldingOverview: View {
             StockDetailMetricCell(
                 title: "累计总收益",
                 value: metrics.totalProfitLoss.map {
-                    StockValueFormatter.money($0, currencyCode: currencyCode)
+                    StockValueFormatter.signedMoney($0, currencyCode: currencyCode)
                 } ?? "待同步",
                 color: color(for: metrics.totalProfitLoss)
             )

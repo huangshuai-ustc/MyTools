@@ -183,7 +183,7 @@ struct TencentStockQuoteProvider: StockQuoteBatchProviding {
             latestPrice: latestPrice,
             previousClose: previousClose,
             changePercent: effectiveChange,
-            updatedAt: parsedDate ?? Date(),
+            updatedAt: parsedDate,
             source: "腾讯证券"
         )
     }

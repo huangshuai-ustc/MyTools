@@ -3,7 +3,7 @@ import Testing
 @testable import MyTools
 
 struct StockChartDiskStoreTests {
-    @Test func unchangedRefreshSkipsWholeFileWriteButCheckpointsFetchTime() throws {
+    @Test func unchangedRefreshSkipsWriteAndOnlyFetchTimesWaitForCheckpoint() throws {
         let directories = try temporaryDirectories()
         defer { try? FileManager.default.removeItem(at: directories.root) }
         var disk = makeStore(directories)
@@ -11,31 +11,105 @@ struct StockChartDiskStoreTests {
         let now = StockChartFixtures.date(2026, 8, 7)
         let points = samplePoints(count: 80)
         let snapshot = StockChartSnapshot(symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 10,
-            points: points, quoteUpdatedAt: points.last!.date, fetchedAt: now, source: "Test", supportsCandlesticks: true)
+            points: points, indicatorPoints: nil, quoteUpdatedAt: points.last!.date, fetchedAt: now, source: "Test", supportsCandlesticks: true)
         var stored = disk.merging(snapshot, range: .dayK, for: key, into: nil)
         let firstSave = disk.save(stored, for: key, at: now)
         #expect(firstSave)
-        let url = disk.persistentStoreURL(for: key)
+        let url = disk.partURL(for: key, part: .daily)
         let original = try Data(contentsOf: url)
-        for seconds in [60, 120, 180, 240] {
-            stored.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt = now.addingTimeInterval(Double(seconds))
-            let saved = disk.save(stored, for: key, at: now.addingTimeInterval(Double(seconds)))
+        let window = StockChartStorePart.daily.coalescingWindow
+        for seconds in [60, 600, window - 1] {
+            stored.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt = now.addingTimeInterval(seconds)
+            let saved = disk.save(stored, for: key, at: now.addingTimeInterval(seconds))
             #expect(saved)
             #expect(try Data(contentsOf: url) == original)
         }
         let memory = disk.load(for: key)
-        #expect(memory?.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt == now.addingTimeInterval(240))
-        stored.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt = now.addingTimeInterval(300)
-        let checkpoint = disk.save(stored, for: key, at: now.addingTimeInterval(300))
+        #expect(memory?.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt == now.addingTimeInterval(window - 1))
+        stored.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt = now.addingTimeInterval(window)
+        let checkpoint = disk.save(stored, for: key, at: now.addingTimeInterval(window))
         #expect(checkpoint)
-        let persisted = try JSONDecoder().decode(StockChartPersistedStore.self, from: Data(contentsOf: url))
-        #expect(persisted.rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt == now.addingTimeInterval(300))
-        // Same-count corrections are real data, and must write immediately.
+        #expect(try decodePart(url).rangeMetadata[StockChartRange.dayK.rawValue]?.fetchedAt == now.addingTimeInterval(window))
+        // Same-count historical corrections are real data, and must write immediately.
         stored.series["daily"]?[0] = StockChartFixtures.point(at: points[0].date, close: 123)
-        let correction = disk.save(stored, for: key, at: now.addingTimeInterval(301))
+        let correction = disk.save(stored, for: key, at: now.addingTimeInterval(window + 1))
         #expect(correction)
-        let corrected = try JSONDecoder().decode(StockChartPersistedStore.self, from: Data(contentsOf: url))
-        #expect(corrected.series["daily"]?.first?.close == 123)
+        #expect(try decodePart(url).series["daily"]?.first?.close == 123)
+    }
+
+    // AUDIT-057：分钟刷新与只动最新一根日线的刷新合并写盘；历史修正立即写入，且两份文件互不牵连。
+    @Test func minuteAndLatestDailyBarChangesAreCoalescedPerPart() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        var disk = makeStore(directories)
+        let key = StockChartStoreKey(market: .aShare, symbol: "600000")
+        let now = StockChartFixtures.date(2026, 8, 7, hour: 10)
+        var stored = disk.emptyStore(for: key)
+        stored.series[StockChartSeriesKind.daily.rawValue] = samplePoints(count: 3)
+        stored.series[StockChartSeriesKind.intraday.rawValue] = [StockChartFixtures.point(at: now)]
+        let first = disk.save(stored, for: key, at: now)
+        #expect(first)
+        let dailyURL = disk.partURL(for: key, part: .daily)
+        let minuteURL = disk.partURL(for: key, part: .minute)
+        let originalDaily = try Data(contentsOf: dailyURL)
+        let originalMinute = try Data(contentsOf: minuteURL)
+
+        stored.series[StockChartSeriesKind.intraday.rawValue]?.append(StockChartFixtures.point(at: now.addingTimeInterval(60)))
+        let lastDaily = try #require(stored.series[StockChartSeriesKind.daily.rawValue]?.last)
+        stored.series[StockChartSeriesKind.daily.rawValue]?[2] = StockChartFixtures.point(at: lastDaily.date, close: 77)
+        let coalesced = disk.save(stored, for: key, at: now.addingTimeInterval(60))
+        #expect(coalesced)
+        #expect(try Data(contentsOf: minuteURL) == originalMinute)
+        #expect(try Data(contentsOf: dailyURL) == originalDaily)
+        #expect(disk.pendingWriteCount == 2)
+        let memory = disk.load(for: key)
+        #expect(memory?.series[StockChartSeriesKind.intraday.rawValue]?.count == 2)
+
+        let minuteWindow = StockChartStorePart.minute.coalescingWindow
+        let checkpointSaved = disk.save(stored, for: key, at: now.addingTimeInterval(minuteWindow))
+        #expect(checkpointSaved)
+        #expect(try decodePart(minuteURL).series[StockChartSeriesKind.intraday.rawValue]?.count == 2)
+        #expect(try Data(contentsOf: dailyURL) == originalDaily)
+
+        stored.series[StockChartSeriesKind.daily.rawValue]?[0] = StockChartFixtures.point(at: samplePoints(count: 1)[0].date, close: 99)
+        let correctionSaved = disk.save(stored, for: key, at: now.addingTimeInterval(minuteWindow + 20))
+        #expect(correctionSaved)
+        let corrected = try decodePart(dailyURL)
+        #expect(corrected.series[StockChartSeriesKind.daily.rawValue]?.first?.close == 99)
+        #expect(corrected.series[StockChartSeriesKind.daily.rawValue]?.last?.close == 77)
+        #expect(disk.pendingWriteCount == 0)
+    }
+
+    @Test func pendingWritesAreFlushedAndWriteTimeSurvivesRelaunch() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        var disk = makeStore(directories)
+        let key = StockChartStoreKey(market: .aShare, symbol: "600000")
+        let now = Date()
+        var stored = disk.emptyStore(for: key)
+        stored.series[StockChartSeriesKind.intraday.rawValue] = [StockChartFixtures.point(at: now)]
+        let first = disk.save(stored, for: key, at: now)
+        #expect(first)
+        let minuteURL = disk.partURL(for: key, part: .minute)
+        stored.series[StockChartSeriesKind.intraday.rawValue]?.append(StockChartFixtures.point(at: now.addingTimeInterval(60)))
+        let deferred = disk.save(stored, for: key, at: now.addingTimeInterval(60))
+        #expect(deferred)
+        #expect(try decodePart(minuteURL).series[StockChartSeriesKind.intraday.rawValue]?.count == 1)
+        #expect(disk.flushPendingWrites() == 1)
+        #expect(disk.pendingWriteCount == 0)
+        #expect(try decodePart(minuteURL).series[StockChartSeriesKind.intraday.rawValue]?.count == 2)
+
+        // A new process seeds the last write time from the file date, so the
+        // first refresh after launch does not rewrite a fresh file.
+        var relaunched = makeStore(directories)
+        let relaunchedValue = relaunched.load(for: key)
+        var reloaded = try #require(relaunchedValue)
+        let written = try Data(contentsOf: minuteURL)
+        reloaded.series[StockChartSeriesKind.intraday.rawValue]?.append(StockChartFixtures.point(at: now.addingTimeInterval(120)))
+        let saved = relaunched.save(reloaded, for: key)
+        #expect(saved)
+        #expect(try Data(contentsOf: minuteURL) == written)
+        #expect(relaunched.pendingWriteCount == 1)
     }
 
     @Test func failedWriteIsRetriedEvenWhenNextSnapshotIsIdentical() throws {
@@ -43,7 +117,7 @@ struct StockChartDiskStoreTests {
         defer { try? FileManager.default.removeItem(at: directories.root) }
         var disk = makeStore(directories)
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
-        let url = disk.persistentStoreURL(for: key)
+        let url = disk.partURL(for: key, part: .daily)
         var stored = disk.emptyStore(for: key)
         let initial = disk.save(stored, for: key)
         #expect(initial)
@@ -55,8 +129,7 @@ struct StockChartDiskStoreTests {
         try FileManager.default.removeItem(at: url)
         let retried = disk.save(stored, for: key)
         #expect(retried)
-        let persisted = try JSONDecoder().decode(StockChartPersistedStore.self, from: Data(contentsOf: url))
-        #expect(persisted.series["daily"] == stored.series["daily"])
+        #expect(try decodePart(url).series["daily"] == stored.series["daily"])
     }
 
     @Test func versionSixWireFormatPreservesDailyHistory() throws {
@@ -67,12 +140,67 @@ struct StockChartDiskStoreTests {
         defer { try? FileManager.default.removeItem(at: directories.root) }
         var store = makeStore(directories)
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
-        let url = store.persistentStoreURL(for: key)
+        let url = store.legacyStoreURL(for: key)
         try FileManager.default.createDirectory(at: directories.persistent, withIntermediateDirectories: true)
         try original.write(to: url)
         let loaded = store.load(for: key)
         #expect(loaded?.series["daily"] == [StockChartFixtures.point(at: Date(timeIntervalSinceReferenceDate: 600000000))])
         #expect(try Data(contentsOf: url.appendingPathExtension("v6.recovery")) == original)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(try decodePart(store.partURL(for: key, part: .daily)).series["daily"] == loaded?.series["daily"])
+    }
+
+    // 拆分存储（v9）：v8 单文件迁移后旧文件删除，派生 K 线与指标只在内存重建、不落盘。
+    @Test func versionEightSingleFileIsSplitAndDerivedDataIsNotPersisted() throws {
+        let directories = try temporaryDirectories()
+        defer { try? FileManager.default.removeItem(at: directories.root) }
+        let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
+        let daily = varyingSamplePoints(count: 100)
+        let minute = [StockChartFixtures.point(at: StockChartFixtures.date(
+            2026, 8, 7, hour: 10, timeZone: "America/New_York"
+        ))]
+        let metadata = StockChartStoredRangeMetadata(
+            symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 100,
+            quoteUpdatedAt: daily.last!.date, fetchedAt: daily.last!.date,
+            source: "Version 8", supportsCandlesticks: true, indicatorPointCount: nil,
+            dailyIndicatorPointCount: daily.count
+        )
+        let legacy = StockChartPersistedStore(
+            version: 8, market: key.market, symbol: key.symbol,
+            series: [StockChartSeriesKind.daily.rawValue: daily, StockChartSeriesKind.intraday.rawValue: minute],
+            rangeMetadata: [StockChartRange.dayK.rawValue: metadata, StockChartRange.intraday.rawValue: metadata]
+        )
+        var store = makeStore(directories)
+        let url = store.legacyStoreURL(for: key)
+        try FileManager.default.createDirectory(at: directories.persistent, withIntermediateDirectories: true)
+        try JSONEncoder().encode(legacy).write(to: url, options: .atomic)
+
+        let loaded = store.load(for: key)
+        let migrated = try #require(loaded)
+        #expect(migrated.version == StockChartPersistedStore.currentVersion)
+        #expect(migrated.series == legacy.series)
+        #expect(migrated.technicalIndicators["daily"]?.count == daily.count)
+        #expect(migrated.derivedSeries[StockChartSeriesKind.weekly.rawValue]?.isEmpty == false)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(!FileManager.default.fileExists(atPath: url.appendingPathExtension("v8.recovery").path))
+
+        let dailyData = try Data(contentsOf: store.partURL(for: key, part: .daily))
+        let dailyJSON = try #require(JSONSerialization.jsonObject(with: dailyData) as? [String: Any])
+        #expect(dailyJSON["technicalIndicators"] == nil)
+        #expect(dailyJSON["derivedSeries"] == nil)
+        let dailyPart = try decodePart(store.partURL(for: key, part: .daily))
+        #expect(Set(dailyPart.series.keys) == [StockChartSeriesKind.daily.rawValue])
+        #expect(Set(dailyPart.rangeMetadata.keys) == [StockChartRange.dayK.rawValue])
+        let minutePart = try decodePart(store.partURL(for: key, part: .minute))
+        #expect(minutePart.series[StockChartSeriesKind.intraday.rawValue] == minute)
+        #expect(Set(minutePart.rangeMetadata.keys) == [StockChartRange.intraday.rawValue])
+
+        var reopened = makeStore(directories)
+        let reloadedValue = reopened.load(for: key)
+        let reloaded = try #require(reloadedValue)
+        #expect(reloaded.series == migrated.series)
+        #expect(reloaded.technicalIndicators == migrated.technicalIndicators)
+        #expect(reloaded.derivedSeries == migrated.derivedSeries)
     }
 
     @Test func rawMemoryCacheIsBoundedAndEvictedStocksReloadFromDisk() throws {
@@ -177,10 +305,10 @@ struct StockChartDiskStoreTests {
             reloaded.technicalIndicatorCacheVersion
                 == StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
         )
-        #expect(FileManager.default.fileExists(atPath: reader.persistentStoreURL(for: key).path))
+        #expect(FileManager.default.fileExists(atPath: reader.partURL(for: key, part: .daily).path))
     }
 
-    @Test func legacyTechnicalIndicatorsAreRebuiltFromLocalOHLCVAndPersistedOnce() throws {
+    @Test func legacyTechnicalIndicatorsAreRebuiltFromLocalOHLCVAndNotPersisted() throws {
         let directories = try temporaryDirectories()
         defer { try? FileManager.default.removeItem(at: directories.root) }
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
@@ -214,7 +342,7 @@ struct StockChartDiskStoreTests {
             )
         }
         let legacyStore = StockChartPersistedStore(
-            version: StockChartPersistedStore.currentVersion,
+            version: 8,
             market: key.market,
             symbol: key.symbol,
             series: [StockChartSeriesKind.daily.rawValue: points],
@@ -223,7 +351,7 @@ struct StockChartDiskStoreTests {
             rangeMetadata: [StockChartRange.dayK.rawValue: metadata]
         )
         var store = makeStore(directories)
-        let url = store.persistentStoreURL(for: key)
+        let url = store.legacyStoreURL(for: key)
         try FileManager.default.createDirectory(
             at: directories.persistent,
             withIntermediateDirectories: true
@@ -251,30 +379,27 @@ struct StockChartDiskStoreTests {
         #expect(daily.last?.psychologicalLine != nil)
         #expect(daily.last?.rateOfChange != nil)
 
-        let persisted = try JSONDecoder().decode(
-            StockChartPersistedStore.self,
-            from: Data(contentsOf: url)
-        )
-        #expect(
-            persisted.technicalIndicatorCacheVersion
-                == StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
-        )
-        #expect(persisted.technicalIndicators["daily"]?.last?.trix != nil)
+        // Indicators are rebuilt on every load since version 9, never persisted.
+        let persisted = try Data(contentsOf: store.partURL(for: key, part: .daily))
+        let json = try #require(JSONSerialization.jsonObject(with: persisted) as? [String: Any])
+        #expect(json["technicalIndicators"] == nil)
+        #expect(try decodePart(store.partURL(for: key, part: .daily)).series["daily"] == points)
     }
 
     @Test func unsupportedPersistentStoreVersionIsIgnored() throws {
         let directories = try temporaryDirectories()
         defer { try? FileManager.default.removeItem(at: directories.root) }
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
-        let unsupported = StockChartPersistedStore(
+        let unsupported = StockChartStoredPart(
             version: StockChartPersistedStore.currentVersion + 1,
             market: key.market,
             symbol: key.symbol,
+            part: .daily,
             series: [:],
             rangeMetadata: [:]
         )
         var store = makeStore(directories)
-        let url = store.persistentStoreURL(for: key)
+        let url = store.partURL(for: key, part: .daily)
         try FileManager.default.createDirectory(
             at: directories.persistent,
             withIntermediateDirectories: true
@@ -328,7 +453,7 @@ struct StockChartDiskStoreTests {
                                 source: "Daily", supportsCandlesticks: true, indicatorPointCount: nil)]
         )
         var store = makeStore(directories)
-        let url = store.persistentStoreURL(for: key)
+        let url = store.legacyStoreURL(for: key)
         try FileManager.default.createDirectory(
             at: directories.persistent,
             withIntermediateDirectories: true
@@ -358,7 +483,7 @@ struct StockChartDiskStoreTests {
         defer { try? FileManager.default.removeItem(at: directories.root) }
         var store = makeStore(directories)
         let key = StockChartStoreKey(market: .unitedStates, symbol: "VOO")
-        let url = store.persistentStoreURL(for: key)
+        let url = store.legacyStoreURL(for: key)
         try FileManager.default.createDirectory(at: directories.persistent, withIntermediateDirectories: true)
         let original = Data("{\"version\":8,\"series\":".utf8)
         try original.write(to: url)
@@ -713,7 +838,9 @@ struct StockChartDiskStoreTests {
 
         store.removeAll()
 
-        #expect(!FileManager.default.fileExists(atPath: store.persistentStoreURL(for: key).path))
+        for part in StockChartStorePart.allCases {
+            #expect(!FileManager.default.fileExists(atPath: store.partURL(for: key, part: part).path))
+        }
         #expect(store.load(for: key) == nil)
     }
 
@@ -740,6 +867,10 @@ struct StockChartDiskStoreTests {
                 volume: 1_000 + Double(index * 10)
             )
         }
+    }
+
+    private func decodePart(_ url: URL) throws -> StockChartStoredPart {
+        try JSONDecoder().decode(StockChartStoredPart.self, from: Data(contentsOf: url))
     }
 
     private func temporaryDirectories() throws -> (root: URL, persistent: URL) {

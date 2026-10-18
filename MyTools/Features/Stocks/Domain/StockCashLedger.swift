@@ -84,7 +84,16 @@ enum StockCashLedger {
         for record in records.sorted(by: recordOrder) where record.occurredAt <= date {
             switch record.kind {
             case .deposit:
-                balances[record.currency, default: 0] += record.amount
+                // 早期关联入金保存成了买入币种（如 USD 1000），再叠加换汇的买入
+                // 会计两次。真实投入按换汇原始事实记为卖出币种（AUDIT-094）。
+                if let exchangeID = record.linkedExchangeRecordID,
+                   let exchange = exchangesByID[exchangeID],
+                   record.currency == exchange.boughtCurrency,
+                   record.currency != exchange.soldCurrency {
+                    balances[exchange.soldCurrency, default: 0] += exchange.soldAmount + exchange.fee
+                } else {
+                    balances[record.currency, default: 0] += record.amount
+                }
             case .withdrawal, .transferLoss:
                 balances[record.currency, default: 0] -= record.amount
             }
@@ -111,8 +120,8 @@ enum StockCashLedger {
                     balances[currency, default: 0] += transaction.sellNetProceeds
                 }
             }
-            let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
-            for dividend in stock.dividends where dividend.isReceived(asOf: date, calendar: calendar) {
+            // 分红到账日按北京日期记录，与收益回放同一口径。
+            for dividend in stock.dividends where dividend.isReceived(asOf: date) {
                 balances[currency, default: 0] += dividend.netAmount
             }
         }
@@ -166,7 +175,7 @@ enum StockXIRRCalculator {
             unresolvedExchangeCount: 0
         ),
         asOf date: Date = Date(),
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> StockXIRRSnapshot {
         let effectiveRecords = records.filter { $0.occurredAt <= date }
         let exchangesByID = Dictionary(uniqueKeysWithValues: exchangeRecords.map { ($0.id, $0) })

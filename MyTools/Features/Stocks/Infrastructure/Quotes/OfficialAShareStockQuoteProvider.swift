@@ -69,7 +69,7 @@ struct OfficialAShareStockQuoteProvider: StockQuoteProviding {
                 date: values[4],
                 time: values[5],
                 timeZoneIdentifier: "Asia/Shanghai"
-            ) ?? Date(),
+            ),
             source: "上海证券交易所"
         )
     }
@@ -105,7 +105,7 @@ struct OfficialAShareStockQuoteProvider: StockQuoteProviding {
             updatedAt: StockQuoteProviderSupport.quoteDate(
                 quote.marketTime,
                 timeZoneIdentifier: "Asia/Shanghai"
-            ) ?? Date(),
+            ),
             source: "深圳证券交易所"
         )
     }

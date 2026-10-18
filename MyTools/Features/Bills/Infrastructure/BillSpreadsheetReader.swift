@@ -9,6 +9,7 @@ enum BillSpreadsheetReaderError: LocalizedError {
     case oversizedEntry
     case invalidWorksheet
     case undecodableText
+    case oversizedFile
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ enum BillSpreadsheetReaderError: LocalizedError {
             return "Excel 账单中没有可读取的工作表。"
         case .undecodableText:
             return "无法识别账单文本编码。"
+        case .oversizedFile:
+            return "账单文件超过 20 MB 或行列数超出 Excel 上限，已停止读取。"
         }
     }
 }
@@ -271,7 +274,11 @@ private final class XLSXSharedStringsParser: NSObject, XMLParserDelegate {
 }
 
 private final class XLSXWorksheetParser: NSObject, XMLParserDelegate {
+    /// Excel's own limits; references beyond them come from damaged or crafted files.
+    static let maximumColumnCount = 16_384
+    static let maximumRowCount = 1_048_576
     private let sharedStrings: [String]
+    private var exceededLimits = false
     private var rows: [[String]] = []
     private var currentRowNumber: Int?
     private var currentCells: [Int: String] = [:]
@@ -291,6 +298,7 @@ private final class XLSXWorksheetParser: NSObject, XMLParserDelegate {
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse() else {
+            if delegate.exceededLimits { throw BillSpreadsheetReaderError.oversizedFile }
             throw parser.parserError ?? BillSpreadsheetReaderError.invalidWorksheet
         }
         return delegate.rows
@@ -309,6 +317,10 @@ private final class XLSXWorksheetParser: NSObject, XMLParserDelegate {
             currentCells = [:]
         case "c":
             currentColumn = attributeDict["r"].flatMap(Self.columnIndex)
+            if let column = currentColumn, column >= Self.maximumColumnCount {
+                exceededLimits = true
+                parser.abortParsing()
+            }
             currentType = attributeDict["t"] ?? ""
             currentRawValue = ""
             currentInlineValue = ""
@@ -350,6 +362,11 @@ private final class XLSXWorksheetParser: NSObject, XMLParserDelegate {
             currentColumn = nil
         case "row":
             let rowNumber = currentRowNumber ?? (rows.count + 1)
+            guard rowNumber <= Self.maximumRowCount else {
+                exceededLimits = true
+                parser.abortParsing()
+                return
+            }
             while rows.count < rowNumber - 1 { rows.append([]) }
             let maximumColumn = currentCells.keys.max() ?? -1
             var row = Array(repeating: "", count: maximumColumn + 1)
@@ -368,6 +385,8 @@ private final class XLSXWorksheetParser: NSObject, XMLParserDelegate {
             guard scalar.value >= 65, scalar.value <= 90 else { break }
             foundLetter = true
             value = value * 26 + Int(scalar.value - 64)
+            // XFD (16,384) is the last column; stop before the arithmetic can overflow.
+            guard value <= maximumColumnCount else { return maximumColumnCount }
         }
         return foundLetter ? value - 1 : nil
     }

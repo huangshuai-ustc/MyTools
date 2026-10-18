@@ -59,6 +59,7 @@ struct StocksView: View {
     private struct ValueHistoryRoute: Hashable {
         let market: StockMarket?
     }
+    @State private var valueHistoryRoute: ValueHistoryRoute?
 
     @EnvironmentObject private var store: StockStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
@@ -70,7 +71,6 @@ struct StocksView: View {
     @State private var enteringRefreshTask: Task<Void, Never>?
     @State private var editingStock: StockHolding?
     @State private var detailRoute: StockDetailRoute?
-    @State private var valueHistoryRoute: ValueHistoryRoute?
     @State private var showsArchivedStocks = false
     @State private var refreshVisibilityToken = UUID()
     @State private var isStocksScreenVisible = false
@@ -112,38 +112,10 @@ struct StocksView: View {
         marketFilter.filtered(configuredStocks)
     }
 
-    /// “全部”下的刷新仍只针对此刻真正活跃的一个市场，避免一次按钮操作跨三个
-    /// 市场制造无意义请求。优先级与页面首次自动选择一致。
-    private var focusedRefreshMarket: StockMarket? {
-        if let market = marketFilter.market { return market }
-        let now = Date()
-        return StockMarket.displayOrder.first { market in
-            StockMarketTradingCalendar.session(for: market, at: now) != .closed
-                && configuredStocks.contains(where: { $0.market == market })
-        }
-    }
-
-    /// The watchlist needs live minute projections for every row. The positions
-    /// page normally consumes batch quotes only, but US extended-hours values
-    /// are derived from minute charts rather than the batch quote. Keep held US
-    /// symbols registered during pre/post-market so their displayed prices do
-    /// not freeze merely because the user switched away from the watchlist.
+    /// Watchlist rows register every market in the selected scope. The
+    /// coordinator filters by the current session on each automatic tick.
     private var automaticChartStockIDs: Set<UUID> {
-        guard let market = focusedRefreshMarket else { return [] }
-
-        switch effectivePage {
-        case .watchlist:
-            return Set(activeConfiguredStocks.lazy
-                .filter { $0.market == market }
-                .map(\.id))
-        case .positions:
-            let session = StockMarketTradingCalendar.session(for: market)
-            guard market == .unitedStates,
-                  session == .preMarket || session == .postMarket else { return [] }
-            return Set(activeConfiguredStocks.lazy
-                .filter { $0.market == market && $0.currentShares > 0 }
-                .map(\.id))
-        }
+        effectivePage.chartStockIDs(stocks: configuredStocks, market: marketFilter.market)
     }
 
     private var chartRegistrationKey: String {
@@ -252,7 +224,8 @@ struct StocksView: View {
             allocations: allocationSnapshot,
             costAllocations: costAllocationSnapshot,
             searchTerm: searchTerm,
-            hasConfiguredStocks: !activeConfiguredStocks.isEmpty
+            hasConfiguredStocks: !activeConfiguredStocks.isEmpty,
+            onShowValueHistory: { valueHistoryRoute = ValueHistoryRoute(market: marketFilter.market) }
         )
     }
 
@@ -263,7 +236,7 @@ struct StocksView: View {
             availableMarketFilters: availableMarketFilters,
             watchlist: watchlistStocks,
             archivedStocks: archivedStocks,
-            showsArchivedStocks: showsArchivedStocks,
+            showsArchivedStocks: $showsArchivedStocks,
             searchTerm: searchTerm,
             hasConfiguredStocks: !activeConfiguredStocks.isEmpty
         )
@@ -340,40 +313,6 @@ struct StocksView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if effectivePage == .positions {
-                    Button {
-                        valueHistoryRoute = ValueHistoryRoute(market: marketFilter.market)
-                    } label: {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                    }
-                    .accessibilityLabel("持仓总价值走势")
-                    .help("持仓总价值走势")
-                }
-                if effectivePage == .watchlist {
-                    Button {
-                        showsArchivedStocks.toggle()
-                    } label: {
-                        Image(systemName: showsArchivedStocks ? "archivebox.fill" : "archivebox")
-                    }
-                    .accessibilityLabel(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
-                    .help(showsArchivedStocks ? "隐藏历史股票" : "显示历史股票")
-                }
-                Button {
-                    Task { await refreshFocusedPage() }
-                } label: {
-                    if store.isRefreshingQuotes || store.isRefreshingCharts {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(
-                        activeConfiguredStocks.isEmpty
-                        || store.isRefreshingQuotes
-                        || store.isRefreshingCharts
-                )
-                .accessibilityLabel("刷新股票行情")
-
                 Button {
                     editingStock = StockHolding()
                 } label: {
@@ -487,10 +426,15 @@ struct StocksView: View {
         )
     }
 
+    /// 下拉只刷新当前页面上的股票：持仓页只有持仓中的那几只，
+    /// 不连带持股为零、仅用于看盘的股票。
     private func refreshFocusedPage() async {
+        let pageStocks = effectivePage == .positions ? displayedStocks : watchlistStocks
         await refreshCoordinator.refreshManually(
-            for: focusedRefreshMarket,
-            refreshMarketCharts: effectivePage == .watchlist
+            for: marketFilter.market,
+            stockIDs: Set(pageStocks.map(\.id)),
+            refreshMarketCharts: true,
+            refreshFiveDayCharts: true
         )
     }
 

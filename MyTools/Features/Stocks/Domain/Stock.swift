@@ -117,31 +117,15 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
     var unitPrice: Decimal = 0
     var fees: Decimal = 0
 
-    /// Converts an absolute instant into the market's business date while
-    /// keeping the stored value compatible with the app's existing date-only
-    /// transaction model. For example, 2026-09-29 01:00 in Shanghai is still
-    /// 2026-09-28 in New York, so a newly-created US transaction defaults to
-    /// September 28 in the local date picker.
-    static func defaultTradingDate(
-        at instant: Date = Date(),
-        market: StockMarket,
-        displayCalendar: Calendar = .autoupdatingCurrent
-    ) -> Date {
-        let marketCalendar = StockChartSeriesProcessor.marketCalendar(market)
-        let components = marketCalendar.dateComponents([.year, .month, .day], from: instant)
-        let calendar = displayCalendar
-        return calendar.date(from: DateComponents(
-            calendar: calendar,
-            timeZone: calendar.timeZone,
-            year: components.year,
-            month: components.month,
-            day: components.day,
-            hour: 12
-        )) ?? normalizedDate(instant)
+    /// 新交易默认的交易日期：北京时间的今天（以北京中午承载）。本地填写的日期一律按
+    /// 北京时间解释，市场交易日在需要时经 `StockMarketClock` 换算。
+    static func defaultTradingDate(at instant: Date = Date()) -> Date {
+        normalizedDate(instant)
     }
 
+    /// 日期承载值统一为北京日期的 12:00，与设备时区无关。
     static func normalizedDate(_ date: Date) -> Date {
-        let calendar = Calendar.autoupdatingCurrent
+        let calendar = StockMarketClock.beijingCalendar
         let startOfDay = calendar.startOfDay(for: date)
         return calendar.date(byAdding: .hour, value: 12, to: startOfDay) ?? startOfDay
     }
@@ -150,55 +134,16 @@ struct StockTransaction: Identifiable, Codable, Equatable, Sendable {
         Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / 60) * 60)
     }
 
-    /// Creates an absolute execution instant from the business day shown by
-    /// the date picker and a wall-clock time shown in the device calendar.
-    /// The resulting instant is interpreted in the selected market timezone.
-    static func executionInstant(
-        tradingDate: Date,
-        displayedTime: Date,
-        market: StockMarket,
-        displayCalendar: Calendar = .autoupdatingCurrent
-    ) -> Date? {
-        var beijingCalendar = Calendar(identifier: .gregorian)
-        beijingCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        let day = beijingCalendar.dateComponents([.year, .month, .day], from: tradingDate)
-        let time = displayCalendar.dateComponents([.hour, .minute], from: displayedTime)
-        var components = DateComponents()
-        components.year = day.year
-        components.month = day.month
-        components.day = day.day
-        components.hour = time.hour
-        components.minute = time.minute
-        components.second = 0
-        components.timeZone = beijingCalendar.timeZone
-        return beijingCalendar.date(from: components)
+    /// 由用户填写的北京日期与北京时刻组装成交时刻。美股在北京时间凌晨的成交，日期
+    /// 应填北京日期（即美东交易日的次日）；所属市场交易日由
+    /// `StockMarketClock.marketBusinessDayStart` 换算得到。
+    static func executionInstant(tradingDate: Date, beijingTime: Date) -> Date? {
+        StockMarketClock.instant(beijingDate: tradingDate, beijingTime: beijingTime)
             .map(normalizedExecutionInstant)
     }
 
-    /// Converts an absolute market instant into a device-calendar carrier used
-    /// solely by a time-only DatePicker, so it displays the market wall clock.
-    static func displayedExecutionTime(
-        for instant: Date,
-        market: StockMarket,
-        displayCalendar: Calendar = .autoupdatingCurrent
-    ) -> Date {
-        var beijingCalendar = Calendar(identifier: .gregorian)
-        beijingCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        let time = beijingCalendar.dateComponents([.hour, .minute], from: instant)
-        let reference = displayCalendar.dateComponents([.year, .month, .day], from: Date())
-        return displayCalendar.date(from: DateComponents(
-            calendar: displayCalendar,
-            timeZone: displayCalendar.timeZone,
-            year: reference.year,
-            month: reference.month,
-            day: reference.day,
-            hour: time.hour,
-            minute: time.minute
-        )) ?? instant
-    }
-
     static func isSameDay(_ lhs: Date, _ rhs: Date) -> Bool {
-        Calendar.autoupdatingCurrent.isDate(lhs, inSameDayAs: rhs)
+        StockMarketClock.beijingCalendar.isDate(lhs, inSameDayAs: rhs)
     }
 
     var signedShares: Decimal {
@@ -251,12 +196,12 @@ struct StockDividend: Identifiable, Codable, Equatable, Sendable {
         grossAmount - totalDeductions
     }
 
-    /// Dividend dates are day-level business dates. A payment scheduled for
-    /// today is effective for the whole local calendar day, regardless of the
-    /// time component retained by DatePicker or an older payload.
+    /// Dividend dates are day-level Beijing dates. A payment scheduled for
+    /// today is effective for the whole Beijing calendar day, regardless of the
+    /// time component retained by DatePicker or the device time zone.
     func isReceived(
         asOf date: Date,
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> Bool {
         calendar.startOfDay(for: receivedAt) <= calendar.startOfDay(for: date)
     }
@@ -344,13 +289,16 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
         !symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Transaction dates are stored as a market business date carrier (noon),
-    /// while an optional execution instant records the actual wall-clock time.
-    /// A buy entered after a US session closes must be effective immediately;
-    /// comparing the noon carrier with `now` incorrectly hid it until noon.
+    /// 交易开始生效的时刻：有成交时间时就是成交时刻；只有日期时从所填北京日期的
+    /// 零点起整天生效（`tradedAt` 是北京中午承载值，直接与 `now` 比较会把当天的
+    /// 交易藏到中午之后）。与设备时区无关。
+    static func effectiveInstant(of transaction: StockTransaction) -> Date {
+        transaction.executedAt
+            ?? StockMarketClock.beijingCalendar.startOfDay(for: transaction.tradedAt)
+    }
+
     static func transactionIsEffective(_ transaction: StockTransaction, at now: Date) -> Bool {
-        if let executedAt = transaction.executedAt { return executedAt <= now }
-        return transaction.tradedAt <= now || Calendar.autoupdatingCurrent.isDate(transaction.tradedAt, inSameDayAs: now)
+        effectiveInstant(of: transaction) <= now
     }
 
     var totalBuyCost: Decimal {
@@ -363,7 +311,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
 
     func netDividendIncome(
         asOf date: Date,
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> Decimal {
         dividends.lazy
             .filter { $0.isReceived(asOf: date, calendar: calendar) }
@@ -425,6 +373,34 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
             shares += transaction.signedShares
             if shares < 0 { return false }
         }
+        // 账本回放按「日 → dayOrder」排序，而生效判断按成交时刻；两条时间轴都要
+        // 保证任意时刻已生效的子集持股不为负。同一时刻生效的记录先计买入再计卖出。
+        // 未填成交时间的记录只知道日期：它在同日账本顺序里排在哪些带时间的记录之后，
+        // 就不早于这些记录的成交时刻，否则「10:00 买入 + 未填时间的卖出」这类旧数据
+        // 会被误判为当天零点就卖出。
+        shares = .zero
+        var instants: [UUID: Date] = [:]
+        var latestExecutionByDay: [Date: Date] = [:]
+        let calendar = StockMarketClock.beijingCalendar
+        for transaction in orderedTransactions(transactions) {
+            let day = calendar.startOfDay(for: transaction.tradedAt)
+            if let executedAt = transaction.executedAt {
+                instants[transaction.id] = executedAt
+                latestExecutionByDay[day] = max(latestExecutionByDay[day] ?? executedAt, executedAt)
+            } else {
+                instants[transaction.id] = max(day, latestExecutionByDay[day] ?? day)
+            }
+        }
+        let byEffect = transactions.sorted { lhs, rhs in
+            let lhsInstant = instants[lhs.id] ?? effectiveInstant(of: lhs)
+            let rhsInstant = instants[rhs.id] ?? effectiveInstant(of: rhs)
+            if lhsInstant != rhsInstant { return lhsInstant < rhsInstant }
+            return lhs.signedShares > rhs.signedShares
+        }
+        for transaction in byEffect {
+            shares += transaction.signedShares
+            if shares < 0 { return false }
+        }
         return true
     }
 
@@ -474,7 +450,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     /// 日 → `dayOrder` → 时间 → id。
     static func orderedTransactions(
         _ transactions: [StockTransaction],
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> [StockTransaction] {
         transactions
             .map { (key: TransactionSortKey($0, calendar: calendar), transaction: $0) }
@@ -565,7 +541,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     /// 未来日期的交易与分红一律不算，与各个同名属性的既有口径一致。
     func performance(
         asOf now: Date = Date(),
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> Performance {
         var result = Performance()
 
@@ -620,7 +596,7 @@ struct StockHolding: Identifiable, Codable, Equatable, Sendable {
     /// 它们每一次读取都会完整回放一遍交易。
     func metrics(
         asOf now: Date = Date(),
-        calendar: Calendar = .autoupdatingCurrent
+        calendar: Calendar = StockMarketClock.beijingCalendar
     ) -> Metrics {
         metrics(performance: performance(asOf: now, calendar: calendar))
     }

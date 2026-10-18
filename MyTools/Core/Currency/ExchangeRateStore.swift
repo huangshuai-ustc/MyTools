@@ -7,7 +7,6 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var updatedAt: Date?
     @Published private(set) var error: String?
     @Published private(set) var isRefreshing = false
-    @Published private(set) var history: [ExchangeRateHistoryPoint]
     @Published private(set) var referenceHistory: [ReferenceExchangeRatePoint]
 
     private let repository: any ExchangeRateProviding
@@ -18,10 +17,9 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
 
     init(
         repository: any ExchangeRateProviding,
-        initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks, .partnership]
+        initialEnabledModules: Set<ToolModule> = [.currencyExchange, .myStocks]
     ) {
         self.repository = repository
-        self.history = repository.loadHistory()
         self.referenceHistory = []
         self.enabledModules = initialEnabledModules
     }
@@ -61,7 +59,7 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         apply(snapshot)
     }
 
-    var observedModules: Set<ToolModule> { [.currencyExchange, .myStocks, .partnership] }
+    var observedModules: Set<ToolModule> { [.currencyExchange, .myStocks] }
 
     func moduleDidChange(_ module: ToolModule, isEnabled: Bool) {
         let wasNeeded = isCapabilityNeeded
@@ -94,8 +92,14 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
             guard let self else { return }
             defer { self.isRefreshing = false }
             do {
-                let snapshot = try await self.repository.fetchSnapshot()
+                let fetched = try await self.repository.fetchSnapshot()
                 guard self.isCapabilityNeeded, !Task.isCancelled else { return }
+                // A currency missing from this page keeps its last known rate.
+                let snapshot = ExchangeRateSnapshot(
+                    renminbiBuyingRates: self.renminbiBuyingRates.merging(fetched.renminbiBuyingRates) { _, new in new },
+                    renminbiSellingRates: self.renminbiSellingRates.merging(fetched.renminbiSellingRates) { _, new in new },
+                    updatedAt: fetched.updatedAt
+                )
                 self.apply(snapshot)
                 self.error = nil
                 self.updateObserver?.exchangeRatesDidUpdate(self.renminbiBuyingRates)
@@ -121,7 +125,6 @@ final class ExchangeRateStore: ObservableObject, ModuleLifecycleParticipant {
         renminbiBuyingRates = [.cny: 1]
         renminbiSellingRates = [.cny: 1]
         updatedAt = nil
-        history = []
         referenceHistory = []
         historyGeneration = UUID()
         isLoadingHistory = false

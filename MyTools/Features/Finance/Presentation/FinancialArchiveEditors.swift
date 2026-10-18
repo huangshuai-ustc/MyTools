@@ -47,7 +47,7 @@
             account: account, accounts: profile.accounts,
             isBank: profile.services.contains(.banking)
           ) { value in
-            save { replace(value, in: &$0.accounts) }
+            save { $0.upsertAccount(value) }
           }
         case .receiving(let method):
           FinanceReceivingEditorView(method: method, accounts: profile.accounts, isBank: false, onSave: { value in
@@ -85,10 +85,11 @@
         var profile = self.profile
         edit(&profile)
         institution = profile
-        let cards = store.cards(for: request.institution)
+        // 编辑可能清理了卡片对已删账户的关联，所以写回编辑后的卡片（AUDIT-025）。
         guard
           try store.saveInstitution(
-            institution, cards: cards, expected: request.institution, expectedCards: cards)
+            institution, cards: institution.cards, expected: request.institution,
+            expectedCards: request.institution.cards)
         else {
           errorMessage = "编辑期间资料已变化，请关闭后重新打开编辑。"
           return false
@@ -153,10 +154,8 @@
                   .appDeleteSwipeAction { removeAccount(account.id) }
               }
               Button {
-                var account = FinancialAccount()
-                if draft.institution.kind == .brokerage { account.kind = .securities; account.brokerage = BrokerageAccountDetails() }
-                if draft.institution.kind == .payment { account.kind = .payment }
-                editingAccount = account
+                // Brokerage and payment institutions use their own editors and account types.
+                editingAccount = FinancialAccount()
               } label: {
                 Label("添加账户", systemImage: "plus.circle")
               }
@@ -287,7 +286,7 @@
             account: account, accounts: draft.institution.accounts,
             isBank: draft.institution.services.contains(.banking)
           ) {
-            upsert($0, in: &draft.institution.accounts)
+            draft.institution.upsertAccount($0)
             return true
           }.iOSLargeSheet()
         }
@@ -465,6 +464,33 @@
     }
   }
 
+  /// AUDIT-024：支付账户同样以打开编辑页时的机构快照校验冲突。
+  struct PaymentAccountSaveView: View {
+    @EnvironmentObject private var store: FinanceStore
+    let original: FinancialInstitution
+    let accountID: UUID
+    @State private var errorMessage: String?
+    private var isWise: Bool {
+      (original.payment?.platform ?? "").trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Wise") == .orderedSame
+    }
+    var body: some View {
+      Group {
+        if let account = original.paymentAccounts.first(where: { $0.id == accountID }) {
+          PaymentAccountEditorView(account: account, onSave: { updated in
+            var value = original
+            guard value.paymentAccounts.contains(where: { $0.id == accountID }) else { return false }
+            value.replacePaymentAccount(updated)
+            do { return try store.saveInstitution(value, cards: [], expected: original, expectedCards: []) }
+            catch { errorMessage = error.localizedDescription; return false }
+          }, isWise: isWise)
+        }
+      }
+      .alert("无法保存", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        Button("确定", role: .cancel) {}
+      } message: { Text(errorMessage ?? "") }
+    }
+  }
+
   struct BrokerageAccountEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State var account: BrokerageAccount
@@ -590,6 +616,7 @@
     @State private var editingAccount: PaymentAccount?
     @State private var editingMethod: FinanceReceivingMethod?
     @State private var editingWiseTemplate = false
+    @State private var errorMessage: String?
     private var isWise: Bool { institution.payment?.platform.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Wise") == .orderedSame }
     private var sortedPaymentAccounts: [PaymentAccount] {
       institution.paymentAccounts.sorted { lhs, rhs in
@@ -616,7 +643,8 @@
               .buttonStyle(.plain)
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
-              .appDeleteSwipeAction { institution.paymentAccounts.removeAll { $0.id == account.id } }
+              // AUDIT-023：经 removeAccount 一并清理登录、文件对该账户的引用。
+              .appDeleteSwipeAction { institution.removeAccount(id: account.id) }
             }
             Button {
               editingAccount = PaymentAccount()
@@ -628,17 +656,19 @@
         .sheet(isPresented: $editingWiseTemplate) { WiseReceivingTemplateEditor().iOSLargeSheet() }
         .sheet(item: $editingAccount) { account in
           PaymentAccountEditorView(account: account, onSave: { value in
-            if let index = institution.paymentAccounts.firstIndex(where: { $0.id == value.id }) { institution.paymentAccounts[index] = value }
-            else { institution.paymentAccounts.append(value) }
+            institution.replacePaymentAccount(value)
             return true
           }, isWise: isWise).iOSLargeSheet()
         }
         .toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
           ToolbarItem(placement: .confirmationAction) {
-            Button("保存") { commitPendingTextInput { do { try store.saveInstitution(institution, cards: [], expected: isNew ? nil : original, expectedCards: []); dismiss() } catch {} } }
+            Button("保存") { commitPendingTextInput { do { try store.saveInstitution(institution, cards: [], expected: isNew ? nil : original, expectedCards: []); dismiss() } catch { errorMessage = error.localizedDescription } } }
           }
         }
+        .alert("无法保存", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+          Button("确定", role: .cancel) {}
+        } message: { Text(errorMessage ?? "") }
       }.diagnosticScreen("支付机构编辑")
     }
   }
@@ -652,11 +682,13 @@
           title: account.name.isEmpty ? "未命名币种账户" : account.name,
           value: [
             account.currencySummary.isEmpty ? "未设置币种" : account.currencySummary,
-            account.maskedAccountNumber.isEmpty ? "" : account.maskedAccountNumber
+            account.maskedAccountNumber.isEmpty ? "" : account.maskedAccountNumber,
+            account.note
           ].filter { !$0.isEmpty }.joined(separator: " · "),
           titleFont: .body,
           valueFont: .caption,
-          verticalPadding: 0
+          verticalPadding: 0,
+          allowsCopy: false
         )
       }
       .buttonStyle(.plain)
@@ -681,26 +713,33 @@
             CardStatusDisclosurePicker(title: "状态", status: $account.status)
           }
           Section(isWise ? "Wise 收款资料" : "收款资料") {
-              if let profile = account.receivingProfile {
-              Button { editingProfile = profile } label: { FinanceReceivingRow(method: profile, accounts: [], linkedAccountName: account.displayName) }.buttonStyle(.plain)
+            ForEach(account.receivingProfiles) { profile in
+              Button { editingProfile = profile } label: {
+                FinanceReceivingRow(method: profile, accounts: [], linkedAccountName: account.displayName)
+              }.buttonStyle(.plain)
+                .appDeleteSwipeAction { account.receivingProfiles.removeAll { $0.id == profile.id } }
             }
             Button {
-              var profile = account.receivingProfile ?? FinanceReceivingMethod()
+              var profile = FinanceReceivingMethod()
               profile.accountID = account.id
-              if account.receivingProfile == nil {
-                profile.details.fields = FinanceReceivingTemplates.wiseTemplate(for: account.currencies).map { FinanceReceivingField(kind: $0) }
-                profile.details.name = account.currencySummary.isEmpty ? "通用收款" : "\(account.currencySummary) 收款"
-              }
+              profile.details.fields = FinanceReceivingTemplates.wiseTemplate(for: account.currencies).map { FinanceReceivingField(kind: $0) }
+              profile.details.name = account.currencySummary.isEmpty ? "通用收款" : "\(account.currencySummary) 收款"
               editingProfile = profile
             } label: {
-              Label(account.receivingProfile == nil ? "添加收款资料" : "编辑收款资料", systemImage: "pencil")
+              Label("添加收款资料", systemImage: "plus.circle")
             }
           }
           Section("备注") { AppMultilineFieldRow(title: "备注", text: $account.note) }
         }
         .appNavigationTitle(isWise ? "Wise 币种账户" : "币种账户")
         .sheet(item: $editingProfile) { profile in
-          FinanceReceivingEditorView(method: profile, accounts: [], isBank: false, onSave: { value in account.receivingProfile = value; return true }, isWise: isWise, isBoundToAccount: true).iOSLargeSheet()
+          FinanceReceivingEditorView(method: profile, accounts: [], isBank: false, onSave: { value in
+            var value = value
+            value.accountID = account.id
+            if let index = account.receivingProfiles.firstIndex(where: { $0.id == value.id }) { account.receivingProfiles[index] = value }
+            else { account.receivingProfiles.append(value) }
+            return true
+          }, isWise: isWise, isBoundToAccount: true).iOSLargeSheet()
         }
         .toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -775,11 +814,6 @@
                   .appDeleteSwipeAction { account.subaccounts.removeAll { $0.id == child.id } }
               }
               Button { editingSubaccount = FinancialAccount() } label: { Label("添加子账户", systemImage: "plus") }
-            }
-          }
-          if account.brokerage != nil {
-            Section("IBKR 账户") {
-              BrokerageAccountFieldsEditor(details: Binding(get: { account.brokerage! }, set: { account.brokerage = $0 }))
             }
           }
           if account.kind == .payment {
@@ -1066,21 +1100,11 @@
       }.diagnosticScreen("金融文件资料编辑")
     }
   }
-  private struct BrokerageAccountFieldsEditor: View {
-    @Binding var details: BrokerageAccountDetails
-    var body: some View {
-      PickerFieldRow(title: "账户类型", selection: $details.accountType) { ForEach(BrokerageAccountType.allCases) { Text($0.title).tag($0) } }
-      PickerFieldRow(title: "基准币种", selection: $details.baseCurrency) { ForEach(CurrencyCode.selectableCases(including: details.baseCurrency)) { Text($0.title).tag($0) } }
-      FieldEditorRow(title: "开户实体", prompt: "例如 Interactive Brokers LLC", text: $details.legalEntity)
-      FieldEditorRow(title: "账户持有形式", prompt: "个人、联名或机构", text: $details.ownership)
-      OptionalOpeningDateRow(date: $details.openedAt)
-    }
-  }
   private struct OptionalOpeningDateRow: View {
     @Binding var date: Date?
     var body: some View {
-      ToggleFieldRow(title: "已知开户日期", isOn: Binding(get: { date != nil }, set: { date = $0 ? (date ?? Date()) : nil }))
-      if date != nil { DateFieldRow(title: "开户日期", date: Binding(get: { date ?? Date() }, set: { date = $0 })) }
+      ToggleFieldRow(title: "已知开户日期", isOn: Binding(get: { date != nil }, set: { date = $0 ? (date ?? FinancialInstitution.defaultOpeningDate) : nil }))
+      if date != nil { DateFieldRow(title: "开户日期", date: Binding(get: { date ?? FinancialInstitution.defaultOpeningDate }, set: { date = $0 })) }
     }
   }
 #endif

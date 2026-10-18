@@ -9,7 +9,7 @@ enum FinancialInstitutionKind: String, Codable, CaseIterable, Identifiable {
 
 /// Single aggregate root. Typed payloads contain only the corresponding business facts.
 struct FinancialInstitution: Identifiable, Codable, Equatable {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
     var schemaVersion = Self.currentSchemaVersion
     var id = UUID()
     var name = ""
@@ -35,20 +35,21 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
         other = kind == .other ? OtherFinancialInstitutionDetails() : nil
     }
 
-    /// Moves the pre-v3 payment shape (institution-level receivingMethods) into
-    /// the one-to-one account.receivingProfile relation. Orphaned profiles are
-    /// dropped only after the account set has been validated; they cannot remain
-    /// hidden in the payload and later reappear after reinstall.
+    /// Migrates legacy institution-level profiles into the owning account without
+    /// discarding additional profiles. Unknown account references fail validation.
     mutating func normalizePaymentReceivingProfiles() {
-        guard kind == .payment, var details = payment else { return }
+        guard schemaVersion <= Self.currentSchemaVersion, kind == .payment, var details = payment else { return }
         var values = details.accounts
         for profile in details.receivingMethods {
             guard let index = values.firstIndex(where: { $0.id == profile.accountID }) else { continue }
-            if values[index].receivingProfile == nil { values[index].receivingProfile = profile }
+            if !values[index].receivingProfiles.contains(profile) {
+                values[index].receivingProfiles.append(profile)
+            }
         }
         details.accounts = values
-        details.receivingMethods = []
+        details.receivingMethods.removeAll { profile in values.contains { $0.id == profile.accountID } }
         payment = details
+        schemaVersion = Self.currentSchemaVersion
     }
     /// In-memory adapter used by older fixtures; this is never encoded as a
     /// separate persisted field.
@@ -76,9 +77,10 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
     }
     var services: Set<FinanceService> { switch kind { case .bank: [.banking]; case .brokerage: [.securities]; case .payment: [.payments]; case .other: [.other] } }
     var serviceSummary: String { kind == .other && !customKind.isEmpty ? customKind : kind.title }
+    /// Generic deposit-style accounts; bank and other institutions each own their collection.
     var accounts: [FinancialAccount] {
-        get { bank?.accounts ?? [] }
-        set { bank?.accounts = newValue }
+        get { kind == .other ? other?.accounts ?? [] : bank?.accounts ?? [] }
+        set { if kind == .other { other?.accounts = newValue } else { bank?.accounts = newValue } }
     }
     var bankAccounts: [FinancialAccount] {
         get { bank?.accounts ?? [] }
@@ -97,7 +99,7 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
             switch kind {
             case .bank: bank?.receivingMethods ?? []
             case .brokerage: brokerage?.fundingMethods ?? []
-            case .payment: paymentAccounts.compactMap(\.receivingProfile)
+            case .payment: paymentAccounts.flatMap(\.receivingProfiles) + (payment?.receivingMethods ?? [])
             case .other: other?.receivingMethods ?? []
             }
         }
@@ -108,9 +110,10 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
             case .payment:
                 var values = paymentAccounts
                 for index in values.indices {
-                    values[index].receivingProfile = newValue.first { $0.accountID == values[index].id }
+                    values[index].receivingProfiles = newValue.filter { $0.accountID == values[index].id }
                 }
                 paymentAccounts = values
+                payment?.receivingMethods = newValue.filter { profile in !values.contains { $0.id == profile.accountID } }
             case .other: other?.receivingMethods = newValue
             }
         }
@@ -126,6 +129,12 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
     var correspondenceAddressEnglish: String { get { bank?.correspondenceAddressEnglish ?? "" } set { bank?.correspondenceAddressEnglish = newValue } }
     var residentialAddressChinese: String { get { bank?.residentialAddressChinese ?? "" } set { bank?.residentialAddressChinese = newValue } }
     var residentialAddressEnglish: String { get { bank?.residentialAddressEnglish ?? "" } set { bank?.residentialAddressEnglish = newValue } }
+    /// 开户日期未知时的默认值：1970-01-01（北京时间中午，避免时区切换改变日期，AUDIT-063）。
+    static let defaultOpeningDate: Date = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return calendar.date(from: DateComponents(year: 1970, month: 1, day: 1, hour: 12)) ?? Date(timeIntervalSince1970: 0)
+    }()
     var financeAttachments: [FileAttachment] { documents.map(\.attachment) + cards.flatMap(\.statements).compactMap(\.attachment) }
     // Bank presentation adapters use the same canonical account collection.
     // No legacy envelope or duplicate subaccount payload is persisted.
@@ -190,7 +199,7 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
     var remittanceBankName: String { get { bank?.remittanceBankName ?? "" } set { bank?.remittanceBankName = newValue } }
     var remittanceBankAddress: String { get { bank?.remittanceBankAddress ?? "" } set { bank?.remittanceBankAddress = newValue } }
     var remittanceInstructions: String { get { bank?.remittanceInstructions ?? "" } set { bank?.remittanceInstructions = newValue } }
-    var allAccounts: [FinancialAccount] { bankAccounts.flatMap { [$0] + $0.subaccounts } }
+    var allAccounts: [FinancialAccount] { accounts.flatMap { [$0] + $0.subaccounts } }
     func isInactiveFinanceArchive(cards: [BankCard]) -> Bool {
         if kind == .bank {
             let activeSubaccount = region == .domestic
@@ -211,6 +220,7 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
         for i in values.indices { values[i].subaccounts.removeAll { $0.id == id } }
         accounts = values
         brokerageAccounts.removeAll { $0.id == id }
+        paymentAccounts.removeAll { $0.id == id }
         var routes = receivingMethods
         for i in routes.indices where routes[i].accountID.map(removedIDs.contains) == true { routes[i].accountID = nil }
         receivingMethods = routes
@@ -220,6 +230,27 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
         for i in valuesCards.indices { valuesCards[i].linkedFinancialAccountIDs?.subtract(removedIDs) }
         cards = valuesCards
         if kind == .payment { normalizePaymentReceivingProfiles() }
+    }
+    /// 写回一个顶层账户；编辑页里删掉的子账户同样经 removeAccount 清理引用（AUDIT-025）。
+    mutating func upsertAccount(_ value: FinancialAccount) {
+        // 子账户就地替换，不能被当成新的顶层账户追加（AUDIT-064）。
+        for parent in accounts.indices {
+            guard let child = accounts[parent].subaccounts.firstIndex(where: { $0.id == value.id }) else { continue }
+            accounts[parent].subaccounts[child] = value
+            return
+        }
+        let previous = accounts.first { $0.id == value.id }?.subaccounts.map(\.id) ?? []
+        if let index = accounts.firstIndex(where: { $0.id == value.id }) { accounts[index] = value }
+        else { accounts.append(value) }
+        let kept = Set(value.subaccounts.map(\.id))
+        for id in previous where !kept.contains(id) { removeAccount(id: id) }
+    }
+    mutating func replacePaymentAccount(_ account: PaymentAccount) {
+        let previous = paymentAccounts.first { $0.id == account.id }?.receivingProfiles ?? []
+        let retained = Set(account.receivingProfiles.map(\.id))
+        for profile in previous where !retained.contains(profile.id) { removeReceivingMethod(id: profile.id) }
+        if let index = paymentAccounts.firstIndex(where: { $0.id == account.id }) { paymentAccounts[index] = account }
+        else { paymentAccounts.append(account) }
     }
     mutating func removeReceivingMethod(id: UUID) {
         var values = receivingMethods
@@ -231,7 +262,8 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
         var value = self; value.cards = cards; try value.validate()
     }
     func validate() throws {
-        guard schemaVersion == Self.currentSchemaVersion else { throw FinancialArchiveError.unsupportedVersion }
+        // AUDIT-062: only a newer schema is unreadable; older payloads already decode into the current shape.
+        guard schemaVersion <= Self.currentSchemaVersion else { throw FinancialArchiveError.unsupportedVersion }
         guard (bank != nil) == (kind == .bank), (brokerage != nil) == (kind == .brokerage), (payment != nil) == (kind == .payment), (other != nil) == (kind == .other) else { throw FinancialArchiveError.wrongCategory }
         let accountIDs = Set(allAccounts.map(\.id) + brokerageAccounts.map(\.id) + paymentAccounts.map(\.id)), routeIDs = Set(receivingMethods.map(\.id)), cardIDs = Set(cards.map(\.id))
         let allAccountIDs = allAccounts.map(\.id) + brokerageAccounts.map(\.id) + paymentAccounts.map(\.id)
@@ -239,9 +271,11 @@ struct FinancialInstitution: Identifiable, Codable, Equatable {
               Set(logins.map(\.id)).count == logins.count, Set(documents.map(\.id)).count == documents.count,
               allAccounts.allSatisfy({ $0.subaccounts.allSatisfy { $0.subaccounts.isEmpty } }),
               receivingMethods.allSatisfy({ ($0.accountID.map(accountIDs.contains) ?? true) && Set($0.details.fields.map(\.id)).count == $0.details.fields.count }),
-              paymentAccounts.allSatisfy({ account in account.receivingProfile.map { profile in profile.accountID == account.id && Set(profile.details.fields.map(\.id)).count == profile.details.fields.count } ?? true }),
+              paymentAccounts.allSatisfy({ account in account.receivingProfiles.allSatisfy { profile in profile.accountID == account.id && Set(profile.details.fields.map(\.id)).count == profile.details.fields.count } }),
               logins.allSatisfy({ $0.accountIDs.isSubset(of: accountIDs) && Set($0.fields.map(\.id)).count == $0.fields.count }),
               documents.allSatisfy({ ($0.accountID.map(accountIDs.contains) ?? true) && ($0.receivingMethodID.map(routeIDs.contains) ?? true) }),
+              brokerageAccounts.allSatisfy({ Set($0.fundingProfileIDs).isSubset(of: routeIDs) }),
+              Set(financeAttachments.map(\.id)).count == financeAttachments.count,
               cardIDs.count == cards.count, cards.allSatisfy({ $0.accountID == id && ($0.linkedFinancialAccountIDs ?? []).isSubset(of: accountIDs) && ($0.replacedByCardID.map(cardIDs.contains) ?? true) && Set($0.additionalCredentials.map(\.id)).count == $0.additionalCredentials.count })
         else { throw FinancialArchiveError.invalidRelationships }
         let replacements = Dictionary(uniqueKeysWithValues: cards.compactMap { card in card.replacedByCardID.map { (card.id, $0) } })

@@ -69,7 +69,7 @@ struct NasdaqStockQuoteProvider: StockQuoteProviding {
             ).map { $0 / 100 },
             updatedAt: StockQuoteProviderSupport.nasdaqDate(
                 priceData.lastTradeTimestamp
-            ) ?? Date(),
+            ),
             source: "Nasdaq"
         )
     }

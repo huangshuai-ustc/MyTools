@@ -142,12 +142,11 @@ struct EastmoneyStockChartProvider: StockChartProvider {
     }
 
     private func parseDate(_ text: String, market: StockMarket) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = StockChartSeriesProcessor.marketTimeZone(market)
-        formatter.dateFormat = text.contains(":") ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"
-        return formatter.date(from: text)
+        StockDateParser.date(
+            text,
+            format: text.contains(":") ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd",
+            timeZone: StockChartSeriesProcessor.marketTimeZone(market)
+        )
     }
 }
 

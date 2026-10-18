@@ -203,12 +203,11 @@ struct NasdaqStockChartProvider: StockChartProvider {
     }
 
     private func historicalDate(_ text: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = StockChartSeriesProcessor.marketTimeZone(.unitedStates)
-        formatter.dateFormat = "MM/dd/yyyy"
-        return formatter.date(from: text)
+        StockDateParser.date(
+            text,
+            format: "MM/dd/yyyy",
+            timeZone: StockChartSeriesProcessor.marketTimeZone(.unitedStates)
+        )
     }
 
     private func isoDate(_ date: Date, calendar: Calendar) -> String {

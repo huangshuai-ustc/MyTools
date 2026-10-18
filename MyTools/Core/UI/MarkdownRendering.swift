@@ -40,6 +40,17 @@ enum MarkdownRenderer {
               let contentStart = text.index(opening, offsetBy: 1, limitedBy: text.endIndex),
               let closing = text[contentStart...].firstIndex(of: "$"),
               closing > contentStart {
+            // Like Pandoc: math content cannot start or end with whitespace and the closing
+            // `$` cannot precede a digit, so prices such as "$5 和 $10" stay literal.
+            let content = text[contentStart..<closing]
+            let afterClosing = text.index(after: closing)
+            guard content.first?.isWhitespace == false, content.last?.isWhitespace == false,
+                  afterClosing == text.endIndex || !text[afterClosing].isNumber
+            else {
+                result += text[cursor...opening]
+                cursor = contentStart
+                continue
+            }
             result += text[cursor..<opening]
             result += normalizeMathExpression(String(text[contentStart..<closing]))
             cursor = text.index(after: closing)
@@ -77,7 +88,14 @@ enum MarkdownRenderer {
                 result += superscript(exponent) ?? "^\(exponent)"
                 nextCursor = expression.index(after: closing)
             } else {
-                let exponentEnd = expression.index(after: exponentStart)
+                // Unbraced exponents take an optional sign plus following digits (m^-2, 10^12).
+                var exponentEnd = expression.index(after: exponentStart)
+                if "+-0123456789".contains(expression[exponentStart]) {
+                    while exponentEnd < expression.endIndex, expression[exponentEnd].isASCII,
+                          expression[exponentEnd].isNumber {
+                        exponentEnd = expression.index(after: exponentEnd)
+                    }
+                }
                 let exponent = String(expression[exponentStart..<exponentEnd])
                 result += superscript(exponent) ?? "^\(exponent)"
                 nextCursor = exponentEnd

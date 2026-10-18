@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UniformTypeIdentifiers
+import CryptoKit
 @testable import MyTools
 
 struct AppStoreBackupProcessorTests {
@@ -38,6 +39,78 @@ struct AppStoreBackupProcessorTests {
         #expect(payload.secrets.map(\.title) == ["Example Secret"])
     }
 
+    @Test func backupEnvelopeRecordsRoundsAndRejectsTamperedHeader() throws {
+        var stock = StockHolding()
+        stock.symbol = "TEST"
+        let data = try VaultBackupCrypto.makeBackup(
+            from: VaultData(stocks: [stock]), includedModules: [.myStocks],
+            password: "test-password"
+        )
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["version"] as? String == "2.0")
+        #expect(object["rounds"] as? Int == 600_000)
+        let restored = try VaultBackupCrypto.restorePayload(from: data, password: "test-password")
+        #expect(restored.vault.stocks.map(\.symbol) == ["TEST"])
+
+        // The header is authenticated: downgrading it to 1.0 fails like a wrong password.
+        object["version"] = "1.0"
+        let downgraded = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: VaultBackupError.wrongPassword) {
+            try VaultBackupCrypto.restorePayload(from: downgraded, password: "test-password")
+        }
+        object["version"] = "2.0"
+        object["rounds"] = 1
+        let weakened = try JSONSerialization.data(withJSONObject: object)
+        #expect(throws: VaultBackupError.invalidFile) {
+            try VaultBackupCrypto.restorePayload(from: weakened, password: "test-password")
+        }
+    }
+
+    @Test func legacyVersionOneBackupStillRestores() throws {
+        let password = "test-password"
+        let salt = Data(repeating: 3, count: 16)
+        let key = SymmetricKey(data: try VaultCrypto.pbkdf2SHA256(
+            password: Data(password.utf8), salt: salt, rounds: 210_000, keyLength: 32
+        ))
+        var stock = StockHolding()
+        stock.symbol = "LEGACY"
+        let payload = try JSONEncoder().encode(
+            VaultBackupPayload(vault: VaultData(stocks: [stock]), includedModules: [.myStocks])
+        )
+        let combined = try #require(try AES.GCM.seal(payload, using: key).combined)
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "format": "mytools-vault", "version": "1.0",
+            "salt": salt.base64EncodedString(), "combined": combined.base64EncodedString(),
+        ])
+
+        let restored = try VaultBackupCrypto.restorePayload(from: legacy, password: password)
+        #expect(restored.vault.stocks.map(\.symbol) == ["LEGACY"])
+    }
+
+    @Test func backupOmitsTagsAndTemplatesOfExcludedModules() async throws {
+        var vault = VaultData()
+        vault.medicalRecordTags = ["体检"]
+        vault.credentialTags = ["家庭"]
+        vault.billTags = ["餐饮"]
+        vault.secretTags = ["工作"]
+        let processor = AppStoreBackupProcessor()
+
+        let data = try await processor.makeBackup(
+            vault: vault,
+            secrets: [],
+            includedModules: [.myStocks],
+            password: "test-password"
+        )
+        // 直接解密，不经过导入时的模块过滤，确认备份文件本身不含这些数据。
+        let payload = try VaultBackupCrypto.restorePayload(from: data, password: "test-password")
+
+        #expect(payload.vault.medicalRecordTags.isEmpty)
+        #expect(payload.vault.credentialTags.isEmpty)
+        #expect(payload.vault.billTags.isEmpty)
+        #expect(payload.vault.secretTags.isEmpty)
+        #expect(payload.vault.domesticBankLoginFieldTemplates.isEmpty)
+    }
+
     @Test func financeAndSecretAttachmentsSurviveBackupRestore() async throws {
         let attachmentStore = AttachmentStore()
         let statementData = Data("statement-pdf".utf8)
@@ -58,7 +131,9 @@ struct AppStoreBackupProcessorTests {
         }
         var statement = CreditCardStatement()
         statement.attachment = statementAttachment
+        let institution = FinancialInstitution()
         var card = BankCard()
+        card.accountID = institution.id
         card.statements = [statement]
         let secret = SecretItem(
             title: "Attachment Secret",
@@ -67,7 +142,7 @@ struct AppStoreBackupProcessorTests {
         let processor = AppStoreBackupProcessor()
 
         let backup = try await processor.makeBackup(
-            vault: VaultData(cards: [card]),
+            vault: VaultData(accounts: [institution], cards: [card]),
             secrets: [secret],
             includedModules: [.personalFinance, .secrets],
             password: "test-password"

@@ -83,6 +83,7 @@ struct BillEditorView: View {
                 }
             }
             .appNavigationTitle(isExisting ? "编辑账单" : "新增账单")
+            .diagnosticScreen(isExisting ? "账单编辑" : "账单新增")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
@@ -118,8 +119,8 @@ struct BillEditorView: View {
     }
 
     private func validateAndRequestSave() {
-        guard let amount = DecimalTextParser.expression(from: amountText), amount > 0 else {
-            errorMessage = "请输入大于 0 的有效金额。"
+        guard let amount = DecimalTextParser.expression(from: amountText), amount >= 0 else {
+            errorMessage = "请输入不小于 0 的有效金额。"
             return
         }
         draft.amount = amount

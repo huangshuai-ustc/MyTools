@@ -6,7 +6,7 @@ enum AppStoreBackupMerger {
         localSecrets: [SecretVaultValue],
         imported: VaultBackupPayload,
         enabledModules: Set<ToolModule> = ToolModuleCatalog.allModules
-    ) -> VaultBackupPayload {
+    ) throws -> VaultBackupPayload {
         let modules = imported.includedModules.intersection(
             CompiledToolModules.available(from: enabledModules)
         ).intersection(ToolModuleCatalog.backupModules)
@@ -15,22 +15,23 @@ enum AppStoreBackupMerger {
             // included module below is replaced as a whole; omitted modules
             // remain untouched.
         var merged = localVault
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        if modules.contains(.partnership) {
-            merged.partnershipBooks = imported.vault.partnershipBooks
+        // Strict backup decoding has already validated every imported module.
+        // A restored module leaves quarantine: otherwise the preserved raw
+        // payload keeps winning at encode time and the import never reaches
+        // disk (AUDIT-027). Unrelated modules keep their recovery payloads.
+        for module in modules {
+            merged.unavailableModules.remove(module.rawValue)
+            for key in quarantinedPayloadKeys[module, default: []] {
+                merged.preservedModulePayloads.removeValue(forKey: key)
+            }
+            if module == .secrets { merged.preservedSecrets = nil }
         }
-#endif
 
 #if MYTOOLS_FEATURE_FINANCE
         if modules.contains(.personalFinance) {
             merged.financialInstitutions = imported.vault.financialInstitutions
-            // Strict backup decoding has already validated the imported module.
-            // Clear only Finance quarantine; unrelated modules retain their
-            // original recovery payloads and blocked status.
-            merged.unavailableModules.remove("personalFinance")
-            for key in ["financialInstitutions", "accounts", "cards", "financialProviders", "domesticBankLoginFieldTemplates", "overseasBankLoginFieldTemplates"] {
-                merged.preservedModulePayloads.removeValue(forKey: key)
-            }
+            merged.domesticBankLoginFieldTemplates = imported.vault.domesticBankLoginFieldTemplates
+            merged.overseasBankLoginFieldTemplates = imported.vault.overseasBankLoginFieldTemplates
             for key in ["accounts", "cards", "financialProviders"] {
                 merged.unknownPayloads.removeValue(forKey: key)
             }
@@ -52,11 +53,12 @@ enum AppStoreBackupMerger {
                     level: .warning
                 )
             }
-            let validImportedStocks = imported.vault.stocks.filter {
-                $0.hasValidTransactionOrder
+            // The module is replaced as a whole, so a partial import is not an
+            // option; fail loudly instead of reporting success (AUDIT-028).
+            guard rejectedStockIDs.isEmpty else {
+                throw VaultBackupError.invalidStockHoldings(rejectedStockIDs.count)
             }
-            guard validImportedStocks.count == imported.vault.stocks.count else { return VaultBackupPayload(vault: localVault, secrets: localSecrets, includedModules: modules) }
-            merged.stocks = validImportedStocks
+            merged.stocks = imported.vault.stocks
             merged.stockCashFlowRecords = imported.vault.stockCashFlowRecords
             merged.stockPriceAlerts = imported.vault.stockPriceAlerts
             merged.stockReturnAlerts = imported.vault.stockReturnAlerts
@@ -75,15 +77,10 @@ enum AppStoreBackupMerger {
             merged.medicalRecordTags = imported.vault.medicalRecordTags
         }
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        if modules.contains(.foodMap) {
-            merged.foodPlaces = imported.vault.foodPlaces
-            merged.foodPlaceTags = imported.vault.foodPlaceTags
-        }
-#endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         if modules.contains(.documents) {
             merged.credentialDocuments = imported.vault.credentialDocuments
+            merged.credentialFieldTemplates = imported.vault.credentialFieldTemplates
             merged.credentialTags = imported.vault.credentialTags
         }
 #endif
@@ -122,6 +119,21 @@ enum AppStoreBackupMerger {
 #endif
         return VaultBackupPayload(vault: merged, secrets: secrets, includedModules: modules)
     }
+
+    /// Top-level Vault keys whose raw payload is preserved while a module is
+    /// quarantined (see `VaultData.init(from:)`).
+    private static let quarantinedPayloadKeys: [ToolModule: [String]] = [
+        .personalFinance: [
+            "financialInstitutions", "accounts", "cards", "financialProviders",
+            "domesticBankLoginFieldTemplates", "overseasBankLoginFieldTemplates",
+        ],
+        .myStocks: ["stocks", "stockCashFlowRecords", "stockPriceAlerts", "stockReturnAlerts"],
+        .currencyExchange: ["currencyExchangeRecords", "currencyRateAlerts"],
+        .healthRecords: ["medicalRecords", "hospitalProfiles", "medicalRecordTags"],
+        .documents: ["credentialDocuments", "credentialFieldTemplates", "credentialTags"],
+        .bills: ["billRecords", "billTags"],
+        .secrets: ["secretTags", "secretFieldTemplates"],
+    ]
 
     private static func mergeByID<Element: Identifiable>(
         local: [Element],

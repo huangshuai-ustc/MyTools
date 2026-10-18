@@ -79,6 +79,22 @@ struct MedicalRecordsPresentationTests {
         #expect(overview.selfPayRatio == Decimal(string: "0.6"))
     }
 
+    @Test func inpatientDailyRecordsCountAsOneVisit() {
+        var episode = record(hospital: "Hospital A", day: 1, year: 2025)
+        episode.visitType = .inpatient
+        episode.totalCost = 100
+        let days = (2...5).map { day in
+            var daily = MedicalRecord(inpatientDayFor: episode, date: date(day, year: 2025))
+            daily.totalCost = 10
+            return daily
+        }
+
+        let overview = makePresentation(records: [episode] + days, selectedYear: 2025).overview
+
+        #expect(overview.visitCount == 1)
+        #expect(overview.total == 140)
+    }
+
     @Test(arguments: ["needle item", "needle result", "needle tag", "三级"])
     func searchCoversExpensePhysicalExamTagAndClassification(_ query: String) {
         var record = record(hospital: "Example", day: 1)

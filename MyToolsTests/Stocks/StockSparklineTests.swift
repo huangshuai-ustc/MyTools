@@ -505,6 +505,31 @@ struct StockConvertedPortfolioSummaryTests {
         #expect(summary.realizedProfitLoss == nil)
     }
 
+    /// 已清仓股票缺汇率只影响已实现收益：仍持有的股票市值照常给出（AUDIT-089）。
+    @Test func clearedPositionWithoutRateKeepsHeldMarketValue() {
+        var held = StockHolding(symbol: "600000")
+        held.transactions = [Self.buy(quantity: 100, unitPrice: 10)]
+        held.latestPrice = 11
+        held.previousClose = 10
+
+        var cleared = StockHolding(symbol: "AAPL")
+        cleared.market = .unitedStates
+        cleared.transactions = [
+            Self.buy(quantity: 10, unitPrice: 100),
+            Self.sell(quantity: 10, unitPrice: 120)
+        ]
+
+        let summary = StockConvertedPortfolioSummary(
+            stocks: [held, cleared],
+            multipliers: [.aShare: 1]
+        )
+
+        #expect(summary.marketValue == 1_100)
+        #expect(summary.todayProfitLoss == 100)
+        #expect(summary.realizedProfitLoss == nil)
+        #expect(summary.totalProfitLoss == nil)
+    }
+
     @Test func realizedProfitLossConvertsEachMarketWithItsOwnRate() {
         var aShare = StockHolding(symbol: "600000")
         aShare.transactions = [

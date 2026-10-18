@@ -82,9 +82,6 @@ struct BillsView: View {
         }
     }
 
-    private var pagedRecords: [BillRecord] {
-        pagination.visibleItems(from: visibleRecords)
-    }
 
     private var availableCategories: [BillCategory] {
         Set(store.records.map(\.category)).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -94,7 +91,7 @@ struct BillsView: View {
         AppTagSupport.normalize(store.records.flatMap(\.tags))
     }
 
-    private var groupedRecords: [(Date, [BillRecord])] {
+    private static func groupedRecords(_ pagedRecords: [BillRecord]) -> [(Date, [BillRecord])] {
         Dictionary(grouping: pagedRecords) {
             Calendar.autoupdatingCurrent.startOfDay(for: $0.occurredAt)
         }
@@ -187,7 +184,10 @@ struct BillsView: View {
                 }
             }
 
-            if visibleRecords.isEmpty {
+            // Filter once per body pass and hand the results to the rows (AUDIT-075).
+            let filteredRecords = visibleRecords
+            let pagedRecords = pagination.visibleItems(from: filteredRecords)
+            if filteredRecords.isEmpty {
                 Section {
                     ContentUnavailableView(
                         store.records.isEmpty ? "暂无账单" : "没有匹配的账单",
@@ -196,11 +196,15 @@ struct BillsView: View {
                     )
                 }
             } else {
-                ForEach(groupedRecords, id: \.0) { day, records in
+                let lastVisibleID = pagedRecords.last?.id
+                let totalCount = filteredRecords.count
+                ForEach(Self.groupedRecords(pagedRecords), id: \.0) { day, records in
                     Section(AppDateFormatter.string(from: day)) {
                         ForEach(records) { record in
                             recordLink(record)
-                                .onAppear { loadMoreIfNeeded(record) }
+                                .onAppear {
+                                    loadMoreIfNeeded(record, lastVisibleID: lastVisibleID, totalCount: totalCount)
+                                }
                         }
                     }
                 }
@@ -283,11 +287,11 @@ struct BillsView: View {
         pagination.reset()
     }
 
-    private func loadMoreIfNeeded(_ record: BillRecord) {
+    private func loadMoreIfNeeded(_ record: BillRecord, lastVisibleID: UUID?, totalCount: Int) {
         pagination.loadMoreIfNeeded(
             currentItemID: record.id,
-            lastVisibleItemID: pagedRecords.last?.id,
-            totalItemCount: visibleRecords.count
+            lastVisibleItemID: lastVisibleID,
+            totalItemCount: totalCount
         )
     }
 
@@ -422,6 +426,7 @@ private struct BillDetailView: View {
                 .listStyle(.insetGrouped)
 #endif
                 .appNavigationTitle(record.displayTitle)
+                .diagnosticScreen("账单详情")
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button {
@@ -597,6 +602,7 @@ struct BillsExportSettingsView: View {
             }
         }
         .appNavigationTitle("账单导出")
+        .diagnosticScreen("账单导出")
         .iOSLabeledBackButton("设置")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

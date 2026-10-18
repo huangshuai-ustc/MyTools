@@ -61,7 +61,8 @@ enum StockQuoteRefreshReducer {
             guard let index = stockIndices[requestedStock.id] else { continue }
 
             let previous = stocks[index]
-            if let previousDate = previous.lastQuoteAt, quote.updatedAt < previousDate {
+            if let previousDate = previous.lastQuoteAt,
+               let quoteDate = quote.updatedAt, quoteDate < previousDate {
                 // A minute-cache promotion may have landed while this batch
                 // was suspended. An older response cannot roll it back.
                 continue
@@ -74,13 +75,14 @@ enum StockQuoteRefreshReducer {
             stocks[index].latestPrice = quote.latestPrice
             stocks[index].previousClose = quote.previousClose
             stocks[index].changePercent = quote.changePercent
-            stocks[index].lastQuoteAt = quote.updatedAt
+            // 无时间戳时只更新价格，不推进报价时间，收盘覆盖检查不会因此误判完成。
+            stocks[index].lastQuoteAt = quote.updatedAt ?? previous.lastQuoteAt
             if previous.symbol != quote.symbol
                 || (!quoteName.isEmpty && previous.quoteName != quoteName)
                 || previous.latestPrice != quote.latestPrice
                 || previous.previousClose != quote.previousClose
                 || previous.changePercent != quote.changePercent
-                || previous.lastQuoteAt != quote.updatedAt {
+                || previous.lastQuoteAt != stocks[index].lastQuoteAt {
                 didChangePersistedQuote = true
             }
             sources[requestedStock.id] = quote.source

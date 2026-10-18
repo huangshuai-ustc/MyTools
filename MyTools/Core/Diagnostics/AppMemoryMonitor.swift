@@ -101,8 +101,9 @@ final class AppMemoryMonitor: @unchecked Sendable {
             queue: nil
         ) { [weak self] _ in
             // 收到内存警告离 jetsam 已经很近了，立刻落盘。
-            self?.queue.async {
-                self?.report(reason: "收到系统内存警告", level: .warning, force: true)
+            guard let monitor = self else { return }
+            monitor.queue.async { [weak monitor] in
+                monitor?.report(reason: "收到系统内存警告", level: .warning, force: true)
             }
         }
 #endif

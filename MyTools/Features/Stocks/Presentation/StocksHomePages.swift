@@ -19,6 +19,15 @@ enum StocksHomePage: Hashable, CaseIterable, Identifiable {
         }
     }
 
+    /// Register all displayed markets; the coordinator applies session checks.
+    /// Held US extended-hours producers are added centrally by the coordinator.
+    func chartStockIDs(stocks: [StockHolding], market: StockMarket?) -> Set<UUID> {
+        guard self == .watchlist else { return [] }
+        return Set(stocks.lazy.filter {
+            $0.hasConfiguredSymbol && !$0.isArchived && (market == nil || $0.market == market)
+        }.map(\.id))
+    }
+
     /// The system tab bar renders the filled variant for the selected tab on its
     /// own, so only the outline name is needed here.
     var systemImage: String {
@@ -53,17 +62,21 @@ struct StockHomeRowLink<Content: View>: View {
                     } label: {
                         Label("详情", systemImage: "list.bullet.rectangle")
                     }
-                    Button {
-                        _ = store.restoreArchivedStock(id: stock.id)
-                    } label: {
-                        Label("恢复看盘", systemImage: "arrow.uturn.backward")
-                    }
                 }
                 // 历史股票必然有过交易或分红（存档的前提），所以默认不给删除，
                 // 与 `StockListRemovalActions` 同一条规则：删除会抹掉全部记录。
                 // 只有在详情页把记录删净之后才允许彻底删掉这只股票。
-                .appDeleteSwipeAction(isEnabled: !stock.hasHistoricalActivity) {
-                    store.deleteStocks(ids: [stock.id])
+                .appSwipeActions(edge: .trailing, style: AppSwipeActions.secondary) {
+                    Button {
+                        _ = store.restoreArchivedStock(id: stock.id)
+                    } label: {
+                        Label("取消归档", systemImage: "arrow.uturn.backward")
+                    }
+                    if !stock.hasHistoricalActivity {
+                        Button(role: .destructive) { store.deleteStocks(ids: [stock.id]) } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
                 }
         } else {
             link
@@ -191,6 +204,7 @@ struct StockPositionsPage: View {
     let costAllocations: StockCostAllocationSnapshot
     let searchTerm: String
     let hasConfiguredStocks: Bool
+    let onShowValueHistory: () -> Void
 
     var body: some View {
         List {
@@ -208,7 +222,8 @@ struct StockPositionsPage: View {
                     marketFilter: marketFilter,
                     summaryStocks: summaryStocks,
                     summaryMarkets: summaryMarkets,
-                    allocations: allocations
+                    allocations: allocations,
+                    onShowValueHistory: onShowValueHistory
                 )
                 .appListRowStyle()
             }
@@ -256,7 +271,7 @@ struct StockWatchlistPage: View {
     let availableMarketFilters: [StockMarketFilter]
     let watchlist: [StockHolding]
     let archivedStocks: [StockHolding]
-    let showsArchivedStocks: Bool
+    @Binding var showsArchivedStocks: Bool
     let searchTerm: String
     let hasConfiguredStocks: Bool
 
@@ -281,6 +296,15 @@ struct StockWatchlistPage: View {
                     ForEach(watchlist) { stock in
                         watchRow(stock)
                     }
+                }
+            }
+
+            if !archivedStocks.isEmpty {
+                Section {
+                    HiddenItemsVisibilityButton(
+                        itemsDescription: "\(archivedStocks.count) 只已归档股票",
+                        isShowing: $showsArchivedStocks
+                    )
                 }
             }
 

@@ -6,6 +6,7 @@ struct CurrencyExchangeView: View {
     @EnvironmentObject private var store: CurrencyExchangeStore
     @EnvironmentObject private var exchangeRateStore: ExchangeRateStore
     @State private var editingRecord: CurrencyExchangeRecord?
+    @State private var deletingRecord: CurrencyExchangeRecord?
     @State private var recordFilter: CurrencyExchangeRecordFilter = .all
     @State private var selectedYear: Int?
     @State private var primaryCurrencyFilter: CurrencyCode?
@@ -62,9 +63,7 @@ struct CurrencyExchangeView: View {
 
     private var recordGroups: [CurrencyExchangeMonthGroup] {
         let grouped = Dictionary(grouping: pagedRecords) { record in
-            CurrencyExchangeMonthGroup.calendar.date(
-                from: CurrencyExchangeMonthGroup.calendar.dateComponents([.year, .month], from: record.exchangedAt)
-            ) ?? record.exchangedAt
+            CurrencyExchangeRecord.monthStart(of: record.exchangedAt)
         }
         return grouped
             .map { CurrencyExchangeMonthGroup(month: $0.key, records: $0.value) }
@@ -134,6 +133,18 @@ struct CurrencyExchangeView: View {
         }
         .appNavigationTitle("换汇记录")
         .diagnosticScreen("换汇记录")
+        .alert(
+            "删除换汇记录？",
+            isPresented: Binding(get: { deletingRecord != nil }, set: { if !$0 { deletingRecord = nil } })
+        ) {
+            Button("取消", role: .cancel) { deletingRecord = nil }
+            Button("删除", role: .destructive) {
+                if let deletingRecord { store.deleteRecords(ids: [deletingRecord.id]) }
+                deletingRecord = nil
+            }
+        } message: {
+            Text("删除后无法撤销。")
+        }
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索币种或代码")
@@ -247,14 +258,14 @@ struct CurrencyExchangeView: View {
     }
 
     private var availableYears: [Int] {
-        let calendar = CurrencyExchangeMonthGroup.calendar
+        let calendar = CurrencyExchangeRecord.calendar
         return Set(allRecords.map { calendar.component(.year, from: $0.exchangedAt) })
             .sorted(by: >)
     }
 
     private func yearMatches(_ record: CurrencyExchangeRecord) -> Bool {
         guard let selectedYear else { return true }
-        return CurrencyExchangeMonthGroup.calendar.component(.year, from: record.exchangedAt) == selectedYear
+        return CurrencyExchangeRecord.calendar.component(.year, from: record.exchangedAt) == selectedYear
     }
 
     private func currenciesMatch(_ record: CurrencyExchangeRecord) -> Bool {
@@ -319,6 +330,11 @@ struct CurrencyExchangeView: View {
                     .foregroundStyle(overviewLossColor)
                 Spacer()
             }
+            if lossSummary.missingCount > 0, lossSummary.total != nil {
+                Text("已知 \(allRecords.count - lossSummary.missingCount) 笔合计；另有 \(lossSummary.missingCount) 笔缺少牌价，待同步")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack(spacing: 16) {
                 Label("\(allRecords.count) 笔", systemImage: "list.number")
                 Label(currencyCountText, systemImage: "dollarsign.circle")
@@ -363,16 +379,14 @@ struct CurrencyExchangeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Records priced by the current rates are summed; records whose currency
+    /// has no rate are counted instead of blanking the whole total (AUDIT-045).
+    private var lossSummary: CurrencyExchangeLossSummary {
+        CurrencyExchangeLossSummary(records: allRecords, buyingRates: exchangeRateStore.renminbiBuyingRates)
+    }
+
     private var totalRenminbiLoss: Decimal? {
-        guard !allRecords.isEmpty else { return 0 }
-        var total = Decimal.zero
-        for record in allRecords {
-            guard let loss = record.renminbiLoss(using: exchangeRateStore.renminbiBuyingRates) else {
-                return nil
-            }
-            total += loss
-        }
-        return total
+        lossSummary.total
     }
 
     @ViewBuilder
@@ -386,7 +400,7 @@ struct CurrencyExchangeView: View {
         .buttonStyle(.plain)
         .appListRowStyle()
         .appDeleteSwipeAction(isEnabled: true) {
-            store.deleteRecords(ids: [record.id])
+            deletingRecord = record
         }
     }
 
@@ -408,19 +422,12 @@ struct CurrencyExchangeView: View {
 }
 
 private struct CurrencyExchangeMonthGroup: Identifiable {
-    static let calendar: Calendar = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.locale = Locale(identifier: "zh_CN")
-        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        return calendar
-    }()
-
     let month: Date
     let records: [CurrencyExchangeRecord]
     var id: Date { month }
 
     var title: String {
-        let components = Self.calendar.dateComponents([.year, .month], from: month)
+        let components = CurrencyExchangeRecord.calendar.dateComponents([.year, .month], from: month)
         return "\(components.year ?? 0)年\(components.month ?? 0)月"
     }
 }

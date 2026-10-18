@@ -22,11 +22,12 @@ private final class StockEditorDraft: ObservableObject {
         searchText = stock.name.isEmpty ? stock.symbol : stock.name
     }
 
-    static func display(_ value: Decimal) -> String {
+    /// 由总额反推的单价或股数用更多小数，保存后与用户输入的总额一致（AUDIT-094）。
+    static func display(_ value: Decimal, maximumFractionDigits: Int = 4) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 0
-        formatter.maximumFractionDigits = 4
+        formatter.maximumFractionDigits = maximumFractionDigits
         formatter.usesGroupingSeparator = false
         return formatter.string(from: value as NSDecimalNumber)
             ?? NSDecimalNumber(decimal: value).stringValue
@@ -54,13 +55,8 @@ struct StockEditorView: View {
     init(stock: StockHolding, isNew: Bool) {
         let draft = StockEditorDraft(stock: stock)
         if isNew {
-            draft.initialTradedAt = StockTransaction.defaultTradingDate(
-                market: stock.market
-            )
-            draft.initialExecutionTime = StockTransaction.displayedExecutionTime(
-                for: Date(),
-                market: stock.market
-            )
+            draft.initialTradedAt = StockTransaction.defaultTradingDate()
+            draft.initialExecutionTime = Date()
         }
         _draft = StateObject(wrappedValue: draft)
         self.isNew = isNew
@@ -159,6 +155,7 @@ struct StockEditorView: View {
                 if isNew, !draft.isWatchOnly {
                     Section("首次买入") {
                         DateFieldRow(title: "购买日期：", date: $draft.initialTradedAt, upperBound: Date())
+                            .environment(\.timeZone, StockMarketClock.beijingTimeZone)
                         ToggleFieldRow(title: "记录成交时间", isOn: $draft.recordsInitialExecutionTime)
                         if draft.recordsInitialExecutionTime {
                             DateFieldRow(
@@ -166,7 +163,8 @@ struct StockEditorView: View {
                                 date: $draft.initialExecutionTime,
                                 displayedComponents: .hourAndMinute
                             )
-                            Text("按北京时间记录；保存后按股票市场自动换算。不填写时继续按价格推定。")
+                            .environment(\.timeZone, StockMarketClock.beijingTimeZone)
+                            Text("日期和时间均按北京时间填写，保存后按股票市场自动换算。美股夜间成交请填写成交时间，否则按北京日期对应的美股交易日处理；不填写时按价格推定。")
                                 .appFont(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -193,18 +191,9 @@ struct StockEditorView: View {
             .task(id: searchKey) {
                 await searchStocks()
             }
-            .onChange(of: draft.stock.market) { _, market in
+            .onChange(of: draft.stock.market) { _, _ in
                 searchResults = []
                 didFinishSearch = false
-                if isNew {
-                    draft.initialTradedAt = StockTransaction.defaultTradingDate(
-                        market: market
-                    )
-                    draft.initialExecutionTime = StockTransaction.displayedExecutionTime(
-                        for: Date(),
-                        market: market
-                    )
-                }
             }
             .alert("无法保存", isPresented: $showingError) {
                 Button("确定", role: .cancel) {}
@@ -264,7 +253,7 @@ struct StockEditorView: View {
             guard let total = totalAmount, total > 0 else { return }
             let gross = total - fees
             guard gross > 0, let p = unitPrice, p > 0 else { return }
-            draft.quantityText = StockEditorDraft.display(gross / p)
+            draft.quantityText = StockEditorDraft.display(gross / p, maximumFractionDigits: 10)
         default:
             break
         }
@@ -313,8 +302,7 @@ struct StockEditorView: View {
                 executedAt: draft.recordsInitialExecutionTime
                     ? StockTransaction.executionInstant(
                         tradingDate: draft.initialTradedAt,
-                        displayedTime: draft.initialExecutionTime,
-                        market: stock.market
+                        beijingTime: draft.initialExecutionTime
                     )
                     : nil,
                 quantity: quantity,

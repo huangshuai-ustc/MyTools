@@ -39,8 +39,12 @@ struct BillImportAdapterRegistry: Sendable {
         self.adapters = adapters
     }
 
+    /// Bill exports are a few MB at most; larger files are rejected before parsing.
+    static let maximumFileSize = 20 * 1_024 * 1_024
+
     func decode(data: Data, fileName: String) throws -> BillExchangeDocument {
         guard !data.isEmpty else { throw BillImportError.missingFileData }
+        guard data.count <= Self.maximumFileSize else { throw BillSpreadsheetReaderError.oversizedFile }
         guard let adapter = adapters.first(where: { $0.canImport(data: data, fileName: fileName) }) else {
             throw BillImportError.unsupportedFile
         }
@@ -150,12 +154,25 @@ struct AlipayBillImportAdapter: BillImportAdapter {
     let identifier = "alipay-csv"
 
     func canImport(data: Data, fileName: String) -> Bool {
+        // Only the leading bytes are needed to recognize the export; decode() reads the rest.
         guard fileName.lowercased().hasSuffix(".csv"),
-              let sample = try? BillDelimitedTextReader.decode(data) else {
+              let sample = Self.decodedPrefix(of: data) else {
             return false
         }
         return sample.contains("支付宝")
             || (sample.contains("交易订单号") && sample.contains("收/付款方式"))
+    }
+
+    /// Decodes the first 4 KB, trimming up to three bytes so a cut multi-byte
+    /// character (UTF-8 or GB18030) does not make the sample undecodable.
+    private static func decodedPrefix(of data: Data) -> String? {
+        let length = min(data.count, 4_096)
+        let candidates = (0...min(3, length)).map { data.prefix(length - $0) }
+        // Try UTF-8 on every trimmed prefix first: GB18030 also accepts UTF-8 bytes as mojibake.
+        if let text = candidates.lazy.compactMap({ String(data: $0, encoding: .utf8) }).first {
+            return text
+        }
+        return candidates.lazy.compactMap { try? BillDelimitedTextReader.decode($0) }.first
     }
 
     func decode(data: Data, fileName: String) throws -> BillExchangeDocument {
@@ -209,14 +226,49 @@ struct AlipayBillImportAdapter: BillImportAdapter {
                 rawFields: row.rawFields
             )
         }
+        let paired = Self.pairingClosedExpensesWithRefunds(transactions)
         return BillExchangeDocument(
             source: BillExchangeSource(
                 providerIdentifier: "com.alipay",
                 providerName: "支付宝",
                 schemaVersion: "csv-v1"
             ),
-            transactions: transactions
+            transactions: paired
         )
+    }
+
+    /// After a full refund Alipay can show the original expense as “交易关闭” next to a separate
+    /// refund row. Excluding the closed expense while still subtracting the refund would count
+    /// the refund twice, so a closed expense with a matching refund in the same file is kept
+    /// as a refunded expense and linked to the refund (AUDIT-043). Unpaid orders that were
+    /// simply closed have no refund row and stay cancelled.
+    static func pairingClosedExpensesWithRefunds(
+        _ transactions: [BillExchangeTransaction]
+    ) -> [BillExchangeTransaction] {
+        let refunds = transactions.filter { $0.direction == BillDirection.refund.rawValue }
+        guard !refunds.isEmpty else { return transactions }
+        return transactions.map { transaction in
+            guard transaction.direction == BillDirection.expense.rawValue,
+                  transaction.status == BillTransactionStatus.cancelled.rawValue,
+                  let refund = refunds.first(where: { refundMatches($0, original: transaction) })
+            else { return transaction }
+            var result = transaction
+            result.status = BillTransactionStatus.refunded.rawValue
+            result.relatedTransactionID = result.relatedTransactionID ?? refund.id
+            return result
+        }
+    }
+
+    private static func refundMatches(
+        _ refund: BillExchangeTransaction,
+        original: BillExchangeTransaction
+    ) -> Bool {
+        guard refund.amount <= original.amount else { return false }
+        if let merchantID = original.merchantTransactionID, !merchantID.isEmpty,
+           refund.merchantTransactionID == merchantID || refund.merchantTransactionID?.hasPrefix(merchantID) == true {
+            return true
+        }
+        return !original.id.isEmpty && refund.id != original.id && refund.id.hasPrefix(original.id)
     }
 }
 

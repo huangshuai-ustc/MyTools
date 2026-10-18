@@ -135,14 +135,16 @@ final class ToolModuleSettings: ObservableObject {
         preferenceChangeHandler?()
     }
 
+    /// Only explicit choices are synced; compile-time defaults stay local so a
+    /// fresh device cannot overwrite another device's settings (AUDIT-033).
     var syncedModuleOrder: [ToolModule] {
-        orderedModules
+        defaults.object(forKey: Self.orderKey) == nil ? [] : orderedModules
     }
 
     var syncedModuleVisibility: [String: Bool] {
-        Dictionary(uniqueKeysWithValues: CompiledToolModules.ordered.map {
-            ($0.rawValue, isVisible($0))
-        })
+        visibility.filter { key, _ in
+            ToolModule(rawValue: key).map(CompiledToolModules.contains) ?? false
+        }
     }
 
     func applySyncedPreferences(
@@ -158,7 +160,8 @@ final class ToolModuleSettings: ObservableObject {
         let normalizedOrder = compiledOrder + CompiledToolModules.ordered.filter {
             !compiledOrder.contains($0)
         }
-        if orderedModules != normalizedOrder {
+        // An empty order means the sender never customized it.
+        if !compiledOrder.isEmpty, orderedModules != normalizedOrder {
             orderedModules = normalizedOrder
             defaults.set(normalizedOrder.map(\.rawValue), forKey: Self.orderKey)
         }

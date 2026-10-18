@@ -10,6 +10,7 @@ final class StockWatchObservation: ObservableObject {
     @Published private(set) var extendedHours: StockExtendedHoursPerformance?
     @Published private(set) var chartUpdate: StockChartCacheUpdate?
     @Published private(set) var chartError: String?
+    @Published private(set) var fiveDayChartError: String?
     let store: StockStore
     private var subscriptions: Set<AnyCancellable> = []
 
@@ -26,6 +27,8 @@ final class StockWatchObservation: ObservableObject {
             .sink { [weak self] in self?.extendedHours = $0 }.store(in: &subscriptions)
         store.$chartRefreshErrors.map { $0[id] }.removeDuplicates()
             .sink { [weak self] in self?.chartError = $0 }.store(in: &subscriptions)
+        store.$fiveDayRefreshErrors.map { $0[id] }.removeDuplicates()
+            .sink { [weak self] in self?.fiveDayChartError = $0 }.store(in: &subscriptions)
         store.$chartCacheUpdate.compactMap { $0 }.filter { $0.stockIDs.contains(id) }
             .sink { [weak self] in self?.chartUpdate = $0 }.store(in: &subscriptions)
     }
@@ -60,15 +63,24 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         var forcedMarkets: Set<StockMarket>
         var allowClosedMissingData: Bool
 
-        mutating func merge(_ other: Self) {
-            if market != other.market { market = nil }
-            if let currentIDs = stockIDs, let otherIDs = other.stockIDs {
-                stockIDs = currentIDs.union(otherIDs)
+        /// 已排队的请求范围更大且强度不低时直接吸收新请求；范围相同才合并强度。
+        /// 原先跨范围合并会把市场、ID 都置 nil，单只股票的强刷因此放大成全部
+        /// 股票强刷（AUDIT-052）。
+        static func enqueue(_ request: Self, into queue: inout [Self]) {
+            if queue.contains(where: {
+                StockStore.scope($0.market, $0.stockIDs, covers: request.market, request.stockIDs)
+                    && request.forcedMarkets.isSubset(of: $0.forcedMarkets)
+                    && (!request.allowClosedMissingData || $0.allowClosedMissingData)
+            }) { return }
+            if let index = queue.firstIndex(where: {
+                $0.market == request.market && $0.stockIDs == request.stockIDs
+            }) {
+                queue[index].forcedMarkets.formUnion(request.forcedMarkets)
+                queue[index].allowClosedMissingData = queue[index].allowClosedMissingData
+                    || request.allowClosedMissingData
             } else {
-                stockIDs = nil
+                queue.append(request)
             }
-            forcedMarkets.formUnion(other.forcedMarkets)
-            allowClosedMissingData = allowClosedMissingData || other.allowClosedMissingData
         }
     }
 
@@ -77,14 +89,19 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         var stockIDs: Set<UUID>?
         var forceRefresh: Bool
 
-        mutating func merge(_ other: Self) {
-            if market != other.market { market = nil }
-            if let currentIDs = stockIDs, let otherIDs = other.stockIDs {
-                stockIDs = currentIDs.union(otherIDs)
+        /// 同报价请求的合并规则（AUDIT-052）。
+        static func enqueue(_ request: Self, into queue: inout [Self]) {
+            if queue.contains(where: {
+                StockStore.scope($0.market, $0.stockIDs, covers: request.market, request.stockIDs)
+                    && (!request.forceRefresh || $0.forceRefresh)
+            }) { return }
+            if let index = queue.firstIndex(where: {
+                $0.market == request.market && $0.stockIDs == request.stockIDs
+            }) {
+                queue[index].forceRefresh = queue[index].forceRefresh || request.forceRefresh
             } else {
-                stockIDs = nil
+                queue.append(request)
             }
-            forceRefresh = forceRefresh || other.forceRefresh
         }
     }
 
@@ -100,6 +117,8 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     @Published private(set) var lastRefreshAtByMarket: [StockMarket: Date] = [:]
     @Published private(set) var quoteErrors: [UUID: String] = [:]
     @Published private(set) var quoteSources: [UUID: String] = [:]
+    private var sparklineRefreshTokens: [UUID: UUID] = [:]
+    private var extendedHoursRefreshTokens: [UUID: UUID] = [:]
     @Published private(set) var extendedHoursPerformance: [UUID: StockExtendedHoursPerformance] = [:]
     @Published private(set) var intradaySparklines: [UUID: StockSparklineSeries] = [:]
     /// Monotonic per-stock disk-cache revisions. Views compare these with the
@@ -124,15 +143,29 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     private weak var mutationNotifier: (any VaultMutationNotifying)?
     private weak var exchangeRateStore: ExchangeRateStore?
     private var exchangeRecordProvider: @MainActor () -> [StockExchangeRecordSnapshot]
-    private var pendingQuoteRefresh: QuoteRefreshRequest?
-    private var pendingIntradayChartRefresh: IntradayChartRefreshRequest?
+    nonisolated private static func scope(
+        _ market: StockMarket?, _ ids: Set<UUID>?,
+        covers otherMarket: StockMarket?, _ otherIDs: Set<UUID>?
+    ) -> Bool {
+        guard market == nil || market == otherMarket else { return false }
+        guard let ids else { return true }
+        return otherIDs.map { $0.isSubset(of: ids) } ?? false
+    }
+
+    private var pendingQuoteRefreshes: [QuoteRefreshRequest] = []
+    private var pendingIntradayChartRefreshes: [IntradayChartRefreshRequest] = []
     private var lastAutomaticIntradayAttemptAt: [UUID: Date] = [:]
     private var chartCacheUpdateSequence: UInt64 = 0
     private var performanceCache = StockPerformanceCache()
-    private var quoteRefreshWaiters: [CheckedContinuation<Void, Never>] = []
-    private var chartRefreshWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Resumed with true when the waiter must take over a drain whose task was
+    /// cancelled; false means its request has been handled (AUDIT-053).
+    private var quoteRefreshWaiters: [CheckedContinuation<Bool, Never>] = []
+    private var chartRefreshWaiters: [CheckedContinuation<Bool, Never>] = []
     private var lastQuoteAttemptAt: [UUID: Date] = [:]
+    /// 分时与五日各记各的错误：一次刷新里五日失败不能盖掉分时的成功，
+    /// 反之亦然；看盘页按当前所选周期显示对应的那一条。
     @Published private(set) var chartRefreshErrors: [UUID: String] = [:]
+    @Published private(set) var fiveDayRefreshErrors: [UUID: String] = [:]
 
     func performance(for stock: StockHolding, at now: Date = Date()) -> StockHolding.Performance {
         performanceCache.performance(for: stock, at: now)
@@ -189,6 +222,8 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         returnAlerts: [StockReturnAlert],
         isDataLoaded: Bool
     ) {
+        extendedHoursRefreshTokens.removeAll()
+        sparklineRefreshTokens.removeAll()
         self.stocks = stocks
         self.cashFlowRecords = cashFlowRecords
         self.priceAlerts = priceAlerts
@@ -378,7 +413,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
     func upsertTransaction(_ transaction: StockTransaction, in stockID: UUID) -> Bool {
         guard let index = stocks.firstIndex(where: { $0.id == stockID }),
               let candidate = StockPortfolioEditor.upserting(transaction, in: stocks[index]) else {
-            DiagnosticLogger.shared.log(.data, "股票交易记录保存失败（未找到持仓） stockID=\(stockID)", level: .warning)
+            DiagnosticLogger.shared.log(.data, "股票交易记录保存失败（未找到持仓或校验未通过） stockID=\(stockID)", level: .warning)
             return false
         }
         stocks[index] = candidate
@@ -393,7 +428,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
                 ids: ids,
                 from: stocks[index]
               ) else {
-            DiagnosticLogger.shared.log(.data, "股票交易记录删除失败（未找到持仓） stockID=\(stockID)", level: .warning)
+            DiagnosticLogger.shared.log(.data, "股票交易记录删除失败（未找到持仓或校验未通过） stockID=\(stockID)", level: .warning)
             return false
         }
         stocks[index] = candidate
@@ -499,6 +534,7 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         lastQuoteAttemptAt.removeAll()
         lastAutomaticIntradayAttemptAt.removeAll()
         chartRefreshErrors.removeAll()
+        fiveDayRefreshErrors.removeAll()
         extendedHoursPerformance.removeAll()
         intradaySparklines.removeAll()
         chartCacheRevisionByStockID.removeAll()
@@ -534,30 +570,47 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             forcedMarkets: effectiveForcedMarkets,
             allowClosedMissingData: allowClosedMissingData
         )
-        if pendingQuoteRefresh == nil {
-            pendingQuoteRefresh = request
-        } else {
-            pendingQuoteRefresh?.merge(request)
-        }
+        QuoteRefreshRequest.enqueue(request, into: &pendingQuoteRefreshes)
         // Calls can re-enter this MainActor method while the provider is
         // suspended. Keep the later request and let the active drain consume it
         // rather than losing a manual force refresh behind an automatic one.
         if isRefreshingQuotes {
-            await withCheckedContinuation { quoteRefreshWaiters.append($0) }
-            return
+            let takesOver = await withCheckedContinuation { quoteRefreshWaiters.append($0) }
+            guard takesOver else { return }
         }
         isRefreshingQuotes = true
+        var inFlight: QuoteRefreshRequest?
         defer {
             isRefreshingQuotes = false
-            if Task.isCancelled { pendingQuoteRefresh = nil }
-            let waiters = quoteRefreshWaiters
-            quoteRefreshWaiters.removeAll()
-            for waiter in waiters { waiter.resume() }
+            // A cancelled drain (e.g. foreground polling stopped) only gives up its
+            // own share: unfinished requests go to the next waiter instead of being
+            // reported as done to everyone queued behind it (AUDIT-053).
+            if Task.isCancelled {
+                if let inFlight {
+                    // 放回队首，并让它吸收被其覆盖的后续请求。
+                    var queue = [inFlight]
+                    for request in pendingQuoteRefreshes { QuoteRefreshRequest.enqueue(request, into: &queue) }
+                    pendingQuoteRefreshes = queue
+                }
+                if !pendingQuoteRefreshes.isEmpty, !quoteRefreshWaiters.isEmpty {
+                    isRefreshingQuotes = true
+                    quoteRefreshWaiters.removeFirst().resume(returning: true)
+                } else {
+                    pendingQuoteRefreshes.removeAll()
+                }
+            }
+            if !isRefreshingQuotes {
+                let waiters = quoteRefreshWaiters
+                quoteRefreshWaiters.removeAll()
+                for waiter in waiters { waiter.resume(returning: false) }
+            }
         }
 
-        while !Task.isCancelled, isModuleVisible, let next = pendingQuoteRefresh {
-            pendingQuoteRefresh = nil
+        while !Task.isCancelled, isModuleVisible, !pendingQuoteRefreshes.isEmpty {
+            let next = pendingQuoteRefreshes.removeFirst()
+            inFlight = next
             await performQuoteRefresh(next)
+            if !Task.isCancelled { inFlight = nil }
         }
     }
 
@@ -632,10 +685,15 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         }
         guard !candidates.isEmpty else {
             if stockIDs == nil {
+                extendedHoursRefreshTokens.removeAll()
                 extendedHoursPerformance = [:]
             }
             return
         }
+        // Cache reads suspend. A newer cache read or live minute projection
+        // invalidates this request per stock before it can overwrite fresh data.
+        let refreshToken = UUID()
+        for stock in candidates { extendedHoursRefreshTokens[stock.id] = refreshToken }
         var values: [UUID: StockExtendedHoursPerformance] = [:]
         // 同一个 `now` 决定盘前/盘后数据是否属于当前交易日，与迷你图的时段判定同源。
         let now = Date()
@@ -695,14 +753,15 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         let eligibleIDs = Set(stocks.lazy.filter {
             $0.market == .unitedStates && $0.hasConfiguredSymbol && !$0.isArchived
         }.map(\.id))
-        let eligibleValues = values.filter { eligibleIDs.contains($0.key) }
-        if let stockIDs {
-            extendedHoursPerformance = extendedHoursPerformance
-                .filter { eligibleIDs.contains($0.key) && !stockIDs.contains($0.key) }
-                .merging(eligibleValues) { _, new in new }
-        } else {
-            extendedHoursPerformance = eligibleValues
-        }
+        let completedIDs = Set(candidates.lazy.filter {
+            self.extendedHoursRefreshTokens[$0.id] == refreshToken && eligibleIDs.contains($0.id)
+        }.map(\.id))
+        let eligibleValues = values.filter { completedIDs.contains($0.key) }
+        extendedHoursPerformance = extendedHoursPerformance
+            .filter { eligibleIDs.contains($0.key) && !completedIDs.contains($0.key) }
+            .merging(eligibleValues) { _, new in new }
+        for id in completedIDs { extendedHoursRefreshTokens[id] = nil }
+        extendedHoursRefreshTokens = extendedHoursRefreshTokens.filter { eligibleIDs.contains($0.key) }
     }
 
     nonisolated private static func decimalQuoteValue(_ value: Double) -> Decimal {
@@ -728,30 +787,44 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             stockIDs: stockID.map { Set([$0]) } ?? stockIDs,
             forceRefresh: forceRefresh
         )
-        if pendingIntradayChartRefresh == nil {
-            pendingIntradayChartRefresh = request
-        } else {
-            pendingIntradayChartRefresh?.merge(request)
-        }
+        IntradayChartRefreshRequest.enqueue(request, into: &pendingIntradayChartRefreshes)
         // 自动轮询、页面进入和手动刷新都经过同一个 drain。后来的强刷会被合并到
         // 下一轮，不能再绕过状态位同时向 Provider 发起第二批请求。
         if isRefreshingCharts {
-            await withCheckedContinuation { chartRefreshWaiters.append($0) }
-            return
+            let takesOver = await withCheckedContinuation { chartRefreshWaiters.append($0) }
+            guard takesOver else { return }
         }
         isRefreshingCharts = true
+        var inFlight: IntradayChartRefreshRequest?
         defer {
             isRefreshingCharts = false
-            if Task.isCancelled { pendingIntradayChartRefresh = nil }
-            let waiters = chartRefreshWaiters
-            chartRefreshWaiters.removeAll()
-            for waiter in waiters { waiter.resume() }
+            // 同报价队列：被取消时把未完成的请求交给下一个等待者（AUDIT-053）。
+            if Task.isCancelled {
+                if let inFlight {
+                    var queue = [inFlight]
+                    for request in pendingIntradayChartRefreshes { IntradayChartRefreshRequest.enqueue(request, into: &queue) }
+                    pendingIntradayChartRefreshes = queue
+                }
+                if !pendingIntradayChartRefreshes.isEmpty, !chartRefreshWaiters.isEmpty {
+                    isRefreshingCharts = true
+                    chartRefreshWaiters.removeFirst().resume(returning: true)
+                } else {
+                    pendingIntradayChartRefreshes.removeAll()
+                }
+            }
+            if !isRefreshingCharts {
+                let waiters = chartRefreshWaiters
+                chartRefreshWaiters.removeAll()
+                for waiter in waiters { waiter.resume(returning: false) }
+            }
         }
 
         while !Task.isCancelled,
               isModuleVisible,
-              let next = pendingIntradayChartRefresh {
-            pendingIntradayChartRefresh = nil
+              !pendingIntradayChartRefreshes.isEmpty {
+            let next = pendingIntradayChartRefreshes.removeFirst()
+            inFlight = next
+            defer { if !Task.isCancelled { inFlight = nil } }
             let candidates = stocks.filter { stock in
                 guard stock.hasConfiguredSymbol, !stock.isArchived else { return false }
                 if let market = next.market, stock.market != market { return false }
@@ -825,13 +898,13 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             _ = try await chartService.fetchChart(for: stock, range: .fiveDays, forceRefresh: forceRefresh)
             guard !Task.isCancelled, isDataLoaded, isModuleVisible,
                   stocks.contains(where: { $0.id == stockID && $0.symbol == stock.symbol && $0.market == stock.market && !$0.isArchived }) else { return }
-            chartRefreshErrors[stockID] = nil
+            fiveDayRefreshErrors[stockID] = nil
             await chartCacheDidUpdate(for: [stockID])
         } catch is CancellationError {
             return
         } catch {
             guard !Task.isCancelled else { return }
-            chartRefreshErrors[stockID] = "五日历史更新失败，已保留上次数据"
+            fiveDayRefreshErrors[stockID] = "五日历史更新失败，已保留上次数据"
         }
     }
 
@@ -909,6 +982,8 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
             stocks[index].lastQuoteAt = point.date
             didMutateLocalOnly()
         }
+        extendedHoursRefreshTokens[projection.stockID] = nil
+        sparklineRefreshTokens[projection.stockID] = nil
         if let extendedHours = projection.extendedHours {
             extendedHoursPerformance[projection.stockID] = extendedHours
         } else {
@@ -967,11 +1042,14 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         }
         guard !candidates.isEmpty else {
             if stockIDs == nil {
+                sparklineRefreshTokens.removeAll()
                 intradaySparklines = [:]
             }
             return
         }
 
+        let refreshToken = UUID()
+        for stock in candidates { sparklineRefreshTokens[stock.id] = refreshToken }
         var values: [UUID: StockSparklineSeries] = [:]
         // 一次刷新内所有行共用同一个 `now`，与 `refreshExtendedHoursPerformance` 的当天
         // 校验用的是同一套判定。
@@ -1010,14 +1088,15 @@ final class StockStore: ObservableObject, ModuleLifecycleParticipant {
         let eligibleIDs = Set(stocks.lazy.filter {
             $0.hasConfiguredSymbol && !$0.isArchived
         }.map(\.id))
-        let eligibleValues = values.filter { eligibleIDs.contains($0.key) }
-        if let stockIDs {
-            intradaySparklines = intradaySparklines
-                .filter { eligibleIDs.contains($0.key) && !stockIDs.contains($0.key) }
-                .merging(eligibleValues) { _, new in new }
-        } else {
-            intradaySparklines = eligibleValues
-        }
+        let completedIDs = Set(candidates.lazy.filter {
+            self.sparklineRefreshTokens[$0.id] == refreshToken && eligibleIDs.contains($0.id)
+        }.map(\.id))
+        let eligibleValues = values.filter { completedIDs.contains($0.key) }
+        intradaySparklines = intradaySparklines
+            .filter { eligibleIDs.contains($0.key) && !completedIDs.contains($0.key) }
+            .merging(eligibleValues) { _, new in new }
+        for id in completedIDs { sparklineRefreshTokens[id] = nil }
+        sparklineRefreshTokens = sparklineRefreshTokens.filter { eligibleIDs.contains($0.key) }
     }
 
     func lastRefreshAt(for market: StockMarket?) -> Date? {

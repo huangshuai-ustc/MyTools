@@ -13,10 +13,8 @@ private final class StockTransactionEditorDraft: ObservableObject {
     init(transaction: StockTransaction, market: StockMarket) {
         self.transaction = transaction
         recordsExecutionTime = transaction.executedAt != nil
-        executionTime = StockTransaction.displayedExecutionTime(
-            for: transaction.executedAt ?? Date(),
-            market: market
-        )
+        // 时间选择器固定按北京时间显示，所以直接承载绝对时刻即可。
+        executionTime = transaction.executedAt ?? Date()
         quantityText = transaction.quantity == 0 ? "" : Self.display(transaction.quantity)
         unitPriceText = transaction.unitPrice == 0 ? "" : Self.display(transaction.unitPrice)
         feesText = transaction.fees == 0 ? "" : Self.display(transaction.fees)
@@ -29,11 +27,12 @@ private final class StockTransactionEditorDraft: ObservableObject {
             )
     }
 
-    static func display(_ value: Decimal) -> String {
+    /// 由总额反推的单价或股数用更多小数，保存后与用户输入的总额一致（AUDIT-094）。
+    static func display(_ value: Decimal, maximumFractionDigits: Int = 4) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 0
-        formatter.maximumFractionDigits = 4
+        formatter.maximumFractionDigits = maximumFractionDigits
         formatter.usesGroupingSeparator = false
         return formatter.string(from: value as NSDecimalNumber)
             ?? NSDecimalNumber(decimal: value).stringValue
@@ -72,6 +71,7 @@ struct StockTransactionEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     DateFieldRow(title: "交易日期：", date: $draft.transaction.tradedAt, upperBound: Date())
+                    .environment(\.timeZone, StockMarketClock.beijingTimeZone)
                     ToggleFieldRow(title: "记录成交时间", isOn: $draft.recordsExecutionTime)
                     if draft.recordsExecutionTime {
                         DateFieldRow(
@@ -79,7 +79,8 @@ struct StockTransactionEditorView: View {
                             date: $draft.executionTime,
                             displayedComponents: .hourAndMinute
                         )
-                        Text("按北京时间记录；保存后按股票市场自动换算。不填写时继续按价格和同日顺序推定。")
+                        .environment(\.timeZone, StockMarketClock.beijingTimeZone)
+                        Text("日期和时间均按北京时间填写，保存后按股票市场自动换算。美股夜间成交请填写成交时间，否则按北京日期对应的美股交易日处理；不填写时按价格和同日顺序推定。")
                             .appFont(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -205,7 +206,7 @@ struct StockTransactionEditorView: View {
                 : total + fees
             guard gross > 0 else { return }
             if let q = quantity, q > 0 {
-                draft.unitPriceText = StockTransactionEditorDraft.display(gross / q)
+                draft.unitPriceText = StockTransactionEditorDraft.display(gross / q, maximumFractionDigits: 10)
             }
         }
     }
@@ -220,8 +221,7 @@ struct StockTransactionEditorView: View {
         transaction.executedAt = draft.recordsExecutionTime
             ? StockTransaction.executionInstant(
                 tradingDate: transaction.tradedAt,
-                displayedTime: draft.executionTime,
-                market: stock.market
+                beijingTime: draft.executionTime
             )
             : nil
         transaction.quantity = quantity
@@ -274,8 +274,7 @@ struct StockTransactionEditorView: View {
         transaction.executedAt = draft.recordsExecutionTime
             ? StockTransaction.executionInstant(
                 tradingDate: transaction.tradedAt,
-                displayedTime: draft.executionTime,
-                market: stock.market
+                beijingTime: draft.executionTime
             )
             : nil
         transaction.quantity = quantity

@@ -82,7 +82,8 @@ struct EastmoneyStockQuoteProvider: StockQuoteProviding {
             latestPrice: Decimal(rawLatest / divisor),
             previousClose: payload.previousClose?.value.map { Decimal($0 / divisor) },
             changePercent: payload.changePercent?.value.map { Decimal($0 / 100) },
-            updatedAt: Date(),
+            // 该接口不返回成交时间。
+            updatedAt: nil,
             source: "东方财富"
         )
     }

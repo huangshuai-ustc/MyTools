@@ -80,6 +80,7 @@ struct HomeView: View {
                                 .contentShape(Rectangle())
                             }
                             .appListRowStyle()
+                            .appDeleteSwipeAction { pendingDeleteAccount = institution }
                         }
                     }
                 }
@@ -96,7 +97,7 @@ struct HomeView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
-                    ForEach(FinancialInstitutionKind.allCases) { kind in
+                    ForEach([FinancialInstitutionKind.bank, .brokerage, .payment]) { kind in
                         Button("添加" + kind.title) {
                             var account = FinancialInstitution(kind: kind)
                             if kind == .bank { account.additionalLoginFields = store.makeLoginFields(for: .domestic) }
@@ -122,7 +123,7 @@ struct HomeView: View {
             case .other: FinanceInstitutionEditorView(institution: account, isNew: true).iOSLargeSheet()
             }
         }
-        .alert("删除银行账户？", isPresented: Binding(get: { pendingDeleteAccount != nil }, set: { if !$0 { pendingDeleteAccount = nil } })) {
+        .alert("删除金融机构？", isPresented: Binding(get: { pendingDeleteAccount != nil }, set: { if !$0 { pendingDeleteAccount = nil } })) {
             Button("删除", role: .destructive) {
                 if let account = pendingDeleteAccount { store.deleteAccount(id: account.id) }
                 pendingDeleteAccount = nil
@@ -130,7 +131,7 @@ struct HomeView: View {
             Button("取消", role: .cancel) { pendingDeleteAccount = nil }
         } message: {
             if let account = pendingDeleteAccount {
-                Text("将删除“\(account.bankName)”及其子账户、关联银行卡和账单 PDF。该操作无法撤回。")
+                Text("将删除“\(account.name)”及其账户、关联卡片、收款／入金资料和附件。该操作无法撤回。")
             }
         }
         .onDisappear {
@@ -176,7 +177,7 @@ struct HomeView: View {
         case .brokerage:
             return "\(institution.brokerageAccounts.count) 个账户 · \(institution.receivingMethods.count) 份入金资料"
         case .payment:
-            return "\(institution.paymentAccounts.count) 个币种账户 · \(institution.paymentAccounts.filter { $0.receivingProfile != nil }.count) 份收款资料"
+            return "\(institution.paymentAccounts.count) 个币种账户 · \(institution.receivingMethods.count) 份收款资料"
         case .other:
             return "\(institution.other?.accounts.count ?? 0) 个账户"
         case .bank:

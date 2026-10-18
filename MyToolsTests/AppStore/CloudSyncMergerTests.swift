@@ -45,7 +45,7 @@ struct CloudSyncMergerTests {
             enabledModules: [.personalFinance]
         )
 
-        #expect(Set(snapshot.items.map(\.kind)) == [.bankAccount, .financeMetadata])
+        #expect(Set(snapshot.items.map(\.kind)) == [.financialInstitution, .financeMetadata])
         #expect(snapshot.participatingModules == [.personalFinance])
     }
 
@@ -76,7 +76,6 @@ struct CloudSyncMergerTests {
         let vault = VaultData(
             domesticBankLoginFieldTemplates: [bankTemplate],
             medicalRecordTags: ["心内科"],
-            foodPlaceTags: ["面馆"],
             credentialTags: ["重要证件"],
             billTags: ["报销"],
             secretTags: ["工作"],
@@ -96,9 +95,10 @@ struct CloudSyncMergerTests {
 
         #expect(result.vault.domesticBankLoginFieldTemplates == [bankTemplate])
         #expect(result.vault.medicalRecordTags == ["心内科"])
-        #expect(result.vault.foodPlaceTags == ["面馆"])
         #expect(result.vault.credentialTags == ["重要证件"])
+#if MYTOOLS_FEATURE_BILLS
         #expect(result.vault.billTags == ["报销"])
+#endif
         #expect(result.vault.secretTags == ["工作"])
         #expect(result.vault.secretFieldTemplates == [secretTemplate])
     }
@@ -110,7 +110,7 @@ struct CloudSyncMergerTests {
         defaults.set(AppFontSize.accessibility2.rawValue, forKey: AppStorageKey.fontSize)
         let moduleSettings = ToolModuleSettings(defaults: defaults)
         moduleSettings.setVisible(false, for: .healthRecords)
-        moduleSettings.moveModules(from: IndexSet(integer: 0), to: ToolModule.allCases.count)
+        moduleSettings.moveModules(from: IndexSet(integer: 0), to: moduleSettings.orderedModules.count)
         let stockSettings = StockAppearanceSettings(defaults: defaults)
         stockSettings.setScheme(.greenRiseRedFall, for: .aShare)
         let bridge = CloudSyncPreferencesBridge(
@@ -184,6 +184,26 @@ struct CloudSyncMergerTests {
         #expect(stockSettings.aShareScheme == .greenRiseRedFall)
         #expect(stockSettings.hongKongScheme == .greenRiseRedFall)
         #expect(stockSettings.unitedStatesScheme == .redRiseGreenFall)
+    }
+
+    // 新版本设置在本机先单独校验，失败只拒收这一条，不能拖垮整批同步。
+    @MainActor
+    @Test func unsupportedPreferencesSchemaIsRejectedBeforeApplying() {
+        let defaults = makeDefaults()
+        let bridge = CloudSyncPreferencesBridge(
+            defaults: defaults,
+            moduleSettings: ToolModuleSettings(defaults: defaults),
+            stockAppearanceSettings: StockAppearanceSettings(defaults: defaults)
+        )
+        let future = CloudSyncAppPreferences(
+            schemaVersion: CloudSyncAppPreferences.currentSchemaVersion + 1,
+            moduleOrder: [], moduleVisibility: [:], appearanceMode: .dark, fontSize: .xxLarge,
+            aShareScheme: .greenRiseRedFall, hongKongScheme: .greenRiseRedFall, unitedStatesScheme: .greenRiseRedFall
+        )
+        #expect(throws: (any Error).self) { try bridge.validate(future) }
+        #expect(throws: (any Error).self) { try bridge.apply(future) }
+        #expect(defaults.string(forKey: AppStorageKey.appearanceMode) == nil)
+        #expect(throws: Never.self) { try bridge.validate(bridge.makeSnapshot()) }
     }
 
     @Test func preferencesDoNotMutateVaultEntities() throws {
@@ -305,12 +325,50 @@ struct CloudSyncMergerTests {
         let raw = try Data(contentsOf: fileURL)
         #expect(raw.starts(with: Data([0x4D, 0x54, 0x53, 0x43, 0x01])))
 
-        let restored = store.load()
+        let restored = try store.load()
         let restoredEntry = try #require(restored.entries.values.first)
         #expect(restored.deviceID == document.deviceID)
         #expect(restored.accountRecordName == document.accountRecordName)
         #expect(restoredEntry.payload == payload)
         #expect(restoredEntry.systemFields == document.entries.values.first?.systemFields)
+    }
+
+    /// AUDIT-086(4)：LWW 用编辑时间；未来时间截到现在，且不早于上次记录。
+    @Test func lastWriterTimestampUsesEditTimeWithinBounds() throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let previous = CloudSyncStoredEntry(
+            kind: .secretItem, id: UUID(), modifiedAt: Date(timeIntervalSince1970: 1_500),
+            deviceID: "a", isDeleted: false
+        )
+        let edited = Date(timeIntervalSince1970: 1_800)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: nil, previous: previous, now: now) == now)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: edited, previous: nil, now: now) == edited)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: edited, previous: previous, now: now) == edited)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: Date(timeIntervalSince1970: 1_000), previous: previous, now: now) == previous.modifiedAt)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: Date(timeIntervalSince1970: 9_000), previous: nil, now: now) == now)
+
+        var secret = SecretItem()
+        secret.updatedAt = edited
+        let snapshot = try CloudSyncSnapshotBuilder.make(
+            vault: VaultData(), secrets: [secret], attachmentStore: AttachmentStore(), enabledModules: [.secrets]
+        )
+        #expect(snapshot.items.first { $0.kind == .secretItem }?.editedAt == edited)
+    }
+
+    /// AUDIT-086(1)：文件缺失才从空文档开始；文件损坏要报错，不能当作空状态。
+    @Test func cloudSyncStateLoadThrowsForUnreadableFileButNotForMissingFile() throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MyTools-CloudSyncState-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = CloudSyncStateStore(applicationSupportDirectory: baseDirectory)
+        #expect(try store.load().entries.isEmpty)
+
+        let directory = baseDirectory.appendingPathComponent("MyTools", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a sync state".utf8).write(
+            to: directory.appendingPathComponent("cloud-sync-state.json", isDirectory: false)
+        )
+        #expect(throws: (any Error).self) { try store.load() }
     }
 
     @Test func cloudSyncStateDropsOnlyNonPendingSystemFields() {
@@ -345,6 +403,67 @@ struct CloudSyncMergerTests {
         #expect(didDiscard)
         #expect(document.entries[pendingKey]?.systemFields == Data([2]))
         #expect(document.entries[completedKey]?.systemFields == nil)
+    }
+
+    // AUDIT-029：zone 被删后，已丢弃 payload 的记录按本地快照重建并全部重新入队。
+    @Test func recreatedZoneRebuildsUploadedEntriesFromLocalSnapshot() {
+        let uploadedID = UUID()
+        let cachedID = UUID()
+        let newerID = UUID()
+        let uploadedKey = CloudSyncItem.key(kind: .billRecord, id: uploadedID)
+        let cachedKey = CloudSyncItem.key(kind: .billRecord, id: cachedID)
+        let newerKey = CloudSyncItem.key(kind: .billRecord, id: newerID)
+        let then = Date(timeIntervalSince1970: 1_000)
+        var document = CloudSyncStoredDocument(entries: [
+            uploadedKey: CloudSyncStoredEntry(
+                kind: .billRecord, id: uploadedID, modifiedAt: then, deviceID: "device-a",
+                isDeleted: false, payload: nil, systemFields: Data([1])
+            ),
+            cachedKey: CloudSyncStoredEntry(
+                kind: .billRecord, id: cachedID, modifiedAt: then, deviceID: "device-b",
+                isDeleted: false, payload: Data([2])
+            ),
+            newerKey: CloudSyncStoredEntry(
+                kind: .billRecord, id: newerID, modifiedAt: then, deviceID: "device-c",
+                isDeleted: false, payload: Data([3]), pendingLocalApply: true, schemaVersion: 99
+            )
+        ], deviceID: "device-a")
+
+        let keys = document.prepareForRecreatedZone(
+            localItems: [CloudSyncItem(kind: .billRecord, id: uploadedID, payload: Data([9]), assetURL: nil)],
+            now: Date()
+        )
+
+        #expect(keys == [uploadedKey, cachedKey].sorted())
+        #expect(document.entries[uploadedKey]?.payload == Data([9]))
+        #expect(document.entries[uploadedKey]?.systemFields == nil)
+        #expect(document.entries[cachedKey]?.payload == Data([2]))
+        #expect(document.entries[newerKey]?.payload == Data([3]))
+    }
+
+    // AUDIT-030：更高 schema 的记录标记为需新版客户端，旧版不回写也不删除。
+    @Test func newerSchemaEntriesAreHeldAndExcludedFromDeletion() throws {
+        let id = UUID()
+        let key = CloudSyncItem.key(kind: .billRecord, id: id)
+        let entry = CloudSyncStoredEntry(
+            kind: .billRecord, id: id, modifiedAt: Date(), deviceID: "device-b",
+            isDeleted: false, payload: Data([1]), pendingLocalApply: true,
+            schemaVersion: CloudSyncStoredEntry.supportedSchemaVersion + 1
+        )
+        #expect(entry.requiresNewerClient)
+        #expect(!CloudSyncStoredEntry(kind: .billRecord, id: id, modifiedAt: Date(), deviceID: "a", isDeleted: false).requiresNewerClient)
+
+        let decoded = try JSONDecoder().decode(CloudSyncStoredEntry.self, from: JSONEncoder().encode(entry))
+        #expect(decoded.schemaVersion == entry.schemaVersion)
+
+        let plan = CloudSyncDeletionPlanner.plan(
+            entries: [key: entry],
+            currentKeys: [],
+            authorizedModules: [],
+            allowsBulkDeletion: true,
+            isActive: { _, _ in true }
+        )
+        #expect(plan.keys.isEmpty)
     }
 
     @Test func missingCloudKitEntitlementErrorHasActionableMessage() {
@@ -406,6 +525,46 @@ struct CloudSyncMergerTests {
         #expect(!CloudSyncErrorFormatter.isCancellation(mixedFailure))
     }
 
+    @Test func selfHealingPartialFailureIsLoggedWithMaskedIDsButNotReported() throws {
+        func cloudKitError(_ code: CKError.Code) -> NSError {
+            NSError(domain: CKErrorDomain, code: code.rawValue)
+        }
+        func partial(_ errors: [AnyHashable: Error]) -> NSError {
+            NSError(
+                domain: CKErrorDomain,
+                code: CKError.Code.partialFailure.rawValue,
+                userInfo: [CKPartialErrorsByItemIDKey: errors]
+            )
+        }
+        let zoneID = CKRecordZone.ID(zoneName: "MyToolsData", ownerName: CKCurrentUserDefaultName)
+        let id = UUID()
+        let changed = CKRecord.ID(recordName: "financialInstitution.\(id.uuidString)", zoneID: zoneID)
+        let missing = CKRecord.ID(recordName: "document.\(UUID().uuidString)", zoneID: zoneID)
+        let batch = CKRecord.ID(recordName: "secret.\(UUID().uuidString)", zoneID: zoneID)
+        let selfHealing = partial([
+            changed: cloudKitError(.serverRecordChanged),
+            missing: cloudKitError(.unknownItem),
+            batch: cloudKitError(.batchRequestFailed)
+        ])
+        #expect(CloudSyncErrorFormatter.isSelfHealingPartialFailure(selfHealing))
+        #expect(!CloudSyncErrorFormatter.isSelfHealingPartialFailure(partial([
+            changed: cloudKitError(.serverRecordChanged),
+            missing: cloudKitError(.quotaExceeded)
+        ])))
+        // A batch of only `batchRequestFailed` hides its real cause.
+        #expect(!CloudSyncErrorFormatter.isSelfHealingPartialFailure(partial([
+            batch: cloudKitError(.batchRequestFailed)
+        ])))
+        #expect(!CloudSyncErrorFormatter.isSelfHealingPartialFailure(cloudKitError(.unknownItem)))
+
+        let summary = try #require(CloudSyncErrorFormatter.partialFailureSummary(selfHealing))
+        #expect(summary.contains("共 3 条"))
+        #expect(summary.contains("financialInstitution CKErrorDomain(14)×1"))
+        #expect(summary.contains("document CKErrorDomain(11)×1"))
+        #expect(summary.contains(String(id.uuidString.prefix(4)) + "…"))
+        #expect(!summary.contains(id.uuidString))
+    }
+
     @Test func remoteRecordUpdatesOnlyItsMatchingEntity() throws {
         var account = FinancialInstitution()
         account.bankName = "Before"
@@ -416,7 +575,7 @@ struct CloudSyncMergerTests {
 
         let payload = try CloudSyncCoding.encoder().encode(remoteAccount)
         let result = try CloudSyncMerger.apply(
-            [.upsert(kind: .bankAccount, id: account.id, payload: payload)],
+            [.upsert(kind: .financialInstitution, id: account.id, payload: payload)],
             to: VaultData(accounts: [account, otherAccount]),
             secrets: []
         )
@@ -509,12 +668,14 @@ struct CloudSyncMergerTests {
         record.attachments = [attachment]
         var statement = CreditCardStatement()
         statement.attachment = attachment
+        let institution = FinancialInstitution()
         var card = BankCard()
+        card.accountID = institution.id
         card.statements = [statement]
         let secret = SecretItem(attachments: [attachment])
 
         let snapshot = try CloudSyncSnapshotBuilder.make(
-            vault: VaultData(cards: [card], medicalRecords: [record]),
+            vault: VaultData(accounts: [institution], cards: [card], medicalRecords: [record]),
             secrets: [secret],
             attachmentStore: attachmentStore
         )
@@ -525,10 +686,13 @@ struct CloudSyncMergerTests {
             FileAttachment.self,
             from: attachmentItem.payload
         )
-        let cardPayload = try #require(
-            snapshot.items.first(where: { $0.kind == .bankCard })?.payload
+        // Schema 3 syncs cards embedded in their institution record.
+        let institutionPayload = try #require(
+            snapshot.items.first(where: { $0.kind == .financialInstitution })?.payload
         )
-        let syncedCard = try CloudSyncCoding.decoder().decode(BankCard.self, from: cardPayload)
+        let syncedCard = try #require(
+            try CloudSyncCoding.decoder().decode(FinancialInstitution.self, from: institutionPayload).cards.first
+        )
         let recordPayload = try #require(
             snapshot.items.first(where: { $0.kind == .medicalRecord })?.payload
         )
@@ -563,5 +727,83 @@ struct CloudSyncMergerTests {
 
     private func makeDefaults() -> UserDefaults {
         UserDefaults(suiteName: "MyToolsTests.\(UUID().uuidString)")!
+    }
+}
+
+/// AUDIT-002: CloudKit deletions must be explicit and never inferred from a failed local apply.
+struct CloudSyncDeletionSafetyTests {
+    @Test func undecodableRemoteRecordIsRejectedWithoutBlockingOthers() throws {
+        var record = MedicalRecord()
+        record.hospital = "Remote"
+        let broken = UUID()
+        let result = try CloudSyncMerger.apply(
+            [
+                .upsert(kind: .medicalRecord, id: broken, payload: Data("not-json".utf8)),
+                .upsert(kind: .medicalRecord, id: record.id, payload: CloudSyncCoding.encoder().encode(record))
+            ],
+            to: VaultData(),
+            secrets: [],
+            enabledModules: [.healthRecords]
+        )
+        #expect(result.vault.medicalRecords.map(\.hospital) == ["Remote"])
+        #expect(result.rejectedKeys == [CloudSyncItem.key(kind: .medicalRecord, id: broken)])
+    }
+
+    @Test func pendingLocalApplyIsNeverDeletedAndRoundTrips() throws {
+        let entries = makeEntries(count: 3, pendingLocalApply: true)
+        let plan = CloudSyncDeletionPlanner.plan(
+            entries: entries, currentKeys: [], authorizedModules: [],
+            allowsBulkDeletion: false, isActive: { _, _ in true }
+        )
+        #expect(plan == .init(keys: [], pausedCount: 0))
+
+        let entry = try #require(entries.values.first)
+        let decoded = try JSONDecoder().decode(CloudSyncStoredEntry.self, from: JSONEncoder().encode(entry))
+        #expect(decoded.pendingLocalApply)
+    }
+
+    @Test func bulkDropIsPausedUntilConfirmed() {
+        let entries = makeEntries(count: 40)
+        let missing = Set(entries.keys.sorted().prefix(20))
+        let current = Set(entries.keys).subtracting(missing)
+        func plan(authorized: Set<ToolModule> = [], allowsBulk: Bool = false) -> CloudSyncDeletionPlanner.Plan {
+            CloudSyncDeletionPlanner.plan(
+                entries: entries, currentKeys: current, authorizedModules: authorized,
+                allowsBulkDeletion: allowsBulk, isActive: { _, _ in true }
+            )
+        }
+        #expect(plan() == .init(keys: [], pausedCount: 20))
+        #expect(Set(plan(authorized: [.healthRecords]).keys) == missing)
+        #expect(Set(plan(allowsBulk: true).keys) == missing)
+    }
+
+    @Test func smallOrProportionallyMinorDeletionsAreNotPaused() {
+        let few = makeEntries(count: 30)
+        let fewMissing = Set(few.keys.sorted().prefix(19))
+        let fewPlan = CloudSyncDeletionPlanner.plan(
+            entries: few, currentKeys: Set(few.keys).subtracting(fewMissing), authorizedModules: [],
+            allowsBulkDeletion: false, isActive: { _, _ in true }
+        )
+        #expect(Set(fewPlan.keys) == fewMissing)
+
+        let many = makeEntries(count: 100)
+        let manyMissing = Set(many.keys.sorted().prefix(20))
+        let manyPlan = CloudSyncDeletionPlanner.plan(
+            entries: many, currentKeys: Set(many.keys).subtracting(manyMissing), authorizedModules: [],
+            allowsBulkDeletion: false, isActive: { _, _ in true }
+        )
+        #expect(manyPlan.pausedCount == 0)
+        #expect(Set(manyPlan.keys) == manyMissing)
+    }
+
+    private func makeEntries(count: Int, pendingLocalApply: Bool = false) -> [String: CloudSyncStoredEntry] {
+        Dictionary(uniqueKeysWithValues: (0..<count).map { _ in
+            let id = UUID()
+            return (CloudSyncItem.key(kind: .medicalRecord, id: id), CloudSyncStoredEntry(
+                kind: .medicalRecord, id: id, module: .healthRecords, modifiedAt: Date(),
+                deviceID: "device-a", isDeleted: false, payload: Data([1]),
+                pendingLocalApply: pendingLocalApply
+            ))
+        })
     }
 }

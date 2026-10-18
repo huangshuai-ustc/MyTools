@@ -78,6 +78,8 @@ struct CloudSyncItem: Sendable {
     let payload: Data
     let assetURL: URL?
     let module: ToolModule?
+    /// 实体自带的编辑时间；有它时以此做 LWW，而不是本机 reconcile 的时间（AUDIT-086(4)）。
+    var editedAt: Date? = nil
 
     var key: String {
         Self.key(kind: kind, id: id)
@@ -102,9 +104,31 @@ struct CloudSyncItem: Sendable {
     }
 }
 
+/// 带编辑时间的实体；编辑时间随内容一起同步，各设备据此比较先后。
+protocol CloudSyncEditTimestamped {
+    var updatedAt: Date { get }
+}
+
+#if MYTOOLS_FEATURE_HEALTH
+extension MedicalRecord: CloudSyncEditTimestamped {}
+extension HospitalProfile: CloudSyncEditTimestamped {}
+#endif
+#if MYTOOLS_FEATURE_SECRETS
+extension SecretItem: CloudSyncEditTimestamped {}
+#endif
+#if MYTOOLS_FEATURE_DOCUMENTS
+extension CredentialDocument: CloudSyncEditTimestamped {}
+#endif
+#if MYTOOLS_FEATURE_BILLS
+extension BillRecord: CloudSyncEditTimestamped {}
+#endif
+
 struct CloudSyncSnapshot: Sendable {
     let items: [CloudSyncItem]
     let participatingModules: Set<ToolModule>
+    /// Modules whose records the user explicitly removed or replaced (module
+    /// data deletion, backup import); their deletions bypass the bulk-deletion breaker.
+    var confirmedDeletionModules: Set<ToolModule> = []
 
     init(items: [CloudSyncItem], participatingModules: Set<ToolModule> = ToolModuleCatalog.cloudSyncModules) {
         self.items = items
@@ -118,11 +142,21 @@ struct CloudSyncSnapshot: Sendable {
 enum CloudSyncChange: Sendable {
     case upsert(kind: CloudSyncEntityKind, id: UUID, payload: Data)
     case delete(kind: CloudSyncEntityKind, id: UUID)
+
+    var key: String {
+        switch self {
+        case .upsert(let kind, let id, _), .delete(let kind, let id):
+            CloudSyncItem.key(kind: kind, id: id)
+        }
+    }
 }
 
 struct CloudSyncMergeResult: @unchecked Sendable {
     let vault: VaultData
     let secrets: [SecretVaultValue]
+    /// Changes that could not be applied (undecodable or invalid). The worker keeps
+    /// them pending so they are never mistaken for local deletions.
+    var rejectedKeys: Set<String> = []
 }
 
 enum CloudSyncCoding {
@@ -266,23 +300,6 @@ enum CloudSyncSnapshotBuilder {
             )
         }
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        if enabledModules.contains(.foodMap) {
-            try append(
-                vault.foodPlaces.map(metadataOnlyFoodPlace),
-                kind: .foodPlace,
-                encoder: encoder,
-                to: &items
-            )
-            try append(
-                CloudSyncFoodMapMetadata(foodPlaceTags: vault.foodPlaceTags),
-                id: CloudSyncFoodMapMetadata.itemID,
-                kind: .foodMapMetadata,
-                encoder: encoder,
-                to: &items
-            )
-        }
-#endif
 #if MYTOOLS_FEATURE_SECRETS
         if enabledModules.contains(.secrets) {
             try append(
@@ -338,11 +355,6 @@ enum CloudSyncSnapshotBuilder {
         }
 #endif
 
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        if enabledModules.contains(.partnership) {
-            try append(vault.partnershipBooks, kind: .partnershipBook, encoder: encoder, to: &items)
-        }
-#endif
         if let appPreferences {
             items.append(
                 CloudSyncItem(
@@ -383,14 +395,14 @@ enum CloudSyncSnapshotBuilder {
         to items: inout [CloudSyncItem]
     ) throws where T.ID == UUID {
         for value in values {
-            items.append(
-                CloudSyncItem(
-                    kind: kind,
-                    id: value.id,
-                    payload: try encoder.encode(value),
-                    assetURL: nil
-                )
+            var item = CloudSyncItem(
+                kind: kind,
+                id: value.id,
+                payload: try encoder.encode(value),
+                assetURL: nil
             )
+            item.editedAt = (value as? any CloudSyncEditTimestamped)?.updatedAt
+            items.append(item)
         }
     }
 
@@ -458,13 +470,6 @@ enum CloudSyncSnapshotBuilder {
     }
 #endif
 
-#if MYTOOLS_FEATURE_FOOD_MAP
-    private static func metadataOnlyFoodPlace(_ place: FoodPlace) -> FoodPlace {
-        var result = place
-        result.photos = place.photos.map(metadataOnlyAttachment)
-        return result
-    }
-#endif
 
 #if MYTOOLS_FEATURE_DOCUMENTS
     private static func metadataOnlyCredentialDocument(
@@ -504,13 +509,6 @@ enum CloudSyncSnapshotBuilder {
             }
         }
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        if enabledModules.contains(.foodMap) {
-            for attachment in vault.foodPlaces.flatMap(\.photos) {
-                result[attachment.id] = (attachment, .foodMap)
-            }
-        }
-#endif
 #if MYTOOLS_FEATURE_SECRETS
         if enabledModules.contains(.secrets) {
             for attachment in secrets.flatMap(\.attachments) {
@@ -543,292 +541,282 @@ enum CloudSyncMerger {
             .intersection(ToolModuleCatalog.cloudSyncModules)
         let decoder = CloudSyncCoding.decoder()
 
+        var rejectedKeys = Set<String>()
         for change in changes {
-            switch change {
-            case .upsert(let kind, _, let payload):
-                guard kind.isIncluded(in: enabledModules) else { continue }
-                switch kind {
-                case .financialInstitution:
+            do {
+                switch change {
+                case .upsert(let kind, _, let payload):
+                    guard kind.isIncluded(in: enabledModules) else { continue }
+                    switch kind {
+                    case .financialInstitution:
 #if MYTOOLS_FEATURE_FINANCE
-                    let incoming = try decoder.decode(FinancialInstitution.self, from: payload)
-                    try incoming.validate()
-                    upsert(incoming, in: &vault.financialInstitutions)
+                        let incoming = try decoder.decode(FinancialInstitution.self, from: payload)
+                        try incoming.validate()
+                        upsert(incoming, in: &vault.financialInstitutions)
 #endif
-                    break
-                case .financialProvider, .bankAccount, .bankCard:
-                    // Reserved record types from the previous product schema are never applied.
-                    break
-                case .stockHolding:
+                        break
+                    case .financialProvider, .bankAccount, .bankCard:
+                        // Reserved record types from the previous product schema are never applied.
+                        break
+                    case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS
-                    var incoming = try decoder.decode(StockHolding.self, from: payload)
-                    // Reject incoming holdings that would produce a negative position.
-                    // A malformed CloudKit record must not overwrite a valid local entry.
-                    guard incoming.hasValidTransactionOrder else {
-                        DiagnosticLogger.shared.log(
-                            .backup,
-                            "CloudKit 同步拒绝了非法持仓记录（交易顺序会导致负持仓）：\(incoming.id.uuidString)",
-                            level: .warning
+                        var incoming = try decoder.decode(StockHolding.self, from: payload)
+                        // Reject incoming holdings that would produce a negative position.
+                        // A malformed CloudKit record must not overwrite a valid local entry.
+                        guard incoming.hasValidTransactionOrder else {
+                            DiagnosticLogger.shared.log(
+                                .backup,
+                                "CloudKit 同步拒绝了非法持仓记录（交易顺序会导致负持仓）：\(incoming.id.uuidString)",
+                                level: .warning
+                            )
+                            rejectedKeys.insert(change.key)
+                            break
+                        }
+                        if let local = vault.stocks.first(where: { $0.id == incoming.id }) {
+                            incoming.latestPrice = local.latestPrice
+                            incoming.previousClose = local.previousClose
+                            incoming.changePercent = local.changePercent
+                            incoming.quoteName = local.quoteName
+                            incoming.lastQuoteAt = local.lastQuoteAt
+                        }
+                        upsert(incoming, in: &vault.stocks)
+#endif
+                        break
+                    case .stockCashFlowRecord:
+#if MYTOOLS_FEATURE_STOCKS
+                        try upsert(
+                            decoder.decode(StockCashFlowRecord.self, from: payload),
+                            in: &vault.stockCashFlowRecords
                         )
+#endif
+                        break
+                    case .currencyExchangeRecord:
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+                        try upsert(
+                            decoder.decode(CurrencyExchangeRecord.self, from: payload),
+                            in: &vault.currencyExchangeRecords
+                        )
+#endif
+                        break
+                    case .medicalRecord:
+#if MYTOOLS_FEATURE_HEALTH
+                        try upsert(decoder.decode(MedicalRecord.self, from: payload), in: &vault.medicalRecords)
+#endif
+                        break
+                    case .hospitalProfile:
+#if MYTOOLS_FEATURE_HEALTH
+                        try upsert(
+                            decoder.decode(HospitalProfile.self, from: payload),
+                            in: &vault.hospitalProfiles
+                        )
+#endif
+                        break
+                    case .foodPlace:
+                        break
+                    case .currencyRateAlert:
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+                        try upsert(
+                            decoder.decode(CurrencyRateAlert.self, from: payload),
+                            in: &vault.currencyRateAlerts
+                        )
+#endif
+                        break
+                    case .stockPriceAlert:
+#if MYTOOLS_FEATURE_STOCKS
+                        try upsert(
+                            decoder.decode(StockPriceAlert.self, from: payload),
+                            in: &vault.stockPriceAlerts
+                        )
+#endif
+                        break
+                    case .stockReturnAlert:
+#if MYTOOLS_FEATURE_STOCKS
+                        try upsert(
+                            decoder.decode(StockReturnAlert.self, from: payload),
+                            in: &vault.stockReturnAlerts
+                        )
+#endif
+                        break
+                    case .secretItem:
+#if MYTOOLS_FEATURE_SECRETS
+                        try upsert(decoder.decode(SecretItem.self, from: payload), in: &secrets)
+#endif
+                        break
+                    case .credentialDocument:
+#if MYTOOLS_FEATURE_DOCUMENTS
+                        try upsert(
+                            decoder.decode(CredentialDocument.self, from: payload),
+                            in: &vault.credentialDocuments
+                        )
+#endif
+                        break
+                    case .partnershipBook:
+                        break
+                    case .billRecord:
+#if MYTOOLS_FEATURE_BILLS
+                        try upsert(decoder.decode(BillRecord.self, from: payload), in: &vault.billRecords)
+#endif
+                        break
+                    case .financeMetadata:
+#if MYTOOLS_FEATURE_FINANCE
+                        let metadata = try decoder.decode(CloudSyncFinanceMetadata.self, from: payload)
+                        vault.domesticBankLoginFieldTemplates = metadata.domesticLoginFieldTemplates
+                        vault.overseasBankLoginFieldTemplates = metadata.overseasLoginFieldTemplates
+#endif
+                        break
+                    case .healthMetadata:
+#if MYTOOLS_FEATURE_HEALTH
+                        vault.medicalRecordTags = try decoder.decode(
+                            CloudSyncHealthMetadata.self,
+                            from: payload
+                        ).medicalRecordTags
+#endif
+                        break
+                    case .foodMapMetadata:
+                        break
+                    case .secretsMetadata:
+#if MYTOOLS_FEATURE_SECRETS
+                        let metadata = try decoder.decode(CloudSyncSecretsMetadata.self, from: payload)
+                        vault.secretFieldTemplates = metadata.fieldTemplates
+                        vault.secretTags = metadata.tags
+#endif
+                        break
+                    case .documentsMetadata:
+#if MYTOOLS_FEATURE_DOCUMENTS
+                        let metadata = try decoder.decode(
+                            CloudSyncDocumentsMetadata.self,
+                            from: payload
+                        )
+                        if metadata.includesFieldTemplates {
+                            vault.credentialFieldTemplates = metadata.fieldTemplates
+                        }
+                        vault.credentialTags = metadata.tags
+#endif
+                        break
+                    case .billsMetadata:
+#if MYTOOLS_FEATURE_BILLS
+                        vault.billTags = try decoder.decode(CloudSyncBillsMetadata.self, from: payload).tags
+#endif
+                        break
+                    case .attachment:
+                        break
+                    case .appPreferences:
                         break
                     }
-                    if let local = vault.stocks.first(where: { $0.id == incoming.id }) {
-                        incoming.latestPrice = local.latestPrice
-                        incoming.previousClose = local.previousClose
-                        incoming.changePercent = local.changePercent
-                        incoming.quoteName = local.quoteName
-                        incoming.lastQuoteAt = local.lastQuoteAt
-                    }
-                    upsert(incoming, in: &vault.stocks)
-#endif
-                    break
-                case .stockCashFlowRecord:
-#if MYTOOLS_FEATURE_STOCKS
-                    try upsert(
-                        decoder.decode(StockCashFlowRecord.self, from: payload),
-                        in: &vault.stockCashFlowRecords
-                    )
-#endif
-                    break
-                case .currencyExchangeRecord:
-#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
-                    try upsert(
-                        decoder.decode(CurrencyExchangeRecord.self, from: payload),
-                        in: &vault.currencyExchangeRecords
-                    )
-#endif
-                    break
-                case .medicalRecord:
-#if MYTOOLS_FEATURE_HEALTH
-                    try upsert(decoder.decode(MedicalRecord.self, from: payload), in: &vault.medicalRecords)
-#endif
-                    break
-                case .hospitalProfile:
-#if MYTOOLS_FEATURE_HEALTH
-                    try upsert(
-                        decoder.decode(HospitalProfile.self, from: payload),
-                        in: &vault.hospitalProfiles
-                    )
-#endif
-                    break
-                case .foodPlace:
-#if MYTOOLS_FEATURE_FOOD_MAP
-                    try upsert(decoder.decode(FoodPlace.self, from: payload), in: &vault.foodPlaces)
-#endif
-                    break
-                case .currencyRateAlert:
-#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
-                    try upsert(
-                        decoder.decode(CurrencyRateAlert.self, from: payload),
-                        in: &vault.currencyRateAlerts
-                    )
-#endif
-                    break
-                case .stockPriceAlert:
-#if MYTOOLS_FEATURE_STOCKS
-                    try upsert(
-                        decoder.decode(StockPriceAlert.self, from: payload),
-                        in: &vault.stockPriceAlerts
-                    )
-#endif
-                    break
-                case .stockReturnAlert:
-#if MYTOOLS_FEATURE_STOCKS
-                    try upsert(
-                        decoder.decode(StockReturnAlert.self, from: payload),
-                        in: &vault.stockReturnAlerts
-                    )
-#endif
-                    break
-                case .secretItem:
-#if MYTOOLS_FEATURE_SECRETS
-                    try upsert(decoder.decode(SecretItem.self, from: payload), in: &secrets)
-#endif
-                    break
-                case .credentialDocument:
-#if MYTOOLS_FEATURE_DOCUMENTS
-                    try upsert(
-                        decoder.decode(CredentialDocument.self, from: payload),
-                        in: &vault.credentialDocuments
-                    )
-#endif
-                    break
-                case .partnershipBook:
-#if MYTOOLS_FEATURE_PARTNERSHIP
-                    try upsert(decoder.decode(PartnershipBook.self, from: payload), in: &vault.partnershipBooks)
-#endif
-                    break
-                case .billRecord:
-#if MYTOOLS_FEATURE_BILLS
-                    try upsert(decoder.decode(BillRecord.self, from: payload), in: &vault.billRecords)
-#endif
-                    break
-                case .financeMetadata:
-#if MYTOOLS_FEATURE_FINANCE
-                    let metadata = try decoder.decode(CloudSyncFinanceMetadata.self, from: payload)
-                    vault.domesticBankLoginFieldTemplates = metadata.domesticLoginFieldTemplates
-                    vault.overseasBankLoginFieldTemplates = metadata.overseasLoginFieldTemplates
-#endif
-                    break
-                case .healthMetadata:
-#if MYTOOLS_FEATURE_HEALTH
-                    vault.medicalRecordTags = try decoder.decode(
-                        CloudSyncHealthMetadata.self,
-                        from: payload
-                    ).medicalRecordTags
-#endif
-                    break
-                case .foodMapMetadata:
-#if MYTOOLS_FEATURE_FOOD_MAP
-                    vault.foodPlaceTags = try decoder.decode(
-                        CloudSyncFoodMapMetadata.self,
-                        from: payload
-                    ).foodPlaceTags
-#endif
-                    break
-                case .secretsMetadata:
-#if MYTOOLS_FEATURE_SECRETS
-                    let metadata = try decoder.decode(CloudSyncSecretsMetadata.self, from: payload)
-                    vault.secretFieldTemplates = metadata.fieldTemplates
-                    vault.secretTags = metadata.tags
-#endif
-                    break
-                case .documentsMetadata:
-#if MYTOOLS_FEATURE_DOCUMENTS
-                    let metadata = try decoder.decode(
-                        CloudSyncDocumentsMetadata.self,
-                        from: payload
-                    )
-                    if metadata.includesFieldTemplates {
-                        vault.credentialFieldTemplates = metadata.fieldTemplates
-                    }
-                    vault.credentialTags = metadata.tags
-#endif
-                    break
-                case .billsMetadata:
-#if MYTOOLS_FEATURE_BILLS
-                    vault.billTags = try decoder.decode(CloudSyncBillsMetadata.self, from: payload).tags
-#endif
-                    break
-                case .attachment:
-                    break
-                case .appPreferences:
-                    break
-                }
 
-            case .delete(let kind, let id):
-                guard kind.isIncluded(in: enabledModules) else { continue }
-                switch kind {
-                case .financialInstitution:
+                case .delete(let kind, let id):
+                    guard kind.isIncluded(in: enabledModules) else { continue }
+                    switch kind {
+                    case .financialInstitution:
 #if MYTOOLS_FEATURE_FINANCE
-                    vault.financialInstitutions.removeAll { $0.id == id }
+                        vault.financialInstitutions.removeAll { $0.id == id }
 #endif
-                    break
-                case .financialProvider, .bankAccount, .bankCard:
-                    break
-                case .stockHolding:
+                        break
+                    case .financialProvider, .bankAccount, .bankCard:
+                        break
+                    case .stockHolding:
 #if MYTOOLS_FEATURE_STOCKS
-                    vault.stocks.removeAll { $0.id == id }
+                        vault.stocks.removeAll { $0.id == id }
 #endif
-                    break
-                case .stockCashFlowRecord:
+                        break
+                    case .stockCashFlowRecord:
 #if MYTOOLS_FEATURE_STOCKS
-                    vault.stockCashFlowRecords.removeAll { $0.id == id }
+                        vault.stockCashFlowRecords.removeAll { $0.id == id }
 #endif
-                    break
-                case .currencyExchangeRecord:
+                        break
+                    case .currencyExchangeRecord:
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
-                    vault.currencyExchangeRecords.removeAll { $0.id == id }
+                        vault.currencyExchangeRecords.removeAll { $0.id == id }
 #endif
-                    break
-                case .medicalRecord:
+                        break
+                    case .medicalRecord:
 #if MYTOOLS_FEATURE_HEALTH
-                    vault.medicalRecords.removeAll { $0.id == id }
+                        vault.medicalRecords.removeAll { $0.id == id }
 #endif
-                    break
-                case .hospitalProfile:
+                        break
+                    case .hospitalProfile:
 #if MYTOOLS_FEATURE_HEALTH
-                    vault.hospitalProfiles.removeAll { $0.id == id }
+                        vault.hospitalProfiles.removeAll { $0.id == id }
 #endif
-                    break
-                case .foodPlace:
-#if MYTOOLS_FEATURE_FOOD_MAP
-                    vault.foodPlaces.removeAll { $0.id == id }
-#endif
-                    break
-                case .currencyRateAlert:
+                        break
+                    case .foodPlace:
+                        break
+                    case .currencyRateAlert:
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
-                    vault.currencyRateAlerts.removeAll { $0.id == id }
+                        vault.currencyRateAlerts.removeAll { $0.id == id }
 #endif
-                    break
-                case .stockPriceAlert:
+                        break
+                    case .stockPriceAlert:
 #if MYTOOLS_FEATURE_STOCKS
-                    vault.stockPriceAlerts.removeAll { $0.id == id }
+                        vault.stockPriceAlerts.removeAll { $0.id == id }
 #endif
-                    break
-                case .stockReturnAlert:
+                        break
+                    case .stockReturnAlert:
 #if MYTOOLS_FEATURE_STOCKS
-                    vault.stockReturnAlerts.removeAll { $0.id == id }
+                        vault.stockReturnAlerts.removeAll { $0.id == id }
 #endif
-                    break
-                case .secretItem:
+                        break
+                    case .secretItem:
 #if MYTOOLS_FEATURE_SECRETS
-                    secrets.removeAll { $0.id == id }
+                        secrets.removeAll { $0.id == id }
 #endif
-                    break
-                case .credentialDocument:
+                        break
+                    case .credentialDocument:
 #if MYTOOLS_FEATURE_DOCUMENTS
-                    vault.credentialDocuments.removeAll { $0.id == id }
+                        vault.credentialDocuments.removeAll { $0.id == id }
 #endif
-                    break
-                case .partnershipBook:
-#if MYTOOLS_FEATURE_PARTNERSHIP
-                    vault.partnershipBooks.removeAll { $0.id == id }
-#endif
-                    break
-                case .billRecord:
+                        break
+                    case .partnershipBook:
+                        break
+                    case .billRecord:
 #if MYTOOLS_FEATURE_BILLS
-                    vault.billRecords.removeAll { $0.id == id }
+                        vault.billRecords.removeAll { $0.id == id }
 #endif
-                    break
-                case .financeMetadata:
+                        break
+                    case .financeMetadata:
 #if MYTOOLS_FEATURE_FINANCE
-                    vault.domesticBankLoginFieldTemplates = []
-                    vault.overseasBankLoginFieldTemplates = []
+                        vault.domesticBankLoginFieldTemplates = []
+                        vault.overseasBankLoginFieldTemplates = []
 #endif
-                    break
-                case .healthMetadata:
+                        break
+                    case .healthMetadata:
 #if MYTOOLS_FEATURE_HEALTH
-                    vault.medicalRecordTags = []
+                        vault.medicalRecordTags = []
 #endif
-                    break
-                case .foodMapMetadata:
-#if MYTOOLS_FEATURE_FOOD_MAP
-                    vault.foodPlaceTags = []
-#endif
-                    break
-                case .secretsMetadata:
+                        break
+                    case .foodMapMetadata:
+                        break
+                    case .secretsMetadata:
 #if MYTOOLS_FEATURE_SECRETS
-                    vault.secretFieldTemplates = []
-                    vault.secretTags = []
+                        vault.secretFieldTemplates = []
+                        vault.secretTags = []
 #endif
-                    break
-                case .documentsMetadata:
+                        break
+                    case .documentsMetadata:
 #if MYTOOLS_FEATURE_DOCUMENTS
-                    vault.credentialTags = []
+                        vault.credentialTags = []
 #endif
-                    break
-                case .billsMetadata:
+                        break
+                    case .billsMetadata:
 #if MYTOOLS_FEATURE_BILLS
-                    vault.billTags = []
+                        vault.billTags = []
 #endif
-                    break
-                case .attachment: break
-                case .appPreferences: break
+                        break
+                    case .attachment: break
+                    case .appPreferences: break
+                    }
                 }
+            } catch {
+                rejectedKeys.insert(change.key)
+                DiagnosticLogger.shared.log(
+                    .cloudSync,
+                    "iCloud 记录无法合并，已保留待重试 key=\(change.key) error=\(DiagnosticLogger.errorCode(error))",
+                    level: .warning
+                )
             }
         }
 
-        return CloudSyncMergeResult(vault: vault, secrets: secrets)
+        return CloudSyncMergeResult(vault: vault, secrets: secrets, rejectedKeys: rejectedKeys)
     }
 
     private static func upsert<T: Identifiable>(_ value: T, in values: inout [T])

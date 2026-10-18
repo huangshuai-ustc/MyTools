@@ -63,7 +63,6 @@
     var note = ""
     var bankRegion: BankRegion?
     var subaccounts: [FinancialAccount] = []
-    var brokerage: BrokerageAccountDetails?
     /// Wise keeps exactly one receiving profile together with each currency account.
     var receivingProfile: FinanceReceivingMethod?
 

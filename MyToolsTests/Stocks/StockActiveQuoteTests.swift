@@ -293,7 +293,9 @@ struct StockHoldingValuationTests {
         stock.market = .unitedStates
         var transaction = StockTransaction()
         transaction.type = .buy
-        transaction.tradedAt = Date().addingTimeInterval(-86_400)
+        // Anchored to the fixed test clock: a wall-clock date would make the buy
+        // look like a future trade on runs before the fixture day.
+        transaction.tradedAt = usDate(hour: 7).addingTimeInterval(-86_400)
         transaction.quantity = quantity
         transaction.unitPrice = cost
         stock.transactions = [transaction]

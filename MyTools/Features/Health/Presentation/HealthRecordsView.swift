@@ -8,6 +8,7 @@ struct HealthRecordsView: View {
     @State private var selectedTag = ""
     @State private var selectedYear: Int?
     @State private var editingRecord: MedicalRecord?
+    @State private var deletingRecord: MedicalRecord?
     @State private var pagination = AppListPagination(pageSize: HealthRecordsView.pageSize)
 
     private var presentation: MedicalRecordsPresentation {
@@ -73,7 +74,7 @@ struct HealthRecordsView: View {
                     ContentUnavailableView(
                         store.medicalRecords.isEmpty ? "暂无健康记录" : "没有匹配的健康记录",
                         systemImage: store.medicalRecords.isEmpty ? "cross.case" : "magnifyingglass",
-                        description: Text(store.medicalRecords.isEmpty ? "点右上角编辑并验证身份后记录第一次就诊、购药、体检或住院" : "请尝试其他机构、药房、体检项目、住院记录、诊断、费用项目或标签")
+                        description: Text(store.medicalRecords.isEmpty ? "点右上角“+”记录第一次就诊、购药、体检或住院" : "请尝试其他机构、药房、体检项目、住院记录、诊断、费用项目或标签")
                     )
                 }
             }
@@ -104,6 +105,18 @@ struct HealthRecordsView: View {
         }
         .appNavigationTitle("健康档案")
         .diagnosticScreen("健康档案")
+        .alert(
+            "删除健康记录？",
+            isPresented: Binding(get: { deletingRecord != nil }, set: { if !$0 { deletingRecord = nil } })
+        ) {
+            Button("取消", role: .cancel) { deletingRecord = nil }
+            Button("删除", role: .destructive) {
+                if let deletingRecord { store.deleteMedicalRecords(ids: [deletingRecord.id]) }
+                deletingRecord = nil
+            }
+        } message: {
+            Text(deletionMessage)
+        }
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索机构、药房、诊断、费用项目或标签")
@@ -214,6 +227,16 @@ struct HealthRecordsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // 删除会级联到关联的复诊、住院日和购药记录（AUDIT-071）。
+    private var deletionMessage: String {
+        let hasLinkedRecords = deletingRecord.map { record in
+            store.medicalRecords.contains { $0.parentRecordID == record.id }
+        } ?? false
+        return hasLinkedRecords
+            ? "将同时删除关联的复诊、住院日和购药记录及全部附件，无法撤销。"
+            : "将同时删除该记录的附件，无法撤销。"
+    }
+
     private func recordLink(
         _ record: MedicalRecord,
         isFollowUp: Bool,
@@ -234,7 +257,7 @@ struct HealthRecordsView: View {
         }
         .appListRowStyle()
         .appDeleteSwipeAction(isEnabled: true) {
-            store.deleteMedicalRecords(ids: [record.id])
+            deletingRecord = record
         }
     }
 }

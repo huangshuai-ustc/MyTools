@@ -78,6 +78,7 @@ struct BillImportView: View {
                 }
             }
             .appNavigationTitle("导入账单")
+            .diagnosticScreen("账单导入")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -133,7 +134,11 @@ struct BillImportView: View {
                     let data = try await Task.detached(priority: .userInitiated) {
                         let hasAccess = url.startAccessingSecurityScopedResource()
                         defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
-                        return try Data(contentsOf: url)
+                        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                        guard size <= BillImportAdapterRegistry.maximumFileSize else {
+                            throw BillSpreadsheetReaderError.oversizedFile
+                        }
+                        return try Data(contentsOf: url, options: .mappedIfSafe)
                     }.value
                     let decoded = try await Task.detached(priority: .userInitiated) {
                         try registry.decode(data: data, fileName: url.lastPathComponent)

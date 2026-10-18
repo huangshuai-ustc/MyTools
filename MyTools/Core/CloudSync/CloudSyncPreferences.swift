@@ -203,10 +203,14 @@ final class CloudSyncPreferencesBridge {
         )
     }
 
-    func apply(_ preferences: CloudSyncAppPreferences) throws {
+    func validate(_ preferences: CloudSyncAppPreferences) throws {
         guard preferences.schemaVersion <= CloudSyncAppPreferences.currentSchemaVersion else {
             throw CloudSyncPreferencesError.unsupportedSchema(preferences.schemaVersion)
         }
+    }
+
+    func apply(_ preferences: CloudSyncAppPreferences) throws {
+        try validate(preferences)
 
         moduleSettings.applySyncedPreferences(
             order: preferences.moduleOrder,

@@ -97,6 +97,7 @@ struct DocumentsView: View {
     @State private var selectedTag = ""
     @State private var isUnlocked = false
     @State private var editingDocument: CredentialDocument?
+    @State private var deletingGroupID: UUID?
     @State private var pagination = AppListPagination(pageSize: DocumentsView.pageSize)
     @State private var showsFilters = false
 
@@ -114,7 +115,7 @@ struct DocumentsView: View {
             .filter(statusFilter.includes)
             .filter(versionStatusFilter.includes)
             .filter { selectedTag.isEmpty || $0.tags.contains(selectedTag) }
-            .filter { $0.matches(query) }
+            .filter { $0.matches(query, includesProtected: canAccess) }
         let matchingByRootID = Dictionary(grouping: matchingDocuments, by: \.rootDocumentID)
         let allByRootID = Dictionary(grouping: store.documents, by: \.rootDocumentID)
         return matchingByRootID.compactMap { rootID, matches in
@@ -128,9 +129,10 @@ struct DocumentsView: View {
             )
         }
             .sorted { lhs, rhs in
+                // 锁定时不按持有人姓名排序，否则顺序本身会泄露姓名。
                 AppAlphabeticalSort.isOrderedBefore(
-                    lhs.representative.displayTitle,
-                    rhs.representative.displayTitle,
+                    canAccess ? lhs.representative.displayTitle : lhs.representative.typeTitle,
+                    canAccess ? rhs.representative.displayTitle : rhs.representative.typeTitle,
                     lhsTieBreaker: lhs.id.uuidString,
                     rhsTieBreaker: rhs.id.uuidString
                 )
@@ -175,6 +177,18 @@ struct DocumentsView: View {
         }
         .appNavigationTitle(ToolModule.documents.title)
         .diagnosticScreen("证照")
+        .alert(
+            "删除证照？",
+            isPresented: Binding(get: { deletingGroupID != nil }, set: { if !$0 { deletingGroupID = nil } })
+        ) {
+            Button("取消", role: .cancel) { deletingGroupID = nil }
+            Button("删除", role: .destructive) {
+                if let deletingGroupID { store.delete(ids: [deletingGroupID]) }
+                deletingGroupID = nil
+            }
+        } message: {
+            Text("将同时删除该证照的全部版本、附件和到期提醒，无法撤销。")
+        }
         .iOSLabeledBackButton("工具")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索名称、号码、持有人或标签")
@@ -294,7 +308,7 @@ struct DocumentsView: View {
         }
         .appListRowStyle()
         .appDeleteSwipeAction(isEnabled: true) {
-            store.delete(ids: [group.id])
+            deletingGroupID = group.id
         }
     }
 
@@ -314,10 +328,7 @@ private struct CredentialDocumentRow: View {
     let isHolderRevealed: Bool
 
     private var protectedDisplayTitle: String {
-        let type = document.typeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let holder = document.holderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !holder.isEmpty else { return type }
-        return "\(type)-\(isHolderRevealed ? holder : "••••••")"
+        document.displayTitle(revealsHolder: isHolderRevealed)
     }
 
     var body: some View {
@@ -349,7 +360,7 @@ private struct CredentialDocumentRow: View {
                 if let expiration = document.expirationDate(), document.validity.kind != .permanent {
                     HStack(spacing: 5) {
                         Image(systemName: "calendar")
-                        Text(AppDateFormatter.string(from: expiration))
+                        Text(isHolderRevealed ? AppDateFormatter.string(from: expiration) : "••••••")
                     }
                         .font(.caption2)
                         .lineLimit(1)

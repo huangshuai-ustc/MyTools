@@ -41,6 +41,13 @@ final class AShareHolidaySnapshot: @unchecked Sendable {
         self.holidayOverrides = holidayOverrides
     }
 
+    /// 是否已有该年的官方休市表。有表的年份不再叠加内置的农历推算规则。
+    func hasData(forYear year: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return holidayOverrides[year]?.isEmpty == false
+    }
+
     /// 同步查询 `date` 是不是法定休市日（含调休放出来的假日）。
     ///
     /// 只回答「休市」这一半。holiday-cn 里 `isOffDay == false` 的补班日被刻意丢弃：

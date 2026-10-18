@@ -27,6 +27,7 @@ struct DomesticSubaccountReadOnlyView: View {
     @EnvironmentObject private var store: FinanceStore
     @State private var editingSubaccount: DomesticSubaccount?
     @State private var expectedInstitution: FinancialInstitution?
+    @State private var saveFailed = false
 
     init(subaccount: DomesticSubaccount, accountID: UUID) {
         initialSubaccount = subaccount
@@ -74,6 +75,9 @@ struct DomesticSubaccountReadOnlyView: View {
                 ContentUnavailableView("子账户已不存在", systemImage: "building.columns")
             }
         }
+        .alert("无法保存", isPresented: $saveFailed) {
+            Button("确定", role: .cancel) {}
+        } message: { Text("编辑期间资料已变化，请重新打开后再修改。") }
         .diagnosticScreen("境内子账户详情")
     }
 
@@ -84,7 +88,8 @@ struct DomesticSubaccountReadOnlyView: View {
         }
         account.domesticSubaccounts[index] = value
         guard let expectedInstitution else { return }
-        _ = store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
+        // AUDIT-025：冲突时提示，而不是静默丢弃修改。
+        saveFailed = !store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
     }
 }
 
@@ -235,6 +240,7 @@ struct ForeignSubaccountReadOnlyView: View {
     @EnvironmentObject private var store: FinanceStore
     @State private var editingSubaccount: ForeignSubaccount?
     @State private var expectedInstitution: FinancialInstitution?
+    @State private var saveFailed = false
 
     init(subaccount: ForeignSubaccount, accountID: UUID) {
         initialSubaccount = subaccount
@@ -282,6 +288,9 @@ struct ForeignSubaccountReadOnlyView: View {
                 ContentUnavailableView("子账户已不存在", systemImage: "building.columns")
             }
         }
+        .alert("无法保存", isPresented: $saveFailed) {
+            Button("确定", role: .cancel) {}
+        } message: { Text("编辑期间资料已变化，请重新打开后再修改。") }
         .diagnosticScreen("境外子账户详情")
     }
 
@@ -292,7 +301,8 @@ struct ForeignSubaccountReadOnlyView: View {
         }
         account.foreignSubaccounts[index] = value
         guard let expectedInstitution else { return }
-        _ = store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
+        // AUDIT-025：冲突时提示，而不是静默丢弃修改。
+        saveFailed = !store.replaceAccount(account, cards: store.cards(for: account), expected: expectedInstitution)
     }
 }
 

@@ -39,6 +39,22 @@ struct ExchangeRateRepositoryTests {
         #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-v1") == nil)
     }
 
+    // AUDIT-088：无读取方的牌价历史不再写入，读取缓存时顺带清掉旧数据。
+    @Test func unusedRateHistoryIsNoLongerWrittenAndLegacyCopyIsRemoved() async throws {
+        let suiteName = "MyToolsTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(Data("[]".utf8), forKey: "boc-currency-rates-history-v1")
+        _ = ExchangeRateRepository.loadCachedSnapshot(defaults: defaults)
+        #expect(defaults.object(forKey: "boc-currency-rates-history-v1") == nil)
+
+        let snapshot = ExchangeRateSnapshot(renminbiBuyingRates: [.usd: 7], renminbiSellingRates: [.usd: 7.1], updatedAt: Date())
+        // 同一 suite 的新实例：UserDefaults 不是 Sendable，不能把上面的实例送进 actor。
+        await ExchangeRateRepository().save(snapshot, defaults: UserDefaults(suiteName: suiteName)!)
+        #expect(defaults.object(forKey: "boc-currency-rates-history-v1") == nil)
+        #expect(ExchangeRateRepository.loadCachedSnapshot(defaults: defaults).renminbiBuyingRates[.usd] == 7)
+    }
+
     @Test func clearCachedSnapshotRemovesCurrentAndLegacyKeys() throws {
         let suiteName = "MyToolsTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -48,6 +64,7 @@ struct ExchangeRateRepositoryTests {
         defaults.set(Date(), forKey: "boc-currency-rates-date-v1")
         defaults.set("7.3", forKey: "stock-usd-cny-buying-rate-v1")
         defaults.set(Date(), forKey: "stock-usd-cny-buying-rate-date-v1")
+        defaults.set(Data("[]".utf8), forKey: "boc-currency-rates-history-v1")
 
         ExchangeRateRepository.clearCachedSnapshot(defaults: defaults)
 
@@ -56,6 +73,7 @@ struct ExchangeRateRepositoryTests {
         #expect(defaults.object(forKey: "boc-currency-rates-date-v1") == nil)
         #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-v1") == nil)
         #expect(defaults.object(forKey: "stock-usd-cny-buying-rate-date-v1") == nil)
+        #expect(defaults.object(forKey: "boc-currency-rates-history-v1") == nil)
     }
 }
 
@@ -88,4 +106,76 @@ struct HistoricalReferenceRateTests {
             #expect(throws: (any Error).self) { try HistoricalExchangeRateService.decodeResponse(Data(fixture.utf8), from: day, through: day) }
         }
     }
+}
+
+// AUDIT-045：中行页面币种名与现钞回退、部分缺价时的合计口径。
+struct BankOfChinaRateParsingTests {
+    private static let html = """
+    <tr data-currency='以色列谢克尔'>
+        <td>以色列谢克尔</td> <td></td> <td>195.3</td> <td></td> <td>238.7</td> <td>217.98</td>
+        <td class="pjrq">2026/10/14 20:35:14</td> <td>20:35:14</td>
+    </tr>
+    <tr data-currency='美元'>
+        <td>美元</td> <td>668.43</td> <td>668.43</td> <td>671.24</td> <td>671.24</td> <td>672.49</td>
+        <td class="pjrq">2026/10/14 20:35:14</td> <td>20:35:14</td>
+    </tr>
+    """
+
+    @Test func spotPricesWinAndCashPricesFillMissingSpotColumns() throws {
+        let rates = ForeignExchangeRateService.parseRates(from: Self.html)
+        let usd = try #require(rates.first { $0.currencyCode == "USD" })
+        #expect(usd.renminbiBuyingPerUnit == Decimal(string: "6.6843"))
+        #expect(usd.renminbiSellingPerUnit == Decimal(string: "6.7124"))
+        let ils = try #require(rates.first { $0.currencyCode == "ILS" })
+        #expect(ils.renminbiBuyingPerUnit == Decimal(string: "1.953"))
+        #expect(ils.renminbiSellingPerUnit == Decimal(string: "2.387"))
+        #expect(CurrencyCode.ugx.bankOfChinaName == nil)
+    }
+
+#if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
+    @Test func lossSummaryKeepsPricedTotalAndCountsMissingRates() {
+        let priced = CurrencyExchangeRecord(soldCurrency: .cny, boughtCurrency: .usd, soldAmount: 700, boughtAmount: 100)
+        let unpriced = CurrencyExchangeRecord(soldCurrency: .cny, boughtCurrency: .ugx, soldAmount: 10, boughtAmount: 5_000)
+        let rates: [CurrencyCode: Decimal] = [.cny: 1, .usd: 7]
+
+        let summary = CurrencyExchangeLossSummary(records: [priced, unpriced], buyingRates: rates)
+        #expect(summary.total == 0)
+        #expect(summary.missingCount == 1)
+        #expect(CurrencyExchangeLossSummary(records: [unpriced], buyingRates: rates).total == nil)
+        #expect(CurrencyExchangeLossSummary(records: [], buyingRates: rates).total == 0)
+    }
+
+    // AUDIT-077：缺键与旧 `oneSoldToBought` 口径的记录仍可解码，且日期归一到中午。
+    @Test func legacyExchangeRecordsDecodeWithDefaultsAndConvertedConvention() throws {
+        let legacy = Data(#"{"soldCurrency":"CNY","boughtCurrency":"USD","quoteConvention":"oneSoldToBought","quotedRate":0.14,"soldAmount":700,"boughtAmount":98,"exchangedAt":0}"#.utf8)
+        let record = try JSONDecoder().decode(CurrencyExchangeRecord.self, from: legacy)
+        #expect(record.quoteConvention == .hundredSoldToBought)
+        #expect(record.quotedRate == 14)
+        #expect(record.expectedBoughtAmount == 98)
+        #expect(record.fee == 0)
+        #expect(Calendar.autoupdatingCurrent.component(.hour, from: record.exchangedAt) == 12)
+
+        let minimal = try JSONDecoder().decode(CurrencyExchangeRecord.self, from: Data(#"{"soldAmount":1}"#.utf8))
+        #expect(minimal.quoteConvention == .hundredSoldToBought)
+        let roundTrip = try JSONDecoder().decode(CurrencyExchangeRecord.self, from: JSONEncoder().encode(record))
+        #expect(roundTrip == record)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(CurrencyExchangeRecord.self, from: Data(#"{"quoteConvention":"bogus"}"#.utf8))
+        }
+    }
+
+    // AUDIT-076：存储、分组用同一日历，月末记录不会被分到下个月。
+    @Test(arguments: ["America/Los_Angeles", "Asia/Shanghai", "Pacific/Auckland"])
+    func monthGroupingUsesStorageCalendar(timeZoneID: String) throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: timeZoneID))
+        for (month, day) in [(10, 31), (12, 31)] {
+            let picked = try #require(calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: 23)))
+            let stored = CurrencyExchangeRecord.noon(on: picked, calendar: calendar)
+            let group = CurrencyExchangeRecord.monthStart(of: stored, calendar: calendar)
+            #expect(calendar.dateComponents([.year, .month, .day], from: stored) == DateComponents(year: 2026, month: month, day: day))
+            #expect(calendar.dateComponents([.year, .month], from: group) == DateComponents(year: 2026, month: month))
+        }
+    }
+#endif
 }

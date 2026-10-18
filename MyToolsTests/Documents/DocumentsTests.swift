@@ -81,6 +81,35 @@ struct DocumentsTests {
         #expect(!field.isMultiline)
     }
 
+    @Test func sharedFieldTemplateEditorCleansAndMatchesCredentialFields() {
+        let edited = [
+            CredentialField(label: "  国籍 ", value: "中国", inputType: .text, isSensitive: false),
+            CredentialField(label: "   "),
+            CredentialField(label: "官网", inputType: .url, isSensitive: true)
+        ]
+        let template = FieldTemplateEditorView<CredentialField>.cleaned(edited)
+
+        #expect(template.map(\.label) == ["国籍", "官网"])
+        #expect(template.allSatisfy { $0.value.isEmpty })
+        #expect(template[0].id != edited[0].id)
+        #expect(template[1].inputType == .url)
+
+        let fields = [
+            CredentialField(label: "国籍", value: "中国", isSensitive: true),
+            CredentialField(label: "官网", inputType: .text, isSensitive: false)
+        ]
+        let updated = FieldTemplateMatching.applyingSensitivity(to: fields, matching: template)
+        #expect(updated[0].isSensitive == false)
+        #expect(updated[0].value == "中国")
+        // Same label but a different input type is not the same template field.
+        #expect(updated[1].isSensitive == false)
+
+        let blanks = template.map { $0.templateCopy(label: $0.label) }
+        #expect(FieldTemplateMatching.fieldsMatchTemplate(blanks, templateFields: template))
+        #expect(!FieldTemplateMatching.fieldsMatchTemplate(fields, templateFields: template))
+        #expect(!FieldTemplateMatching.fieldsMatchTemplate(Array(blanks.prefix(1)), templateFields: template))
+    }
+
     @Test func documentsMetadataDecodesBeforeFieldTemplateSyncWasAdded() throws {
         let data = Data(#"{"tags":["重要证件"]}"#.utf8)
         let metadata = try JSONDecoder().decode(CloudSyncDocumentsMetadata.self, from: data)
@@ -104,6 +133,38 @@ struct DocumentsTests {
             let document = CredentialDocument(type: type, issuedAt: issuedAt, validity: CredentialValidity(kind: kind))
             #expect(document.expirationDate(calendar: calendar) == expected)
         }
+    }
+
+    @Test func leapDayIssueEndsOnLastDayOfFebruary() {
+        let issuedAt = Self.date(year: 2024, month: 2, day: 29)
+        let cases: [(CredentialDocumentType, CredentialValidityKind, Date)] = [
+            (.passport, .tenYears, Self.date(year: 2034, month: 2, day: 28)),
+            (.identityCard, .tenYears, Self.date(year: 2034, month: 2, day: 28)),
+            (.passport, .fiveYears, Self.date(year: 2029, month: 2, day: 28)),
+            (.identityCard, .twentyYears, Self.date(year: 2044, month: 2, day: 29))
+        ]
+        for (type, kind, expected) in cases {
+            let document = CredentialDocument(type: type, issuedAt: issuedAt, validity: CredentialValidity(kind: kind))
+            #expect(document.expirationDate(calendar: Self.calendar) == expected)
+        }
+        let passport = CredentialDocument(
+            type: .passport,
+            issuedAt: Self.date(year: 2024, month: 3, day: 1),
+            validity: CredentialValidity(kind: .fiveYears)
+        )
+        #expect(passport.expirationDate(calendar: Self.calendar) == Self.date(year: 2029, month: 2, day: 28))
+    }
+
+    @Test func reminderInsideWindowFiresAtNextMorningUntilExpiry() throws {
+        let calendar = Self.calendar
+        func at(_ day: Int, _ hour: Int) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour))!
+        }
+        let expiry = at(20, 9)
+        #expect(DocumentsStore.reminderFireDate(scheduled: at(18, 9), expiry: expiry, now: at(1, 10), calendar: calendar) == at(18, 9))
+        #expect(DocumentsStore.reminderFireDate(scheduled: at(1, 9), expiry: expiry, now: at(5, 10), calendar: calendar) == at(6, 9))
+        #expect(DocumentsStore.reminderFireDate(scheduled: at(1, 9), expiry: expiry, now: at(5, 8), calendar: calendar) == at(5, 9))
+        #expect(DocumentsStore.reminderFireDate(scheduled: at(1, 9), expiry: expiry, now: at(20, 10), calendar: calendar) == nil)
     }
 
     @Test func validityStatusDistinguishesPermanentUpcomingAndExpired() {

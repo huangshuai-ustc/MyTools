@@ -91,7 +91,11 @@ struct StockQuoteService: Sendable {
                   let lastPoint = snapshot.points.max(by: { $0.date < $1.date })
             else { continue }
             // 分钟柱按结束时刻标注，末点可以略超前当前时刻，沿用报价择优的同一份容忍度。
-            guard lastPoint.date > quote.updatedAt,
+            // 报价缺时间戳时无从比较新旧，只接受当前港股自然日内的分时末点，
+            // 避免前一交易日的缓存末点顶替新报价。
+            let quoteTime = quote.updatedAt
+                ?? StockChartSeriesProcessor.marketCalendar(.hongKong).startOfDay(for: currentDate)
+            guard lastPoint.date > quoteTime,
                   lastPoint.date <= currentDate.addingTimeInterval(Self.futureTolerance)
             else { continue }
             let chartPrice = Self.decimalQuoteValue(lastPoint.close)
@@ -130,13 +134,17 @@ struct StockQuoteService: Sendable {
         guard let validator else { return primary }
 
         let currentDate = now()
-        let primaryHasValidTime = primary.updatedAt <= currentDate.addingTimeInterval(Self.futureTolerance)
-        let validatorHasValidTime = validator.updatedAt <= currentDate.addingTimeInterval(Self.futureTolerance)
+        // 缺时间戳的报价降权：只在双方都缺或都超前时按主源处理（AUDIT-054）。
+        let validLimit = currentDate.addingTimeInterval(Self.futureTolerance)
+        let primaryHasValidTime = primary.updatedAt.map { $0 <= validLimit } ?? false
+        let validatorHasValidTime = validator.updatedAt.map { $0 <= validLimit } ?? false
         if primaryHasValidTime != validatorHasValidTime {
             return primaryHasValidTime ? primary : validator
         }
+        guard let primaryTime = primary.updatedAt,
+              let validatorTime = validator.updatedAt else { return primary }
 
-        let timeDifference = primary.updatedAt.timeIntervalSince(validator.updatedAt)
+        let timeDifference = primaryTime.timeIntervalSince(validatorTime)
         if abs(timeDifference) > 2 {
             return timeDifference > 0 ? primary : validator
         }

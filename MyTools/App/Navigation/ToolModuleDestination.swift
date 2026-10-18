@@ -41,11 +41,7 @@ struct ToolModuleDestination: View {
             unavailableModule(module)
 #endif
         case .foodMap:
-#if MYTOOLS_FEATURE_FOOD_MAP
-            FoodMapView()
-#else
             unavailableModule(module)
-#endif
         case .secrets:
 #if MYTOOLS_FEATURE_SECRETS
             SecretVaultView()
@@ -65,11 +61,7 @@ struct ToolModuleDestination: View {
             unavailableModule(module)
 #endif
         case .partnership:
-#if MYTOOLS_FEATURE_PARTNERSHIP
-            PartnershipView()
-#else
             unavailableModule(module)
-#endif
         case .sportsLottery:
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
             SportsLotteryView()

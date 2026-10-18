@@ -12,12 +12,12 @@ struct StockChartServiceTests {
         var stored = disk.emptyStore(for: key)
         #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now) == [.intraday, .dayK])
         let daily = StockChartSnapshot(symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 100,
-            points: [StockChartFixtures.point(at: close)], quoteUpdatedAt: close, fetchedAt: now,
+            points: [StockChartFixtures.point(at: close)], indicatorPoints: nil, quoteUpdatedAt: close, fetchedAt: now,
             source: "Test", supportsCandlesticks: true)
         stored = disk.merging(daily, range: .dayK, for: key, into: stored)
         #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now) == [.intraday])
         let minute = StockChartSnapshot(symbol: key.symbol, name: "VOO", currencyCode: "USD", previousClose: 100,
-            points: [StockChartFixtures.point(at: close.addingTimeInterval(-60))], quoteUpdatedAt: close, fetchedAt: now,
+            points: [StockChartFixtures.point(at: close.addingTimeInterval(-60))], indicatorPoints: nil, quoteUpdatedAt: close, fetchedAt: now,
             source: "Test", supportsCandlesticks: true)
         stored = disk.merging(minute, range: .intraday, for: key, into: stored)
         #expect(StockChartService.closingRangesNeedingRefresh(in: stored, market: market, at: now).isEmpty)
@@ -114,6 +114,28 @@ struct StockChartServiceTests {
         #expect(start.duration(to: .now) < .milliseconds(700))
         try await Task.sleep(for: .milliseconds(1200))
         #expect(await context.service.cachedChart(for: context.stock, range: .dayK) == nil)
+    }
+
+    @Test func removingStockDiscardsInFlightChartWrite() async throws {
+        let context = try makeContext(market: .unitedStates, range: .dayK, providerDelay: .milliseconds(300))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let pending = Task { try await context.service.fetchChart(for: context.stock, range: .dayK, forceRefresh: false) }
+        try await Task.sleep(for: .milliseconds(60))
+        await context.service.clearCache(for: context.stock)
+        _ = await pending.result
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(await context.service.cachedChart(for: context.stock, range: .dayK) == nil)
+    }
+
+    @Test func forcedRefreshDoesNotJoinNonForcedFlight() async throws {
+        let context = try makeContext(market: .unitedStates, range: .dayK, providerDelay: .milliseconds(200))
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let normal = Task { try await context.service.fetchChart(for: context.stock, range: .dayK, forceRefresh: false) }
+        try await Task.sleep(for: .milliseconds(40))
+        let forced = Task { try await context.service.fetchChart(for: context.stock, range: .dayK, forceRefresh: true) }
+        _ = try await normal.value
+        _ = try await forced.value
+        #expect(await context.recorder.calls() == ["yahoo", "yahoo"])
     }
 
     @Test func cancellingOneConsumerPreservesSharedProducerForAnother() async throws {

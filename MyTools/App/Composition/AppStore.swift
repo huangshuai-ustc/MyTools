@@ -14,41 +14,6 @@ private struct SendableUserDefaults: @unchecked Sendable {
     let value: UserDefaults
 }
 
-#if MYTOOLS_FEATURE_STOCKS && MYTOOLS_FEATURE_PARTNERSHIP
-extension StockStore: PartnershipStockImportProviding {
-    var partnershipImportRecords: [PartnershipStockImportRecord] {
-        stocks.flatMap { stock in
-            let market: PartnershipStockMarket = switch stock.market {
-            case .unitedStates: .unitedStates
-            case .aShare: .aShare
-            case .hongKong: .hongKong
-            }
-            let transactions = stock.transactions.map { transaction in
-                PartnershipStockImportRecord(
-                    id: transaction.id,
-                    market: market,
-                    symbol: stock.symbol,
-                    name: stock.displayName,
-                    kind: transaction.type == .buy ? .buy : .sell,
-                    date: transaction.tradedAt,
-                    shares: transaction.quantity,
-                    price: transaction.unitPrice,
-                    fee: transaction.fees
-                )
-            }
-            let dividends = stock.dividends.map { dividend in
-                PartnershipStockImportRecord(
-                    id: dividend.id, market: market, symbol: stock.symbol, name: stock.displayName,
-                    kind: .dividend, date: dividend.receivedAt, shares: dividend.quantity,
-                    price: dividend.dividendPerShare, fee: dividend.fees,
-                    grossAmount: dividend.grossAmount, withholdingTax: dividend.withholdingTax
-                )
-            }
-            return transactions + dividends
-        }
-    }
-}
-#endif
 
 struct PendingModuleLocalDataDeletion: Identifiable, Equatable, Sendable {
     let id: UUID
@@ -78,9 +43,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_FINANCE
     let financeStore: FinanceStore
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-    let foodMapStore: FoodMapStore
-#endif
 #if MYTOOLS_FEATURE_SECRETS
     let secretStore: SecretStore
 #endif
@@ -92,9 +54,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
     let currencyExchangeStore: CurrencyExchangeStore
-#endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-    let partnershipStore: PartnershipStore
 #endif
     let cloudSync: CloudSyncCoordinator
     private let persistence: any VaultPersisting
@@ -113,6 +72,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private var attachmentRemovalTask: Task<Void, Never>?
     private var persistenceRequestRevision: UInt64 = 0
     private var isApplyingCloudChanges = false
+    /// Modules the user explicitly cleared or replaced, with the confirmation
+    /// time. Snapshots taken shortly afterwards let their CloudKit deletions
+    /// skip the bulk-deletion breaker; several snapshots may be taken per sync.
+    private var confirmedCloudDeletionModules: [ToolModule: Date] = [:]
+    private static let cloudDeletionConfirmationWindow: TimeInterval = 10 * 60
     private var canPersistVault = true
     @Published private(set) var unavailableModules: Set<ToolModule> = []
     private var didLogPersistenceBlocked = false
@@ -155,12 +119,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             defaults: dependencies.defaults,
             attachmentStore: attachmentStore
         )
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        partnershipStore = PartnershipStore(books: initialVault?.partnershipBooks ?? [])
-#endif
         let exchangeRateStore = ExchangeRateStore(
             repository: dependencies.exchangeRateRepository,
-            initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks, .partnership].filter { moduleSettings.isVisible($0) })
+            initialEnabledModules: Set([ToolModule.currencyExchange, .myStocks].filter { moduleSettings.isVisible($0) })
         )
         self.exchangeRateStore = exchangeRateStore
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
@@ -204,9 +165,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
             }
         )
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        partnershipStore.attach(stockImportProvider: stockStore)
-#endif
 #endif
 #if MYTOOLS_FEATURE_HEALTH
         healthStore = HealthStore(
@@ -222,13 +180,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             financialInstitutions: initialVault?.financialInstitutions ?? [],
             domesticLoginFieldTemplates: initialVault?.domesticBankLoginFieldTemplates ?? BankLoginFieldTemplate.domesticDefaults,
             overseasLoginFieldTemplates: initialVault?.overseasBankLoginFieldTemplates ?? BankLoginFieldTemplate.overseasDefaults,
-            attachmentStore: attachmentStore
-        )
-#endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        foodMapStore = FoodMapStore(
-            places: initialVault?.foodPlaces ?? [],
-            knownTags: initialVault?.foodPlaceTags ?? [],
             attachmentStore: attachmentStore
         )
 #endif
@@ -275,9 +226,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_HEALTH
         moduleDataCleanupRegistry.register(healthStore)
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        moduleDataCleanupRegistry.register(foodMapStore)
-#endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         moduleDataCleanupRegistry.register(documentsStore)
 #endif
@@ -293,9 +241,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_FINANCE
         financeStore.attach(mutationNotifier: self)
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        foodMapStore.attach(mutationNotifier: self)
-#endif
 #if MYTOOLS_FEATURE_SECRETS
         secretStore.attach(mutationNotifier: self)
 #endif
@@ -309,16 +254,14 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         currencyExchangeStore.attach(mutationNotifier: self)
         exchangeRateStore.attach(updateObserver: currencyExchangeStore)
 #endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        partnershipStore.attach(mutationNotifier: self)
-#endif
         cloudSync.attach(
             snapshotProvider: { [weak self] in
                 guard let self else { return .empty }
                 return try await self.makeCloudSyncSnapshot()
             },
             changeHandler: { [weak self] changes in
-                try self?.applyCloudSyncChanges(changes)
+                // Nothing is applied once the store is gone; keep every change pending.
+                try self?.applyCloudSyncChanges(changes) ?? Set(changes.map(\.key))
             }
         )
         moduleSettings.setVisibilityChangeHandler { [weak self] module, isVisible in
@@ -368,10 +311,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         guard (!isInitialDataLoaded || !canPersistVault), initialVaultLoadTask == nil else { return }
 #if os(iOS)
         guard UIApplication.shared.isProtectedDataAvailable else {
-            DiagnosticLogger.shared.log(
-                .persistence,
-                "启动时受保护数据尚不可用，等待设备解锁后载入本地档案",
-                level: .warning
+            DiagnosticLogger.shared.logOncePerSession(
+                "protected-data-unavailable-at-load", .persistence,
+                "启动时受保护数据尚不可用，等待设备解锁后载入本地档案"
             )
             return
         }
@@ -417,6 +359,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_STOCKS
         if module == .myStocks {
             StockRefreshCoordinator.shared.updateModuleVisibility(isVisible)
+        }
+#endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        if module == .sportsLottery {
+            SportsLotteryRefreshCoordinator.shared.updateModuleVisibility(isVisible)
         }
 #endif
     }
@@ -505,9 +452,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             knownTags: vault.medicalRecordTags
         )
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        foodMapStore.replace(places: vault.foodPlaces, knownTags: vault.foodPlaceTags)
-#endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         documentsStore.replace(
             documents: vault.credentialDocuments,
@@ -517,9 +461,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
 #if MYTOOLS_FEATURE_BILLS
         billsStore.replace(records: vault.billRecords, knownTags: vault.billTags)
-#endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        partnershipStore.replace(books: vault.partnershipBooks)
 #endif
     }
 
@@ -554,6 +495,12 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     func restoreBackup(from data: Data, password: String) async throws {
+        // An unreadable vault decodes as an empty store; merging a backup into
+        // it and saving would replace the original ciphertext for good.
+        guard isInitialDataLoaded, canPersistVault else {
+            DiagnosticLogger.shared.log(.backup, "本地档案未成功读取，已拒绝导入备份以保护原文件", level: .error)
+            throw VaultBackupError.localVaultUnavailable
+        }
         isRestoringBackup = true
         backupRestoreRegistry.notifyStarted()
         defer {
@@ -577,21 +524,28 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             DiagnosticLogger.logError(.backup, operation: "导入加密备份失败", error: error)
             throw error
         }
-        let mergedPayload = AppStoreBackupMerger.merge(
-            localVault: currentVaultData(),
-            localSecrets: currentSecrets,
-            imported: restoredPayload,
-            enabledModules: enabledModules
-        )
+        let mergedPayload: VaultBackupPayload
+        do {
+            mergedPayload = try AppStoreBackupMerger.merge(
+                localVault: currentVaultData(),
+                localSecrets: currentSecrets,
+                imported: restoredPayload,
+                enabledModules: enabledModules
+            )
+        } catch {
+            DiagnosticLogger.logError(.backup, operation: "合并备份失败", error: error)
+            throw error
+        }
         do {
             try await Task.detached(priority: .userInitiated) { [persistence] in
                 try persistence.saveImmediately(
                     mergedPayload.vault,
-                    secrets: mergedPayload.secrets
+                    secrets: mergedPayload.secrets,
+                    preservingOriginal: true
                 )
             }.value
         } catch {
-            DiagnosticLogger.logError(.backup, operation: "保存增量备份导入结果失败", error: error)
+            DiagnosticLogger.logError(.backup, operation: "保存备份导入结果失败", error: error)
             throw error
         }
         applyVault(mergedPayload.vault)
@@ -622,6 +576,8 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             )
         }
 #endif
+        // The user chose to replace these modules as a whole (AUDIT-006).
+        for module in restoredPayload.includedModules { confirmedCloudDeletionModules[module] = Date() }
         cloudSync.localDataDidChange()
     }
 
@@ -697,6 +653,31 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         return report
     }
 
+    /// Data left by removed features (Food Map, Partnership) and top-level
+    /// fields unknown to this version. None of it is shown anywhere in the app.
+    func scanLegacyData() -> LegacyDataReport {
+        guard isInitialDataLoaded else { return .empty }
+        return LegacyVaultData.scan(retainedVault)
+    }
+
+    @discardableResult
+    func cleanupLegacyData() -> LegacyDataReport {
+        guard isInitialDataLoaded, canPersistVault, pendingModuleLocalDataDeletion == nil else { return .empty }
+        let report = LegacyVaultData.scan(retainedVault)
+        guard !report.isEmpty else { return report }
+        retainedVault = LegacyVaultData.removing(from: retainedVault)
+        unavailableModules = Set(retainedVault.unavailableModules.compactMap(ToolModule.init(rawValue:)))
+        DiagnosticLogger.shared.log(.data, "已清理遗留数据 items=\(report.itemCount) attachments=\(report.attachmentStoredFileNames.count)")
+        // Removed modules never participate in CloudKit, so only the local Vault changes.
+        persist()
+        scheduleAttachmentRemovalAfterPersistence(report.attachmentStoredFileNames.map { name in
+            var attachment = FileAttachment()
+            attachment.storedFileName = name
+            return attachment
+        })
+        return report
+    }
+
     @discardableResult
     func beginModuleLocalDataDeletion(
         for module: ToolModule,
@@ -719,11 +700,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             secrets: currentSecrets
         )
         pendingModuleLocalDataDeletion = deletion
-        let didChangeVault = clearLocalData(for: module)
+        // Nothing is written yet: persist() keeps the snapshot on disk until commit.
+        clearLocalData(for: module)
         DiagnosticLogger.shared.log(.data, "模块本地数据清除开始 module=\(module.rawValue)")
-        if didChangeVault {
-            persist()
-        }
 
         pendingModuleDeletionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(max(undoWindow, 0)))
@@ -764,6 +743,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         pendingModuleLocalDataDeletion = nil
         finalizeLocalDataDeletion(snapshot)
         DiagnosticLogger.shared.log(.data, "模块本地数据清除已提交 module=\(snapshot.module.rawValue)")
+        confirmedCloudDeletionModules[snapshot.module] = Date()
         cloudSync.localDataDidChange()
         await moduleLocalDataCacheCleaner.clearLocalCache(for: deletion.module)
     }
@@ -788,7 +768,9 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     private func persist() {
-        guard !isRestoringBackup, canPersistVault else {
+        // Before the first load completes the stores are empty placeholders;
+        // writing them would overwrite the real vault.
+        guard isInitialDataLoaded, !isRestoringBackup, canPersistVault else {
             if !canPersistVault, !didLogPersistenceBlocked {
                 didLogPersistenceBlocked = true
                 DiagnosticLogger.shared.log(
@@ -800,7 +782,24 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             return
         }
         persistenceRequestRevision &+= 1
-        persistence.schedule(currentVaultData(), secrets: currentSecrets)
+        scheduleVaultWrite(currentVaultData(), secrets: currentSecrets)
+    }
+
+    /// Every Vault write goes through here so the module-deletion undo window
+    /// is honoured no matter who triggers the save (local edits or CloudKit).
+    private func scheduleVaultWrite(_ vault: VaultData, secrets: [SecretVaultValue]) {
+        if let snapshot = pendingModuleDeletionSnapshot {
+            // Inside the undo window disk keeps the module's data; quitting the
+            // app before the window ends therefore behaves like an undo.
+            let (restoredVault, restoredSecrets) = restoredLocalData(
+                from: snapshot,
+                vault: vault,
+                secrets: secrets
+            )
+            persistence.schedule(restoredVault, secrets: restoredSecrets)
+        } else {
+            persistence.schedule(vault, secrets: secrets)
+        }
     }
 
     private func currentVaultData() -> VaultData {
@@ -825,10 +824,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         vault.hospitalProfiles = healthStore.hospitalProfiles
         vault.medicalRecordTags = healthStore.knownTags
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        vault.foodPlaces = foodMapStore.places
-        vault.foodPlaceTags = foodMapStore.knownTags
-#endif
 #if MYTOOLS_FEATURE_DOCUMENTS
         vault.credentialDocuments = documentsStore.documents
         vault.credentialFieldTemplates = documentsStore.fieldTemplates
@@ -837,9 +832,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #if MYTOOLS_FEATURE_BILLS
         vault.billRecords = billsStore.records
         vault.billTags = billsStore.knownTags
-#endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        vault.partnershipBooks = partnershipStore.books
 #endif
 #if MYTOOLS_FEATURE_SECRETS
         vault.secretFieldTemplates = secretStore.fieldTemplates
@@ -865,7 +857,10 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         let attachmentStore = self.attachmentStore
         let appPreferences = cloudSyncPreferences.makeSnapshot()
         let enabledModules = cloudSyncModules
-        return try await Task.detached(priority: .utility) {
+        let confirmationCutoff = Date().addingTimeInterval(-Self.cloudDeletionConfirmationWindow)
+        confirmedCloudDeletionModules = confirmedCloudDeletionModules.filter { $0.value > confirmationCutoff }
+        let confirmedDeletionModules = Set(confirmedCloudDeletionModules.keys)
+        var snapshot = try await Task.detached(priority: .utility) {
             try CloudSyncSnapshotBuilder.make(
                 vault: vault,
                 secrets: secrets,
@@ -874,9 +869,11 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
                 enabledModules: enabledModules
             )
         }.value
+        snapshot.confirmedDeletionModules = confirmedDeletionModules
+        return snapshot
     }
 
-    private func applyCloudSyncChanges(_ changes: [CloudSyncChange]) throws {
+    private func applyCloudSyncChanges(_ changes: [CloudSyncChange]) throws -> Set<String> {
         guard canPersistVault else {
             throw CloudSyncApplyError.localVaultUnavailable
         }
@@ -884,15 +881,33 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
             vault: currentVaultData(),
             secrets: currentSecrets
         )
+        // A preferences record this build cannot read (corrupt, or written by a
+        // newer schema) is rejected on its own so it stays pending without
+        // blocking the rest of the batch.
         var incomingPreferences: CloudSyncAppPreferences?
+        var preferencesKey: String?
+        var rejectedPreferenceKeys = Set<String>()
         for change in changes {
             guard case .upsert(let kind, let id, let payload) = change,
                   kind == .appPreferences,
                   id == CloudSyncAppPreferences.itemID else { continue }
-            incomingPreferences = try CloudSyncCoding.decoder().decode(
-                CloudSyncAppPreferences.self,
-                from: payload
-            )
+            do {
+                let preferences = try CloudSyncCoding.decoder().decode(
+                    CloudSyncAppPreferences.self,
+                    from: payload
+                )
+                try cloudSyncPreferences.validate(preferences)
+                incomingPreferences = preferences
+                preferencesKey = change.key
+            } catch {
+                incomingPreferences = nil
+                rejectedPreferenceKeys.insert(change.key)
+                DiagnosticLogger.shared.log(
+                    .cloudSync,
+                    "iCloud 应用设置无法合并，已保留待重试 error=\(DiagnosticLogger.errorCode(error))",
+                    level: .warning
+                )
+            }
         }
         let merged = try CloudSyncMerger.apply(
             changes,
@@ -913,17 +928,25 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         )
 #endif
         if let incomingPreferences {
-            try cloudSyncPreferences.apply(incomingPreferences)
+            do {
+                try cloudSyncPreferences.apply(incomingPreferences)
+            } catch {
+                if let preferencesKey { rejectedPreferenceKeys.insert(preferencesKey) }
+                DiagnosticLogger.logError(.cloudSync, operation: "应用 iCloud 设置", error: error)
+            }
         }
         let finalVault = currentVaultData()
         let retainedAttachmentIDs = Set(
             attachmentsByID(vault: finalVault, secrets: merged.secrets).keys
         )
-        for (id, attachment) in previousAttachments where !retainedAttachmentIDs.contains(id) {
-            attachmentStore.delete(attachment)
-        }
-        persistence.schedule(finalVault, secrets: merged.secrets)
+        scheduleVaultWrite(finalVault, secrets: merged.secrets)
+        // Same rule as module stores: unreferenced files go only after the
+        // Vault that dropped them has been flushed (AUDIT-017).
+        scheduleAttachmentRemovalAfterPersistence(previousAttachments.compactMap { id, attachment in
+            retainedAttachmentIDs.contains(id) ? nil : attachment
+        })
         cloudSync.localDataDidChange()
+        return merged.rejectedKeys.union(rejectedPreferenceKeys)
     }
 
     private var enabledModules: Set<ToolModule> {
@@ -977,10 +1000,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
             break
         case .foodMap:
-#if MYTOOLS_FEATURE_FOOD_MAP
-            vault.foodPlaces = []
-            vault.foodPlaceTags = []
-#endif
             break
         case .secrets:
 #if MYTOOLS_FEATURE_SECRETS
@@ -1003,9 +1022,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
             break
         case .partnership:
-#if MYTOOLS_FEATURE_PARTNERSHIP
-            vault.partnershipBooks = []
-#endif
             break
         case .sportsLottery:
             break
@@ -1026,7 +1042,33 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     }
 
     private func restoreLocalData(from snapshot: ModuleLocalDataDeletionSnapshot) {
-        var vault = currentVaultData()
+        let (vault, secrets) = restoredLocalData(
+            from: snapshot,
+            vault: currentVaultData(),
+            secrets: currentSecrets
+        )
+        applyVault(vault)
+        retainedSecrets = secrets
+#if MYTOOLS_FEATURE_SECRETS
+        if snapshot.module == .secrets {
+            secretStore.replace(
+                secretItems: secrets,
+                fieldTemplates: vault.secretFieldTemplates,
+                knownTags: vault.secretTags
+            )
+        }
+#endif
+    }
+
+    /// The snapshot's module data merged back into `vault`/`secrets`. Used both
+    /// for undo and for every write inside the undo window, so the cleared
+    /// state never reaches disk before the deletion commits (AUDIT-032).
+    private func restoredLocalData(
+        from snapshot: ModuleLocalDataDeletionSnapshot,
+        vault current: VaultData,
+        secrets currentSecrets: [SecretVaultValue]
+    ) -> (VaultData, [SecretVaultValue]) {
+        var vault = current
         var secrets = currentSecrets
 
         switch snapshot.module {
@@ -1081,13 +1123,6 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
             break
         case .foodMap:
-#if MYTOOLS_FEATURE_FOOD_MAP
-            vault.foodPlaces = mergingRestored(snapshot.vault.foodPlaces, into: vault.foodPlaces)
-            vault.foodPlaceTags = AppTagSupport.merged(
-                vault.foodPlaceTags,
-                with: snapshot.vault.foodPlaceTags
-            )
-#endif
             break
         case .secrets:
 #if MYTOOLS_FEATURE_SECRETS
@@ -1128,38 +1163,24 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
 #endif
             break
         case .partnership:
-#if MYTOOLS_FEATURE_PARTNERSHIP
-            vault.partnershipBooks = mergingRestored(snapshot.vault.partnershipBooks, into: vault.partnershipBooks)
-#endif
             break
         case .sportsLottery:
             break
         }
-
-        applyVault(vault)
-        retainedSecrets = secrets
-#if MYTOOLS_FEATURE_SECRETS
-        if snapshot.module == .secrets {
-            secretStore.replace(
-                secretItems: secrets,
-                fieldTemplates: vault.secretFieldTemplates,
-                knownTags: vault.secretTags
-            )
-        }
-#endif
+        return (vault, secrets)
     }
 
     private func finalizeLocalDataDeletion(_ snapshot: ModuleLocalDataDeletionSnapshot) {
+        // The cleared Vault is written only now; files follow after the flush.
+        persist()
         let retainedAttachmentIDs = Set(
             attachmentsByID(vault: currentVaultData(), secrets: currentSecrets).keys
         )
-        for attachment in attachments(
+        scheduleAttachmentRemovalAfterPersistence(attachments(
             for: snapshot.module,
             vault: snapshot.vault,
             secrets: snapshot.secrets
-        ) where !retainedAttachmentIDs.contains(attachment.id) {
-            attachmentStore.delete(attachment)
-        }
+        ).filter { !retainedAttachmentIDs.contains($0.id) })
 
         switch snapshot.module {
         case .myStocks:
@@ -1213,6 +1234,13 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         secrets: [SecretVaultValue]
     ) -> [UUID: FileAttachment] {
         ModuleAttachmentReferenceIndex.byID(vault: vault, secrets: secrets)
+    }
+
+    /// Read-only location of a file in the attachment directory, used to preview orphans.
+    func attachmentURL(forStoredFileName storedFileName: String) -> URL {
+        var attachment = FileAttachment()
+        attachment.storedFileName = storedFileName
+        return attachmentStore.url(for: attachment)
     }
 
     var referencedAttachmentStoredFileNames: Set<String> {

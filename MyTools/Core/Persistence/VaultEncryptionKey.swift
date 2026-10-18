@@ -60,11 +60,20 @@ struct KeychainVaultEncryptionKey: VaultEncryptionKeyProviding {
             return nil
         }
         guard status == errSecSuccess, let data = result as? Data else {
-            DiagnosticLogger.shared.log(
-                .persistence,
-                "读取本地加密密钥失败 status=\(status)",
-                level: .warning
-            )
+            // -25308/-25291 只说明设备锁屏（密钥为 WhenUnlockedThisDeviceOnly），
+            // 调用方会等解锁后重试，不算异常。
+            if status == errSecInteractionNotAllowed || status == errSecNotAvailable {
+                DiagnosticLogger.shared.logOncePerSession(
+                    "vault-key-locked-\(status)", .persistence,
+                    "设备锁定，本地加密密钥暂不可读 status=\(status)，解锁后重试"
+                )
+            } else {
+                DiagnosticLogger.shared.log(
+                    .persistence,
+                    "读取本地加密密钥失败 status=\(status)",
+                    level: .warning
+                )
+            }
             throw VaultEncryptionKeyError.keychainReadFailed(status)
         }
         return SymmetricKey(data: data)

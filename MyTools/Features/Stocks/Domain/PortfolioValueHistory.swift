@@ -14,19 +14,17 @@ enum StockIntradayTransactionPlacement {
         guard !transactions.isEmpty, !sortedPoints.isEmpty else { return [:] }
 
         let calendar = StockChartSeriesProcessor.marketCalendar(market)
-        let orderedTransactions = StockHolding.orderedTransactions(
-            transactions,
-            calendar: calendar
-        )
+        // 同日顺序按录入的北京日期排；归属哪根 K 线按换算后的市场交易日。
+        let orderedTransactions = StockHolding.orderedTransactions(transactions)
         var grouped: [Date: (points: [StockChartPoint], transactions: [StockTransaction])] = [:]
 
         for transaction in orderedTransactions {
-            let matchingDate = transaction.executedAt ?? transaction.tradedAt
+            let marketDay = StockMarketClock.marketBusinessDayStart(of: transaction, market: market)
             var matchingPoints = sortedPoints.filter {
-                calendar.isDate($0.date, inSameDayAs: matchingDate)
+                calendar.startOfDay(for: $0.date) == marketDay
             }
             if matchingPoints.isEmpty,
-               let fallbackPoint = sortedPoints.last(where: { $0.date <= transaction.tradedAt }) {
+               let fallbackPoint = sortedPoints.last(where: { calendar.startOfDay(for: $0.date) <= marketDay }) {
                 matchingPoints = sortedPoints.filter {
                     calendar.isDate($0.date, inSameDayAs: fallbackPoint.date)
                 }
@@ -42,10 +40,7 @@ enum StockIntradayTransactionPlacement {
         var result: [UUID: StockChartPoint] = [:]
         for group in grouped.values {
             let dayPoints = group.points.sorted { $0.date < $1.date }
-            let dayTransactions = StockHolding.orderedTransactions(
-                group.transactions,
-                calendar: calendar
-            )
+            let dayTransactions = StockHolding.orderedTransactions(group.transactions)
             var previousIndex = -1
 
             for (transactionIndex, transaction) in dayTransactions.enumerated() {
@@ -136,7 +131,8 @@ enum PortfolioValueHistoryBuilder {
         for market: StockMarket,
         stocks: [StockHolding],
         dailyPointsBySymbol: [String: [StockChartPoint]],
-        todayPriceOverrides: [String: Decimal] = [:]
+        todayPriceOverrides: [String: Decimal] = [:],
+        now: Date = Date()
     ) -> PortfolioValueSeries {
         let marketStocks = stocks.filter { $0.market == market && !$0.transactions.isEmpty }
 
@@ -156,6 +152,8 @@ enum PortfolioValueHistoryBuilder {
         var dailyBarsBySymbol: [String: [Date: StockChartPoint]] = [:]
 
         let cal = StockChartSeriesProcessor.marketCalendar(market)
+        // 只在市场交易日把实时价补成“今天”的 K 线，周末和假日不多出一根。
+        let liveDay: Date? = StockMarketTradingCalendar.isTradingDay(market, on: now) ? cal.startOfDay(for: now) : nil
 
         for stock in marketStocks {
             guard let dailyPoints = dailyPointsBySymbol[stock.symbol], !dailyPoints.isEmpty else {
@@ -169,11 +167,22 @@ enum PortfolioValueHistoryBuilder {
                 bars[day] = point
                 allDates.insert(day)
             }
-            // Inject today's live price so intraday/fiveDay ranges show the current value
-            if let todayPrice = todayPriceOverrides[stock.symbol] {
-                let today = cal.startOfDay(for: Date())
+            // Inject today's live price so intraday/fiveDay ranges show the current value.
+            // 已有今天的日线时把高低扩到包含实时价，避免收盘落在高低区间之外（AUDIT-060）。
+            if let today = liveDay, let todayPrice = todayPriceOverrides[stock.symbol] {
                 prices[today] = todayPrice
                 allDates.insert(today)
+                if let bar = bars[today] {
+                    let live = NSDecimalNumber(decimal: todayPrice).doubleValue
+                    bars[today] = StockChartPoint(
+                        date: bar.date,
+                        open: bar.open,
+                        high: max(bar.high, live),
+                        low: min(bar.low, live),
+                        close: live,
+                        volume: bar.volume
+                    )
+                }
             }
             pricesBySymbol[stock.symbol] = prices
             dailyBarsBySymbol[stock.symbol] = bars
@@ -204,7 +213,17 @@ enum PortfolioValueHistoryBuilder {
             )
         }
 
-        let startDay = cal.startOfDay(for: startDate)
+        // 日线按市场交易日结算：交易计入其所属市场交易日那根日线，持股与成本同一口径。
+        let marketDaysByTransactionID = marketStocks.reduce(into: [UUID: Date]()) { result, stock in
+            for transaction in stock.transactions {
+                result[transaction.id] = StockMarketClock.marketBusinessDayStart(of: transaction, market: market)
+            }
+        }
+        // 美股夜间成交的北京日期晚于其美东交易日，起点取买入所属的最早市场交易日。
+        let startDay = marketStocks.flatMap(\.transactions)
+            .filter { $0.type == .buy }
+            .compactMap { marketDaysByTransactionID[$0.id] }
+            .min() ?? StockMarketClock.marketDayStart(forBeijingDate: startDate, market: market)
 
         // Build carry-forward price tables
         var carryForwardPrices: [String: Decimal] = [:]
@@ -218,7 +237,9 @@ enum PortfolioValueHistoryBuilder {
             var hasAnyHolding = false
 
             for stock in marketStocks {
-                let shares = sharesHeld(for: stock, on: date)
+                let shares = stock.transactions
+                    .filter { (marketDaysByTransactionID[$0.id] ?? .distantFuture) <= date }
+                    .reduce(Decimal.zero) { $0 + $1.signedShares }
                 guard shares > 0 else { continue }
                 hasAnyHolding = true
 
@@ -253,7 +274,11 @@ enum PortfolioValueHistoryBuilder {
             currencyCode: market.currencyCode,
             points: result,
             costBasis: totalHoldingCost(marketStocks),
-            costBasisPoints: costBasisPoints(marketStocks, dates: result.map(\.date))
+            costBasisPoints: costBasisPoints(
+                marketStocks,
+                dates: result.map(\.date),
+                effectiveDatesByTransactionID: marketDaysByTransactionID
+            )
         )
     }
 
@@ -362,13 +387,9 @@ enum PortfolioValueHistoryBuilder {
                 result[entry.key] = decimalPrice(first.close)
             }
         }
-        let transactionCalendar = StockChartSeriesProcessor.marketCalendar(market)
         let transactionsByStock: [UUID: [(transaction: StockTransaction, effectiveDate: Date, order: Int)]] =
             Dictionary(uniqueKeysWithValues: marketStocks.map { stock in
-                let orderedTransactions = StockHolding.orderedTransactions(
-                    stock.transactions,
-                    calendar: transactionCalendar
-                )
+                let orderedTransactions = StockHolding.orderedTransactions(stock.transactions)
                 let placements = StockIntradayTransactionPlacement.resolve(
                     transactions: orderedTransactions,
                     points: scopedBySymbol[stock.symbol] ?? [],
@@ -378,7 +399,9 @@ enum PortfolioValueHistoryBuilder {
                     .map { order, transaction in
                         (
                             transaction: transaction,
-                            effectiveDate: placements[transaction.id]?.date ?? transaction.tradedAt,
+                            effectiveDate: placements[transaction.id]?.date
+                                ?? transaction.executedAt
+                                ?? StockMarketClock.marketBusinessDayStart(of: transaction, market: market),
                             order: order
                         )
                     }
@@ -673,8 +696,8 @@ enum PortfolioValueHistoryBuilder {
                 ($0.element.id, $0.offset)
             })
             let transactions = orderedTransactions.sorted { left, right in
-                let leftDate = effectiveDatesByTransactionID[left.id] ?? left.tradedAt
-                let rightDate = effectiveDatesByTransactionID[right.id] ?? right.tradedAt
+                let leftDate = effectiveDatesByTransactionID[left.id] ?? StockHolding.effectiveInstant(of: left)
+                let rightDate = effectiveDatesByTransactionID[right.id] ?? StockHolding.effectiveInstant(of: right)
                 if leftDate != rightDate { return leftDate < rightDate }
                 return orderByID[left.id, default: Int.max] < orderByID[right.id, default: Int.max]
             }
@@ -692,7 +715,8 @@ enum PortfolioValueHistoryBuilder {
                 var offset = offsets[stock.id, default: 0]
                 var ledger = ledgers[stock.id, default: StockMovingAverageCostLedger()]
                 while offset < transactions.count,
-                      (effectiveDatesByTransactionID[transactions[offset].id] ?? transactions[offset].tradedAt) <= date {
+                      (effectiveDatesByTransactionID[transactions[offset].id]
+                        ?? StockHolding.effectiveInstant(of: transactions[offset])) <= date {
                     let transaction = transactions[offset]
                     ledger.apply(transaction)
                     offset += 1

@@ -470,6 +470,13 @@ struct MedicalCostSummary: Equatable {
     }
 }
 
+extension Sequence where Element == MedicalRecord {
+    /// 编辑页、详情页与列表分组共用的费用汇总口径（AUDIT-088）。
+    var costSummary: MedicalCostSummary {
+        reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+    }
+}
+
 enum MedicalValueFormatter {
     static func money(_ value: Decimal) -> String {
         AppCurrencyFormatter.money(value, currency: .cny)

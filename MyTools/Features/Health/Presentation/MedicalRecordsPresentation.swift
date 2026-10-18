@@ -78,9 +78,7 @@ struct MedicalRecordsPresentation {
                 originalVisit: originalVisit,
                 followUps: linkedRecords.filter { !$0.isPharmacyPurchase },
                 pharmacyPurchases: linkedRecords.filter(\.isLinkedPharmacyPurchase),
-                costSummary: linkedRecords.reduce(originalVisit.costSummary) {
-                    $0 + $1.costSummary
-                }
+                costSummary: originalVisit.costSummary + linkedRecords.costSummary
             )
         }
     }
@@ -132,7 +130,8 @@ struct MedicalRecordsPresentation {
             total += record.totalCost
             insurance += record.insuranceCost
             selfPay += record.selfPayCost
-            guard !record.isPharmacyPurchase else { continue }
+            // 住院日记录属于同一次住院，只计入费用（AUDIT-067）。
+            guard !record.isPharmacyPurchase, !record.isInpatientDailyRecord else { continue }
             visitCount += 1
             let hospital = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
             if !hospital.isEmpty { hospitals.insert(hospital) }

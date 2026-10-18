@@ -63,43 +63,47 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     func scanRedundantData() -> [RedundantDataFinding] {
         var findings: [RedundantDataFinding] = []
 
-        let dischargeDateRecords = medicalRecords.filter {
-            !$0.isInpatientEpisode && $0.inpatientEndDate != nil
-        }.count
         appendFinding(
             to: &findings,
             ruleID: "non-episode-discharge-date",
             title: "非住院主记录的出院日期",
             detail: "出院日期只属于住院主记录。",
-            recordCount: dischargeDateRecords,
-            fieldCount: dischargeDateRecords
+            items: medicalRecords.filter {
+                !$0.isInpatientEpisode && $0.inpatientEndDate != nil
+            }.map { redundantItem($0, fields: ["出院日期"]) }
         )
 
-        let examDetailRecords = medicalRecords.filter {
-            !$0.isPhysicalExam && $0.physicalExamDetails != nil
-        }.count
         appendFinding(
             to: &findings,
             ruleID: "non-exam-details",
             title: "非体检记录的体检详情",
             detail: "体检套餐、项目和结论只属于体检记录。",
-            recordCount: examDetailRecords,
-            fieldCount: examDetailRecords
+            items: medicalRecords.filter {
+                !$0.isPhysicalExam && $0.physicalExamDetails != nil
+            }.map { redundantItem($0, fields: ["体检详情"]) }
         )
 
-        let classificationRecords = medicalRecords.filter {
-            $0.institutionType != .hospital && classificationFieldCount(in: $0) > 0
-        }
         appendFinding(
             to: &findings,
             ruleID: "non-hospital-classification",
             title: "非医院记录的医院分类",
             detail: "药房和体检机构不使用医院级别、等次或性质。",
-            recordCount: classificationRecords.count,
-            fieldCount: classificationRecords.reduce(0) { $0 + classificationFieldCount(in: $1) }
+            items: medicalRecords.filter {
+                $0.institutionType != .hospital && !classificationFieldNames(in: $0).isEmpty
+            }.map { redundantItem($0, fields: classificationFieldNames(in: $0)) }
         )
 
         return findings
+    }
+
+    private func redundantItem(_ record: MedicalRecord, fields: [String]) -> RedundantDataItem {
+        let hospital = record.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
+        let date = AppDateFormatter.string(from: record.date)
+        return RedundantDataItem(
+            id: record.id.uuidString,
+            recordTitle: hospital.isEmpty ? date : "\(date) \(hospital)",
+            fieldNames: fields
+        )
     }
 
     func cleanupRedundantData() {
@@ -132,11 +136,10 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         storedRecord.hospital = storedRecord.hospital.trimmingCharacters(in: .whitespacesAndNewlines)
         knownTags = AppTagSupport.merged(knownTags, with: storedRecord.tags)
         let isUpdate: Bool
+        var removedAttachments: [FileAttachment] = []
         if let index = medicalRecords.firstIndex(where: { $0.id == storedRecord.id }) {
             let retainedIDs = Set(storedRecord.attachments.map(\.id))
-            for attachment in medicalRecords[index].attachments where !retainedIDs.contains(attachment.id) {
-                attachmentStore.delete(attachment)
-            }
+            removedAttachments = medicalRecords[index].attachments.filter { !retainedIDs.contains($0.id) }
             medicalRecords[index] = storedRecord
             isUpdate = true
         } else {
@@ -155,7 +158,7 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         medicalRecords = synchronization.medicalRecords
         hospitalProfiles = synchronization.hospitalProfiles
         DiagnosticLogger.shared.log(.data, "就医记录\(isUpdate ? "更新" : "新增") id=\(storedRecord.id)")
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     private static func normalizedTags(in record: MedicalRecord) -> MedicalRecord {
@@ -231,6 +234,15 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
         return true
     }
 
+    /// 同步会按记录里的机构名重建资料，删除前用它提示仍被引用的记录数（AUDIT-068）。
+    func referencingRecordCount(for profile: HospitalProfile) -> Int {
+        let key = HealthRecordSynchronizer.hospitalNameKey(profile.name)
+        guard !key.isEmpty else { return 0 }
+        return medicalRecords.lazy.filter {
+            HealthRecordSynchronizer.hospitalNameKey($0.hospital) == key
+        }.count
+    }
+
     func deleteHospitalProfiles(ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
         hospitalProfiles.removeAll { ids.contains($0.id) }
@@ -258,12 +270,12 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
             }
         }
 
-        for record in medicalRecords where recordIDsToDelete.contains(record.id) {
-            record.attachments.forEach(attachmentStore.delete)
-        }
+        let removedAttachments = medicalRecords
+            .filter { recordIDsToDelete.contains($0.id) }
+            .flatMap(\.attachments)
         medicalRecords.removeAll { recordIDsToDelete.contains($0.id) }
         DiagnosticLogger.shared.log(.data, "就医记录删除 requested=\(ids.count) total=\(recordIDsToDelete.count)")
-        didMutate()
+        didMutate(removing: removedAttachments)
     }
 
     func importMedicalAttachment(from url: URL) throws -> FileAttachment {
@@ -285,14 +297,23 @@ final class HealthStore: ObservableObject, ModuleLifecycleParticipant, ModuleDat
     // deleteUncommittedAttachment, renameAttachment, restoreAttachmentLocation, attachmentURL
     // are provided by the AttachmentManaging protocol extension.
 
-    private func classificationFieldCount(in record: MedicalRecord) -> Int {
-        (record.hospitalLevel == .unspecified ? 0 : 1)
-            + (record.hospitalGrade == .unspecified ? 0 : 1)
-            + (record.hospitalCategory == .unspecified ? 0 : 1)
+    private func classificationFieldNames(in record: MedicalRecord) -> [String] {
+        [
+            record.hospitalLevel == .unspecified ? nil : "医院级别",
+            record.hospitalGrade == .unspecified ? nil : "医院等次",
+            record.hospitalCategory == .unspecified ? nil : "医院性质",
+        ].compactMap { $0 }
     }
 
-    private func didMutate() {
+    private func didMutate(removing attachments: [FileAttachment] = []) {
         mutationNotifier?.moduleStoreDidMutate()
+        // Files go only after the Vault no longer referencing them is on disk
+        // (AUDIT-017). A store without a Vault behind it deletes immediately.
+        if let mutationNotifier {
+            mutationNotifier.scheduleAttachmentRemovalAfterPersistence(attachments)
+        } else {
+            attachments.forEach(attachmentStore.delete)
+        }
     }
 }
 

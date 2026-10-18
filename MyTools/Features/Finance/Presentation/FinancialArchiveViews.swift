@@ -4,216 +4,6 @@
     import AppKit
   #endif
 
-  struct FinanceInstitutionsView: View {
-    @EnvironmentObject private var store: FinanceStore
-    @State private var query = ""
-    @State private var service: FinanceService?
-    @State private var showArchived = false
-    @State private var editing: FinancialInstitution?
-    @State private var deleting: FinancialInstitution?
-
-    private var matchingInstitutions: [FinancialInstitution] {
-      store.financialInstitutions.filter { account in
-        let profile = account
-        let cardMatches = store.cards(for: account).contains {
-          [$0.cardType, $0.holderName, String($0.cardNumber.suffix(4))].contains {
-            $0.localizedCaseInsensitiveContains(query)
-          }
-        }
-        return (service.map(profile.services.contains) ?? true)
-          && (profile.matches(query.trimmingCharacters(in: .whitespacesAndNewlines)) || cardMatches)
-      }.sorted {
-        AppAlphabeticalSort.isOrderedBefore(
-          $0.name, $1.name, lhsTieBreaker: $0.id.uuidString,
-          rhsTieBreaker: $1.id.uuidString)
-      }
-    }
-    private var activeInstitutions: [FinancialInstitution] {
-      matchingInstitutions.filter { !$0.isInactiveFinanceArchive(cards: store.cards(for: $0)) }
-    }
-    private var archivedInstitutions: [FinancialInstitution] {
-      matchingInstitutions.filter { $0.isInactiveFinanceArchive(cards: store.cards(for: $0)) }
-    }
-    private var archivedCount: Int {
-      archivedInstitutions.count
-    }
-    private var overviewInstitutions: [FinancialInstitution] {
-      showArchived ? matchingInstitutions : activeInstitutions
-    }
-    private var overviewCards: [BankCard] {
-      overviewInstitutions.flatMap { store.cards(for: $0) }.filter {
-        showArchived || $0.status != .closed
-      }
-    }
-    private var overviewAccountCount: Int {
-      overviewInstitutions.reduce(0) {
-        $0 + $1.accountCount(includeClosed: showArchived)
-      }
-    }
-
-    var body: some View {
-      List {
-        Section {
-          HStack(spacing: 12) {
-            metric("机构", value: overviewInstitutions.count, symbol: "building.2")
-            metric("账户", value: overviewAccountCount, symbol: "wallet.bifold")
-            metric(
-              "借记卡", value: overviewCards.filter { $0.kind == .debit }.count, symbol: "creditcard")
-            metric(
-              "信用卡", value: overviewCards.filter { $0.kind == .credit }.count,
-              symbol: "creditcard.fill")
-          }
-        }
-        if !activeInstitutions.isEmpty || !showArchived || archivedInstitutions.isEmpty {
-          Section {
-            if activeInstitutions.isEmpty {
-              ContentUnavailableView(
-                "暂无符合条件的金融档案", systemImage: "wallet.bifold",
-                description: Text("添加银行、券商或支付平台，也可以调整筛选条件。"))
-            }
-            ForEach(activeInstitutions) { institution in
-              NavigationLink {
-                institutionDetailDestination(institution)
-              } label: {
-                institutionRow(institution)
-              }
-              .appListRowStyle()
-              .appDeleteSwipeAction { deleting = institution }
-            }
-          } header: {
-            Text(service?.title ?? "在用金融机构")
-          } footer: {
-            Text("同一机构可管理多种账户、卡片和收款方式。")
-          }
-        }
-        if !archivedInstitutions.isEmpty {
-          Section("已归档机构") {
-            Button(showArchived ? "隐藏已归档机构（\(archivedCount)）" : "显示已归档机构（\(archivedCount)）") {
-              showArchived.toggle()
-            }
-            if showArchived {
-              ForEach(archivedInstitutions) { institution in
-                NavigationLink {
-                  institutionDetailDestination(institution)
-                } label: {
-                  institutionRow(institution)
-                }
-                .appListRowStyle()
-                .appDeleteSwipeAction { deleting = institution }
-              }
-            }
-          }
-        }
-      }
-      .appNavigationTitle(ToolModule.personalFinance.title)
-      .diagnosticScreen("金融档案首页")
-      .iOSLabeledBackButton("工具")
-      .searchable(text: $query, prompt: "机构、账户、币种或卡号尾号")
-      .toolbar {
-        ToolbarItemGroup(placement: .primaryAction) {
-          Menu {
-            Picker("机构类型", selection: $service) {
-              Text("全部类型").tag(nil as FinanceService?)
-              ForEach(FinanceService.allCases) { Text($0.title).tag(Optional($0)) }
-            }
-          } label: {
-            Image(
-              systemName: service == nil
-                ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
-          }
-          .accessibilityLabel("筛选金融档案")
-          Menu {
-            ForEach(FinancialInstitutionKind.allCases) { kind in
-              Button("添加" + kind.title) { editing = FinancialInstitution(kind: kind) }
-            }
-          } label: {
-            Image(systemName: "plus")
-          }
-          .accessibilityLabel("添加金融机构")
-        }
-      }
-      .sheet(item: $editing) {
-        FinanceInstitutionEditorView(institution: $0, isNew: true).iOSLargeSheet()
-      }
-      .alert(
-        "删除整个金融档案？",
-        isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
-      ) {
-        Button("取消", role: .cancel) { deleting = nil }
-        Button("删除", role: .destructive) {
-          if let deleting { store.deleteAccount(id: deleting.id) }
-          deleting = nil
-        }
-      } message: {
-        Text("将删除该机构的账户、卡片、登录资料、收款方式和文件。账户与卡片全部销户后，档案会自动归档。")
-      }
-      #if os(iOS)
-        .listStyle(.insetGrouped)
-        .appAdaptiveLargeNavigationTitle()
-      #endif
-    }
-
-    private func metric(_ title: String, value: Int, symbol: String) -> some View {
-      VStack(alignment: .leading, spacing: 4) {
-        Label(title, systemImage: symbol).appFont(.caption2).foregroundStyle(.secondary).lineLimit(
-          1)
-        Text("\(value)").appFont(.title3.weight(.semibold).monospacedDigit())
-      }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func institutionDetailDestination(_ institution: FinancialInstitution) -> some View {
-      switch institution.kind {
-      case .bank: FinanceInstitutionDetailView(institutionID: institution.id)
-      case .brokerage: BrokerageInstitutionDetailView(institutionID: institution.id)
-      case .payment: PaymentInstitutionDetailView(institutionID: institution.id)
-      case .other: FinanceInstitutionDetailView(institutionID: institution.id)
-      }
-    }
-
-    private func institutionRow(_ institution: FinancialInstitution) -> some View {
-      let profile = institution
-      let cards = store.cards(for: institution)
-      let includeClosed = showArchived
-      return VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 8) {
-          ForEach(FinanceService.allCases.filter { profile.services.contains($0) }) { service in
-            Text(service.title)
-              .appFont(.caption.weight(.medium))
-              .padding(.horizontal, 6).padding(.vertical, 3)
-              .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
-              .foregroundStyle(.blue)
-          }
-          Text(profile.name.isEmpty ? "未命名机构" : profile.name)
-            .appFont(.headline).lineLimit(1)
-          Spacer(minLength: 0)
-        }
-        if profile.services.contains(.banking) {
-          let countedCards = cards.filter { includeClosed || $0.status != .closed }
-          let accountCount = profile.accounts.filter { includeClosed || $0.status != .closed }.count
-          Text(
-            "借记卡 \(countedCards.filter { $0.kind == .debit }.count) · 信用卡 \(countedCards.filter { $0.kind == .credit }.count) · 账户 \(accountCount)"
-          )
-          .appFont(.caption).foregroundStyle(.secondary)
-        } else if profile.services.contains(.payments) {
-          Text("账户 \(profile.paymentAccounts.filter { includeClosed || $0.status != .closed }.count)")
-            .appFont(.caption).foregroundStyle(.secondary)
-        }
-      }.padding(.vertical, 3)
-    }
-  }
-
-  private extension FinancialInstitution {
-    func accountCount(includeClosed: Bool) -> Int {
-      switch kind {
-      case .bank: bankAccounts.filter { includeClosed || $0.status != .closed }.count
-      case .brokerage: brokerageAccounts.filter { includeClosed || $0.status != .closed }.count
-      case .payment: paymentAccounts.filter { includeClosed || $0.status != .closed }.count
-      case .other: 0
-      }
-    }
-  }
-
   struct FinanceInstitutionDetailView: View {
     let institutionID: UUID
     @EnvironmentObject private var store: FinanceStore
@@ -227,6 +17,8 @@
     @State private var showClosedCards = false
     @State private var revealedLoginIDs: Set<UUID> = []
     @State private var attachmentError = false
+    @State private var confirmsDeletion = false
+    @Environment(\.dismiss) private var dismiss
     private var institution: FinancialInstitution? { store.financialInstitutions.first { $0.id == institutionID } }
 
     var body: some View {
@@ -242,13 +34,24 @@
       .toolbar {
         ToolbarItemGroup(placement: .primaryAction) {
           Button {
-            editing = institution
+            // 与银行档案一致，编辑前验证身份（AUDIT-066）。
+            Task { if await auth.verifyWithBiometrics() { editing = institution } }
           } label: {
             Image(systemName: "square.and.pencil")
           }
           .accessibilityLabel("编辑金融档案")
         }
+        // 支付与其他机构此前没有删除入口（AUDIT-065）。
+        if institution != nil {
+          ToolbarItem(placement: .secondaryAction) {
+            Button("删除金融档案", role: .destructive) { confirmsDeletion = true }
+          }
+        }
       }
+      .alert("删除金融档案？", isPresented: $confirmsDeletion) {
+        Button("删除", role: .destructive) { store.deleteAccount(id: institutionID); dismiss() }
+        Button("取消", role: .cancel) {}
+      } message: { Text("将删除该机构的账户、卡片、登录资料、收款方式和文件。此操作无法撤回。") }
       .sheet(item: $editing) { value in
         switch value.kind {
         case .bank: FinanceInstitutionEditorView(institution: value, isNew: false, cards: store.cards(for: value)).iOSLargeSheet()
@@ -422,8 +225,9 @@
   struct BrokerageInstitutionDetailView: View {
     let institutionID: UUID
     @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
     @State private var editing: FinancialInstitution?
-    @State private var confirmsDeletion = false
+    @State private var selectedReceivingID: UUID?
     @Environment(\.dismiss) private var dismiss
     private var institution: FinancialInstitution? { store.financialInstitutions.first { $0.id == institutionID } }
     var body: some View {
@@ -450,26 +254,25 @@
             if !institution.receivingMethods.isEmpty {
               Section("入金资料") {
                 ForEach(institution.receivingMethods) { method in
-                  NavigationLink { FinanceReceivingInfoView(institutionID: institutionID, methodID: method.id) } label: {
+                  Button { selectedReceivingID = method.id } label: {
                     FinanceReceivingRow(method: method, accounts: [], linkedAccountName: institution.brokerageAccounts.first { $0.id == method.accountID }?.displayName)
                       .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                   }
+                  .buttonStyle(.plain)
                 }
               }
             }
           }
           .toolbar {
-            ToolbarItem(placement: .primaryAction) { Button { editing = institution } label: { Image(systemName: "square.and.pencil") } }
-            ToolbarItem(placement: .secondaryAction) { Button("删除券商档案", role: .destructive) { confirmsDeletion = true } }
+            ToolbarItem(placement: .primaryAction) { Button { Task { if await auth.verifyWithBiometrics() { editing = institution } } } label: { Image(systemName: "square.and.pencil") } }
           }
         } else { ContentUnavailableView("券商档案已不存在", systemImage: "chart.line.uptrend.xyaxis") }
       }
       .appNavigationTitle(institution?.name ?? "券商详情")
       .diagnosticScreen("券商机构详情")
-      .alert("删除券商档案？", isPresented: $confirmsDeletion) {
-        Button("删除", role: .destructive) { store.deleteAccount(id: institutionID); dismiss() }
-        Button("取消", role: .cancel) {}
-      } message: { Text("将删除此券商及其账户、入金资料和附件。此操作无法撤回。") }
+      .navigationDestination(item: $selectedReceivingID) { methodID in
+        FinanceReceivingInfoView(institutionID: institutionID, methodID: methodID)
+      }
       .sheet(item: $editing) { BrokerageInstitutionEditorView(institution: $0, isNew: false).iOSLargeSheet() }
     }
   }
@@ -479,13 +282,25 @@
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
     @State private var editingInstitution: FinancialInstitution?
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var revealsAccountNumber = false
     private var account: BrokerageAccount? { store.financialInstitutions.first { $0.id == institutionID }?.brokerageAccounts.first { $0.id == accountID } }
     var body: some View {
       List {
         if let account {
           Section("账户资料") {
             AppAdaptiveRecordRow(title: "名称", value: account.displayName)
-            if !account.accountNumber.isEmpty { AppAdaptiveRecordRow(title: "账户号", value: account.accountNumber) }
+            if !account.accountNumber.isEmpty {
+              // 完整账户号需验证身份后显示（AUDIT-066）。
+              Button {
+                if revealsAccountNumber { revealsAccountNumber = false }
+                else { Task { if await auth.verifyWithBiometrics() { revealsAccountNumber = true } } }
+              } label: {
+                AppAdaptiveRecordRow(title: "账户号", value: revealsAccountNumber ? account.accountNumber : account.maskedAccountNumber)
+              }
+              .buttonStyle(.plain)
+            }
             if !account.holderName.isEmpty { AppAdaptiveRecordRow(title: "持有人", value: account.holderName) }
             if let date = account.openedAt { AppAdaptiveRecordRow(title: "开户日期", value: AppDateFormatter.string(from: date)) }
             AppAdaptiveRecordRow(title: "账户类型", value: account.accountType.title)
@@ -499,10 +314,14 @@
       }
       .appNavigationTitle(account?.displayName ?? "券商账户")
       .diagnosticScreen("券商账户详情")
+      .onChange(of: scenePhase) { _, phase in if phase != .active { revealsAccountNumber = false } }
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button {
-            editingInstitution = store.financialInstitutions.first { $0.id == institutionID }
+            Task {
+              guard await auth.verifyWithBiometrics() else { return }
+              editingInstitution = store.financialInstitutions.first { $0.id == institutionID }
+            }
           } label: { Image(systemName: "square.and.pencil") }
           .disabled(account == nil)
         }
@@ -516,8 +335,10 @@
   struct PaymentInstitutionDetailView: View {
     let institutionID: UUID
     @EnvironmentObject private var store: FinanceStore
+    @EnvironmentObject private var auth: AuthManager
     @State private var editing: FinancialInstitution?
     @State private var selectedAccountID: UUID?
+    @Environment(\.dismiss) private var dismiss
     private var institution: FinancialInstitution? { store.financialInstitutions.first { $0.id == institutionID } }
     var body: some View {
       Group {
@@ -547,11 +368,12 @@
                   AppAdaptiveRecordRow(
                     title: account.name.isEmpty ? "未命名币种账户" : account.name,
                     value: [account.currencySummary.isEmpty ? "未设置币种" : account.currencySummary,
-                            account.accountNumber.isEmpty ? "" : account.maskedAccountNumber]
+                            account.accountNumber.isEmpty ? "" : account.maskedAccountNumber, account.note]
                       .filter { !$0.isEmpty }.joined(separator: " · "),
                     titleFont: .headline,
                     valueFont: .caption,
-                    verticalPadding: 0
+                    verticalPadding: 0,
+                    allowsCopy: false
                   )
                 }
                 .buttonStyle(.plain)
@@ -560,7 +382,9 @@
               }
             }
           }
-          .toolbar { ToolbarItem(placement: .primaryAction) { Button { editing = institution } label: { Image(systemName: "square.and.pencil") } } }
+          .toolbar {
+            ToolbarItem(placement: .primaryAction) { Button { Task { if await auth.verifyWithBiometrics() { editing = institution } } } label: { Image(systemName: "square.and.pencil") } }
+          }
         } else { ContentUnavailableView("支付机构档案已不存在", systemImage: "wallet.bifold") }
       }
       .appNavigationTitle(institution?.name ?? "支付机构详情")
@@ -576,14 +400,23 @@
     let institutionID: UUID
     let accountID: UUID
     @EnvironmentObject private var store: FinanceStore
-    @State private var editing: PaymentAccount?
+    @State private var editingInstitution: FinancialInstitution?
+    @EnvironmentObject private var auth: AuthManager
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var revealsAccountNumber = false
     private var account: PaymentAccount? { store.financialInstitutions.first { $0.id == institutionID }?.paymentAccounts.first { $0.id == accountID } }
     var body: some View {
       List {
         if let account {
           Section("账户资料") {
             AppAdaptiveRecordRow(title: "名称", value: account.displayName)
-            if !account.accountNumber.isEmpty { AppAdaptiveRecordRow(title: "账户号", value: account.accountNumber) }
+            if !account.accountNumber.isEmpty {
+              // 完整账户号需验证身份后显示（AUDIT-066）。
+              Button(action: toggleAccountNumberReveal) {
+                AppAdaptiveRecordRow(title: "账户号", value: revealsAccountNumber ? account.accountNumber : account.maskedAccountNumber)
+              }
+              .buttonStyle(.plain)
+            }
             if !account.currencySummary.isEmpty { AppAdaptiveRecordRow(title: "币种", value: account.currencySummary) }
             HStack {
               Text("状态").foregroundStyle(.secondary)
@@ -591,33 +424,41 @@
               AccountStatusText(status: account.status)
             }
             .appListRowStyle()
+            if !account.note.isEmpty { AppAdaptiveRecordRow(title: "备注", value: account.note) }
           }
-          if let receiving = account.receivingProfile {
+          ForEach(account.receivingProfiles) { receiving in
             Section("收款信息") {
               if !receiving.details.name.isEmpty { AppAdaptiveRecordRow(title: "资料名称", value: receiving.details.name) }
+              if !receiving.details.currencySummary.isEmpty { AppAdaptiveRecordRow(title: "币种", value: receiving.details.currencySummary) }
+              // 收款字段与账户号同一口径：验证身份后显示，点按任一行切换（AUDIT-066）。
               ForEach(receiving.details.fields.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { field in
-                AppAdaptiveRecordRow(title: field.title, value: field.value)
+                Button(action: toggleAccountNumberReveal) {
+                  AppAdaptiveRecordRow(title: field.title, value: revealsAccountNumber ? field.value : "••••••")
+                }
+                .buttonStyle(.plain)
               }
+              if !receiving.details.note.isEmpty { AppAdaptiveRecordRow(title: "备注", value: receiving.details.note) }
             }
           }
         } else { ContentUnavailableView("支付账户已不存在", systemImage: "wallet.bifold") }
       }
       .appNavigationTitle(account?.displayName ?? "支付账户")
       .diagnosticScreen("支付账户详情")
-      .toolbar { ToolbarItem(placement: .primaryAction) { Button { editing = account } label: { Image(systemName: "square.and.pencil") } } }
-      .sheet(item: $editing) { value in
-        PaymentAccountEditorView(account: value, onSave: { updated in
-          guard let original = store.financialInstitutions.first(where: { $0.id == institutionID }),
-                var institution = store.financialInstitutions.first(where: { $0.id == institutionID }),
-                let index = institution.paymentAccounts.firstIndex(where: { $0.id == updated.id }) else { return false }
-          institution.paymentAccounts[index] = updated
-          do { return try store.saveInstitution(institution, cards: [], expected: original, expectedCards: []) }
-          catch { return false }
-        }, isWise: {
-          let platform = store.financialInstitutions.first { $0.id == institutionID }?.payment?.platform ?? ""
-          return platform.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Wise") == .orderedSame
-        }()).iOSLargeSheet()
+      .onChange(of: scenePhase) { _, phase in if phase != .active { revealsAccountNumber = false } }
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button { Task { if await auth.verifyWithBiometrics() { editingInstitution = store.financialInstitutions.first { $0.id == institutionID } } } } label: { Image(systemName: "square.and.pencil") }
+            .disabled(account == nil)
+        }
       }
+      .sheet(item: $editingInstitution) { original in
+        PaymentAccountSaveView(original: original, accountID: accountID).iOSLargeSheet()
+      }
+    }
+
+    private func toggleAccountNumberReveal() {
+      if revealsAccountNumber { revealsAccountNumber = false }
+      else { Task { if await auth.verifyWithBiometrics() { revealsAccountNumber = true } } }
     }
   }
 
@@ -674,7 +515,8 @@
         ].filter { !$0.isEmpty }.joined(separator: " · "),
         titleFont: .headline,
         valueFont: .caption,
-        verticalPadding: 0
+        verticalPadding: 0,
+        allowsCopy: false
       ).contentShape(Rectangle())
     }
   }
@@ -697,7 +539,7 @@
         || institution.branchLocation != nil
       {
         Menu {
-          ForEach(BankNavigationApplication.allCases) { app in
+          ForEach(AppMapNavigationService.availableApplications) { app in
             Button {
               BankBranchNavigationService.open(
                 app, branchName: institution.branchName,
@@ -781,12 +623,6 @@
               AppAdaptiveRecordRow(title: "名称", value: account.displayName)
             }
             if hasText(account.typeTitle) { AppAdaptiveRecordRow(title: "类型", value: account.typeTitle) }
-            if let brokerage = account.brokerage {
-              AppAdaptiveRecordRow(title: "IBKR 账户类型", value: brokerage.accountType.title)
-              AppAdaptiveRecordRow(title: "基准币种", value: brokerage.baseCurrency.title)
-              if hasText(brokerage.legalEntity) { AppAdaptiveRecordRow(title: "开户实体", value: brokerage.legalEntity) }
-              if hasText(brokerage.ownership) { AppAdaptiveRecordRow(title: "账户持有形式", value: brokerage.ownership) }
-            }
             if hasText(account.accountNumber) { AppAdaptiveRecordRow(title: "账户号", value: account.accountNumber) }
             if hasText(account.holderName) { AppAdaptiveRecordRow(title: "持有人", value: account.holderName) }
             if hasText(account.currencySummary) { AppAdaptiveRecordRow(title: "币种", value: account.currencySummary) }
@@ -833,7 +669,8 @@
             Task {
               guard await auth.verifyWithBiometrics(),
                 let institution = store.financialInstitutions.first(where: { $0.id == institutionID }),
-                let account = institution.accounts.first(where: {
+                // 子账户也从这里进入编辑（AUDIT-064）。
+                let account = institution.allAccounts.first(where: {
                   $0.id == accountID
                 })
               else { return }

@@ -5,6 +5,7 @@ struct HospitalDirectoryView: View {
     @EnvironmentObject private var store: HealthStore
     @State private var query = ""
     @State private var editingProfile: HospitalProfile?
+    @State private var deletingProfile: HospitalProfile?
 
     private var displayedProfiles: [HospitalProfile] {
         let searchTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -18,6 +19,14 @@ struct HospitalDirectoryView: View {
                     }
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var referenceCount: Int {
+        deletingProfile.map(store.referencingRecordCount(for:)) ?? 0
+    }
+
+    private var deletionTitle: String {
+        referenceCount == 0 ? "删除该机构资料？" : "无法删除该机构资料"
     }
 
     var body: some View {
@@ -36,12 +45,32 @@ struct HospitalDirectoryView: View {
                             editingProfile = profile
                         }
                         .appDeleteSwipeAction(isEnabled: true) {
-                            store.deleteHospitalProfiles(ids: [profile.id])
+                            deletingProfile = profile
                         }
                 }
             }
         }
         .appNavigationTitle("医疗机构资料库")
+        .alert(
+            deletionTitle,
+            isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } })
+        ) {
+            if referenceCount == 0 {
+                Button("取消", role: .cancel) { deletingProfile = nil }
+                Button("删除", role: .destructive) {
+                    if let deletingProfile { store.deleteHospitalProfiles(ids: [deletingProfile.id]) }
+                    deletingProfile = nil
+                }
+            } else {
+                Button("好", role: .cancel) { deletingProfile = nil }
+            }
+        } message: {
+            if referenceCount == 0 {
+                Text("删除后无法撤销。")
+            } else {
+                Text("仍有 \(referenceCount) 条健康记录使用该机构，删除后会按这些记录重新生成。请先修改或删除这些记录。")
+            }
+        }
         .iOSLabeledBackButton("健康档案")
 #if os(iOS)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索机构名称或分类")

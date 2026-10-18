@@ -10,7 +10,8 @@ struct StockQuote: Sendable {
     let latestPrice: Decimal
     let previousClose: Decimal?
     let changePercent: Decimal?
-    let updatedAt: Date
+    /// 报价源给出的成交时间；解析不到时为 nil，不能用当前时间冒充（AUDIT-054）。
+    let updatedAt: Date?
     let source: String
 
     init(
@@ -20,7 +21,7 @@ struct StockQuote: Sendable {
         latestPrice: Decimal,
         previousClose: Decimal?,
         changePercent: Decimal?,
-        updatedAt: Date,
+        updatedAt: Date?,
         source: String
     ) {
         self.symbol = symbol

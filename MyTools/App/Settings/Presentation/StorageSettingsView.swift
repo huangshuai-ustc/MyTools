@@ -1,10 +1,19 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct StorageDataView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @State private var scanResult: StorageScanResult?
+    /// Filtered once per scan; reading it from `body` must not rebuild the
+    /// whole attachment reference index every time (AUDIT-084).
+    @State private var unreferencedOrphans: [OrphanAttachmentInfo] = []
     @State private var redundantDataReport: RedundantDataCleanupReport?
+    @State private var legacyDataReport: LegacyDataReport?
+    @State private var showingLegacyCleanupConfirmation = false
+    @State private var previewOrphan: OrphanAttachmentInfo?
     @State private var isScanning = false
     @State private var showingCleanupConfirmation = false
     @State private var showingRedundantCleanupConfirmation = false
@@ -62,9 +71,14 @@ struct StorageDataView: View {
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .foregroundStyle(.orange)
-                        Text(missingAttachmentSummary(scanResult.missingAttachments))
-                            .appFont(.footnote)
-                            .foregroundStyle(.secondary)
+                        DisclosureGroup("查看缺失的文件") {
+                            ForEach(scanResult.missingAttachments) { attachment in
+                                Text(attachment.storedFileName)
+                                    .appFont(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
                 } header: {
                     Text("数据完整性")
@@ -80,6 +94,11 @@ struct StorageDataView: View {
                         } label: {
                             Text("可清理附件")
                         }
+                        DisclosureGroup("查看文件") {
+                            ForEach(unreferencedOrphans) { orphan in
+                                orphanRow(orphan)
+                            }
+                        }
                         Button(role: .destructive) {
                             showingCleanupConfirmation = true
                         } label: {
@@ -91,7 +110,7 @@ struct StorageDataView: View {
                 } header: {
                     Text("无效附件")
                 } footer: {
-                    Text("只会删除未被业务记录引用的附件，不会删除有效记录中的附件。")
+                    Text("只会删除未被业务记录引用的附件，不会删除有效记录中的附件。这些文件已没有对应记录，只能显示存储名、大小和修改时间，点按可预览。")
                 }
 
                 Section {
@@ -115,6 +134,20 @@ struct StorageDataView: View {
                                         .appFont(.caption)
                                         .foregroundStyle(.secondary)
                                 }
+                                if !finding.items.isEmpty {
+                                    DisclosureGroup("查看记录") {
+                                        ForEach(finding.items) { item in
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(item.recordTitle)
+                                                    .appFont(.subheadline)
+                                                Text(item.fieldNames.joined(separator: "、"))
+                                                    .appFont(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                    }
+                                    .appFont(.footnote)
+                                }
                             }
                         }
                         Button(role: .destructive) {
@@ -129,6 +162,51 @@ struct StorageDataView: View {
                     Text("冗余字段")
                 } footer: {
                     Text("只检查当前已编译且已开启的功能。关闭功能的数据和未编译功能的不透明数据不会被读取或修改。")
+                }
+
+                Section {
+                    if let legacyDataReport, legacyDataReport.isEmpty {
+                        Label("没有发现已移除功能的遗留数据", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    } else if let legacyDataReport {
+                        AppLabeledContentRow("可清理数据") {
+                            Text("\(legacyDataReport.itemCount) 项 · \(legacyDataReport.attachmentStoredFileNames.count) 个附件")
+                        }
+                        ForEach(legacyDataReport.findings) { finding in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(finding.title)
+                                Text(finding.detail)
+                                    .appFont(.footnote)
+                                    .foregroundStyle(.secondary)
+                                DisclosureGroup("查看 \(finding.items.count) 项") {
+                                    ForEach(finding.items) { item in
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.title)
+                                                .appFont(.subheadline)
+                                            if !item.attachmentStoredFileNames.isEmpty {
+                                                Text("附件：\(item.attachmentStoredFileNames.joined(separator: "、"))")
+                                                    .appFont(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                    .textSelection(.enabled)
+                                            }
+                                        }
+                                    }
+                                }
+                                .appFont(.footnote)
+                            }
+                        }
+                        Button(role: .destructive) {
+                            showingLegacyCleanupConfirmation = true
+                        } label: {
+                            Label("清理遗留数据", systemImage: "trash")
+                        }
+                        .tint(.red)
+                        .disabled(isScanning)
+                    }
+                } header: {
+                    Text("遗留数据")
+                } footer: {
+                    Text("美食地图和合伙记账已从 App 中删除，它们留在本地档案里的记录、标签和附件不会再显示。清理只影响本机档案；iCloud 中这两类旧记录不会被修改。收支账单、体彩开奖只是暂时关闭，数据不在此处清理。")
                 }
 
                 if !localCacheModules.isEmpty {
@@ -259,6 +337,23 @@ struct StorageDataView: View {
         } message: {
             Text("将从当前档案中删除 \(redundantDataReport?.affectedFieldCount ?? 0) 个不适用字段值。此操作无法撤销，已经导出的旧备份不会被修改。")
         }
+        .alert("清理遗留数据", isPresented: $showingLegacyCleanupConfirmation) {
+            Button("清理", role: .destructive) {
+                cleanupLegacyData()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将从本机档案中删除 \(legacyDataReport?.itemCount ?? 0) 项遗留数据，并在保存成功后删除其中 \(legacyDataReport?.attachmentStoredFileNames.count ?? 0) 个附件。此操作无法撤销，已经导出的旧备份不会被修改。")
+        }
+#if os(iOS)
+        .sheet(item: $previewOrphan) { orphan in
+            AttachmentPreviewSheet(
+                attachment: orphanAttachment(orphan),
+                url: store.attachmentURL(forStoredFileName: orphan.storedFileName),
+                onDismiss: { previewOrphan = nil }
+            )
+        }
+#endif
         .alert(item: $cacheCleanupModule) { module in
             Alert(
                 title: Text("清理\(module.title)本地缓存？"),
@@ -284,24 +379,12 @@ struct StorageDataView: View {
         }
     }
 
-    private var referencedStoredFileNames: Set<String> {
-        store.referencedAttachmentStoredFileNames
-    }
-
     private var orphanBytes: Int64 {
         unreferencedOrphans.reduce(Int64.zero) { $0 + $1.byteCount }
     }
 
     private var localCacheModules: [ToolModule] {
         CompiledToolModules.ordered.filter(\.hasLocalCache)
-    }
-
-    private var unreferencedOrphans: [OrphanAttachmentInfo] {
-        guard let scanResult else { return [] }
-        let referencedNames = referencedStoredFileNames
-        return scanResult.orphanAttachments.filter {
-            !referencedNames.contains($0.storedFileName)
-        }
     }
 
     private func storageRow(_ title: String, bytes: Int64, detail: String? = nil) -> some View {
@@ -323,16 +406,50 @@ struct StorageDataView: View {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    private func missingAttachmentSummary(_ attachments: [MissingAttachmentInfo]) -> String {
-        let names = attachments.prefix(5).map(\.storedFileName).joined(separator: "、")
-        return attachments.count > 5 ? "\(names) 等" : names
+    private func orphanRow(_ orphan: OrphanAttachmentInfo) -> some View {
+        Button {
+#if os(iOS)
+            previewOrphan = orphan
+#elseif os(macOS)
+            NSWorkspace.shared.open(store.attachmentURL(forStoredFileName: orphan.storedFileName))
+#endif
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(orphan.storedFileName)
+                        .appFont(.footnote)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let modifiedAt = orphan.modifiedAt {
+                        Text(modifiedAt.formatted(date: .abbreviated, time: .shortened))
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text(formattedSize(orphan.byteCount))
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityHint("预览这个附件")
+    }
+
+    private func orphanAttachment(_ orphan: OrphanAttachmentInfo) -> FileAttachment {
+        var attachment = FileAttachment()
+        attachment.fileName = orphan.storedFileName
+        attachment.storedFileName = orphan.storedFileName
+        attachment.fileSize = orphan.byteCount
+        return attachment
     }
 
     private func scan() {
         guard store.isInitialDataLoaded, !isScanning else { return }
         isScanning = true
         redundantDataReport = store.scanRedundantData()
-        let referencedNames = referencedStoredFileNames
+        legacyDataReport = store.scanLegacyData()
+        let referencedNames = store.referencedAttachmentStoredFileNames
         Task { @MainActor in
             let result: Result<StorageScanResult, Error> = await Task.detached(priority: .utility) {
                 do {
@@ -345,6 +462,7 @@ struct StorageDataView: View {
             switch result {
             case .success(let scanResult):
                 self.scanResult = scanResult
+                unreferencedOrphans = scanResult.orphanAttachments
             case .failure(let error):
                 report(error.localizedDescription)
             }
@@ -354,7 +472,10 @@ struct StorageDataView: View {
     private func cleanupOrphans() {
         guard scanResult != nil else { return }
         isScanning = true
-        let orphans = unreferencedOrphans
+        // Re-check against the references at deletion time: records may have
+        // gained an attachment with the same name since the scan.
+        let referencedNames = store.referencedAttachmentStoredFileNames
+        let orphans = unreferencedOrphans.filter { !referencedNames.contains($0.storedFileName) }
         guard !orphans.isEmpty else {
             isScanning = false
             scan()
@@ -389,6 +510,22 @@ struct StorageDataView: View {
         }
         report("已清理 \(cleanupReport.affectedFieldCount) 个不适用字段值。")
         scan()
+    }
+
+    private func cleanupLegacyData() {
+        guard legacyDataReport?.isEmpty == false else { return }
+        let cleanupReport = store.cleanupLegacyData()
+        guard !cleanupReport.isEmpty else {
+            report("没有可清理的遗留数据，或当前档案暂时无法安全写入。")
+            scan()
+            return
+        }
+        report("已清理 \(cleanupReport.itemCount) 项遗留数据，相关附件会在保存完成后删除。")
+        Task { @MainActor in
+            // Let the deferred attachment removal finish so the rescan reflects it.
+            try? await Task.sleep(for: .milliseconds(500))
+            scan()
+        }
     }
 
     private func clearLocalCache(for module: ToolModule) {

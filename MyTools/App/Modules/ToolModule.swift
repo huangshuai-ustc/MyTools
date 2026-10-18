@@ -78,12 +78,9 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
 
     var defaultIsVisible: Bool {
         switch self {
-        case .partnership:
-#if MYTOOLS_DEFAULT_HIDDEN_PARTNERSHIP
+        case .foodMap, .partnership:
+            // Implementation removed; retained only to decode existing data.
             return false
-#else
-            return true
-#endif
         case .personalFinance:
 #if MYTOOLS_DEFAULT_HIDDEN_FINANCE
             return false
@@ -104,12 +101,6 @@ enum ToolModule: String, CaseIterable, Codable, Hashable, Identifiable, Sendable
 #endif
         case .healthRecords:
 #if MYTOOLS_DEFAULT_HIDDEN_HEALTH
-            return false
-#else
-            return true
-#endif
-        case .foodMap:
-#if MYTOOLS_DEFAULT_HIDDEN_FOOD_MAP
             return false
 #else
             return true
@@ -277,9 +268,6 @@ enum CompiledToolModules {
 #if MYTOOLS_FEATURE_HEALTH
         modules.append(.healthRecords)
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-        modules.append(.foodMap)
-#endif
 #if MYTOOLS_FEATURE_SECRETS
         modules.append(.secrets)
 #endif
@@ -291,9 +279,6 @@ enum CompiledToolModules {
 #endif
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
         modules.append(.sportsLottery)
-#endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-        modules.append(.partnership)
 #endif
         return modules
     }()

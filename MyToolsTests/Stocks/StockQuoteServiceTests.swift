@@ -18,6 +18,22 @@ struct StockQuoteServiceTests {
         #expect(result[stock.id]?.source == "Sina")
     }
 
+    @Test func quoteWithTimestampWinsOverQuoteWithoutTimestamp() async {
+        let stock = StockHolding(market: .unitedStates, symbol: "VOO")
+        // AUDIT-054：缺时间戳的报价不再伪造为当前时间并因此胜出。
+        let undated = quote(source: "Tencent", updatedAt: nil)
+        let dated = quote(source: "Sina", updatedAt: Date(timeIntervalSince1970: 900))
+        let service = makeService(
+            tencentBatch: [stock.id: undated],
+            sinaBatch: [stock.id: dated],
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        let result = await service.fetchQuotes(for: [stock])
+
+        #expect(result[stock.id]?.source == "Sina")
+    }
+
     @Test func validTimestampWinsOverNewerFutureTimestamp() async {
         let stock = StockHolding(market: .unitedStates, symbol: "VOO")
         let future = quote(source: "Tencent", updatedAt: Date(timeIntervalSince1970: 1_400))
@@ -183,6 +199,31 @@ struct StockQuoteServiceTests {
         #expect(result[stock.id]?.source == "Tencent")
     }
 
+    /// 报价缺时间戳时，前一交易日的分时缓存末点不能顶替报价；当天的末点仍可胜出。
+    @Test func hongKongTimestamplessQuoteRejectsPreviousDayIntraday() async {
+        let stock = StockHolding(market: .hongKong, symbol: "03033")
+        let undated = quote(source: "Tencent", updatedAt: nil)
+        let now = StockChartFixtures.date(2026, 10, 14, hour: 10, timeZone: "Asia/Hong_Kong")
+        let yesterday = makeService(
+            tencentBatch: [stock.id: undated],
+            sinaBatch: [:],
+            now: now,
+            intradaySnapshot: snapshot(closes: [108], lastDate: now.addingTimeInterval(-18 * 3_600))
+        )
+        let stale = await yesterday.fetchQuotes(for: [stock])
+        #expect(stale[stock.id]?.latestPrice == 105)
+        #expect(stale[stock.id]?.source == "Tencent")
+
+        let today = makeService(
+            tencentBatch: [stock.id: undated],
+            sinaBatch: [:],
+            now: now,
+            intradaySnapshot: snapshot(closes: [108], lastDate: now.addingTimeInterval(-60))
+        )
+        let fresh = await today.fetchQuotes(for: [stock])
+        #expect(fresh[stock.id]?.latestPrice == 108)
+    }
+
     /// A 股与美股报价源本身实时，不引入分时这条依赖——美股还另有
     /// `StockExtendedHoursPerformance` 负责盘前盘后。
     @Test func nonHongKongMarketsIgnoreIntradayOverride() async {
@@ -290,7 +331,7 @@ struct StockQuoteServiceTests {
         ))
     }
 
-    private func quote(source: String, updatedAt: Date) -> StockQuote {
+    private func quote(source: String, updatedAt: Date?) -> StockQuote {
         StockQuote(
             symbol: "TEST",
             name: "Test",

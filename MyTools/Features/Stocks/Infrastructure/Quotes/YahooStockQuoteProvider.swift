@@ -71,7 +71,7 @@ struct YahooStockQuoteProvider: StockQuoteProviding {
             ),
             updatedAt: meta.regularMarketTime.map {
                 Date(timeIntervalSince1970: $0)
-            } ?? Date(),
+            },
             source: "Yahoo Finance"
         )
     }

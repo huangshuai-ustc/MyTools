@@ -83,11 +83,13 @@ enum CurrencyCode: String, Codable, CaseIterable, Identifiable, Sendable {
         case .aed: return "阿联酋迪拉姆"
         case .czk: return "捷克克朗"
         case .dkk: return "丹麦克朗"
-        case .ils: return "以色列新谢克尔"
+        // Name as published on the Bank of China page (AUDIT-045).
+        case .ils: return "以色列谢克尔"
         case .nok: return "挪威克朗"
         case .pln: return "波兰兹罗提"
         case .sek: return "瑞典克朗"
-        case .ugx: return "乌干达先令"
+        // Not quoted by the Bank of China; kept for account records only.
+        case .ugx: return nil
         case .zar: return "南非兰特"
         }
     }

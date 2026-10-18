@@ -1401,13 +1401,7 @@ struct StockChartPresentation {
     }
 
     static func timeZone(for market: StockMarket) -> TimeZone {
-        let identifier: String
-        switch market {
-        case .aShare: identifier = "Asia/Shanghai"
-        case .hongKong: identifier = "Asia/Hong_Kong"
-        case .unitedStates: identifier = "America/New_York"
-        }
-        return TimeZone(identifier: identifier) ?? .gmt
+        StockChartSeriesProcessor.marketTimeZone(market)
     }
 
     static func priceText(_ value: Double, currencyCode: String) -> String {
@@ -1612,7 +1606,8 @@ struct StockChartPresentation {
         return stock.transactions.compactMap { transaction in
             guard transaction.quantity > 0,
                   transaction.unitPrice > 0 else { return nil }
-            let transactionDate = transaction.executedAt ?? transaction.tradedAt
+            // 北京时间录入的交易先换算到所属市场交易日（市场时区零点），再与 K 线比较。
+            let transactionDate = StockMarketClock.marketBusinessDayStart(of: transaction, market: stock.market)
 
             let exactMatchingPoints = sourcePoints.filter { point in
                 if range == .weekK {
@@ -1639,12 +1634,11 @@ struct StockChartPresentation {
                 }
                 return marketCalendar.isDate(point.date, inSameDayAs: transactionDate)
             }
-            // A date-only plotting date can still fall on a market holiday or
-            // weekend. Use
-            // the last trading bar on or before that instant so day K, five
-            // day, and intraday views keep the marker instead of dropping it.
+            // A market business day can still fall on a market holiday or
+            // weekend. Use the last trading bar on or before that day so day K,
+            // five day, and intraday views keep the marker instead of dropping it.
             let matchingPoints = exactMatchingPoints.isEmpty
-                ? sourcePoints.last(where: { $0.date <= transactionDate }).map { [$0] } ?? []
+                ? sourcePoints.last(where: { marketCalendar.startOfDay(for: $0.date) <= transactionDate }).map { [$0] } ?? []
                 : exactMatchingPoints
             guard !matchingPoints.isEmpty else { return nil }
             let markerPoint: StockChartPoint
@@ -1986,10 +1980,9 @@ struct StockChartPresentation {
         return (minimum - padding)...(maximum + padding)
     }
 
+    /// 与 K 线聚合同一份日历（周一起始），周 K 的交易标记才落在同一根柱子（AUDIT-059）。
     private static func calendar(for market: StockMarket) -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone(for: market)
-        return calendar
+        StockChartSeriesProcessor.marketCalendar(market)
     }
 
     private static func dateFormatter(market: StockMarket) -> DateFormatter {

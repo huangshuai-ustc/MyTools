@@ -25,12 +25,19 @@ enum VaultCryptoError: LocalizedError {
 
 /// 本地 Vault 静态加密信封与基础密码学原语。
 ///
-/// 信封格式：`{format: "mytools-vault", version: "2.0", combined: <AES-GCM sealed>}`。
+/// 信封格式：`{format: "mytools-vault", version: "2.1", combined: <AES-GCM sealed>}`。
 /// `combined` 已包含 nonce、密文和认证标签，不需要单独保存 nonce。
+/// 2.1 把 `format|version` 作为 AAD 绑定进认证标签；仍可读取无 AAD 的 2.0 旧信封，
+/// 下次保存时自动写成 2.1。
 /// PBKDF2-HMAC-SHA256 派生供加密备份（`VaultBackupCrypto`）复用。
 enum VaultCrypto {
     static let envelopeFormat = "mytools-vault"
-    static let encryptedVersion = "2.0"
+    static let encryptedVersion = "2.1"
+    static let legacyEncryptedVersion = "2.0"
+
+    private static func authenticatedData(version: String) -> Data {
+        Data("\(envelopeFormat)|\(version)".utf8)
+    }
 
     private struct Envelope: Codable {
         let format: String
@@ -39,7 +46,9 @@ enum VaultCrypto {
     }
 
     static func encrypt(_ data: Data, using key: SymmetricKey) throws -> Data {
-        let sealed = try AES.GCM.seal(data, using: key)
+        let sealed = try AES.GCM.seal(
+            data, using: key, authenticating: authenticatedData(version: encryptedVersion)
+        )
         guard let combined = sealed.combined else { throw VaultCryptoError.invalidFormat }
         return try JSONEncoder().encode(
             Envelope(format: envelopeFormat, version: encryptedVersion, combined: combined)
@@ -51,12 +60,19 @@ enum VaultCrypto {
             throw VaultCryptoError.invalidFormat
         }
         guard envelope.format == envelopeFormat else { throw VaultCryptoError.invalidFormat }
-        guard envelope.version == encryptedVersion else { throw VaultCryptoError.unsupportedVersion }
+        guard envelope.version == encryptedVersion || envelope.version == legacyEncryptedVersion else {
+            throw VaultCryptoError.unsupportedVersion
+        }
         guard let sealed = try? AES.GCM.SealedBox(combined: envelope.combined) else {
             throw VaultCryptoError.invalidFormat
         }
         do {
-            return try AES.GCM.open(sealed, using: key)
+            if envelope.version == legacyEncryptedVersion {
+                return try AES.GCM.open(sealed, using: key)
+            }
+            return try AES.GCM.open(
+                sealed, using: key, authenticating: authenticatedData(version: envelope.version)
+            )
         } catch {
             throw VaultCryptoError.authenticationFailed
         }

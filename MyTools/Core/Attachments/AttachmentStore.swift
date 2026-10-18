@@ -71,12 +71,39 @@ final class AttachmentStore: @unchecked Sendable {
         )
     }
 
+    /// `storedFileName` arrives from backups and CloudKit, so it is untrusted.
+    /// Only a single visible path component is accepted. Historical builds stored
+    /// display-style names, so the rule cannot be narrowed to UUIDs without
+    /// orphaning existing files.
+    static func isSafeStoredFileName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name.utf8.count <= 255
+            && !name.hasPrefix(".")
+            && !name.contains { $0 == "/" || $0 == "\\" || $0 == ":" || $0 == "\0" }
+    }
+
+    /// Resolves the on-disk location, refusing any name that could leave the
+    /// attachment directory. Every read, write and delete goes through here.
+    private func resolvedURL(for attachment: FileAttachment) throws -> URL {
+        let name = attachment.storedFileName
+        guard Self.isSafeStoredFileName(name) else { throw AttachmentStoreError.invalidFileName }
+        let candidate = directoryURL.appendingPathComponent(name, isDirectory: false).standardizedFileURL
+        guard candidate.deletingLastPathComponent().path == directoryURL.standardizedFileURL.path else {
+            throw AttachmentStoreError.invalidFileName
+        }
+        return candidate
+    }
+
+    /// Read-only location for previews and uploads. An unsafe name maps to a
+    /// hidden path inside the directory that never exists, so callers see a
+    /// missing file instead of reaching outside the sandbox folder.
     func url(for attachment: FileAttachment) -> URL {
-        directoryURL.appendingPathComponent(attachment.storedFileName, isDirectory: false)
+        (try? resolvedURL(for: attachment))
+            ?? directoryURL.appendingPathComponent(".invalid-\(attachment.id.uuidString.lowercased())", isDirectory: false)
     }
 
     func data(for attachment: FileAttachment) throws -> Data {
-        let fileURL = url(for: attachment)
+        let fileURL = try resolvedURL(for: attachment)
         guard fileManager.fileExists(atPath: fileURL.path) else {
             throw AttachmentStoreError.fileMissing(attachment.fileName)
         }
@@ -84,9 +111,10 @@ final class AttachmentStore: @unchecked Sendable {
     }
 
     func write(_ data: Data, to attachment: FileAttachment) throws {
+        let destinationURL = try resolvedURL(for: attachment)
         try ensureDirectory()
         try data.write(
-            to: url(for: attachment),
+            to: destinationURL,
             options: Self.writingOptions
         )
     }
@@ -107,8 +135,8 @@ final class AttachmentStore: @unchecked Sendable {
         to attachment: FileAttachment,
         replacing previous: FileAttachment?
     ) throws {
+        let destinationURL = try resolvedURL(for: attachment)
         try ensureDirectory()
-        let destinationURL = url(for: attachment)
         let temporaryURL = directoryURL.appendingPathComponent(
             ".icloud-\(UUID().uuidString.lowercased()).tmp",
             isDirectory: false
@@ -127,8 +155,8 @@ final class AttachmentStore: @unchecked Sendable {
     }
 
     func delete(_ attachment: FileAttachment) {
-        let fileURL = url(for: attachment)
-        guard fileManager.fileExists(atPath: fileURL.path) else { return }
+        guard let fileURL = try? resolvedURL(for: attachment),
+              fileManager.fileExists(atPath: fileURL.path) else { return }
         try? fileManager.removeItem(at: fileURL)
     }
 
@@ -141,7 +169,7 @@ final class AttachmentStore: @unchecked Sendable {
             throw AttachmentStoreError.invalidFileName
         }
 
-        let sourceURL = url(for: attachment)
+        let sourceURL = try resolvedURL(for: attachment)
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw AttachmentStoreError.fileMissing(attachment.fileName)
         }
@@ -161,8 +189,8 @@ final class AttachmentStore: @unchecked Sendable {
         guard attachment.id == original.id else {
             throw AttachmentStoreError.invalidFile
         }
-        let sourceURL = url(for: attachment)
-        let destinationURL = url(for: original)
+        let sourceURL = try resolvedURL(for: attachment)
+        let destinationURL = try resolvedURL(for: original)
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw AttachmentStoreError.fileMissing(attachment.fileName)
         }

@@ -10,13 +10,16 @@ import AppKit
 typealias BankNavigationApplication = AppMapNavigationApplication
 
 enum BankBranchNavigationService {
+    /// AUDIT-026: without valid coordinates, search by branch name instead of navigating to a made-up default point.
     static func url(for application: BankNavigationApplication, branchName: String, location: BankBranchLocation?) -> URL? {
-        let resolved = location?.isValid == true ? location! : .defaultLocation
-        return AppMapNavigationService.url(for: application, target: AppMapNavigationTarget(name: branchName.isEmpty ? "分行/网点" : branchName, latitude: resolved.latitude, longitude: resolved.longitude))
+        guard let location, location.isValid else {
+            return AppMapNavigationService.searchURL(for: application, query: branchName)
+        }
+        return AppMapNavigationService.url(for: application, target: AppMapNavigationTarget(name: branchName.isEmpty ? "分行/网点" : branchName, latitude: location.latitude, longitude: location.longitude))
     }
     @MainActor static func open(_ application: BankNavigationApplication, branchName: String, location: BankBranchLocation?) {
-        let resolved = location?.isValid == true ? location! : .defaultLocation
-        _ = AppMapNavigationService.open(application, target: AppMapNavigationTarget(name: branchName.isEmpty ? "分行/网点" : branchName, latitude: resolved.latitude, longitude: resolved.longitude))
+        guard let url = url(for: application, branchName: branchName, location: location) else { return }
+        AppMapNavigationService.open(url)
     }
 }
 
@@ -34,6 +37,7 @@ struct AccountDetailView: View {
     @State private var sensitiveLoginInformationRevealed = false
     @State private var showsClosedCards = false
     @State private var showsClosedSubaccounts = false
+    @State private var saveFailed = false
 
     init(account: FinancialInstitution, backTitle: String) {
         accountID = account.id
@@ -53,6 +57,9 @@ struct AccountDetailView: View {
             }
         }
         .appNavigationTitle(account?.bankName.isEmpty == false ? account?.bankName ?? "" : "银行账户详情")
+        .alert("无法保存", isPresented: $saveFailed) {
+            Button("确定", role: .cancel) {}
+        } message: { Text("编辑期间资料已变化，请重新打开后再修改。") }
         .diagnosticScreen("银行账户详情")
         .iOSLabeledBackButton(backTitle)
 #if os(iOS)
@@ -105,7 +112,7 @@ struct AccountDetailView: View {
                 if !branch.name.isEmpty {
                     updated.branchName = branch.name
                 }
-                store.replaceAccount(updated, cards: store.cards(for: account), expected: account)
+                saveFailed = !store.replaceAccount(updated, cards: store.cards(for: account), expected: account)
             }
             .iOSLargeSheet()
         }
@@ -189,7 +196,7 @@ struct AccountDetailView: View {
                 Text("网络银行")
             } else {
                 Menu {
-                    ForEach(BankNavigationApplication.allCases) { application in
+                    ForEach(AppMapNavigationService.availableApplications) { application in
                         Button {
                             BankBranchNavigationService.open(
                                 application,
@@ -544,7 +551,7 @@ private final class AccountEditorDraft: ObservableObject {
         originalAccount = account
         originalCards = cards
         var initial = account
-        if initial.openedAt == nil { initial.openedAt = Date() }
+        if initial.openedAt == nil { initial.openedAt = FinancialInstitution.defaultOpeningDate }
         self.account = initial
         self.cards = cards
         attachmentSession = AttachmentEditSession(originalAttachments: cards.flatMap(\.statements).compactMap(\.attachment))
@@ -599,7 +606,7 @@ struct AccountEditorView: View {
 
                 Section("其他") {
                     AccountStatusDisclosurePicker(status: $draft.account.status)
-                    DateFieldRow(title: "建立日期：", date: Binding(get: { draft.account.openedAt ?? Date() }, set: { draft.account.openedAt = $0 }))
+                    DateFieldRow(title: "建立日期：", date: Binding(get: { draft.account.openedAt ?? FinancialInstitution.defaultOpeningDate }, set: { draft.account.openedAt = $0 }))
                     VStack(alignment: .leading, spacing: 6) {
                         Text("备注：")
                             .foregroundStyle(.secondary)
@@ -734,7 +741,7 @@ struct AccountEditorView: View {
                     }
                     .buttonStyle(.plain)
                     .appDeleteSwipeAction {
-                        draft.account.domesticSubaccounts.removeAll { $0.id == subaccount.id }
+                        removeSubaccount(subaccount.id)
                     }
                 }
                 Button { editingDomesticSubaccount = DomesticSubaccount() } label: {
@@ -750,7 +757,7 @@ struct AccountEditorView: View {
                     }
                     .buttonStyle(.plain)
                     .appDeleteSwipeAction {
-                        draft.account.foreignSubaccounts.removeAll { $0.id == subaccount.id }
+                        removeSubaccount(subaccount.id)
                     }
                 }
                 Button { editingForeignSubaccount = ForeignSubaccount() } label: {
@@ -833,7 +840,12 @@ struct AccountEditorView: View {
         Section {
             ForEach($draft.account.additionalLoginFields) { $field in
                 AppAdaptiveEditableRow(title: field.name.isEmpty ? "未命名字段" : field.name) {
-                    IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
+                    // 登录密码等敏感字段不在编辑页明文显示（AUDIT-066）。
+                    if field.isSensitive {
+                        SecureField("请输入内容", text: $field.value).multilineTextAlignment(.trailing)
+                    } else {
+                        IMESafeTextField(prompt: "请输入内容", text: $field.value, alignment: .trailing)
+                    }
                 }
                 .appSwipeActions(edge: .leading, style: AppSwipeActions.edit) {
                     Button { editingAdditionalLoginField = field } label: {
@@ -956,6 +968,12 @@ struct AccountEditorView: View {
         } else {
             draft.cards.append(card)
         }
+    }
+
+    /// AUDIT-025：删除子账户时一并清理登录、文件、卡片对它的引用。
+    private func removeSubaccount(_ id: UUID) {
+        draft.account.removeAccount(id: id)
+        for index in draft.cards.indices { draft.cards[index].linkedFinancialAccountIDs?.remove(id) }
     }
 
     private func deleteCards(ids: Set<UUID>) {
@@ -1161,26 +1179,23 @@ struct BankBranchLocationPickerView: View {
     let onSave: (BankBranchSelection) -> Void
 
     var body: some View {
-        let initial = location?.isValid == true ? location! : BankBranchLocation.defaultLocation
+        // AUDIT-026: no saved coordinate means no preselected point; the map centers on the device location instead.
+        let initial = location.flatMap { $0.isValid ? $0 : nil }
         MapLocationPickerView(
             configuration: MapLocationPickerConfiguration(
                 title: title,
                 searchPlaceholder: "搜索分行、网点或地址",
                 markerTitle: branchName.isEmpty ? markerFallback : branchName,
                 initialSearchText: branchName,
-                initialSelection: MapLocationSelection(
-                    name: branchName,
-                    address: "",
-                    coordinate: CLLocationCoordinate2D(
-                        latitude: initial.latitude,
-                        longitude: initial.longitude
-                    ),
-                    administrativeContext: ""
-                ),
-                defaultCoordinate: CLLocationCoordinate2D(
-                    latitude: BankBranchLocation.defaultLocation.latitude,
-                    longitude: BankBranchLocation.defaultLocation.longitude
-                )
+                initialSelection: initial.map {
+                    MapLocationSelection(
+                        name: branchName,
+                        address: "",
+                        coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
+                        administrativeContext: ""
+                    )
+                },
+                centersOnUserLocation: true
             )
         ) { selection in
             onSave(BankBranchSelection(

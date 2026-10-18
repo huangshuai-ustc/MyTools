@@ -27,7 +27,7 @@ protocol VaultInitialLoading: Sendable {
 
 protocol VaultPersisting: Sendable {
     func schedule(_ vault: VaultData, secrets: [SecretVaultValue])
-    func saveImmediately(_ vault: VaultData, secrets: [SecretVaultValue]) throws
+    func saveImmediately(_ vault: VaultData, secrets: [SecretVaultValue], preservingOriginal: Bool) throws
     func flush() async -> String?
 }
 
@@ -38,7 +38,6 @@ protocol StockQuoteRefreshing: Sendable {
 }
 
 protocol ExchangeRateProviding: Sendable {
-    func loadHistory() -> [ExchangeRateHistoryPoint]
     func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint]
     func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint]
     func fetchSnapshot() async throws -> ExchangeRateSnapshot
@@ -47,7 +46,6 @@ protocol ExchangeRateProviding: Sendable {
 
 extension ExchangeRateProviding {
     func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint] { [] }
-    func loadHistory() -> [ExchangeRateHistoryPoint] { [] }
     func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint] { [] }
 }
 

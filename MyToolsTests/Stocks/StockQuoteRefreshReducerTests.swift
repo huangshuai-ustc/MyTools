@@ -126,6 +126,25 @@ struct StockQuoteRefreshReducerTests {
         #expect(result.successCount == 1)
     }
 
+    @Test func undatedQuoteUpdatesPriceButKeepsQuoteTime() throws {
+        let previousAt = Date(timeIntervalSince1970: 2_000_000_000)
+        var stock = Self.stock(symbol: "AAPL", market: .unitedStates)
+        stock.latestPrice = 100
+        stock.lastQuoteAt = previousAt
+        let quote = StockQuote(
+            symbol: "AAPL", name: "Apple", latestPrice: 101, previousClose: 99,
+            changePercent: 1, updatedAt: nil, source: "Test"
+        )
+
+        let result = StockQuoteRefreshReducer.reduce(
+            currentStocks: [stock], requestedStocks: [stock], quotes: [stock.id: quote]
+        )
+
+        let updated = try #require(result.stocks.first)
+        #expect(updated.latestPrice == 101)
+        #expect(updated.lastQuoteAt == previousAt)
+    }
+
     @Test func quoteForStockDeletedDuringRequestIsIgnored() {
         let requested = Self.stock(symbol: "AAPL", market: .unitedStates)
         let quote = StockQuote(

@@ -654,9 +654,21 @@ protocol StockQuoteHTTPClient: Sendable {
 
 struct URLSessionStockQuoteHTTPClient: StockQuoteHTTPClient {
     func data(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode) else {
+        let host = request.url?.host ?? "unknown"
+        let breaker = StockDataSourceCircuitBreaker.shared
+        guard breaker.rejectRequest(for: host) == nil else { throw StockQuoteError.quoteUnavailable }
+        let started = Date()
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            if !Task.isCancelled { breaker.record(error, for: host, startedAt: started) }
+            throw error
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        breaker.record(status: status, for: host, startedAt: started)
+        guard (200..<300).contains(status) else {
             throw StockQuoteError.invalidResponse
         }
         return data
@@ -847,12 +859,33 @@ enum StockQuoteProviderSupport {
         format: String,
         timeZoneIdentifier: String
     ) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(identifier: timeZoneIdentifier)
-        formatter.dateFormat = format
-        return formatter.date(from: value)
+        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else { return nil }
+        return StockDateParser.date(value, format: format, timeZone: timeZone)
+    }
+}
+
+/// 行情与图表逐点解析日期，按“格式 + 时区”复用 DateFormatter，
+/// 不再每个点新建一个（AUDIT-057）。DateFormatter 解析本身线程安全，锁只保护缓存。
+enum StockDateParser {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
+
+    static func date(_ value: String, format: String, timeZone: TimeZone) -> Date? {
+        formatter(format: format, timeZone: timeZone).date(from: value)
+    }
+
+    private static func formatter(format: String, timeZone: TimeZone) -> DateFormatter {
+        let key = format + "|" + timeZone.identifier
+        return lock.withLock {
+            if let cached = formatters[key] { return cached }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = timeZone
+            formatter.dateFormat = format
+            formatters[key] = formatter
+            return formatter
+        }
     }
 }
 

@@ -36,54 +36,59 @@ actor ForeignExchangeRateService {
             throw ForeignExchangeRateError.invalidResponse
         }
 
-        let rates = CurrencyCode.selectableCases.compactMap { currency -> ForeignExchangeRate? in
-            guard let bankName = currency.bankOfChinaName else { return nil }
-            return parseRate(currencyCode: currency.rawValue, bankName: bankName, from: html)
-        }
+        let rates = Self.parseRates(from: html)
         guard rates.contains(where: { $0.currencyCode == "USD" }) else {
             throw ForeignExchangeRateError.rateUnavailable
         }
         return rates
     }
 
-    private func parseRate(
+    static func parseRates(from html: String) -> [ForeignExchangeRate] {
+        CurrencyCode.selectableCases.compactMap { currency -> ForeignExchangeRate? in
+            guard let bankName = currency.bankOfChinaName else { return nil }
+            return parseRate(currencyCode: currency.rawValue, bankName: bankName, from: html)
+        }
+    }
+
+    /// Row cells: name, 现汇买入, 现钞买入, 现汇卖出, 现钞卖出, 折算价, 发布时间.
+    /// Currencies without spot prices (CZK, ILS) fall back to the cash
+    /// prices instead of disappearing from the snapshot (AUDIT-045).
+    private static func parseRate(
         currencyCode: String,
         bankName: String,
         from html: String
     ) -> ForeignExchangeRate? {
         let escapedName = NSRegularExpression.escapedPattern(for: bankName)
-        let pattern = "<tr[^>]*data-currency\\s*=\\s*['\"]"
-            + escapedName
-            + "['\"][^>]*>\\s*<td[^>]*>\\s*"
-            + escapedName
-            + "\\s*</td>\\s*<td[^>]*>\\s*([0-9.]+)\\s*</td>"
-            + "\\s*<td[^>]*>.*?</td>"
-            + "\\s*<td[^>]*>\\s*([0-9.]+)\\s*</td>.*?"
-            + "<td[^>]*class\\s*=\\s*['\"]pjrq['\"][^>]*>\\s*([^<]+)\\s*</td>"
-        guard let expression = try? NSRegularExpression(
-            pattern: pattern,
+        let rowPattern = "<tr[^>]*data-currency\\s*=\\s*['\"]" + escapedName + "['\"][^>]*>(.*?)</tr>"
+        guard let rowExpression = try? NSRegularExpression(
+            pattern: rowPattern,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
         ),
-              let match = expression.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-              let buyingRateRange = Range(match.range(at: 1), in: html),
-              let sellingRateRange = Range(match.range(at: 2), in: html),
-              let rawBuyingRate = Decimal(
-                string: String(html[buyingRateRange]),
-                locale: Locale(identifier: "en_US_POSIX")
+              let cellExpression = try? NSRegularExpression(
+                pattern: "<td([^>]*)>(.*?)</td>",
+                options: [.caseInsensitive, .dotMatchesLineSeparators]
               ),
-              let rawSellingRate = Decimal(
-                string: String(html[sellingRateRange]),
-                locale: Locale(identifier: "en_US_POSIX")
-              ),
-              rawBuyingRate > 0,
-              rawSellingRate > 0 else { return nil }
-
-        let updatedAt: Date
-        if let dateRange = Range(match.range(at: 3), in: html) {
-            updatedAt = parseBankDate(String(html[dateRange])) ?? Date()
-        } else {
-            updatedAt = Date()
+              let row = rowExpression.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+              let rowRange = Range(row.range(at: 1), in: html) else { return nil }
+        let rowHTML = String(html[rowRange])
+        let cells = cellExpression.matches(in: rowHTML, range: NSRange(rowHTML.startIndex..., in: rowHTML)).map { match in
+            (
+                attributes: Range(match.range(at: 1), in: rowHTML).map { String(rowHTML[$0]) } ?? "",
+                text: Range(match.range(at: 2), in: rowHTML)
+                    .map { String(rowHTML[$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            )
         }
+        guard cells.count >= 5,
+              cells[0].text == bankName else { return nil }
+        func price(_ index: Int) -> Decimal? {
+            Decimal(string: cells[index].text, locale: Locale(identifier: "en_US_POSIX"))
+                .flatMap { $0 > 0 ? $0 : nil }
+        }
+        guard let rawBuyingRate = price(1) ?? price(2),
+              let rawSellingRate = price(3) ?? price(4) else { return nil }
+
+        let updatedAt = cells.first { $0.attributes.contains("pjrq") }
+            .flatMap { parseBankDate($0.text) } ?? Date()
         return ForeignExchangeRate(
             currencyCode: currencyCode,
             renminbiBuyingPerUnit: rawBuyingRate / 100,
@@ -92,7 +97,7 @@ actor ForeignExchangeRateService {
         )
     }
 
-    private func parseBankDate(_ text: String) -> Date? {
+    private static func parseBankDate(_ text: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)

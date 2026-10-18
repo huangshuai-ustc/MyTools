@@ -1,6 +1,7 @@
 import SwiftUI
 #if os(iOS)
 import UIKit
+import UniformTypeIdentifiers
 #elseif os(macOS)
 import AppKit
 #endif
@@ -172,13 +173,19 @@ private struct CopyableTextModifier: ViewModifier {
     @MainActor
     private func copy(_ value: String) {
 #if os(iOS)
-        UIPasteboard.general.string = value
+        // Keep copied values off Universal Clipboard and expire them after a few minutes.
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: value]],
+            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
+        )
         let feedback = UIImpactFeedbackGenerator(style: .light)
         feedback.prepare()
         feedback.impactOccurred()
 #elseif os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
+        // Ask clipboard managers not to record the value.
+        NSPasteboard.general.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
 #endif
         Task { @MainActor in
             CopyToastCenter.shared.show()

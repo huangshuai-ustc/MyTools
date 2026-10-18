@@ -24,9 +24,6 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
             snapshot.financialInstitutions = try attachments.institutionsForBackup(snapshot.financialInstitutions)
             snapshot.cards = try attachments.cardsForBackup(snapshot.cards)
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-            snapshot.foodPlaces = try attachments.foodPlacesForBackup(snapshot.foodPlaces)
-#endif
 #if MYTOOLS_FEATURE_DOCUMENTS
             snapshot.credentialDocuments = try attachments.documentsForBackup(
                 snapshot.credentialDocuments
@@ -77,13 +74,6 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
                 )
             }
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-            if payload.includedModules.contains(.foodMap) {
-                payload.vault.foodPlaces = try attachments.restoreAttachments(
-                    in: payload.vault.foodPlaces
-                )
-            }
-#endif
 #if MYTOOLS_FEATURE_SECRETS
             if payload.includedModules.contains(.secrets) {
                 payload.secrets = try attachments.restoreAttachments(
@@ -123,9 +113,12 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         snapshot.preservedModulePayloads = [:]
         snapshot.preservedSecrets = nil
         snapshot.unknownPayloads = [:]
+        // 未选模块的标签与模板同样不进备份（AUDIT-086(7)）；导入时只按所选模块合并。
         if !includedModules.contains(.personalFinance) {
             snapshot.financialInstitutions = []
             snapshot.cards = []
+            snapshot.domesticBankLoginFieldTemplates = []
+            snapshot.overseasBankLoginFieldTemplates = []
         }
         if !includedModules.contains(.myStocks) {
             snapshot.stocks = []
@@ -135,6 +128,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         }
         if !includedModules.contains(.secrets) {
             snapshot.secretFieldTemplates = []
+            snapshot.secretTags = []
         }
         if !includedModules.contains(.currencyExchange) {
             snapshot.currencyExchangeRecords = []
@@ -143,16 +137,21 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         if !includedModules.contains(.healthRecords) {
             snapshot.medicalRecords = []
             snapshot.hospitalProfiles = []
+            snapshot.medicalRecordTags = []
         }
         if !includedModules.contains(.foodMap) {
             snapshot.foodPlaces = []
+            snapshot.foodPlaceTags = []
         }
         if !includedModules.contains(.documents) {
             snapshot.credentialDocuments = []
+            snapshot.credentialFieldTemplates = []
+            snapshot.credentialTags = []
         }
         if !includedModules.contains(.partnership) { snapshot.partnershipBooks = [] }
         if !includedModules.contains(.bills) {
             snapshot.billRecords = []
+            snapshot.billTags = []
         }
         return snapshot
     }
@@ -210,15 +209,6 @@ private struct BackupAttachmentMapper {
     }
 #endif
 
-#if MYTOOLS_FEATURE_FOOD_MAP
-    func foodPlacesForBackup(_ places: [FoodPlace]) throws -> [FoodPlace] {
-        try places.map { place in
-            var copy = place
-            copy.photos = try copy.photos.map(attachmentForBackup)
-            return copy
-        }
-    }
-#endif
 
 #if MYTOOLS_FEATURE_DOCUMENTS
     func documentsForBackup(
@@ -269,15 +259,6 @@ private struct BackupAttachmentMapper {
     }
 #endif
 
-#if MYTOOLS_FEATURE_FOOD_MAP
-    func restoreAttachments(in places: [FoodPlace]) throws -> [FoodPlace] {
-        try places.map { place in
-            var copy = place
-            copy.photos = try copy.photos.map(restoredAttachment)
-            return copy
-        }
-    }
-#endif
 
 #if MYTOOLS_FEATURE_DOCUMENTS
     func restoreAttachments(

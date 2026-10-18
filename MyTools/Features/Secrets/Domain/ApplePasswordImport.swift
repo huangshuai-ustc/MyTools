@@ -58,9 +58,10 @@ enum ApplePasswordImporter {
 
         let headers = rows[headerIndex].map(normalizedHeader)
         let items = rows.dropFirst(headerIndex + 1).compactMap { row -> SecretItem? in
-            let values = Dictionary(uniqueKeysWithValues: headers.enumerated().map { index, header in
+            // Duplicate header names must not trap; the first column wins.
+            let values = Dictionary(headers.enumerated().map { index, header in
                 (header, row.indices.contains(index) ? row[index] : "")
-            })
+            }, uniquingKeysWith: { first, _ in first })
             let title = trimmed(values[normalizedHeader("Title")])
             let url = trimmed(values[normalizedHeader("URL")])
             let username = trimmed(values[normalizedHeader("Username")])

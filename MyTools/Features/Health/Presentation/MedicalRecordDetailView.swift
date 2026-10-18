@@ -12,6 +12,7 @@ struct MedicalRecordDetailView: View {
     @State private var previewAttachment: FileAttachment?
     @State private var attachmentError = ""
     @State private var showingAttachmentError = false
+    @State private var deletingRecord: MedicalRecord?
 
     private var record: MedicalRecord? {
         store.medicalRecords.first { $0.id == recordID }
@@ -40,11 +41,11 @@ struct MedicalRecordDetailView: View {
     }
 
     private var followUpCostSummary: MedicalCostSummary {
-        followUps.reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+        followUps.costSummary
     }
 
     private var pharmacyPurchaseCostSummary: MedicalCostSummary {
-        pharmacyPurchases.reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+        pharmacyPurchases.costSummary
     }
 
     private var episodeCostSummary: MedicalCostSummary {
@@ -149,11 +150,33 @@ struct MedicalRecordDetailView: View {
             )
         }
 #endif
+        .alert(
+            "删除健康记录？",
+            isPresented: Binding(get: { deletingRecord != nil }, set: { if !$0 { deletingRecord = nil } })
+        ) {
+            Button("取消", role: .cancel) { deletingRecord = nil }
+            Button("删除", role: .destructive) {
+                if let deletingRecord { store.deleteMedicalRecords(ids: [deletingRecord.id]) }
+                deletingRecord = nil
+            }
+        } message: {
+            Text(deletionMessage)
+        }
         .alert("无法打开附件", isPresented: $showingAttachmentError) {
             Button("确定", role: .cancel) {}
         } message: {
             Text(attachmentError)
         }
+    }
+
+    // 删除会级联到关联的复诊、住院日和购药记录（AUDIT-071）。
+    private var deletionMessage: String {
+        let hasLinkedRecords = deletingRecord.map { record in
+            store.medicalRecords.contains { $0.parentRecordID == record.id }
+        } ?? false
+        return hasLinkedRecords
+            ? "将同时删除关联的复诊、住院日和购药记录及全部附件，无法撤销。"
+            : "将同时删除该记录的附件，无法撤销。"
     }
 
     private func recordList(_ record: MedicalRecord) -> some View {
@@ -244,7 +267,7 @@ struct MedicalRecordDetailView: View {
                                 }
                                 .appListRowStyle()
                                 .appDeleteSwipeAction(isEnabled: true) {
-                                    store.deleteMedicalRecords(ids: [followUp.id])
+                                    deletingRecord = followUp
                                 }
                             }
                         }
@@ -267,7 +290,7 @@ struct MedicalRecordDetailView: View {
                             }
                             .appListRowStyle()
                             .appDeleteSwipeAction(isEnabled: true) {
-                                store.deleteMedicalRecords(ids: [followUp.id])
+                                deletingRecord = followUp
                             }
                         }
                     }
@@ -282,7 +305,7 @@ struct MedicalRecordDetailView: View {
                                 }
                                 .appListRowStyle()
                                 .appDeleteSwipeAction(isEnabled: true) {
-                                    store.deleteMedicalRecords(ids: [followUp.id])
+                                    deletingRecord = followUp
                                 }
                             }
                         }
@@ -298,7 +321,7 @@ struct MedicalRecordDetailView: View {
                                 }
                                 .appListRowStyle()
                                 .appDeleteSwipeAction(isEnabled: true) {
-                                    store.deleteMedicalRecords(ids: [purchase.id])
+                                    deletingRecord = purchase
                                 }
                             }
                         }

@@ -6,12 +6,24 @@ enum BrokerageAccountType: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String { switch self { case .cash: "现金账户"; case .margin: "保证金账户"; case .portfolioMargin: "投资组合保证金账户" } }
 }
-struct BrokerageAccountDetails: Codable, Equatable {
-    var accountType: BrokerageAccountType = .cash
-    var baseCurrency: CurrencyCode = .usd
-    var legalEntity = ""
-    var ownership = "个人"
+/// Read-only shape of pre-v3 brokerage accounts, which reused the bank `FinancialAccount`
+/// with an inline `brokerage` block. It only feeds the migration into `BrokerageAccount`.
+private struct LegacyBrokerageAccount: Decodable {
+    struct Details: Decodable {
+        var accountType: BrokerageAccountType?
+        var baseCurrency: CurrencyCode?
+        var ownership: String?
+    }
+    var id: UUID
+    var name: String?
+    var accountNumber: String?
+    var holderName: String?
+    var currencies: Set<CurrencyCode>?
+    var legalEntity: String?
     var openedAt: Date?
+    var status: AccountStatus?
+    var note: String?
+    var brokerage: Details?
 }
 struct BrokerageInstitutionDetails: Codable, Equatable {
     var platform = "IBKR"
@@ -27,14 +39,16 @@ struct BrokerageInstitutionDetails: Codable, Equatable {
         do {
             accounts = try c.decodeIfPresent([BrokerageAccount].self, forKey: .accounts) ?? []
         } catch {
-            let legacy = try c.decodeIfPresent([FinancialAccount].self, forKey: .accounts) ?? []
+            let legacy = try c.decodeIfPresent([LegacyBrokerageAccount].self, forKey: .accounts) ?? []
             accounts = legacy.map { value in
                 var result = BrokerageAccount()
-                result.id = value.id; result.name = value.name; result.accountNumber = value.accountNumber
-                result.holderName = value.holderName; result.baseCurrency = value.currencies.first ?? .usd
-                result.legalEntity = value.legalEntity; result.openedAt = value.openedAt
-                result.status = value.status; result.note = value.note
-                if let details = value.brokerage { result.accountType = details.accountType; result.baseCurrency = details.baseCurrency; result.ownership = details.ownership }
+                result.id = value.id; result.name = value.name ?? ""; result.accountNumber = value.accountNumber ?? ""
+                result.holderName = value.holderName ?? ""
+                result.baseCurrency = value.brokerage?.baseCurrency ?? value.currencies?.first ?? .usd
+                result.legalEntity = value.legalEntity ?? ""; result.openedAt = value.openedAt
+                result.status = value.status ?? .normal; result.note = value.note ?? ""
+                result.accountType = value.brokerage?.accountType ?? .cash
+                result.ownership = value.brokerage?.ownership ?? "个人"
                 return result
             }
         }
@@ -53,18 +67,7 @@ struct PaymentInstitutionDetails: Codable, Equatable {
         platform = try c.decodeIfPresent(String.self, forKey: .platform) ?? ""
         profileType = try c.decodeIfPresent(String.self, forKey: .profileType) ?? "个人"
         receivingMethods = try c.decodeIfPresent([FinanceReceivingMethod].self, forKey: .receivingMethods) ?? []
-        do {
-            accounts = try c.decodeIfPresent([PaymentAccount].self, forKey: .accounts) ?? []
-        } catch {
-            let legacy = try c.decodeIfPresent([FinancialAccount].self, forKey: .accounts) ?? []
-            accounts = legacy.map { value in
-                var result = PaymentAccount()
-                result.id = value.id; result.name = value.name; result.accountNumber = value.accountNumber
-                result.currencies = value.currencies; result.status = value.status; result.note = value.note
-                result.receivingProfile = value.receivingProfile
-                return result
-            }
-        }
+        accounts = try c.decodeIfPresent([PaymentAccount].self, forKey: .accounts) ?? []
     }
 }
 struct BrokerageAccount: Identifiable, Codable, Equatable {
@@ -90,7 +93,46 @@ struct PaymentAccount: Identifiable, Codable, Equatable {
     var accountNumber = ""
     var status: AccountStatus = .normal
     var note = ""
-    var receivingProfile: FinanceReceivingMethod?
+    var receivingProfiles: [FinanceReceivingMethod] = []
+    /// Adapter for the published v3 single-profile shape. New UI uses the collection.
+    var receivingProfile: FinanceReceivingMethod? {
+        get { receivingProfiles.first }
+        set {
+            if let newValue {
+                if receivingProfiles.isEmpty { receivingProfiles = [newValue] }
+                else { receivingProfiles[0] = newValue }
+            } else { receivingProfiles = [] }
+        }
+    }
+    init() {}
+    private enum CodingKeys: String, CodingKey {
+        case id, name, currencies, accountNumber, status, note, receivingProfile, receivingProfiles
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        currencies = try c.decode(Set<CurrencyCode>.self, forKey: .currencies)
+        accountNumber = try c.decode(String.self, forKey: .accountNumber)
+        status = try c.decode(AccountStatus.self, forKey: .status)
+        note = try c.decode(String.self, forKey: .note)
+        if c.contains(.receivingProfiles) {
+            receivingProfiles = try c.decode([FinanceReceivingMethod].self, forKey: .receivingProfiles)
+        } else {
+            receivingProfiles = try c.decodeIfPresent(FinanceReceivingMethod.self, forKey: .receivingProfile).map { [$0] } ?? []
+        }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(currencies, forKey: .currencies)
+        try c.encode(accountNumber, forKey: .accountNumber)
+        try c.encode(status, forKey: .status)
+        try c.encode(note, forKey: .note)
+        try c.encode(receivingProfiles, forKey: .receivingProfiles)
+        try c.encodeIfPresent(receivingProfiles.first, forKey: .receivingProfile)
+    }
     var displayName: String { name.isEmpty ? "币种账户" : name }
     var maskedAccountNumber: String { AccountNumberFormatter.masked(accountNumber) }
     var currencySummary: String { CurrencyCode.displayOrdered(currencies).map(\.rawValue).joined(separator: " · ") }

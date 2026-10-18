@@ -25,6 +25,17 @@ struct StockChartProviderParsingTests {
         #expect(store.renderedSnapshot(from: merged, range: .intraday)?.postMarketPoints == snapshot.postMarketPoints)
     }
 
+    // AUDIT-057：格式化器按“格式 + 时区”复用，不同时区不能串用。
+    @Test func cachedDateParserKeepsFormatAndTimeZoneSeparate() throws {
+        let shanghai = try #require(TimeZone(identifier: "Asia/Shanghai"))
+        let newYork = try #require(TimeZone(identifier: "America/New_York"))
+        let a = StockDateParser.date("2026-08-07 09:30", format: "yyyy-MM-dd HH:mm", timeZone: shanghai)
+        let b = StockDateParser.date("2026-08-07 09:30", format: "yyyy-MM-dd HH:mm", timeZone: newYork)
+        #expect(a == StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30))
+        #expect(b == StockChartFixtures.date(2026, 8, 7, hour: 9, minute: 30, timeZone: "America/New_York"))
+        #expect(StockDateParser.date("20260807", format: "yyyy-MM-dd HH:mm", timeZone: shanghai) == nil)
+    }
+
     @Test func minuteRangesUseOneMinuteProviderIntervals() {
         #expect(StockChartRange.intraday.yahooInterval == "1m")
         #expect(StockChartRange.fiveDays.yahooInterval == "1m")
@@ -341,5 +352,59 @@ struct StockChartProviderParsingTests {
 
     private func json(_ object: Any) throws -> Data {
         try JSONSerialization.data(withJSONObject: object)
+    }
+}
+
+struct StockDataSourceCircuitBreakerTests {
+    private final class Clock: @unchecked Sendable {
+        var date = StockChartFixtures.date(2026, 8, 7, hour: 10)
+    }
+
+    @Test func consecutiveFailuresOpenAnEscalatingCooldownAndSuccessCloses() {
+        let clock = Clock()
+        let breaker = StockDataSourceCircuitBreaker(
+            failureThreshold: 3, baseCooldown: 120, maximumCooldown: 300, now: { clock.date }
+        )
+        let host = "api.nasdaq.com"
+        let timeout = URLError(.timedOut)
+        for _ in 0..<2 { breaker.record(timeout, for: host, startedAt: clock.date) }
+        #expect(breaker.rejectRequest(for: host) == nil)
+        breaker.record(timeout, for: host, startedAt: clock.date)
+        #expect(breaker.rejectRequest(for: host) == 120)
+        #expect(breaker.rejectRequest(for: "query2.finance.yahoo.com") == nil)
+
+        // In-flight failures do not extend an open breaker.
+        breaker.record(timeout, for: host, startedAt: clock.date)
+        clock.date.addTimeInterval(121)
+        #expect(breaker.rejectRequest(for: host) == nil)
+
+        // A failed probe re-opens with a doubled cooldown, capped at the maximum.
+        breaker.record(timeout, for: host, startedAt: clock.date)
+        #expect(breaker.rejectRequest(for: host) == 240)
+        clock.date.addTimeInterval(241)
+        breaker.record(status: 503, for: host, startedAt: clock.date)
+        #expect(breaker.rejectRequest(for: host) == 300)
+
+        clock.date.addTimeInterval(301)
+        breaker.record(status: 200, for: host, startedAt: clock.date)
+        for _ in 0..<2 { breaker.record(timeout, for: host, startedAt: clock.date) }
+        #expect(breaker.rejectRequest(for: host) == nil)
+    }
+
+    @Test func cancellationOfflineAndSuspendedRequestsAreNotHeldAgainstTheHost() {
+        let clock = Clock()
+        let breaker = StockDataSourceCircuitBreaker(failureThreshold: 1, now: { clock.date })
+        let host = "qt.gtimg.cn"
+        breaker.record(URLError(.cancelled), for: host, startedAt: clock.date)
+        breaker.record(CancellationError(), for: host, startedAt: clock.date)
+        breaker.record(URLError(.notConnectedToInternet), for: host, startedAt: clock.date)
+        breaker.record(StockChartError.noData, for: host, startedAt: clock.date)
+        breaker.record(status: 404, for: host, startedAt: clock.date)
+        breaker.record(URLError(.timedOut), for: host, startedAt: clock.date.addingTimeInterval(-300))
+        #expect(breaker.rejectRequest(for: host) == nil)
+        breaker.record(URLError(.secureConnectionFailed), for: host, startedAt: clock.date)
+        #expect(breaker.rejectRequest(for: host) != nil)
+        #expect(DiagnosticLogger.isCancellation(URLError(.cancelled)))
+        #expect(!DiagnosticLogger.isCancellation(URLError(.timedOut)))
     }
 }

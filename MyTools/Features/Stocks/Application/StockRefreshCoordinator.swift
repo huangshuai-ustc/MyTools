@@ -27,6 +27,23 @@ final class StockRefreshCoordinator: ObservableObject {
     private var lastClosingRefreshSessionEndByMarket: [StockMarket: Date] = [:]
     private var lastClosingRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
     private var lastClosingChartRefreshAttemptAtByMarket: [StockMarket: Date] = [:]
+    /// 每个市场每个收盘时点的补刷次数。停牌等永远补不齐的股票不能每 5 分钟
+    /// 强刷到下一个交易日（AUDIT-056）。按 5 分钟冷却，上限覆盖收盘后约 1 小时。
+    private var closingQuoteAttempts: [StockMarket: (sessionEnd: Date, count: Int)] = [:]
+    private var closingChartAttempts: [StockMarket: (sessionEnd: Date, count: Int)] = [:]
+    static let maxClosingRefreshAttempts = 12
+
+    /// 记一次补刷；同一收盘时点超过上限后返回 false。
+    private static func recordClosingAttempt(
+        _ attempts: inout [StockMarket: (sessionEnd: Date, count: Int)],
+        market: StockMarket,
+        sessionEnd: Date
+    ) -> Bool {
+        let count = attempts[market].map { $0.sessionEnd == sessionEnd ? $0.count : 0 } ?? 0
+        guard count < maxClosingRefreshAttempts else { return false }
+        attempts[market] = (sessionEnd, count + 1)
+        return true
+    }
     private var isAutomaticRefreshRunning = false
     private var currentScenePhase: ScenePhase = .inactive
     /// Each visible stock screen owns a token. A single Boolean was insufficient:
@@ -143,78 +160,88 @@ final class StockRefreshCoordinator: ObservableObject {
         )
     }
 
-    /// Manual refresh also repairs closed-market quotes and minute data.
-    /// A supplied stock ID keeps the request scoped to the current chart.
+    /// Manual refresh covers only the stocks on the calling page (`stockIDs`,
+    /// or the single `prioritizedStockID`). All markets are batched into one
+    /// intraday and one quote request so they run in parallel. Open markets
+    /// force intraday first, then five-day history; closed markets only repair
+    /// what the local cache is missing, so a complete close creates no traffic.
     func refreshManually(
         for requestedMarket: StockMarket? = nil,
+        stockIDs requestedIDs: Set<UUID>? = nil,
         prioritizedStockID: UUID? = nil,
         refreshMarketCharts: Bool = false,
+        refreshFiveDayCharts: Bool = false,
         at now: Date = Date()
     ) async {
         guard let store, isStockModuleVisible, store.isDataLoaded else { return }
-        let markets = requestedMarket.map { [$0] } ?? StockMarket.allCases
-        for market in markets {
-            let session = StockMarketTradingCalendar.session(for: market, at: now)
-            if session != .closed {
-                // 持仓列表只刷新批量报价；看盘列表额外刷新当前市场全部分钟
-                // 缓存，让迷你图通过同一缓存广播立即重绘。单股看盘/详情仍只刷新
-                // 目标股票。港股保持分时在前，让延迟报价可用本轮末点修正。
-                let shouldRefreshCharts = refreshMarketCharts || prioritizedStockID != nil
-                if market == .hongKong, shouldRefreshCharts {
-                    await store.refreshIntradayCharts(
-                        for: market,
-                        stockID: prioritizedStockID,
-                        forceRefresh: true
-                    )
-                    await store.refreshQuotes(
-                        for: market,
-                        stockID: prioritizedStockID,
-                        forceRefresh: true
-                    )
-                } else {
-                    async let quotes: Void = store.refreshQuotes(
-                        for: market,
-                        stockID: prioritizedStockID,
-                        forceRefresh: true
-                    )
-                    if shouldRefreshCharts {
-                        await store.refreshIntradayCharts(
-                            for: market,
-                            stockID: prioritizedStockID,
-                            forceRefresh: true
-                        )
-                    }
-                    await quotes
-                }
-                continue
-            }
-            // Inspect quote and minute coverage independently. Completed data
-            // never creates traffic just because the user taps Refresh again.
-            let targets = store.stocks.filter {
-                $0.market == market && $0.hasConfiguredSymbol && !$0.isArchived
-                    && (prioritizedStockID == nil || $0.id == prioritizedStockID)
-            }
-            var chartIDs: Set<UUID> = []
-            for stock in targets {
-                guard !Task.isCancelled else { return }
-                let snapshot = await chartService.cachedChart(for: stock, range: .intraday)
-                if Self.needsClosedChartRefresh(stock: stock, snapshot: snapshot, at: now) {
-                    chartIDs.insert(stock.id)
-                }
-            }
-            if !chartIDs.isEmpty {
-                await store.refreshIntradayCharts(for: market, stockIDs: chartIDs, forceRefresh: true)
-            }
-            let targetIDs = Set(targets.map(\.id))
-            let quoteIDs = Set(store.stocks.filter {
-                targetIDs.contains($0.id) && Self.needsClosedQuoteRefresh(stock: $0, at: now)
-            }.map(\.id))
-            if !quoteIDs.isEmpty {
-                await store.refreshQuotes(for: market, stockIDs: quoteIDs, forceRefresh: true)
-            }
-            DiagnosticLogger.shared.log(.stockQuote, "休市手动检查 market=\(market.rawValue) targets=\(targets.count) charts=\(chartIDs.count) quotes=\(quoteIDs.count)")
+        let scope = prioritizedStockID.map { Set([$0]) } ?? requestedIDs
+        let targets = store.stocks.filter {
+            $0.hasConfiguredSymbol && !$0.isArchived
+                && (requestedMarket == nil || $0.market == requestedMarket)
+                && (scope?.contains($0.id) ?? true)
         }
+        let isOpen = Dictionary(uniqueKeysWithValues: StockMarket.allCases.map {
+            ($0, StockMarketTradingCalendar.session(for: $0, at: now) != .closed)
+        })
+        let openTargets = targets.filter { isOpen[$0.market] == true }
+        let closedTargets = targets.filter { isOpen[$0.market] != true }
+        let shouldRefreshCharts = refreshMarketCharts || refreshFiveDayCharts || prioritizedStockID != nil
+
+        var chartIDs = shouldRefreshCharts ? Set(openTargets.map(\.id)) : []
+        for stock in closedTargets {
+            guard !Task.isCancelled else { return }
+            let snapshot = await chartService.cachedChart(for: stock, range: .intraday)
+            if Self.needsClosedChartRefresh(stock: stock, snapshot: snapshot, at: now) {
+                chartIDs.insert(stock.id)
+            }
+        }
+        // Hong Kong quotes are corrected from the live minute tail, so they
+        // wait for intraday; other open markets fetch quotes alongside it.
+        let earlyQuoteIDs = Set(openTargets.filter {
+            !shouldRefreshCharts || $0.market != .hongKong
+        }.map(\.id))
+        var lateQuoteIDs = Set(openTargets.map(\.id)).subtracting(earlyQuoteIDs)
+        lateQuoteIDs.formUnion(closedTargets.filter {
+            Self.needsClosedQuoteRefresh(stock: $0, at: now)
+        }.map(\.id))
+
+        async let earlyQuotes: Void = Self.refreshQuotes(earlyQuoteIDs, in: store)
+        if !chartIDs.isEmpty {
+            await store.refreshIntradayCharts(stockIDs: chartIDs, forceRefresh: true)
+        }
+        async let lateQuotes: Void = Self.refreshQuotes(lateQuoteIDs, in: store)
+        var fiveDayIDs: Set<UUID> = []
+        if refreshFiveDayCharts, !Task.isCancelled {
+            fiveDayIDs = Set(openTargets.map(\.id))
+            // Checked after the intraday repair: both ranges share one minute
+            // series, so a just-repaired close may already cover five days.
+            for stock in closedTargets {
+                let snapshot = await chartService.cachedChart(for: stock, range: .fiveDays)
+                if Self.needsClosedFiveDayRefresh(stock: stock, snapshot: snapshot, at: now) {
+                    fiveDayIDs.insert(stock.id)
+                }
+            }
+            // The chart service bounds provider concurrency. Each successful
+            // commit broadcasts its stock ID; failures never undo intraday.
+            await withTaskGroup(of: Void.self) { group in
+                for stockID in fiveDayIDs {
+                    group.addTask {
+                        guard !Task.isCancelled else { return }
+                        await store.refreshFiveDayHistory(for: stockID, forceRefresh: true)
+                    }
+                }
+            }
+        }
+        await lateQuotes
+        await earlyQuotes
+        DiagnosticLogger.shared.log(.stockQuote, "手动刷新 targets=\(targets.count) closed=\(closedTargets.count) charts=\(chartIDs.count) quotes=\(earlyQuoteIDs.count + lateQuoteIDs.count) fiveDays=\(fiveDayIDs.count)")
+        guard !Task.isCancelled else { return }
         lastRefreshCompletedAt = Date()
+    }
+
+    private static func refreshQuotes(_ stockIDs: Set<UUID>, in store: StockStore) async {
+        guard !stockIDs.isEmpty else { return }
+        await store.refreshQuotes(stockIDs: stockIDs, forceRefresh: true)
     }
 
     static func needsClosedQuoteRefresh(stock: StockHolding, at now: Date) -> Bool {
@@ -244,6 +271,16 @@ final class StockRefreshCoordinator: ObservableObject {
             }
         }
         return false
+    }
+
+    /// `cachedChart(.fiveDays)` is nil until five trading days are covered.
+    /// The latest day shares the intraday series, whose closing minutes are
+    /// repaired by `needsClosedChartRefresh`, so only its presence is checked.
+    static func needsClosedFiveDayRefresh(stock: StockHolding, snapshot: StockChartSnapshot?, at now: Date) -> Bool {
+        guard let snapshot,
+              let end = StockMarketTradingCalendar.latestCompletedRegularSessionEnd(for: stock.market, at: now) else { return true }
+        let calendar = StockChartSeriesProcessor.marketCalendar(stock.market)
+        return !snapshot.points.contains { calendar.isDate($0.date, inSameDayAs: end) && $0.close > 0 }
     }
 
     private var shouldPollInForeground: Bool {
@@ -394,6 +431,9 @@ final class StockRefreshCoordinator: ObservableObject {
                now.timeIntervalSince(attemptedAt) < 5 * 60 {
                 continue
             }
+            guard Self.recordClosingAttempt(
+                &closingChartAttempts, market: market, sessionEnd: sessionEnd
+            ) else { continue }
             lastClosingChartRefreshAttemptAtByMarket[market] = now
             result[market] = sessionEnd
         }
@@ -413,7 +453,12 @@ final class StockRefreshCoordinator: ObservableObject {
             await withTaskGroup(of: UUID?.self) { group in
                 for stock in stocks where stock.market == market {
                     group.addTask { [chartService] in
-                        guard !Task.isCancelled, await chartService.isChartStale(for: stock) else { return nil }
+                        // `stocks` 是开始时的快照；跳过之后被删除或存档的股票（AUDIT-051）。
+                        let isCurrent = await MainActor.run {
+                            store.stocks.contains { $0.id == stock.id && !$0.isArchived }
+                        }
+                        guard isCurrent, !Task.isCancelled,
+                              await chartService.isChartStale(for: stock) else { return nil }
                         do {
                             try await chartService.refreshAfterFinalSession(for: stock)
                             return stock.id
@@ -447,7 +492,9 @@ final class StockRefreshCoordinator: ObservableObject {
             guard StockMarketTradingCalendar.session(for: market, at: now) == .closed else {
                 continue
             }
-            guard store.stocks.contains(where: { $0.market == market && $0.hasConfiguredSymbol }) else {
+            guard store.stocks.contains(where: {
+                $0.market == market && $0.hasConfiguredSymbol && !$0.isArchived
+            }) else {
                 continue
             }
 
@@ -465,6 +512,9 @@ final class StockRefreshCoordinator: ObservableObject {
                now.timeIntervalSince(attemptedAt) < 5 * 60 {
                 continue
             }
+            guard Self.recordClosingAttempt(
+                &closingQuoteAttempts, market: market, sessionEnd: sessionEnd
+            ) else { continue }
             lastClosingRefreshAttemptAtByMarket[market] = now
             result[market] = sessionEnd
         }
@@ -551,7 +601,7 @@ final class StockRefreshCoordinator: ObservableObject {
                 }
                 completed = true
             } catch is CancellationError {
-                DiagnosticLogger.shared.log(.lifecycle, "股票后台刷新达到时间预算，未完成标的保留到下次重试", level: .warning)
+                DiagnosticLogger.shared.log(.lifecycle, "股票后台刷新达到时间预算，未完成标的保留到下次重试")
             } catch {
                 DiagnosticLogger.logError(.stockQuote, operation: "股票后台刷新", error: error)
             }
@@ -564,19 +614,9 @@ final class StockRefreshCoordinator: ObservableObject {
 }
 
 #if os(iOS)
-final class StockRefreshAppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        supportedInterfaceOrientationsFor window: UIWindow?
-    ) -> UIInterfaceOrientationMask {
-        AppOrientationController.supportedOrientations
-    }
-
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
-    ) -> Bool {
-        application.registerForRemoteNotifications()
+extension StockRefreshCoordinator {
+    /// Called by the App delegate at launch.
+    static func registerBackgroundTask() {
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: StockRefreshCoordinator.taskIdentifier,
             // UIApplicationDelegate and StockRefreshCoordinator are MainActor-isolated.
@@ -590,10 +630,6 @@ final class StockRefreshAppDelegate: NSObject, UIApplicationDelegate {
             }
             StockRefreshCoordinator.shared.handleBackgroundRefresh(refreshTask)
         }
-#if MYTOOLS_FEATURE_SPORTS_LOTTERY
-        SportsLotteryRefreshCoordinator.registerBackgroundTask()
-#endif
-        return true
     }
 }
 #endif

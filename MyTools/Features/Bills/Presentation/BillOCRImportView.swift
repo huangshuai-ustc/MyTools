@@ -83,6 +83,7 @@ struct BillOCRImportView: View {
                 }
             }
             .appNavigationTitle("图片识别账单")
+            .diagnosticScreen("账单图片识别")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)

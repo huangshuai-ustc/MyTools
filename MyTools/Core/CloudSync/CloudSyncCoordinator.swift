@@ -40,6 +40,8 @@ enum CloudSyncStatus: Equatable, Sendable {
     case temporarilyUnavailable
     case accountChanged
     case cloudDataRemoved
+    /// Bulk deletion held back by the circuit breaker, waiting for user confirmation.
+    case deletionPaused(Int)
     case error(String)
 
     var title: String {
@@ -53,6 +55,7 @@ enum CloudSyncStatus: Equatable, Sendable {
         case .temporarilyUnavailable: return "iCloud 暂时不可用"
         case .accountChanged: return "iCloud 账户已变化"
         case .cloudDataRemoved: return "云端数据已移除"
+        case .deletionPaused: return "已暂停云端删除"
         case .error: return "同步失败"
         }
     }
@@ -66,7 +69,8 @@ enum CloudSyncStatus: Equatable, Sendable {
 }
 
 typealias CloudSyncSnapshotProvider = @MainActor @Sendable () async throws -> CloudSyncSnapshot
-typealias CloudSyncChangeHandler = @MainActor @Sendable ([CloudSyncChange]) throws -> Void
+/// Applies remote changes locally and returns the keys that could not be applied.
+typealias CloudSyncChangeHandler = @MainActor @Sendable ([CloudSyncChange]) throws -> Set<String>
 
 @MainActor
 final class CloudSyncCoordinator: ObservableObject {
@@ -187,9 +191,26 @@ final class CloudSyncCoordinator: ObservableObject {
         }
     }
 
+    /// Sends the deletions paused by the circuit breaker after the user confirmed them.
+    func confirmPausedDeletions() {
+        guard case .deletionPaused = status,
+              activeOperationID == nil,
+              let worker = prepareWorkerIfPossible() else { return }
+        DiagnosticLogger.shared.log(.cloudSync, "用户确认同步已暂停的云端删除")
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        let operationID = UUID()
+        activeOperationID = operationID
+        operationTask = Task { [weak self] in
+            await worker.synchronize(allowingBulkDeletion: true)
+            self?.operationDidFinish(operationID)
+        }
+    }
+
     var errorDetail: String? {
         switch status {
         case .error(let message): message
+        case .deletionPaused(let count): "本机比 iCloud 少了 \(count) 条记录。为避免读取或合并异常误删其他设备的数据，已暂停这些云端删除；如确认是你删除的，请点“确认删除”。"
         case .accountChanged: "为避免把本机资料上传到另一个账户，同步已自动关闭，请确认账户后重新开启。"
         case .cloudDataRemoved: "iCloud 中的\(AppMetadata.appName)同步数据已被移除。本机资料仍然保留；同步已自动关闭，确认后可以重新开启。"
         default: nil
@@ -262,7 +283,7 @@ final class CloudSyncCoordinator: ObservableObject {
                     return try await self.snapshotProvider?() ?? .empty
                 },
                 changeHandler: { [weak self] changes in
-                    try self?.changeHandler?(changes)
+                    try self?.changeHandler?(changes) ?? Set(changes.map(\.key))
                 }
             )
         }
@@ -332,6 +353,8 @@ final class CloudSyncCoordinator: ObservableObject {
             DiagnosticLogger.shared.log(.cloudSync, "iCloud 访问受限", level: .warning)
         case .temporarilyUnavailable:
             DiagnosticLogger.shared.log(.cloudSync, "iCloud 暂时不可用", level: .warning)
+        case .deletionPaused(let count):
+            DiagnosticLogger.shared.log(.cloudSync, "云端删除已暂停 count=\(count)", level: .warning)
         case .disabled, .checkingAccount, .syncing, .synced:
             break
         }

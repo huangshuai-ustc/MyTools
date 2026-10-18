@@ -125,7 +125,7 @@ struct SinaStockQuoteProvider: StockQuoteBatchProviding {
             updatedAt: StockQuoteProviderSupport.quoteDate(
                 "\(fields[30]) \(fields[31])",
                 timeZoneIdentifier: "Asia/Shanghai"
-            ) ?? Date(),
+            ),
             source: "新浪财经"
         )
     }
@@ -159,7 +159,7 @@ struct SinaStockQuoteProvider: StockQuoteBatchProviding {
             updatedAt: StockQuoteProviderSupport.quoteDate(
                 fields[3],
                 timeZoneIdentifier: "Asia/Shanghai"
-            ) ?? Date(),
+            ),
             source: "新浪财经"
         )
     }
@@ -181,7 +181,7 @@ struct SinaStockQuoteProvider: StockQuoteBatchProviding {
             updatedAt: StockQuoteProviderSupport.slashQuoteDate(
                 "\(fields[17]) \(fields[18])",
                 timeZoneIdentifier: "Asia/Hong_Kong"
-            ) ?? Date(),
+            ),
             source: "新浪财经"
         )
     }

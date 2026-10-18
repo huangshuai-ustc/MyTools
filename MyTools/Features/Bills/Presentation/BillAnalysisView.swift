@@ -16,6 +16,20 @@ private enum BillCalendarMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// AUDIT-044：一次 body 会读取 snapshot 数十次。按输入缓存计算结果；
+/// 记录变化经 `refreshID` 失效（`onReceive(store.$records)` 会调用 refresh）。
+private final class BillAnalysisCache {
+    struct Key: Equatable {
+        let refreshID: UUID
+        let interval: DateInterval
+        let period: BillAnalysisPeriod
+        let currency: CurrencyCode
+    }
+
+    var currencies: (refreshID: UUID, values: [CurrencyCode])?
+    var snapshots: (key: Key, current: BillAnalyticsSnapshot, previous: BillAnalyticsSnapshot?)?
+}
+
 struct BillAnalysisView: View {
     @EnvironmentObject private var store: BillsStore
     @Binding var pageSelection: BillsPage
@@ -27,22 +41,39 @@ struct BillAnalysisView: View {
     @State private var showingDatePicker = false
     @State private var calendarMode: BillCalendarMode = .anchor
     @State private var refreshID = UUID()
+    @State private var cache = BillAnalysisCache()
 
     private var availableCurrencies: [CurrencyCode] {
+        if let cached = cache.currencies, cached.refreshID == refreshID { return cached.values }
         let currencies = Set(store.records.map(\.currency))
-        return currencies.isEmpty
+        let values: [CurrencyCode] = currencies.isEmpty
             ? [.cny]
             : currencies.sorted { $0.rawValue < $1.rawValue }
+        cache.currencies = (refreshID, values)
+        return values
     }
 
     private var currency: CurrencyCode {
         availableCurrencies.contains(selectedCurrency) ? selectedCurrency : (availableCurrencies.first ?? .cny)
     }
 
-    private var snapshot: BillAnalyticsSnapshot {
-        _ = refreshID
-        return BillAnalyticsCalculator.snapshot(records: store.records, interval: selectedInterval, currency: currency)
+    private var snapshots: (current: BillAnalyticsSnapshot, previous: BillAnalyticsSnapshot?) {
+        let key = BillAnalysisCache.Key(
+            refreshID: refreshID,
+            interval: selectedInterval,
+            period: period,
+            currency: currency
+        )
+        if let cached = cache.snapshots, cached.key == key { return (cached.current, cached.previous) }
+        let current = BillAnalyticsCalculator.snapshot(records: store.records, interval: key.interval, currency: key.currency)
+        let previous = BillAnalyticsCalculator.previousInterval(before: key.interval, period: key.period).map {
+            BillAnalyticsCalculator.snapshot(records: store.records, interval: $0, currency: key.currency)
+        }
+        cache.snapshots = (key, current, previous)
+        return (current, previous)
     }
+
+    private var snapshot: BillAnalyticsSnapshot { snapshots.current }
 
     private var selectedInterval: DateInterval {
         switch period {
@@ -53,13 +84,7 @@ struct BillAnalysisView: View {
         }
     }
 
-    private var previousSnapshot: BillAnalyticsSnapshot? {
-        guard let previousInterval = BillAnalyticsCalculator.previousInterval(
-            before: selectedInterval,
-            period: period
-        ) else { return nil }
-        return BillAnalyticsCalculator.snapshot(records: store.records, interval: previousInterval, currency: currency)
-    }
+    private var previousSnapshot: BillAnalyticsSnapshot? { snapshots.previous }
 
     private var periodTitle: String {
         if period == .custom {
@@ -262,11 +287,11 @@ struct BillAnalysisView: View {
             if let previousSnapshot {
                 DetailValueRow(
                     title: "支出较上周期",
-                    value: comparisonText(current: snapshot.expense, previous: previousSnapshot.expense)
+                    value: Self.comparisonText(current: snapshot.expense, previous: previousSnapshot.expense)
                 )
                 DetailValueRow(
                     title: "净支出较上周期",
-                    value: comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense)
+                    value: Self.comparisonText(current: snapshot.netExpense, previous: previousSnapshot.netExpense)
                 )
             }
         }
@@ -428,6 +453,7 @@ struct BillAnalysisView: View {
                 }
             }
             .appNavigationTitle("选择分析时间")
+            .diagnosticScreen("账单分析时间选择")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { showingDatePicker = false }
@@ -451,9 +477,11 @@ struct BillAnalysisView: View {
         refreshID = UUID()
     }
 
-    private func comparisonText(current: Decimal, previous: Decimal) -> String {
+    static func comparisonText(current: Decimal, previous: Decimal) -> String {
         guard previous != 0 else { return current == 0 ? "持平" : "无上一周期基数" }
-        let change = (current - previous) / previous
+        // Net expense can be negative (refunds exceed spending); dividing by the magnitude
+        // keeps the direction of the change correct (AUDIT-075).
+        let change = (current - previous) / previous.magnitude
         let value = BillAnalysisFormatting.percentage(change.magnitude, of: 1)
         if change > 0 { return "增加 \(value)" }
         if change < 0 { return "减少 \(value)" }

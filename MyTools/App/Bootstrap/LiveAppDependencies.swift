@@ -19,9 +19,6 @@ extension ExchangeRateRepository: ExchangeRateProviding {
     func cachedReferenceHistory() async throws -> [ReferenceExchangeRatePoint] {
         try await HistoricalExchangeRateService.shared.cachedPoints()
     }
-    nonisolated func loadHistory() -> [ExchangeRateHistoryPoint] {
-        Self.loadHistory()
-    }
     func fetchReferenceHistory(from: Date, to: Date, currencies: [CurrencyCode]) async throws -> [ReferenceExchangeRatePoint] {
         try await HistoricalExchangeRateService.shared.fetch(from: from, to: to, currencies: currencies)
     }

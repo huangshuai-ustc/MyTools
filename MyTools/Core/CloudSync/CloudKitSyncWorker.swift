@@ -22,7 +22,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     private static let recordType = "MyToolsEntity"
     private static let zoneName = "MyToolsData"
-    private static let schemaVersion: Int64 = 1
+    private static let schemaVersion = CloudSyncStoredEntry.supportedSchemaVersion
 
     private let container: CKContainer
     private let attachmentStore: AttachmentStore
@@ -42,6 +42,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     private var operationFailure: OperationFailure?
     private var isPerformingRequestedOperation = false
     private var attachmentRestoreTask: Task<Void, Never>?
+    /// 引擎状态更新很频繁；合并到这个延迟写入里，其余变更仍立即写盘（AUDIT-086(5)）。
+    private var pendingStateSaveTask: Task<Void, Never>?
+    private static let stateSaveDelay: Duration = .seconds(2)
+    /// Deletions held back by the bulk-deletion circuit breaker in the last reconcile.
+    private var pausedDeletionCount = 0
+    /// Set by an explicit user confirmation; consumed by the next reconcile.
+    private var allowsNextBulkDeletion = false
 
     private lazy var syncEngine: CKSyncEngine = makeSyncEngine()
 
@@ -82,7 +89,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     @discardableResult
     func start() async -> Bool {
-        await loadPersistedStateIfNeeded()
+        guard await loadPersistedStateIfNeeded() else { return false }
         guard !Task.isCancelled else { return false }
         guard !hasStarted else {
             await synchronize()
@@ -136,6 +143,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             _ = await prepareActiveModules(using: initialSnapshot)
             try await ensureZoneExists()
             try await fetchRemoteChanges()
+            await retryPendingLocalApply()
             let mergedSnapshot = try await snapshotProvider()
             await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
@@ -143,7 +151,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             saveDocument()
             guard !Task.isCancelled else { return false }
             hasStarted = true
-            await statusHandler(.synced(Date()))
+            await statusHandler(syncedStatus())
             return true
         } catch is OperationFailure {
             hasStarted = false
@@ -179,6 +187,17 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
             let digest = Self.digest(item.payload)
             let previous = document.entries[item.key]
+            // Never overwrite a record written by a newer client (AUDIT-030).
+            if previous?.requiresNewerClient == true { continue }
+            if previous?.pendingLocalApply == true {
+                // The local copy predates a remote change that has not been
+                // applied yet; uploading it would revert the other device.
+                if previous?.isDeleted == false, previous?.digest == digest {
+                    document.entries[item.key]?.pendingLocalApply = false
+                    changedKeys.insert(item.key)
+                }
+                continue
+            }
             // A digest match only means the content hasn't changed since the
             // last attempt — it says nothing about whether that attempt
             // actually reached CloudKit. `needsRetry` is set whenever a save
@@ -194,7 +213,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 id: item.id,
                 module: item.module,
                 digest: digest,
-                modifiedAt: now,
+                modifiedAt: CloudSyncStoredEntry.modifiedAt(editedAt: item.editedAt, previous: previous, now: now),
                 deviceID: document.deviceID,
                 isDeleted: false,
                 payload: item.payload,
@@ -204,10 +223,17 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             changes.append(.saveRecord(recordID(forKey: item.key)))
         }
 
-        for (key, entry) in document.entries
-        where isActiveEntry(kind: entry.kind, key: key)
-            && (!entry.isDeleted || entry.systemFields != nil)
-            && !currentKeys.contains(key) {
+        let deletionPlan = CloudSyncDeletionPlanner.plan(
+            entries: document.entries,
+            currentKeys: currentKeys,
+            authorizedModules: snapshot.confirmedDeletionModules,
+            allowsBulkDeletion: allowsNextBulkDeletion,
+            isActive: { key, entry in isActiveEntry(kind: entry.kind, key: key) }
+        )
+        if deletionPlan.pausedCount == 0 { allowsNextBulkDeletion = false }
+        pausedDeletionCount = deletionPlan.pausedCount
+        for key in deletionPlan.keys {
+            guard let entry = document.entries[key] else { continue }
             if !entry.isDeleted {
                 document.entries[key] = CloudSyncStoredEntry(
                     kind: entry.kind,
@@ -223,6 +249,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 changedKeys.insert(key)
             }
             changes.append(.deleteRecord(recordID(forKey: key)))
+        }
+        if deletionPlan.pausedCount > 0 {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "本机记录骤减，已暂停 \(deletionPlan.pausedCount) 条云端删除，等待用户确认",
+                level: .warning
+            )
+            await statusHandler(.deletionPaused(deletionPlan.pausedCount))
         }
 
         let didDiscardPayloads = discardRedundantPayloads(
@@ -275,15 +309,59 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             await self?.restoreAttachments(for: activatedModules)
         }
         let changes = changesForActivatedModules(activatedModules)
+        return await applyLocally(changes, operation: "恢复已重新开启模块的 iCloud 数据")
+    }
+
+    private func syncedStatus() -> CloudSyncStatus {
+        pausedDeletionCount > 0 ? .deletionPaused(pausedDeletionCount) : .synced(Date())
+    }
+
+    /// Applies remote changes to the local vault. Their keys stay
+    /// `pendingLocalApply` (persisted before the attempt) until the vault
+    /// accepts them, so a failed or partial merge is retried later instead of
+    /// being reconciled as a local deletion or overwritten by stale data.
+    ///
+    /// - Returns: `true` when at least one change was applied.
+    @discardableResult
+    private func applyLocally(_ changes: [CloudSyncChange], operation: String) async -> Bool {
         guard !changes.isEmpty else { return false }
+        let keys = Set(changes.map(\.key))
+        for key in keys { document.entries[key]?.pendingLocalApply = true }
+        saveDocument()
         do {
-            try await changeHandler(changes)
+            let rejected = try await changeHandler(changes)
+            for key in keys.subtracting(rejected) {
+                document.entries[key]?.pendingLocalApply = false
+            }
             saveDocument()
-            return true
+            if !rejected.isEmpty {
+                DiagnosticLogger.shared.log(
+                    .cloudSync,
+                    "\(rejected.count) 条 iCloud 记录未能合并，已保留待重试且不会被同步删除",
+                    level: .warning
+                )
+            }
+            return rejected.count < keys.count
         } catch {
-            await report(error, operation: "恢复已重新开启模块的 iCloud 数据")
+            await report(error, operation: operation)
             return false
         }
+    }
+
+    private func retryPendingLocalApply() async {
+        let changes: [CloudSyncChange] = document.entries
+            .filter { key, entry in
+                entry.pendingLocalApply && entry.kind != .attachment
+                    && !entry.requiresNewerClient
+                    && isActiveEntry(kind: entry.kind, key: key)
+            }
+            .values
+            .sorted { $0.modifiedAt < $1.modifiedAt }
+            .compactMap { entry in
+                if entry.isDeleted { return .delete(kind: entry.kind, id: entry.id) }
+                return entry.payload.map { .upsert(kind: entry.kind, id: entry.id, payload: $0) }
+            }
+        await applyLocally(changes, operation: "重试合并 iCloud 数据")
     }
 
     private func changesForActivatedModules(
@@ -291,7 +369,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     ) -> [CloudSyncChange] {
         document.entries.values
             .filter { entry in
-                guard let module = entry.kind.module else { return false }
+                guard let module = entry.kind.module, !entry.requiresNewerClient else { return false }
                 return modules.contains(module) && entry.deviceID != document.deviceID
             }
             .sorted { $0.modifiedAt < $1.modifiedAt }
@@ -305,6 +383,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
     }
 
+    /// Runs one sync that may send deletions previously paused by the circuit breaker.
+    func synchronize(allowingBulkDeletion: Bool) async {
+        allowsNextBulkDeletion = allowingBulkDeletion
+        await synchronize()
+    }
+
     func synchronize() async {
         if !hasStarted {
             await start()
@@ -313,12 +397,13 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         await statusHandler(.syncing)
         do {
             try await fetchRemoteChanges()
+            await retryPendingLocalApply()
             let mergedSnapshot = try await snapshotProvider()
             await reconcileReadySnapshot(mergedSnapshot)
             try await sendPendingChanges()
             _ = document.discardSystemFields(excluding: pendingRecordKeys())
             saveDocument()
-            await statusHandler(.synced(Date()))
+            await statusHandler(syncedStatus())
         } catch is OperationFailure {
             return
         } catch {
@@ -332,21 +417,32 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         attachmentRestoreTask?.cancel()
         attachmentRestoreTask = nil
         guard hasLoadedState else { return }
+        if pendingStateSaveTask != nil { saveDocument() }
         await syncEngine.cancelOperations()
     }
 
-    private func loadPersistedStateIfNeeded() async {
-        guard !hasLoadedState else { return }
+    /// - Returns: false when the state file exists but cannot be read; sync stays
+    ///   blocked instead of starting from an empty document.
+    private func loadPersistedStateIfNeeded() async -> Bool {
+        guard !hasLoadedState else { return true }
         let loaded = await Task.detached(priority: .utility) { [stateStore] in
-            var document = stateStore.load()
-            let upgradedState = document.prepareForCurrentReconciliationVersion()
-            return (document, upgradedState)
+            Result { () throws -> (CloudSyncStoredDocument, Bool) in
+                var document = try stateStore.load()
+                let upgradedState = document.prepareForCurrentReconciliationVersion()
+                return (document, upgradedState)
+            }
         }.value
-        document = loaded.0
+        guard case .success(let value) = loaded else {
+            DiagnosticLogger.shared.log(.cloudSync, "同步状态文件无法读取，已暂停同步", level: .error)
+            await statusHandler(.error("同步状态文件无法读取。为避免已删除的资料从 iCloud 恢复，已暂停同步。"))
+            return false
+        }
+        document = value.0
         hasLoadedState = true
-        if loaded.1 {
+        if value.1 {
             saveDocument()
         }
+        return true
     }
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
@@ -354,7 +450,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         case .stateUpdate(let event):
             document.engineState = event.stateSerialization
             _ = document.discardSystemFields(excluding: pendingRecordKeys())
-            saveDocument()
+            scheduleStateSave()
 
         case .accountChange(let event):
             switch event.changeType {
@@ -405,12 +501,15 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
 
         case .didFetchChanges, .didSendChanges:
-            if !isPerformingRequestedOperation, operationFailure == nil {
-                await statusHandler(.synced(Date()))
+            // Automatic syncs can run between the steps of `start()`; only
+            // `start()` itself may report the first `.synced`, otherwise a
+            // startup failure is followed by a misleading “完成”.
+            if !isPerformingRequestedOperation, !isStarting, operationFailure == nil {
+                await statusHandler(syncedStatus())
             }
 
         case .willFetchChanges, .willSendChanges:
-            if !isPerformingRequestedOperation {
+            if !isPerformingRequestedOperation, !isStarting {
                 operationFailure = nil
             }
             await statusHandler(.syncing)
@@ -444,7 +543,8 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
     }
 
     private func recordToSave(with recordID: CKRecord.ID) -> CKRecord? {
-        guard let entry = document.entries[recordID.recordName] else { return nil }
+        guard let entry = document.entries[recordID.recordName],
+              !entry.requiresNewerClient else { return nil }
         let record = entry.systemFields.flatMap(CKRecord.cloudSyncRecord(from:))
             ?? CKRecord(recordType: Self.recordType, recordID: recordID)
 
@@ -488,10 +588,30 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             syncEngine.state.add(
                 pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]
             )
-            let recordChanges = document.entries.keys.map {
-                CKSyncEngine.PendingRecordZoneChange.saveRecord(recordID(forKey: $0))
+            // Uploaded entries no longer carry a payload; rebuild every record
+            // from the current local snapshot so the new zone is complete (AUDIT-029).
+            let keys: [String]
+            do {
+                let snapshot = try await snapshotProvider()
+                let items = snapshot.items.filter { item in
+                    item.assetURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? true
+                }
+                keys = document.prepareForRecreatedZone(localItems: items, now: Date())
+                saveDocument()
+            } catch {
+                await report(error, operation: "重建 iCloud 数据区")
+                keys = document.entries.compactMap { key, entry in
+                    entry.isDeleted || entry.payload == nil ? nil : key
+                }
             }
-            syncEngine.state.add(pendingRecordZoneChanges: recordChanges)
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "iCloud 数据区已被删除，按本机数据重新上传 \(keys.count) 条记录",
+                level: .warning
+            )
+            syncEngine.state.add(pendingRecordZoneChanges: keys.map {
+                .saveRecord(recordID(forKey: $0))
+            })
         case .purged, .encryptedDataReset:
             document.entries = [:]
             saveDocument()
@@ -520,6 +640,12 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                     changes.append(change)
                 }
             } catch {
+                // The entry already reflects the remote record; keep it from
+                // being reconciled as a deletion until the file is in place.
+                if let kind = remoteKind(from: record),
+                   let id = (record[Field.entityID] as? String).flatMap(UUID.init(uuidString:)) {
+                    document.entries[CloudSyncItem.key(kind: kind, id: id)]?.pendingLocalApply = true
+                }
                 await report(error, operation: "处理 iCloud 记录")
             }
         }
@@ -571,12 +697,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
 
         saveDocument()
-        guard !changes.isEmpty else { return }
-        do {
-            try await changeHandler(changes)
-        } catch {
-            await report(error, operation: "合并 iCloud 数据")
-        }
+        await applyLocally(changes, operation: "合并 iCloud 数据")
     }
 
     private func acceptRemoteRecord(
@@ -594,6 +715,11 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         let key = CloudSyncItem.key(kind: kind, id: id)
         let module = kind.module ?? attachmentModule(for: id)
+        let schemaVersion = (record[Field.schemaVersion] as? NSNumber)?.int64Value
+        if (schemaVersion ?? 1) > Self.schemaVersion {
+            storeNewerClientRecord(record, kind: kind, id: id, module: module, schemaVersion: schemaVersion, syncEngine: syncEngine)
+            return nil
+        }
         guard isActiveEntry(kind: kind, key: key, module: module) else {
             storeInactiveRemoteRecord(
                 record: record,
@@ -661,6 +787,42 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             return .delete(kind: kind, id: id)
         }
         return payload.map { .upsert(kind: kind, id: id, payload: $0) }
+    }
+
+    /// Keeps a newer-schema record verbatim; this build neither applies nor
+    /// re-uploads it (AUDIT-030).
+    private func storeNewerClientRecord(
+        _ record: CKRecord,
+        kind: CloudSyncEntityKind,
+        id: UUID,
+        module: ToolModule?,
+        schemaVersion: Int64?,
+        syncEngine: CKSyncEngine
+    ) {
+        let key = CloudSyncItem.key(kind: kind, id: id)
+        let isDeleted = (record[Field.isDeleted] as? NSNumber)?.boolValue ?? false
+        let payload = isDeleted ? nil : record.encryptedValues[Field.payload] as? Data
+        document.entries[key] = CloudSyncStoredEntry(
+            kind: kind,
+            id: id,
+            module: module ?? document.entries[key]?.module,
+            digest: payload.map(Self.digest),
+            modifiedAt: record[Field.modifiedAt] as? Date ?? Date(),
+            deviceID: record[Field.deviceID] as? String ?? "server",
+            isDeleted: isDeleted,
+            payload: payload,
+            pendingLocalApply: true,
+            schemaVersion: schemaVersion
+        )
+        syncEngine.state.remove(pendingRecordZoneChanges: [
+            .saveRecord(record.recordID),
+            .deleteRecord(record.recordID)
+        ])
+        DiagnosticLogger.shared.log(
+            .cloudSync,
+            "收到更高版本（schema \(schemaVersion ?? 1)）的 iCloud 记录 kind=\(kind.rawValue)，已原样保留，升级 App 后再合并",
+            level: .warning
+        )
     }
 
     private func storeInactiveRemoteRecord(
@@ -737,12 +899,6 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 #endif
                 break
             case .foodPlace:
-#if MYTOOLS_FEATURE_FOOD_MAP
-                guard let place = try? decoder.decode(FoodPlace.self, from: payload) else { return }
-                if place.photos.contains(where: { $0.id == id }) {
-                    result.insert(.foodMap)
-                }
-#endif
                 break
             case .secretItem:
 #if MYTOOLS_FEATURE_SECRETS
@@ -875,6 +1031,14 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
                 syncEngine.state.add(
                     pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)]
                 )
+            case .batchRequestFailed:
+                // Failed only because another record in the batch did; that
+                // record carries the real error. Retry without alerting.
+                let key = failure.record.recordID.recordName
+                document.entries[key]?.needsRetry = true
+                syncEngine.state.add(
+                    pendingRecordZoneChanges: [.saveRecord(failure.record.recordID)]
+                )
             default:
                 // Every other error (network failure, service unavailable,
                 // quota, etc.) is not self-healing: CKSyncEngine does not
@@ -937,7 +1101,17 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
         var options = CKSyncEngine.SendChangesOptions()
         options.scope = .zoneIDs([zoneID])
-        try await syncEngine.sendChanges(options)
+        do {
+            try await syncEngine.sendChanges(options)
+        } catch {
+            // Each failed record was already merged or re-queued by
+            // `handleSentRecords`; the next send retries them.
+            guard CloudSyncErrorFormatter.isSelfHealingPartialFailure(error) else { throw error }
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "上传 iCloud 记录部分失败，均可自愈，等待自动重试：\(CloudSyncErrorFormatter.partialFailureSummary(error) ?? "")"
+            )
+        }
         if let operationFailure { throw operationFailure }
     }
 
@@ -1010,7 +1184,22 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         })
     }
 
+    private func scheduleStateSave() {
+        guard pendingStateSaveTask == nil else { return }
+        pendingStateSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.stateSaveDelay)
+            await self?.flushScheduledStateSave()
+        }
+    }
+
+    private func flushScheduledStateSave() {
+        guard pendingStateSaveTask != nil else { return }
+        saveDocument()
+    }
+
     private func saveDocument() {
+        pendingStateSaveTask?.cancel()
+        pendingStateSaveTask = nil
         do {
             try stateStore.save(document)
         } catch {
@@ -1027,6 +1216,18 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
 
     private func report(_ error: Error, operation: String) async {
         guard !CloudSyncErrorFormatter.isCancellation(error) else { return }
+        let isSelfHealing = CloudSyncErrorFormatter.isSelfHealingPartialFailure(error)
+        if let summary = CloudSyncErrorFormatter.partialFailureSummary(error) {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "\(operation)部分失败明细：\(summary)",
+                level: isSelfHealing ? .info : .warning
+            )
+        }
+        guard !isSelfHealing else {
+            DiagnosticLogger.shared.log(.cloudSync, "\(operation)：子错误均可自愈，等待自动重试，不提示错误")
+            return
+        }
         let code = DiagnosticLogger.errorCode(error)
         let message = CloudSyncErrorFormatter.message(for: error, operation: operation)
         operationFailure = OperationFailure(message: message)
@@ -1056,6 +1257,64 @@ enum CloudSyncErrorFormatter {
                 as? [AnyHashable: Error],
               !partialErrors.isEmpty else { return false }
         return partialErrors.values.allSatisfy(isCancellation)
+    }
+
+    /// Sub-errors recovered without the user: `handleSentRecords` merges the
+    /// server record, re-queues unknown items, or recreates the zone, and a
+    /// batch-only failure is retried with its batch.
+    private static let selfHealingCodes: Set<CKError.Code> = [
+        .serverRecordChanged, .unknownItem, .zoneNotFound, .batchRequestFailed, .operationCancelled
+    ]
+
+    private static func partialErrors(of error: Error) -> [AnyHashable: Error]? {
+        let value = error as NSError
+        guard value.domain == CKErrorDomain,
+              value.code == CKError.Code.partialFailure.rawValue,
+              let partialErrors = value.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+              !partialErrors.isEmpty else { return nil }
+        return partialErrors
+    }
+
+    private static func cloudKitCode(_ error: Error) -> CKError.Code? {
+        let value = error as NSError
+        guard value.domain == CKErrorDomain else { return nil }
+        return CKError.Code(rawValue: value.code)
+    }
+
+    /// True for a partial failure whose every sub-error heals itself. A batch
+    /// made only of `batchRequestFailed` hides its cause, so it still alerts.
+    static func isSelfHealingPartialFailure(_ error: Error) -> Bool {
+        guard let partialErrors = partialErrors(of: error) else { return false }
+        let codes = partialErrors.values.map(cloudKitCode)
+        return codes.allSatisfy { $0.map(selfHealingCodes.contains) == true }
+            && !codes.allSatisfy { $0 == .batchRequestFailed || $0 == .operationCancelled }
+    }
+
+    /// Groups sub-errors by record kind and code, with a masked sample id, e.g.
+    /// `financialInstitution CKErrorDomain(14)×3 eg=1A2B…`. Never logs full ids.
+    static func partialFailureSummary(_ error: Error) -> String? {
+        guard let partialErrors = partialErrors(of: error) else { return nil }
+        var groups: [String: (count: Int, sample: String)] = [:]
+        for (item, childError) in partialErrors {
+            let (kind, sample) = maskedItem(item)
+            let group = "\(kind) \(DiagnosticLogger.errorCode(childError))"
+            groups[group, default: (0, sample)].count += 1
+        }
+        let lines = groups.sorted { $0.key < $1.key }.prefix(12).map {
+            "\($0.key)×\($0.value.count) eg=\($0.value.sample)"
+        }
+        let more = groups.count > 12 ? "；另有 \(groups.count - 12) 组" : ""
+        return "共 \(partialErrors.count) 条：" + lines.joined(separator: "；") + more
+    }
+
+    private static func maskedItem(_ item: AnyHashable) -> (kind: String, sample: String) {
+        if let zoneID = item.base as? CKRecordZone.ID {
+            return ("zone", zoneID.zoneName)
+        }
+        let name = (item.base as? CKRecord.ID)?.recordName ?? String(describing: item.base)
+        let components = name.split(separator: ".", maxSplits: 1)
+        guard components.count == 2 else { return ("unknown", String(name.prefix(4)) + "…") }
+        return (String(components[0]), String(components[1].prefix(4)) + "…")
     }
 
     static func message(for error: Error, operation: String) -> String {

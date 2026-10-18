@@ -31,8 +31,82 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         self.domesticLoginFieldTemplates = Self.normalizedTemplates(domesticLoginFieldTemplates)
         self.overseasLoginFieldTemplates = Self.normalizedTemplates(overseasLoginFieldTemplates)
     }
-    func scanRedundantData() -> [RedundantDataFinding] { [] }
-    func cleanupRedundantData() {}
+    func scanRedundantData() -> [RedundantDataFinding] {
+        var findings: [RedundantDataFinding] = []
+        appendFinding(
+            to: &findings,
+            ruleID: "non-custom-account-type",
+            title: "非自定义账户类型的类型名称",
+            detail: "账户类型不是“其他”时不会显示自定义类型名称。",
+            items: financialInstitutions.flatMap { institution in
+                institution.allAccounts.filter(Self.hasStaleCustomType).map { account in
+                    RedundantDataItem(
+                        id: "\(institution.id.uuidString).\(account.id.uuidString)",
+                        recordTitle: "\(Self.title(of: institution)) · \(account.displayName)",
+                        fieldNames: ["自定义类型（\(account.customType)）"]
+                    )
+                }
+            }
+        )
+        appendFinding(
+            to: &findings,
+            ruleID: "domestic-overseas-details",
+            title: "境内银行的境外信息",
+            detail: "境内银行不显示 SWIFT、IBAN、汇款信息和中英文地址。",
+            items: financialInstitutions.compactMap { institution in
+                let fields = Self.overseasOnlyFields(in: institution).map(\.name)
+                guard !fields.isEmpty else { return nil }
+                return RedundantDataItem(id: institution.id.uuidString, recordTitle: Self.title(of: institution), fieldNames: fields)
+            }
+        )
+        return findings
+    }
+
+    func cleanupRedundantData() {
+        for index in financialInstitutions.indices {
+            var value = financialInstitutions[index]
+            var accounts = value.accounts
+            for i in accounts.indices {
+                Self.clearStaleCustomType(&accounts[i])
+                for j in accounts[i].subaccounts.indices { Self.clearStaleCustomType(&accounts[i].subaccounts[j]) }
+            }
+            value.accounts = accounts
+            for field in Self.overseasOnlyFields(in: value) { value[keyPath: field.keyPath] = "" }
+            if value != financialInstitutions[index] { financialInstitutions[index] = value }
+        }
+    }
+
+    private static func title(of institution: FinancialInstitution) -> String {
+        let name = institution.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? institution.serviceSummary : name
+    }
+
+    private static func hasStaleCustomType(_ account: FinancialAccount) -> Bool {
+        account.kind != .other && !account.customType.isEmpty
+    }
+
+    private static func clearStaleCustomType(_ account: inout FinancialAccount) {
+        if hasStaleCustomType(account) { account.customType = "" }
+    }
+
+    /// Bank fields that the editor and detail page only expose for overseas banks.
+    private static func overseasOnlyFields(
+        in institution: FinancialInstitution
+    ) -> [(name: String, keyPath: WritableKeyPath<FinancialInstitution, String>)] {
+        guard institution.kind == .bank, institution.region == .domestic else { return [] }
+        let fields: [(name: String, keyPath: WritableKeyPath<FinancialInstitution, String>)] = [
+            ("SWIFT", \.swift),
+            ("IBAN", \.iban),
+            ("汇款银行名称", \.remittanceBankName),
+            ("汇款银行地址", \.remittanceBankAddress),
+            ("汇款说明", \.remittanceInstructions),
+            ("通讯地址（中文）", \.correspondenceAddressChinese),
+            ("通讯地址（英文）", \.correspondenceAddressEnglish),
+            ("居住地址（中文）", \.residentialAddressChinese),
+            ("居住地址（英文）", \.residentialAddressEnglish)
+        ]
+        return fields.filter { !institution[keyPath: $0.keyPath].isEmpty }
+    }
 
     @discardableResult
     func saveInstitution(_ institution: FinancialInstitution, cards: [BankCard], expected: FinancialInstitution?, expectedCards: [BankCard]) throws -> Bool {
@@ -40,6 +114,7 @@ final class FinanceStore: ObservableObject, ModuleDataCleanupParticipant, Attach
         if value.kind != .bank && !cards.isEmpty { throw FinancialArchiveError.wrongCategory }
         value.cards = cards.map { card in var card = card; card.accountID = value.id; return card }
         try value.validate()
+        value.schemaVersion = FinancialInstitution.currentSchemaVersion
         let current = financialInstitutions.first { $0.id == value.id }
         guard expected.map({ $0 == current && $0.cards == expectedCards }) ?? (current == nil) else { throw FinancialArchiveError.editConflict }
         let previousFiles = current?.financeAttachments ?? []

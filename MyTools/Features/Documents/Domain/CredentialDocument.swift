@@ -156,7 +156,7 @@ enum CredentialFieldKind: String, Codable, CaseIterable, Identifiable, Sendable 
     var title: String { self == .text ? "单行文本" : "多行文本" }
 }
 
-enum CredentialFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable {
+enum CredentialFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable, TemplateFieldInputKind {
     case text
     case url
     case date
@@ -225,6 +225,18 @@ struct CredentialField: Identifiable, Codable, Equatable, Sendable {
             ) ?? CredentialFieldInputType(kind: kind),
             isSensitive: try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? true
         )
+    }
+}
+
+extension CredentialField: TemplateEditableField {
+    var templateLayoutKey: String { "\(isMultiline)" }
+
+    static func newTemplateField(label: String) -> Self {
+        CredentialField(label: label, isSensitive: true)
+    }
+
+    func templateCopy(label: String) -> Self {
+        CredentialField(label: label, kind: kind, inputType: inputType, isSensitive: isSensitive)
     }
 }
 
@@ -368,6 +380,11 @@ enum CredentialValidityKind: String, Codable, CaseIterable, Identifiable, Sendab
         case .anniversary:
             return anniversary
         case .dayBeforeAnniversary:
+            // 2 月 29 日签发、届满年没有对应日时，期间止于该月末日（2 月 28 日），
+            // 不能再往前减一天（AUDIT-070）。
+            if calendar.component(.day, from: anniversary) != calendar.component(.day, from: startDate) {
+                return anniversary
+            }
             return calendar.date(byAdding: .day, value: -1, to: anniversary)
         }
     }
@@ -694,10 +711,15 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
     }
 
     var listDisplayTitle: String {
+        displayTitle(revealsHolder: true)
+    }
+
+    /// 锁定状态下持有人姓名以 `••••••` 代替，列表与详情共用（AUDIT-069）。
+    func displayTitle(revealsHolder: Bool) -> String {
         let type = typeTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let holder = holderName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !holder.isEmpty else { return type }
-        return "\(type)-\(holder)"
+        return "\(type)-\(revealsHolder ? holder : "••••••")"
     }
 
     var attachmentFiles: [FileAttachment] {
@@ -813,20 +835,26 @@ struct CredentialDocument: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
-    func matches(_ query: String) -> Bool {
+    /// 锁定时 `includesProtected` 为 false，只匹配列表本来就显示的非敏感字段，
+    /// 避免借搜索结果反推证件号、持有人等被遮罩的内容（AUDIT-069）。
+    func matches(_ query: String, includesProtected: Bool = true) -> Bool {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return true }
-        return displayTitle.localizedCaseInsensitiveContains(term)
-            || title.localizedCaseInsensitiveContains(term)
+        if title.localizedCaseInsensitiveContains(term)
             || typeTitle.localizedCaseInsensitiveContains(term)
+            || tags.contains(where: { $0.localizedCaseInsensitiveContains(term) })
+            || fields.contains(where: {
+                $0.label.localizedCaseInsensitiveContains(term)
+                    || (!$0.isSensitive && $0.value.localizedCaseInsensitiveContains(term))
+            }) {
+            return true
+        }
+        guard includesProtected else { return false }
+        return displayTitle.localizedCaseInsensitiveContains(term)
             || holderName.localizedCaseInsensitiveContains(term)
             || documentNumber.localizedCaseInsensitiveContains(term)
             || issuingAuthority.localizedCaseInsensitiveContains(term)
-            || tags.contains { $0.localizedCaseInsensitiveContains(term) }
-            || fields.contains {
-                $0.label.localizedCaseInsensitiveContains(term)
-                    || $0.value.localizedCaseInsensitiveContains(term)
-            }
+            || fields.contains { $0.value.localizedCaseInsensitiveContains(term) }
     }
 }
 

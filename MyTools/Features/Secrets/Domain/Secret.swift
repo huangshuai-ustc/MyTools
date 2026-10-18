@@ -123,7 +123,7 @@ enum SecretFieldKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum SecretFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable {
+enum SecretFieldInputType: String, Codable, CaseIterable, Identifiable, Sendable, TemplateFieldInputKind {
     case text
     case url
     case date
@@ -187,6 +187,18 @@ struct SecretField: Identifiable, Codable, Equatable, Sendable {
                 ?? SecretFieldInputType(kind: kind),
             isSensitive: try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? kind.defaultIsSensitive
         )
+    }
+}
+
+extension SecretField: TemplateEditableField {
+    var templateLayoutKey: String { kind.rawValue }
+
+    static func newTemplateField(label: String) -> Self {
+        SecretField(label: label, kind: .text, isSensitive: true)
+    }
+
+    func templateCopy(label: String) -> Self {
+        SecretField(label: label, kind: kind, inputType: inputType, isSensitive: isSensitive)
     }
 }
 

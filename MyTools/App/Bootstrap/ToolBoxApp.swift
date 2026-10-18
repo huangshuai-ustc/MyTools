@@ -11,17 +11,48 @@ enum AppOrientationController {
         supportedOrientations = orientations
     }
 }
+
+/// App-level delegate: remote-notification registration backs CloudKit silent
+/// pushes and must not depend on which feature modules are compiled (AUDIT-034).
+final class ToolBoxAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        AppOrientationController.supportedOrientations
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.registerForRemoteNotifications()
+#if MYTOOLS_FEATURE_STOCKS
+        StockRefreshCoordinator.registerBackgroundTask()
+#endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        SportsLotteryRefreshCoordinator.registerBackgroundTask()
+#endif
+        return true
+    }
+}
 #elseif os(macOS)
 import AppKit
+
+final class ToolBoxAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.registerForRemoteNotifications()
+    }
+}
 #endif
 
 @main
 struct ToolBoxApp: App {
-#if os(iOS) && MYTOOLS_FEATURE_STOCKS
-    @UIApplicationDelegateAdaptor(StockRefreshAppDelegate.self)
+#if os(iOS)
+    @UIApplicationDelegateAdaptor(ToolBoxAppDelegate.self)
     private var appDelegate
-#elseif os(iOS) && MYTOOLS_FEATURE_SPORTS_LOTTERY
-    @UIApplicationDelegateAdaptor(SportsLotteryRefreshAppDelegate.self)
+#elseif os(macOS)
+    @NSApplicationDelegateAdaptor(ToolBoxAppDelegate.self)
     private var appDelegate
 #endif
     @StateObject private var moduleSettings: ToolModuleSettings
@@ -42,6 +73,7 @@ struct ToolBoxApp: App {
             dependencies: .live
         )
         _store = StateObject(wrappedValue: store)
+        AppAlphabeticalSort.prewarm()
 #if MYTOOLS_FEATURE_STOCKS
         StockRefreshCoordinator.shared.attach(
             store: store.stockStore,
@@ -50,6 +82,11 @@ struct ToolBoxApp: App {
         // Pre-warm the A-share holiday calendar so that trading-day queries
         // during the current session reflect the official closure/补班 schedule.
         Task { await AShareHolidayService.shared.refreshIfNeeded() }
+#endif
+#if MYTOOLS_FEATURE_SPORTS_LOTTERY
+        SportsLotteryRefreshCoordinator.shared.updateModuleVisibility(
+            moduleSettings.isVisible(.sportsLottery)
+        )
 #endif
     }
 
@@ -99,9 +136,6 @@ private struct ConfiguredRootView: View {
 #if MYTOOLS_FEATURE_FINANCE
             .environmentObject(store.financeStore)
 #endif
-#if MYTOOLS_FEATURE_FOOD_MAP
-            .environmentObject(store.foodMapStore)
-#endif
 #if MYTOOLS_FEATURE_SECRETS
             .environmentObject(store.secretStore)
 #endif
@@ -113,9 +147,6 @@ private struct ConfiguredRootView: View {
 #endif
 #if MYTOOLS_FEATURE_CURRENCY_EXCHANGE
             .environmentObject(store.currencyExchangeStore)
-#endif
-#if MYTOOLS_FEATURE_PARTNERSHIP
-            .environmentObject(store.partnershipStore)
 #endif
             .environmentObject(store.cloudSync)
             .environmentObject(auth)

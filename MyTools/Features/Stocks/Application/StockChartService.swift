@@ -112,13 +112,21 @@ actor StockChartService: StockChartServing {
     private let providers: StockChartProviders
     private var lastRefreshSessionEnd: [StockChartCacheKey: Date] = [:]
     private var cacheGeneration = 0
+    /// 单只股票被删除时递增；删除前已开始的请求据此放弃写盘（AUDIT-051）。
+    private var removalGenerations: [StockChartStoreKey: Int] = [:]
     private struct Flight {
         let id: UUID
         let task: Task<Void, Never>
         let deadline: Task<Void, Never>
         var consumers: [UUID: StockChartResultWaiter] = [:]
     }
-    private var flights: [StockChartCacheKey: Flight] = [:]
+    /// 强刷与普通请求分开共享：强刷加入普通请求会拿到缓存或 60 秒窗口内的
+    /// noData，看起来像手动刷新无效（AUDIT-055）。
+    private struct FlightKey: Hashable {
+        let cache: StockChartCacheKey
+        let forceRefresh: Bool
+    }
+    private var flights: [FlightKey: Flight] = [:]
     private var minuteWarmups: [StockChartStoreKey: (id: UUID, task: Task<Void, Never>)] = [:]
     private struct RenderedEntry {
         let day: Date
@@ -126,6 +134,10 @@ actor StockChartService: StockChartServing {
     }
     private var renderedCache: [StockChartCacheKey: RenderedEntry] = [:]
     private var lastAttempt: [StockChartCacheKey: Date] = [:]
+    /// Rendered snapshots share their history buffers with resident stores,
+    /// but keep them alive after the store is evicted. Stay close to the
+    /// store's resident capacity (two ranges per holding) instead of 128.
+    private static let renderedCacheCapacity = 96
     private static let requestTimeout: Duration = .seconds(12)
     private let flightTimeout: Duration
     private let nowProvider: @Sendable () -> Date
@@ -155,7 +167,7 @@ actor StockChartService: StockChartServing {
         guard let store = diskStore.load(for: key) else { return nil }
         if range == .fiveDays, !diskStore.hasRequestedCoverage(in: store, for: range) { return nil }
         guard let snapshot = diskStore.renderedSnapshot(from: store, range: range) else { return nil }
-        if renderedCache.count >= 128 { renderedCache.removeAll(keepingCapacity: true) }
+        if renderedCache.count >= Self.renderedCacheCapacity { renderedCache.removeAll(keepingCapacity: true) }
         renderedCache[cacheKey] = RenderedEntry(day: day, snapshot: snapshot)
         return snapshot
     }
@@ -164,9 +176,10 @@ actor StockChartService: StockChartServing {
         for stock: StockHolding, range: StockChartRange, forceRefresh: Bool = false
     ) async throws -> StockChartSnapshot {
         try Task.checkCancellation()
-        let key = StockChartCacheKey(market: stock.market,
+        let key = FlightKey(cache: StockChartCacheKey(market: stock.market,
             symbol: StockHolding.normalizedSymbol(stock.symbol, market: stock.market),
-            range: range.isKLineRange ? .dayK : range)
+            range: range.isKLineRange ? .dayK : range), forceRefresh: forceRefresh)
+        cancelMinuteWarmup(supersededBy: key)
         let consumerID = UUID()
         let waiter = StockChartResultWaiter()
         let flightID: UUID
@@ -176,7 +189,7 @@ actor StockChartService: StockChartServing {
             flightID = UUID()
             let task = Task {
                 let result: Result<StockChartSnapshot, Error>
-                do { result = .success(try await self.fetchAndCommitChart(for: stock, range: key.range, forceRefresh: forceRefresh)) }
+                do { result = .success(try await self.fetchAndCommitChart(for: stock, range: key.cache.range, forceRefresh: forceRefresh)) }
                 catch { result = .failure(error) }
                 self.finishFlight(key, id: flightID, result: result)
             }
@@ -195,11 +208,22 @@ actor StockChartService: StockChartServing {
             Task { await self.cancelConsumer(consumerID, key: key, flightID: flightID) }
         }
         try Task.checkCancellation()
-        if range != key.range, let derived = await cachedChart(for: stock, range: range) { return derived }
+        if range != key.cache.range, let derived = await cachedChart(for: stock, range: range) { return derived }
         return snapshot
     }
 
-    private func finishFlight(_ key: StockChartCacheKey, id: UUID, result: Result<StockChartSnapshot, Error>) {
+    /// A forced five-day refresh right after a forced intraday commit would
+    /// duplicate the warmup that commit spawned. The warmup is non-forced and
+    /// may be served by the cooldown, so it cannot stand in for an explicit
+    /// refresh: cancel it (its consumer cancellation also drops a flight it
+    /// already started) and let the forced request run alone.
+    private func cancelMinuteWarmup(supersededBy key: FlightKey) {
+        guard key.forceRefresh, key.cache.range == .fiveDays else { return }
+        let stockKey = StockChartStoreKey(market: key.cache.market, symbol: key.cache.symbol)
+        minuteWarmups.removeValue(forKey: stockKey)?.task.cancel()
+    }
+
+    private func finishFlight(_ key: FlightKey, id: UUID, result: Result<StockChartSnapshot, Error>) {
         guard let flight = flights[key], flight.id == id else { return }
         flights[key] = nil
         flight.deadline.cancel()
@@ -207,11 +231,11 @@ actor StockChartService: StockChartServing {
         for waiter in flight.consumers.values { waiter.finish(result) }
     }
 
-    private func cancelConsumer(_ id: UUID, key: StockChartCacheKey, flightID: UUID) {
+    private func cancelConsumer(_ id: UUID, key: FlightKey, flightID: UUID) {
         guard flights[key]?.id == flightID else { return }
         flights[key]?.consumers[id] = nil
         if flights[key]?.consumers.isEmpty == true {
-            lastAttempt[key] = nil
+            lastAttempt[key.cache] = nil
             finishFlight(key, id: flightID, result: .failure(CancellationError()))
         }
     }
@@ -232,6 +256,7 @@ actor StockChartService: StockChartServing {
         )
         let now = nowProvider()
         let generation = cacheGeneration
+        let removalGeneration = removalGenerations[stockKey, default: 0]
         let stored = diskStore.load(for: stockKey)
         let cached = stored.flatMap {
             diskStore.renderedSnapshot(from: $0, range: range)
@@ -296,7 +321,8 @@ actor StockChartService: StockChartServing {
             )
             DiagnosticLogger.shared.log(.stockQuote, "图表阶段=合并指标 id=\(stock.id) ms=\(Int(Date().timeIntervalSince(mergeStarted) * 1000))")
             try Task.checkCancellation()
-            if generation == cacheGeneration {
+            if generation == cacheGeneration,
+               removalGeneration == removalGenerations[stockKey, default: 0] {
                 let writeStarted = Date()
                 let persisted = diskStore.save(updatedStore, for: stockKey)
                 if range == .intraday,
@@ -342,13 +368,19 @@ actor StockChartService: StockChartServing {
         try Task.checkCancellation()
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { throw StockChartError.invalidSymbol }
-        let stored = diskStore.load(for: StockChartStoreKey(market: stock.market, symbol: symbol))
+        let storeKey = StockChartStoreKey(market: stock.market, symbol: symbol)
+        let removalGeneration = removalGenerations[storeKey, default: 0]
+        let stored = diskStore.load(for: storeKey)
         let ranges = Self.closingRangesNeedingRefresh(in: stored, market: stock.market, at: nowProvider())
         var firstError: Error?
         // These are the canonical source series. The presentation layer
         // recalculates every MA/BOLL/MACD/RSI from them, while the disk store
         // derives weekly/monthly/quarterly/yearly K-lines from the daily set.
         for range in ranges {
+            // 补刷途中股票被删除时，后续周期不得重新拉取并写回。
+            guard removalGeneration == removalGenerations[storeKey, default: 0] else {
+                throw CancellationError()
+            }
             do {
                 _ = try await fetchChart(
                     for: stock,
@@ -415,14 +447,35 @@ actor StockChartService: StockChartServing {
         diskStore.removeAll()
     }
 
+    /// Writes chart parts whose disk write was deferred; called before the
+    /// app is suspended so a later kill loses nothing that was on screen.
+    func flushPendingWrites() {
+        let pending = diskStore.pendingWriteCount
+        guard pending > 0 else { return }
+        let started = Date()
+        let written = diskStore.flushPendingWrites()
+        DiagnosticLogger.shared.log(.stockQuote, "离线行情后台落盘 pending=\(pending) written=\(written) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+    }
+
+    /// Drops rendered snapshots and resident chart stores after a memory
+    /// warning. Deferred writes are flushed first; everything reloads lazily.
+    func trimMemory() {
+        let rendered = renderedCache.count
+        let resident = diskStore.cachedStockCount
+        renderedCache.removeAll()
+        diskStore.trimMemory()
+        DiagnosticLogger.shared.log(.memory, "股票图表缓存已释放 rendered=\(rendered) resident=\(resident) 释放后\(DiagnosticLogger.memoryDescription())")
+    }
+
     func clearCache(for stock: StockHolding) {
         let symbol = StockHolding.normalizedSymbol(stock.symbol, market: stock.market)
         guard !symbol.isEmpty else { return }
         let key = StockChartStoreKey(market: stock.market, symbol: symbol)
+        removalGenerations[key, default: 0] += 1
         minuteWarmups.removeValue(forKey: key)?.task.cancel()
         renderedCache = renderedCache.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
         lastAttempt = lastAttempt.filter { $0.key.market != key.market || $0.key.symbol != key.symbol }
-        for flightKey in Array(flights.keys) where flightKey.market == key.market && flightKey.symbol == key.symbol {
+        for flightKey in Array(flights.keys) where flightKey.cache.market == key.market && flightKey.cache.symbol == key.symbol {
             if let flight = flights[flightKey] {
                 finishFlight(flightKey, id: flight.id, result: .failure(CancellationError()))
             }
@@ -573,7 +626,7 @@ actor StockChartService: StockChartServing {
             await remoteRequestGate.release()
             return snapshot
         } catch {
-            if !(error is CancellationError) && !Task.isCancelled {
+            if !DiagnosticLogger.isCancellation(error) && !Task.isCancelled {
                 DiagnosticLogger.shared.log(.stockQuote, "图表阶段=provider失败 symbol=\(request.symbol) range=\(request.range.rawValue) error=\(DiagnosticLogger.errorCode(error))", level: .warning)
             }
             await remoteRequestGate.release()

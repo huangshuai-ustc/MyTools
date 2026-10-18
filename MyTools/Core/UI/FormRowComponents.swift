@@ -11,6 +11,7 @@ struct AppAdaptiveRecordRow: View {
     /// Payment/account lists use a tighter row while keeping the same adaptive
     /// single-line/stacked layout as every other record row.
     var verticalPadding: CGFloat = 3
+    var allowsCopy = true
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -21,14 +22,14 @@ struct AppAdaptiveRecordRow: View {
                     .font(valueFont)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .copyableText(value.isEmpty ? nil : value)
+                    .copyableText(allowsCopy && !value.isEmpty ? value : nil)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(titleFont).foregroundStyle(.secondary)
                 Text(value)
                     .font(valueFont)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .copyableText(value.isEmpty ? nil : value)
+                    .copyableText(allowsCopy && !value.isEmpty ? value : nil)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,11 +43,13 @@ struct AppAdaptiveRecordRow: View {
 struct AppAdaptiveRecordRowWithAccessory<Accessory: View>: View {
     let title: String
     let value: String
+    var allowsCopy = true
     let accessory: () -> Accessory
 
-    init(title: String, value: String, @ViewBuilder accessory: @escaping () -> Accessory) {
+    init(title: String, value: String, allowsCopy: Bool = true, @ViewBuilder accessory: @escaping () -> Accessory) {
         self.title = title
         self.value = value
+        self.allowsCopy = allowsCopy
         self.accessory = accessory
     }
 
@@ -57,7 +60,7 @@ struct AppAdaptiveRecordRowWithAccessory<Accessory: View>: View {
                 Spacer(minLength: 8)
                 Text(value).multilineTextAlignment(.trailing)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .copyableText(value.isEmpty ? nil : value)
+                    .copyableText(allowsCopy && !value.isEmpty ? value : nil)
                 accessory()
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -68,7 +71,7 @@ struct AppAdaptiveRecordRowWithAccessory<Accessory: View>: View {
                 }
                 Text(value)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .copyableText(value.isEmpty ? nil : value)
+                    .copyableText(allowsCopy && !value.isEmpty ? value : nil)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -245,11 +248,19 @@ struct FieldEditorRow: View {
     var alignment: TextAlignment = .trailing
     var mode: IMESafeTextInputMode = .text
     var maxFieldWidth: CGFloat = 260
+    /// CVV 等敏感字段在编辑页同样遮罩输入（AUDIT-066）。
+    var isSecure = false
 
     var body: some View {
         AppLabeledContentRow(title) {
-            IMESafeTextField(prompt: prompt, text: $text, alignment: alignment, mode: mode)
-                .frame(maxWidth: maxFieldWidth)
+            Group {
+                if isSecure {
+                    SecureField(prompt, text: $text).multilineTextAlignment(alignment)
+                } else {
+                    IMESafeTextField(prompt: prompt, text: $text, alignment: alignment, mode: mode)
+                }
+            }
+            .frame(maxWidth: maxFieldWidth)
         }
     }
 }

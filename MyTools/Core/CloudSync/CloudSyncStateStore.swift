@@ -1,5 +1,6 @@
 import CloudKit
 import Compression
+import CryptoKit
 import Foundation
 import OSLog
 
@@ -21,10 +22,37 @@ struct CloudSyncStoredEntry: Codable, Sendable {
     /// the last attempt, since an unchanged digest only means "the content
     /// didn't change" — not "the previous upload succeeded".
     var needsRetry: Bool = false
+    /// Set when a fetched remote change was accepted here but could not be
+    /// applied to the local vault. Such an entry is absent from local
+    /// snapshots for a reason other than a user deletion, so reconciliation
+    /// must neither delete nor overwrite it until it applies successfully.
+    var pendingLocalApply: Bool = false
+    /// Record schema written by the sending client; nil means version 1.
+    var schemaVersion: Int64? = nil
+
+    /// Highest record schema this build can decode.
+    static let supportedSchemaVersion: Int64 = 1
+
+    /// LWW 时间：优先用实体编辑时间（不晚于现在），但不早于上次记录的时间，
+    /// 避免未更新编辑时间的改动倒退（AUDIT-086(4)）。
+    static func modifiedAt(editedAt: Date?, previous: CloudSyncStoredEntry?, now: Date) -> Date {
+        guard let editedAt else { return now }
+        let edited = min(editedAt, now)
+        guard let previous, !previous.isDeleted else { return edited }
+        return max(edited, previous.modifiedAt)
+    }
+
+    /// A record from a newer client is kept verbatim (payload plus
+    /// `pendingLocalApply`) and never re-uploaded or deleted from here, so an
+    /// older build cannot strip fields it does not know (AUDIT-030). After an
+    /// upgrade the stored payload is applied by the normal pending-apply retry.
+    var requiresNewerClient: Bool {
+        (schemaVersion ?? 1) > Self.supportedSchemaVersion
+    }
 
     private enum CodingKeys: String, CodingKey {
         case kind, id, module, digest, modifiedAt, deviceID, isDeleted, payload
-        case systemFields, needsRetry
+        case systemFields, needsRetry, pendingLocalApply, schemaVersion
     }
 
     init(
@@ -37,7 +65,9 @@ struct CloudSyncStoredEntry: Codable, Sendable {
         isDeleted: Bool,
         payload: Data? = nil,
         systemFields: Data? = nil,
-        needsRetry: Bool = false
+        needsRetry: Bool = false,
+        pendingLocalApply: Bool = false,
+        schemaVersion: Int64? = nil
     ) {
         self.kind = kind
         self.id = id
@@ -49,6 +79,8 @@ struct CloudSyncStoredEntry: Codable, Sendable {
         self.payload = payload
         self.systemFields = systemFields
         self.needsRetry = needsRetry
+        self.pendingLocalApply = pendingLocalApply
+        self.schemaVersion = schemaVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -63,6 +95,60 @@ struct CloudSyncStoredEntry: Codable, Sendable {
         payload = try container.decodeIfPresent(Data.self, forKey: .payload)
         systemFields = try container.decodeIfPresent(Data.self, forKey: .systemFields)
         needsRetry = try container.decodeIfPresent(Bool.self, forKey: .needsRetry) ?? false
+        pendingLocalApply = try container.decodeIfPresent(Bool.self, forKey: .pendingLocalApply) ?? false
+        schemaVersion = try container.decodeIfPresent(Int64.self, forKey: .schemaVersion)
+    }
+}
+
+/// Decides which CloudKit deletions a reconcile may send.
+///
+/// A record is only deleted when it was present locally before (never while a
+/// remote change is still waiting to be applied). A sudden bulk deletion that
+/// the user has not confirmed pauses all new deletions instead of propagating
+/// what may be a failed local load or merge to every other device.
+enum CloudSyncDeletionPlanner {
+    static let minimumGuardedDeletions = 20
+    static let maximumUnconfirmedFraction = 0.25
+
+    struct Plan: Equatable {
+        var keys: [String]
+        /// Number of new deletions held back by the circuit breaker; zero when not paused.
+        var pausedCount: Int
+    }
+
+    static func plan(
+        entries: [String: CloudSyncStoredEntry],
+        currentKeys: Set<String>,
+        authorizedModules: Set<ToolModule>,
+        allowsBulkDeletion: Bool,
+        isActive: (String, CloudSyncStoredEntry) -> Bool
+    ) -> Plan {
+        let candidates = entries.filter { key, entry in
+            isActive(key, entry)
+                && !entry.pendingLocalApply
+                && (!entry.isDeleted || entry.systemFields != nil)
+                && !currentKeys.contains(key)
+        }
+        // Deletions already committed locally, attachments (owned by records)
+        // and modules the user explicitly cleared never need confirmation.
+        let unconfirmed = Set(candidates.filter { _, entry in
+            guard !entry.isDeleted, entry.kind != .attachment else { return false }
+            guard let module = entry.module ?? entry.kind.module else { return true }
+            return !authorizedModules.contains(module)
+        }.keys)
+        let liveRecords = entries.filter { key, entry in
+            !entry.isDeleted && entry.kind != .attachment && isActive(key, entry)
+        }.count
+        let tripped = !allowsBulkDeletion
+            && unconfirmed.count >= minimumGuardedDeletions
+            && Double(unconfirmed.count) > maximumUnconfirmedFraction * Double(liveRecords)
+        guard tripped else {
+            return Plan(keys: candidates.keys.sorted(), pausedCount: 0)
+        }
+        return Plan(
+            keys: candidates.keys.filter { !unconfirmed.contains($0) }.sorted(),
+            pausedCount: unconfirmed.count
+        )
     }
 }
 
@@ -106,6 +192,45 @@ struct CloudSyncStoredDocument: Codable, Sendable {
         reconciliationVersion = Self.currentReconciliationVersion
     }
 
+    /// Rebuilds entries after the server zone was deleted (AUDIT-029).
+    ///
+    /// Uploaded entries drop their payload to save space, so re-queuing the
+    /// cached keys alone would send nothing for them. Every local item gets
+    /// its full payload back; cached payloads (inactive modules, remote changes
+    /// still waiting to apply) are re-sent as they are. Records from a newer
+    /// client are left for that client to restore.
+    ///
+    /// - Returns: The keys to save into the recreated zone.
+    mutating func prepareForRecreatedZone(localItems: [CloudSyncItem], now: Date) -> [String] {
+        var rebuilt = Set<String>()
+        for item in localItems {
+            let previous = entries[item.key]
+            if previous?.pendingLocalApply == true || previous?.requiresNewerClient == true { continue }
+            let digest = Data(SHA256.hash(data: item.payload))
+            let unchanged = previous.map { !$0.isDeleted && $0.digest == digest } ?? false
+            entries[item.key] = CloudSyncStoredEntry(
+                kind: item.kind,
+                id: item.id,
+                module: item.module ?? previous?.module,
+                digest: digest,
+                modifiedAt: unchanged ? previous?.modifiedAt ?? now : now,
+                deviceID: unchanged ? previous?.deviceID ?? deviceID : deviceID,
+                isDeleted: false,
+                payload: item.payload
+            )
+            rebuilt.insert(item.key)
+        }
+        var keys = rebuilt
+        for (key, entry) in entries where !rebuilt.contains(key) {
+            // The zone is gone, so old change tags would only cause conflicts.
+            entries[key]?.systemFields = nil
+            if !entry.isDeleted, entry.payload != nil, !entry.requiresNewerClient {
+                keys.insert(key)
+            }
+        }
+        return keys.sorted()
+    }
+
     /// CloudKit system fields are only needed while a record is being retried.
     /// Stable record IDs and the explicit payload fields are enough to rebuild
     /// a record after a successful send, so retaining them for every entity
@@ -138,7 +263,14 @@ final class CloudSyncStateStore: @unchecked Sendable {
             .appendingPathComponent("cloud-sync-state.json", isDirectory: false)
     }
 
-    func load() -> CloudSyncStoredDocument {
+    enum LoadError: Error {
+        case undecodable
+    }
+
+    /// Only a missing file starts from an empty document. A file that exists but
+    /// cannot be read throws: an empty document would forget local deletions and
+    /// let them come back from iCloud (AUDIT-086(1)).
+    func load() throws -> CloudSyncStoredDocument {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return CloudSyncStoredDocument()
         }
@@ -146,7 +278,7 @@ final class CloudSyncStateStore: @unchecked Sendable {
             let storedData = try Data(contentsOf: fileURL)
             guard let data = CloudSyncStateFileCodec.decode(storedData) else {
                 cloudSyncLogger.error("Unable to decompress cloud sync state")
-                return CloudSyncStoredDocument()
+                throw LoadError.undecodable
             }
             return try JSONDecoder().decode(
                 CloudSyncStoredDocument.self,
@@ -156,7 +288,7 @@ final class CloudSyncStateStore: @unchecked Sendable {
             cloudSyncLogger.error(
                 "Unable to decode cloud sync state: \(DiagnosticLogger.errorCode(error), privacy: .public)"
             )
-            return CloudSyncStoredDocument()
+            throw error
         }
     }
 

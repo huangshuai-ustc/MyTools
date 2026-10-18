@@ -22,11 +22,7 @@ struct ModuleAttachmentReferenceIndex {
             return []
 #endif
         case .foodMap:
-#if MYTOOLS_FEATURE_FOOD_MAP
-            return vault.foodPlaces.flatMap(\.photos)
-#else
             return []
-#endif
         case .secrets:
 #if MYTOOLS_FEATURE_SECRETS
             return secrets.flatMap(\.attachments)

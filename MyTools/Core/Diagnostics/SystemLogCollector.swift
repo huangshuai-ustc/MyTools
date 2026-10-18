@@ -19,7 +19,9 @@ final class SystemLogCollector: @unchecked Sendable {
     /// 不跟卡顿探测抢 CPU。
     private static let interval: TimeInterval = 30
     /// 单次抄写条数上限。CloudKit 同步一轮能刷几百条，设上限免得一次把整段历史读进内存。
-    private static let maxEntriesPerDrain = 4_000
+    private static let maxEntriesPerDrain = 2_500
+    /// 每攒这么多行就写盘并释放一次，内存里不再同时持有整轮条目（诊断 5）。
+    private static let linesPerChunk = 250
     private static let maxFileBytes = 4 * 1024 * 1024
     /// 单条消息长度上限。统一日志里偶尔有几十 KB 的巨型消息，留个头部足够定位。
     private static let maxMessageLength = 600
@@ -100,25 +102,43 @@ final class SystemLogCollector: @unchecked Sendable {
         guard let store = ensureStore() else { return }
         pruneIfNeeded(now: Date())
 
+        let started = Date()
+        let memoryBefore = DiagnosticLogger.memoryFootprintBytes()
         let since = lastEntryDate ?? Date(timeIntervalSinceNow: -Self.initialLookback)
         var lines: [String] = []
+        lines.reserveCapacity(Self.linesPerChunk)
         var newestDate = lastEntryDate
+        var drainedCount = 0
         var isTruncated = false
 
         do {
             let entries = try store.getEntries(at: store.position(date: since))
-            for entry in entries {
-                guard let log = entry as? OSLogEntryLog else { continue }
-                // 严格大于：`position(date:)` 会把游标那一刻的条目再给一遍。同一纳秒
-                // 撞上多条的概率极低，换来的是绝不重复抄写。
-                if let lastEntryDate, log.date <= lastEntryDate { continue }
-                guard shouldInclude(log) else { continue }
-                if lines.count >= Self.maxEntriesPerDrain {
-                    isTruncated = true
-                    break
+            var iterator = entries.makeIterator()
+            while true {
+                // `OSLogEntry` 是 Objective-C 对象，逐块排空自动释放池，避免整轮条目一起常驻。
+                let reachedEnd: Bool = autoreleasepool {
+                    while lines.count < Self.linesPerChunk {
+                        guard let entry = iterator.next() else { return true }
+                        guard let log = entry as? OSLogEntryLog else { continue }
+                        // 严格大于：`position(date:)` 会把游标那一刻的条目再给一遍。同一纳秒
+                        // 撞上多条的概率极低，换来的是绝不重复抄写。
+                        if let lastEntryDate, log.date <= lastEntryDate { continue }
+                        guard shouldInclude(log) else { continue }
+                        if drainedCount + lines.count >= Self.maxEntriesPerDrain {
+                            isTruncated = true
+                            return true
+                        }
+                        lines.append(line(for: log))
+                        if newestDate == nil || log.date > newestDate! { newestDate = log.date }
+                    }
+                    return false
                 }
-                lines.append(line(for: log))
-                if newestDate == nil || log.date > newestDate! { newestDate = log.date }
+                if !lines.isEmpty {
+                    append(lines)
+                    drainedCount += lines.count
+                    lines.removeAll(keepingCapacity: true)
+                }
+                if reachedEnd { break }
             }
         } catch {
             reportStoreFailure(error)
@@ -127,15 +147,29 @@ final class SystemLogCollector: @unchecked Sendable {
 
         lastEntryDate = newestDate
         lastDrainedAt = Date()
-        guard !lines.isEmpty else { return }
-        totalEntryCount += lines.count
-        append(lines)
+        guard drainedCount > 0 else { return }
+        totalEntryCount += drainedCount
+        trimFileIfNeeded()
 
-        if isTruncated {
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        if isTruncated || drainedCount >= 1_000 || elapsedMs >= 500 {
+            var delta = "未知"
+            if let memoryBefore, let memoryAfter = DiagnosticLogger.memoryFootprintBytes() {
+                delta = String(
+                    format: "%+.1fMB",
+                    (Double(memoryAfter) - Double(memoryBefore)) / 1_048_576
+                )
+            }
             DiagnosticLogger.shared.log(
                 .systemLog,
-                "单次抄写达到上限 \(Self.maxEntriesPerDrain) 条，本轮其余条目已跳过",
-                level: .warning
+                "系统日志抄写 条数=\(drainedCount) ms=\(elapsedMs) 内存变化=\(delta) \(DiagnosticLogger.memoryDescription())"
+            )
+        }
+        if isTruncated {
+            // 前台久未抄写（挂起、调试暂停）后的预期内情况，不算异常。
+            DiagnosticLogger.shared.log(
+                .systemLog,
+                "单次抄写达到上限 \(Self.maxEntriesPerDrain) 条，本轮其余条目已跳过"
             )
         }
     }
@@ -192,7 +226,6 @@ final class SystemLogCollector: @unchecked Sendable {
             try handle.seekToEnd()
             try handle.write(contentsOf: Data((lines.joined(separator: "\n") + "\n").utf8))
             try handle.synchronize()
-            trimFileIfNeeded()
         } catch {
             DiagnosticLogger.logError(.systemLog, operation: "写入系统日志抄本", error: error)
         }

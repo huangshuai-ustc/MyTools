@@ -23,3 +23,13 @@ final class AuthManager: ObservableObject {
         }
     }
 }
+
+/// Editors show sensitive values in plain text, so opening one while the
+/// content is locked must verify the owner first (AUDIT-007).
+enum SensitiveEditAccess {
+    @MainActor
+    static func isGranted(isUnlocked: Bool, verify: () async -> Bool) async -> Bool {
+        if isUnlocked { return true }
+        return await verify()
+    }
+}

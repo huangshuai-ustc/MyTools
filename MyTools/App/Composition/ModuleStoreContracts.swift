@@ -77,8 +77,16 @@ struct RedundantDataFinding: Identifiable, Equatable, Sendable {
     let detail: String
     let affectedRecordCount: Int
     let affectedFieldCount: Int
+    /// Per-record breakdown shown in Settings so the user can see exactly what will be cleared.
+    var items: [RedundantDataItem] = []
 
     var id: String { "\(module.rawValue).\(ruleID)" }
+}
+
+struct RedundantDataItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let recordTitle: String
+    let fieldNames: [String]
 }
 
 struct RedundantDataCleanupReport: Equatable, Sendable {
@@ -111,7 +119,8 @@ extension ModuleDataCleanupParticipant {
         title: String,
         detail: String,
         recordCount: Int,
-        fieldCount: Int
+        fieldCount: Int,
+        items: [RedundantDataItem] = []
     ) {
         guard fieldCount > 0 else { return }
         findings.append(RedundantDataFinding(
@@ -120,8 +129,28 @@ extension ModuleDataCleanupParticipant {
             title: title,
             detail: detail,
             affectedRecordCount: recordCount,
-            affectedFieldCount: fieldCount
+            affectedFieldCount: fieldCount,
+            items: items
         ))
+    }
+
+    /// Builds a finding whose counts are derived from its itemized records.
+    func appendFinding(
+        to findings: inout [RedundantDataFinding],
+        ruleID: String,
+        title: String,
+        detail: String,
+        items: [RedundantDataItem]
+    ) {
+        appendFinding(
+            to: &findings,
+            ruleID: ruleID,
+            title: title,
+            detail: detail,
+            recordCount: items.count,
+            fieldCount: items.reduce(0) { $0 + $1.fieldNames.count },
+            items: items
+        )
     }
 }
 
@@ -149,5 +178,116 @@ final class ModuleDataCleanupRegistry {
             participant.cleanupRedundantData()
         }
         return report
+    }
+}
+
+// MARK: - Legacy data from removed modules
+
+/// One stored record (or tag list / unknown field) left behind by a removed feature.
+struct LegacyDataItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let attachmentStoredFileNames: [String]
+}
+
+struct LegacyDataFinding: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let detail: String
+    let items: [LegacyDataItem]
+}
+
+struct LegacyDataReport: Equatable, Sendable {
+    let findings: [LegacyDataFinding]
+
+    static let empty = LegacyDataReport(findings: [])
+
+    var isEmpty: Bool { findings.isEmpty }
+    var itemCount: Int { findings.reduce(0) { $0 + $1.items.count } }
+    var attachmentStoredFileNames: [String] {
+        Set(findings.flatMap { $0.items.flatMap(\.attachmentStoredFileNames) }).sorted()
+    }
+}
+
+/// Finds and removes Vault payloads that no compiled feature can read: the
+/// deleted Food Map / Partnership modules and top-level keys unknown to this
+/// schema. Bills and Sports Lottery are only switched off at build time, so
+/// their data is intentionally left alone.
+enum LegacyVaultData {
+    private static let removedModules: [(module: ToolModule, keys: [String])] = [
+        (.foodMap, ["foodPlaces", "foodPlaceTags"]),
+        (.partnership, ["partnershipBooks"])
+    ]
+
+    static func scan(_ vault: VaultData) -> LegacyDataReport {
+        var findings: [LegacyDataFinding] = []
+        let foodItems = records(vault.foodPlaces, preserved: vault.preservedModulePayloads["foodPlaces"], prefix: "foodPlace", titleKeys: ["shopName", "recommendedFood"], fallback: "未命名店铺")
+            + tagItem(vault.foodPlaceTags, preserved: vault.preservedModulePayloads["foodPlaceTags"], id: "foodPlaceTags")
+        if !foodItems.isEmpty {
+            findings.append(LegacyDataFinding(id: ToolModule.foodMap.rawValue, title: "美食地图（已删除）", detail: "店铺记录、标签和店铺照片。", items: foodItems))
+        }
+        let partnershipItems = records(vault.partnershipBooks, preserved: vault.preservedModulePayloads["partnershipBooks"], prefix: "partnershipBook", titleKeys: ["name"], fallback: "未命名账本")
+        if !partnershipItems.isEmpty {
+            findings.append(LegacyDataFinding(id: ToolModule.partnership.rawValue, title: "合伙记账（已删除）", detail: "账本、成员和记账流水。", items: partnershipItems))
+        }
+        // Keys that also back a quarantined module stay put: they are that module's recovery copy.
+        let unknownItems = unknownKeys(in: vault).map { key in
+            LegacyDataItem(id: "unknown.\(key)", title: key, attachmentStoredFileNames: vault.unknownPayloads[key]?.attachmentStoredFileNames.sorted() ?? [])
+        }
+        if !unknownItems.isEmpty {
+            findings.append(LegacyDataFinding(id: "unknownPayloads", title: "未使用的顶层字段", detail: "当前版本不再读取的档案字段，通常来自旧版本。", items: unknownItems))
+        }
+        return LegacyDataReport(findings: findings)
+    }
+
+    static func removing(from vault: VaultData) -> VaultData {
+        var value = vault
+        value.foodPlaces = []
+        value.foodPlaceTags = []
+        value.partnershipBooks = []
+        for entry in removedModules {
+            value.unavailableModules.remove(entry.module.rawValue)
+            for key in entry.keys { value.preservedModulePayloads.removeValue(forKey: key) }
+        }
+        for key in unknownKeys(in: vault) { value.unknownPayloads.removeValue(forKey: key) }
+        return value
+    }
+
+    private static func unknownKeys(in vault: VaultData) -> [String] {
+        vault.unknownPayloads.keys.filter { vault.preservedModulePayloads[$0] == nil }.sorted()
+    }
+
+    private static func records(
+        _ typed: [OpaqueModuleValue],
+        preserved: OpaqueModuleValue?,
+        prefix: String,
+        titleKeys: [String],
+        fallback: String
+    ) -> [LegacyDataItem] {
+        var values = typed
+        if case .array(let raw)? = preserved { values += raw } else if let preserved { values.append(preserved) }
+        return values.enumerated().map { index, value in
+            let title = titleKeys.lazy.compactMap { string(value, $0) }.first ?? fallback
+            return LegacyDataItem(
+                id: "\(prefix).\(string(value, "id") ?? String(index))",
+                title: title,
+                attachmentStoredFileNames: value.attachmentStoredFileNames.sorted()
+            )
+        }
+    }
+
+    private static func tagItem(_ tags: [String], preserved: OpaqueModuleValue?, id: String) -> [LegacyDataItem] {
+        var values = tags
+        if case .array(let raw)? = preserved {
+            values += raw.compactMap { if case .string(let tag) = $0 { tag } else { nil } }
+        }
+        guard !values.isEmpty else { return [] }
+        return [LegacyDataItem(id: id, title: "标签：\(values.joined(separator: "、"))", attachmentStoredFileNames: [])]
+    }
+
+    private static func string(_ value: OpaqueModuleValue, _ key: String) -> String? {
+        guard case .object(let object) = value, case .string(let text)? = object[key] else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

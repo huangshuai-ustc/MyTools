@@ -12,6 +12,13 @@ struct MedicalRecordEditingTests {
         #expect(String(rendered.characters) == "体重指数：24.9kg/m²\n第二项\n第三项")
     }
 
+    @Test func markdownRendererKeepsPriceDollarsAndMultiCharacterExponents() {
+        let prices = MarkdownRenderer.attributedString(from: "$5 和 $10")
+        #expect(String(prices.characters) == "$5 和 $10")
+        let exponent = MarkdownRenderer.attributedString(from: "密度 $3kg·m^-2$，$10^12$")
+        #expect(String(exponent.characters) == "密度 3kg·m⁻²，10¹²")
+    }
+
     @Test func validatorNormalizesFieldsTagsAndMixedCosts() throws {
         var record = MedicalRecord()
         record.hospital = "  示例医院  "

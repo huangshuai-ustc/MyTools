@@ -17,7 +17,9 @@ final class AppHangMonitor: @unchecked Sendable {
 
     /// 分档上报，每档只报一次，避免一次长停顿刷出几十行。看门狗的额度是 10 秒，
     /// 所以 8 秒那一档基本就是「即将被杀」的最后一条记录，必须落盘。
-    private static let thresholds: [TimeInterval] = [1.5, 4, 8]
+    /// 0.5 秒一档对齐系统 hangtracer 的上报线：此前 0.5~0.6s 的卡顿只出现在系统日志里，
+    /// 自己的日志没有页面信息，无从定位。
+    private static let thresholds: [TimeInterval] = [0.5, 1.5, 4, 8]
     private static let tick: TimeInterval = 0.25
     /// 超过这个时长就不当停顿看：真实成因几乎一定是进程被挂起（断点、系统挂起、
     /// 时钟跳变），报出来只会污染日志。
@@ -138,9 +140,9 @@ final class AppHangMonitor: @unchecked Sendable {
         let threshold = Self.thresholds[reachedIndex]
         lock.unlock()
 
-        // 第一档只是可感知的掉帧，记 WARN；再往上就是随时会被看门狗杀掉的量级，
+        // 4 秒以下只是可感知的掉帧，记 WARN；再往上就是随时会被看门狗杀掉的量级，
         // 记 ERROR 让它立刻 fsync。
-        let level: DiagnosticLogLevel = reachedIndex == 0 ? .warning : .error
+        let level: DiagnosticLogLevel = threshold < 4 ? .warning : .error
         DiagnosticLogger.shared.log(
             .hang,
             String(

@@ -753,11 +753,11 @@ struct MedicalRecordEditorView: View {
     }
 
     private var linkedFollowUpCostSummary: MedicalCostSummary {
-        linkedFollowUps.reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+        linkedFollowUps.costSummary
     }
 
     private var linkedPharmacyPurchaseCostSummary: MedicalCostSummary {
-        linkedPharmacyPurchases.reduce(MedicalCostSummary()) { $0 + $1.costSummary }
+        linkedPharmacyPurchases.costSummary
     }
 
     private var currentItemsTotal: Decimal {

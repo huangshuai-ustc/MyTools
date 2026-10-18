@@ -55,11 +55,6 @@ struct ProfileSettingsView: View {
 
             Section("其他") {
                 NavigationLink {
-                    OCRTestView()
-                } label: {
-                    Label("文字识别测试", systemImage: "text.viewfinder")
-                }
-                NavigationLink {
                     HomeFeatureSettingsView()
                 } label: {
                     Label("首页功能", systemImage: "switch.2")
@@ -127,7 +122,7 @@ struct ProfileSettingsView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("导入会替换当前全部银行、股票、换汇、健康档案和保密资料数据。")
+            Text("备份中包含的模块会被备份内容整体替换，这些模块在备份之后新增或修改的本机记录会被移除；备份未包含的模块保持不变。导入前会在本机保留一份原档案的加密副本。")
         }
         .fileExporter(
             isPresented: $showingExporter,

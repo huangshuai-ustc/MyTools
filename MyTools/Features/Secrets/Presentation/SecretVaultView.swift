@@ -27,60 +27,6 @@ private enum SecretCategoryFilter: Hashable, Identifiable {
     }
 }
 
-private enum SecretSortOrder: String {
-    case nameAscending
-    case nameDescending
-
-    var direction: SortDirection {
-        switch self {
-        case .nameAscending: return .ascending
-        case .nameDescending: return .descending
-        }
-    }
-
-    func sorted(_ items: [SecretItem]) -> [SecretItem] {
-        items.sorted { lhs, rhs in
-            let comparison = displayName(lhs).localizedStandardCompare(displayName(rhs))
-            if comparison == .orderedSame {
-                return direction == .ascending
-                    ? lhs.id.uuidString < rhs.id.uuidString
-                    : lhs.id.uuidString > rhs.id.uuidString
-            }
-            return direction == .ascending
-                ? comparison == .orderedAscending
-                : comparison == .orderedDescending
-        }
-    }
-
-    private func displayName(_ item: SecretItem) -> String {
-        item.title.isEmpty ? "未命名条目" : item.title
-    }
-}
-
-private struct SecretSortMenu: View {
-    @Binding var selection: String
-
-    private var selectedOrder: SecretSortOrder {
-        SecretSortOrder(rawValue: selection) ?? .nameAscending
-    }
-
-    var body: some View {
-        Menu {
-            Button {
-                selection = selectedOrder == .nameAscending
-                    ? SecretSortOrder.nameDescending.rawValue
-                    : SecretSortOrder.nameAscending.rawValue
-            } label: {
-                Text("名称  \(selectedOrder.direction.indicator)")
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .accessibilityLabel("保密资料排序：名称，\(selectedOrder.direction.title)")
-        .help("保密资料排序：名称，\(selectedOrder.direction.title)")
-    }
-}
-
 private final class SecretEditorDraft: ObservableObject {
     @Published var item: SecretItem
 
@@ -93,7 +39,6 @@ struct SecretVaultView: View {
     private static let pageSize = 30
     @EnvironmentObject private var store: SecretStore
     @EnvironmentObject private var auth: AuthManager
-    @EnvironmentObject private var preferenceChangeBus: AppPreferenceChangeBus
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.appFontScale) private var fontScale
     @State private var query = ""
@@ -101,17 +46,12 @@ struct SecretVaultView: View {
     @State private var selectedTag = ""
     @State private var isUnlocked = false
     @State private var editingItem: SecretItem?
+    @State private var deletingItemID: UUID?
     @State private var isCreating = false
     @State private var showingPasswordImportPage = false
     @State private var importResult: String?
     @State private var showingImportResult = false
     @State private var pagination = AppListPagination(pageSize: SecretVaultView.pageSize)
-    @AppStorage(AppStorageKey.secretSortOrder) private var sortOrderRawValue = SecretSortOrder.nameAscending.rawValue
-
-    private var selectedSortOrder: SecretSortOrder {
-        SecretSortOrder(rawValue: sortOrderRawValue) ?? .nameAscending
-    }
-
     private var canAccess: Bool {
         isUnlocked
     }
@@ -125,14 +65,18 @@ struct SecretVaultView: View {
                 term.isEmpty
                     || item.title.localizedCaseInsensitiveContains(term)
                     || item.category.title.localizedCaseInsensitiveContains(term)
-                    || item.tags.localizedCaseInsensitiveContains(term)
+                    // 标签在详情页锁定时遮罩，列表搜索同样只在解锁后匹配（AUDIT-069）。
+                    || (canAccess && item.tags.localizedCaseInsensitiveContains(term))
                     || item.fields.contains { $0.label.localizedCaseInsensitiveContains(term) }
             }
-        return selectedSortOrder.sorted(filteredItems)
-    }
-
-    private var pagedItems: [SecretItem] {
-        pagination.visibleItems(from: visibleItems)
+        return filteredItems.sorted { lhs, rhs in
+            AppAlphabeticalSort.isOrderedBefore(
+                lhs.title.isEmpty ? "未命名条目" : lhs.title,
+                rhs.title.isEmpty ? "未命名条目" : rhs.title,
+                lhsTieBreaker: lhs.id.uuidString,
+                rhsTieBreaker: rhs.id.uuidString
+            )
+        }
     }
 
     private var availableTags: [String] {
@@ -140,6 +84,9 @@ struct SecretVaultView: View {
     }
 
     var body: some View {
+        // 过滤+排序每次渲染只算一遍，空态、分页和触底加载共用这一份结果。
+        let items = visibleItems
+        let pagedItems = pagination.visibleItems(from: items)
         List {
             Section {
                 PickerFieldRow(title: "分类", selection: $categoryFilter) {
@@ -148,13 +95,13 @@ struct SecretVaultView: View {
                         Text(category.title).tag(SecretCategoryFilter.category(category))
                     }
                 }
-                if !availableTags.isEmpty {
+                if canAccess, !availableTags.isEmpty {
                     AppTagFilterCapsules(tags: availableTags, selectedTag: $selectedTag)
                 }
             }
 
             Section("保密条目") {
-                if visibleItems.isEmpty {
+                if items.isEmpty {
                     ContentUnavailableView(
                         store.secretItems.isEmpty ? "暂无保密资料" : "没有匹配的条目",
                         systemImage: store.secretItems.isEmpty ? "lock.shield" : "magnifyingglass"
@@ -168,17 +115,31 @@ struct SecretVaultView: View {
                     }
                     .appListRowStyle()
                     .appDeleteSwipeAction(isEnabled: true) {
-                        store.deleteSecrets(ids: [item.id])
+                        deletingItemID = item.id
                     }
-                    .onAppear { loadMoreIfNeeded(item) }
+                    .onAppear {
+                        pagination.loadMoreIfNeeded(
+                            currentItemID: item.id,
+                            lastVisibleItemID: pagedItems.last?.id,
+                            totalItemCount: items.count
+                        )
+                    }
                 }
             }
         }
         .appNavigationTitle(ToolModule.secrets.title)
         .diagnosticScreen("保密资料")
-        .onChange(of: sortOrderRawValue) { _, _ in
-            preferenceChangeBus.notifyChanged()
-            pagination.reset()
+        .alert(
+            "删除保密条目？",
+            isPresented: Binding(get: { deletingItemID != nil }, set: { if !$0 { deletingItemID = nil } })
+        ) {
+            Button("取消", role: .cancel) { deletingItemID = nil }
+            Button("删除", role: .destructive) {
+                if let deletingItemID { store.deleteSecrets(ids: [deletingItemID]) }
+                deletingItemID = nil
+            }
+        } message: {
+            Text("将同时删除该条目的附件，无法撤销。")
         }
         .iOSLabeledBackButton("工具")
 #if os(iOS)
@@ -188,7 +149,6 @@ struct SecretVaultView: View {
 #endif
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                SecretSortMenu(selection: $sortOrderRawValue)
                 if !canAccess {
                     Button {
                         Task { if await auth.verifyWithBiometrics() { isUnlocked = true } }
@@ -243,6 +203,7 @@ struct SecretVaultView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 isUnlocked = false
+                selectedTag = ""
             }
         }
         .onChange(of: editingItem) { _, item in
@@ -256,14 +217,6 @@ struct SecretVaultView: View {
         .onChange(of: query) { _, _ in pagination.reset() }
         .onChange(of: categoryFilter) { _, _ in pagination.reset() }
         .onChange(of: selectedTag) { _, _ in pagination.reset() }
-    }
-
-    private func loadMoreIfNeeded(_ item: SecretItem) {
-        pagination.loadMoreIfNeeded(
-            currentItemID: item.id,
-            lastVisibleItemID: pagedItems.last?.id,
-            totalItemCount: visibleItems.count
-        )
     }
 
 }
@@ -402,153 +355,6 @@ private struct SecretPasswordImportView: View {
     }
 }
 
-private struct SecretFieldTemplateEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.appFontScale) private var fontScale
-    let category: SecretCategory
-    @State private var fields: [SecretField]
-    @State private var showingNewField = false
-    @State private var newFieldName = ""
-    @State private var draggedFieldID: UUID?
-    @State private var editingFieldID: UUID?
-    @State private var fieldNameDraft = ""
-    let onSave: (SecretFieldTemplate) -> Void
-
-    init(category: SecretCategory, template: SecretFieldTemplate, onSave: @escaping (SecretFieldTemplate) -> Void) {
-        self.category = category
-        _fields = State(initialValue: template.fields)
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach($fields) { field in
-                        HStack(spacing: 12) {
-                            TextField("字段名称", text: field.label)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Picker("字段类型", selection: field.inputType) {
-                                ForEach(SecretFieldInputType.allCases) { inputType in
-                                    Text(inputType.title).tag(inputType)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .foregroundStyle(.secondary)
-                            .tint(.blue)
-                            .labelsHidden()
-                            .fixedSize()
-                            .frame(height: AppListMetrics.minimumRowHeight(fontScale: fontScale))
-                        }
-                        .frame(minHeight: AppListMetrics.minimumRowHeight(fontScale: fontScale), alignment: .center)
-                        .appListRowStyle()
-                        .onDrag {
-                            draggedFieldID = field.wrappedValue.id
-                            return NSItemProvider(object: NSString(string: field.wrappedValue.id.uuidString))
-                        }
-                        .onDrop(
-                            of: [.text],
-                            delegate: TemplateFieldDropDelegate(
-                                targetID: field.wrappedValue.id,
-                                draggedID: $draggedFieldID,
-                                move: moveField
-                            )
-                        )
-                        .appTemplateFieldSwipeActions(
-                            isSensitive: field.wrappedValue.isSensitive
-                        ) {
-                            field.wrappedValue.isSensitive.toggle()
-                        } onRename: {
-                            editingFieldID = field.wrappedValue.id
-                            fieldNameDraft = field.wrappedValue.label
-                        }
-                        .appDeleteSwipeAction {
-                            fields.removeAll { $0.id == field.wrappedValue.id }
-                        }
-                    }
-                    Button {
-                        newFieldName = ""
-                        showingNewField = true
-                    } label: {
-                        Label("添加模板字段", systemImage: "plus.circle")
-                    }
-                } header: {
-                    Text("字段模板 · \(category.title)")
-                } footer: {
-                    Text("模板只保存字段定义；右滑可显示/隐藏内容或编辑名称，左滑可删除，长按可拖动调整顺序；新建条目时会生成空白字段。")
-                }
-            }
-            .appNavigationTitle("字段模板")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        let cleaned = fields.filter {
-                            !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        }.map {
-                            SecretField(
-                                label: $0.label.trimmingCharacters(in: .whitespacesAndNewlines),
-                                kind: $0.kind,
-                                inputType: $0.inputType,
-                                isSensitive: $0.isSensitive
-                            )
-                        }
-                        onSave(SecretFieldTemplate(category: category, fields: cleaned))
-                        dismiss()
-                    }
-                    .disabled(fields.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-                }
-            }
-            .alert("添加模板字段", isPresented: $showingNewField) {
-                TextField("字段名称", text: $newFieldName)
-                Button("取消", role: .cancel) {}
-                Button("添加") {
-                    let label = newFieldName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !label.isEmpty else { return }
-                    fields.append(SecretField(label: label, kind: .text, isSensitive: true))
-                }
-            }
-            .alert(
-                "编辑字段名称",
-                isPresented: Binding(
-                    get: { editingFieldID != nil },
-                    set: { if !$0 { editingFieldID = nil } }
-                )
-            ) {
-                TextField("字段名称", text: $fieldNameDraft)
-                Button("取消", role: .cancel) { editingFieldID = nil }
-                Button("保存") { saveFieldName() }
-            } message: {
-                Text("请输入字段的显示名称。")
-            }
-        }
-    }
-
-    private func moveField(_ draggedID: UUID, before targetID: UUID) {
-        guard draggedID != targetID,
-              let sourceIndex = fields.firstIndex(where: { $0.id == draggedID }),
-              let targetIndex = fields.firstIndex(where: { $0.id == targetID }) else {
-            return
-        }
-        let movedField = fields.remove(at: sourceIndex)
-        let insertionIndex = fields.firstIndex(where: { $0.id == targetID }) ?? targetIndex
-        fields.insert(movedField, at: insertionIndex)
-    }
-
-    private func saveFieldName() {
-        guard let editingFieldID else { return }
-        let label = fieldNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty,
-              let index = fields.firstIndex(where: { $0.id == editingFieldID }) else {
-            return
-        }
-        fields[index].label = label
-        self.editingFieldID = nil
-    }
-}
-
 private struct SecretAttachmentRow: View {
     let attachment: FileAttachment
     let showsDisclosure: Bool
@@ -682,7 +488,14 @@ struct SecretDetailView: View {
                             .accessibilityLabel("验证身份后查看保密内容")
                         }
                         Button {
-                            editingItem = item
+                            Task {
+                                guard await SensitiveEditAccess.isGranted(
+                                    isUnlocked: isUnlocked,
+                                    verify: { await auth.verifyWithBiometrics(reason: "验证本人身份后编辑保密资料") }
+                                ) else { return }
+                                isUnlocked = true
+                                editingItem = item
+                            }
                         } label: {
                             Image(systemName: "square.and.pencil")
                         }
@@ -918,10 +731,12 @@ struct SecretEditorView: View {
                 Text("请输入新字段的显示名称。")
             }
             .sheet(isPresented: $showingTemplateEditor) {
-                SecretFieldTemplateEditorView(
-                    category: draft.item.category,
-                    template: store.fieldTemplate(for: draft.item.category)
-                ) { template in
+                FieldTemplateEditorView(
+                    title: draft.item.category.title,
+                    recordNoun: "条目",
+                    fields: store.fieldTemplate(for: draft.item.category).fields
+                ) { fields in
+                    let template = SecretFieldTemplate(category: draft.item.category, fields: fields)
                     let previousTemplate = store.fieldTemplate(for: draft.item.category)
                     let shouldRefreshDraft = isNew
                         && fieldsMatchTemplate(draft.item.fields, template: previousTemplate)
@@ -1066,30 +881,14 @@ struct SecretEditorView: View {
     }
 
     private func fieldsMatchTemplate(_ fields: [SecretField], template: SecretFieldTemplate) -> Bool {
-        let normalizedFields = fields
-            .filter { $0.value.isEmpty }
-            .map { "\($0.label)|\($0.kind.rawValue)|\($0.inputType.rawValue)|\($0.isSensitive)" }
-            .sorted()
-        let normalizedTemplate = template.fields
-            .map { "\($0.label)|\($0.kind.rawValue)|\($0.inputType.rawValue)|\($0.isSensitive)" }
-            .sorted()
-        return fields.count == template.fields.count && normalizedFields == normalizedTemplate
+        FieldTemplateMatching.fieldsMatchTemplate(fields, templateFields: template.fields)
     }
 
     private func applyTemplateSensitivity(
         to fields: [SecretField],
         matching template: SecretFieldTemplate
     ) -> [SecretField] {
-        fields.map { field in
-            guard let templateField = template.fields.first(where: {
-                $0.label == field.label && $0.inputType == field.inputType
-            }) else {
-                return field
-            }
-            var updated = field
-            updated.isSensitive = templateField.isSensitive
-            return updated
-        }
+        FieldTemplateMatching.applyingSensitivity(to: fields, matching: template.fields)
     }
 
     private var attachmentSection: some View {

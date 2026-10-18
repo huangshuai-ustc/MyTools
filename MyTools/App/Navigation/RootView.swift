@@ -80,6 +80,16 @@ struct RootView: View {
         ) { _ in
             retryInitialVaultLoadIfPossible()
         }
+#if MYTOOLS_FEATURE_STOCKS
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didReceiveMemoryWarningNotification
+            )
+        ) { _ in
+            // 图表缓存是能重新从磁盘载入的大头，收到警告先放掉它。
+            Task { await StockChartService.shared.trimMemory() }
+        }
+#endif
 #endif
         .onChange(of: scenePhase) { _, phase in
 #if MYTOOLS_FEATURE_STOCKS
@@ -94,12 +104,25 @@ struct RootView: View {
                 AppHangMonitor.shared.stop()
                 AppMemoryMonitor.shared.stop()
                 SystemLogCollector.shared.stop()
+                // 向系统申请后台执行时间，保证挂起前把待保存的数据写完（AUDIT-086）。
+                let backgroundTask = BackgroundSaveTask.begin()
+                let flushStarted = ProcessInfo.processInfo.systemUptime
                 Task {
                     await store.flushPendingPersistence()
+#if MYTOOLS_FEATURE_STOCKS
+                    await StockChartService.shared.flushPendingWrites()
+#endif
                     // `stop()` 内部已经抄了一次，这里再 `await` 一次是当屏障用：
                     // 队列排空就意味着那一次抄写确实落盘了，之后再 flush 事件日志。
                     await SystemLogCollector.shared.drainNow()
+                    // 后台执行时间只有几十秒，记下收尾耗时，超时被系统杀掉时能对上。
+                    let elapsed = ProcessInfo.processInfo.systemUptime - flushStarted
+                    DiagnosticLogger.shared.log(
+                        .lifecycle,
+                        String(format: "后台收尾完成 耗时=%.2fs %@", elapsed, DiagnosticLogger.memoryDescription())
+                    )
                     await DiagnosticLogger.shared.flush()
+                    backgroundTask.end()
                 }
             } else if phase == .active {
                 DiagnosticLogger.shared.markBecameActive()
@@ -114,10 +137,9 @@ struct RootView: View {
     private func retryInitialVaultLoadIfPossible() {
 #if os(iOS)
         guard UIApplication.shared.isProtectedDataAvailable else {
-            DiagnosticLogger.shared.log(
-                .persistence,
-                "设备受保护数据尚不可用，暂缓载入本地档案",
-                level: .warning
+            DiagnosticLogger.shared.logOncePerSession(
+                "protected-data-unavailable-at-active", .persistence,
+                "设备受保护数据尚不可用，暂缓载入本地档案"
             )
             return
         }
@@ -319,5 +341,32 @@ private struct InitialDataLoadingView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("正在载入本地数据")
+    }
+}
+
+/// Wraps `beginBackgroundTask` so the background flush is not cut short when
+/// the app is suspended; a no-op on macOS, which does not suspend this way.
+@MainActor
+private final class BackgroundSaveTask {
+#if os(iOS)
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+#endif
+
+    static func begin() -> BackgroundSaveTask {
+        let task = BackgroundSaveTask()
+#if os(iOS)
+        task.identifier = UIApplication.shared.beginBackgroundTask(withName: "保存数据") { [weak task] in
+            MainActor.assumeIsolated { task?.end() }
+        }
+#endif
+        return task
+    }
+
+    func end() {
+#if os(iOS)
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+#endif
     }
 }

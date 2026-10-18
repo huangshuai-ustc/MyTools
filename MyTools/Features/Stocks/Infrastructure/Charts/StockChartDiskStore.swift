@@ -137,7 +137,13 @@ struct StockChartPersistedStore: Codable, Sendable {
     // post-market series; its daily history must remain untouched.
     // Version 8 persists extended-hours minutes separately and applies the
     // seven-trading-day retention policy to every minute source.
-    static let currentVersion = 8
+    // Version 9 splits the file into a daily part and a minute part
+    // (`StockChartStoredPart`). Derived K-lines and technical indicators are
+    // rebuilt on load instead of being written: they were ~80% of each file,
+    // and every minute refresh used to rewrite decades of daily history.
+    // Single-file versions 6...8 are migrated on first load.
+    static let currentVersion = 9
+    static let legacySingleFileVersions = 6...8
     // Keep this separate from the file schema version. Adding a technical
     // indicator does not invalidate the raw OHLCV cache: an older file can be
     // upgraded locally once, then written back with the current indicator set.
@@ -151,26 +157,103 @@ struct StockChartPersistedStore: Codable, Sendable {
     var technicalIndicators: [String: [StockTechnicalIndicatorPoint]] = [:]
     var technicalIndicatorCacheVersion: Int? = currentTechnicalIndicatorCacheVersion
     var rangeMetadata: [String: StockChartStoredRangeMetadata]
+}
 
-    /// A successful check with no new prices need not rewrite the whole
-    /// history and indicator cache. Fetch times remain current in memory.
-    func hasSameContent(as other: Self) -> Bool {
-        guard version == other.version, market == other.market, symbol == other.symbol,
-              series == other.series, derivedSeries == other.derivedSeries,
-              technicalIndicators == other.technicalIndicators,
-              technicalIndicatorCacheVersion == other.technicalIndicatorCacheVersion else { return false }
-        var metadata = rangeMetadata
-        for (key, var value) in metadata {
-            value.fetchedAt = other.rangeMetadata[key]?.fetchedAt ?? value.fetchedAt
-            metadata[key] = value
-        }
-        return metadata == other.rangeMetadata
+enum StockChartTechnicalCacheKind: String {
+    case minute
+    case daily
+}
+
+/// The two files a stock's chart cache is written to. Minute data changes
+/// every minute during a session; daily history rarely changes except for
+/// today's bar, so the two are written independently.
+enum StockChartStorePart: String, CaseIterable, Codable, Sendable {
+    case daily
+    case minute
+
+    private static let minuteSeriesKeys: Set<String> = [
+        StockChartSeriesKind.intraday.rawValue,
+        StockChartSeriesKind.preMarketMinute.rawValue,
+        StockChartSeriesKind.postMarketMinute.rawValue
+    ]
+    private static let minuteRangeKeys = Set(
+        StockChartRange.allCases.filter(\.isMinuteRange).map(\.rawValue)
+    )
+
+    func ownsSeries(_ key: String) -> Bool {
+        Self.minuteSeriesKeys.contains(key) == (self == .minute)
+    }
+
+    func ownsRange(_ key: String) -> Bool {
+        Self.minuteRangeKeys.contains(key) == (self == .minute)
+    }
+
+    func file(of store: StockChartPersistedStore) -> StockChartStoredPart {
+        StockChartStoredPart(
+            version: store.version,
+            market: store.market,
+            symbol: store.symbol,
+            part: self,
+            series: store.series.filter { ownsSeries($0.key) },
+            rangeMetadata: store.rangeMetadata.filter { ownsRange($0.key) }
+        )
     }
 }
 
-private enum StockChartTechnicalCacheKind: String {
-    case minute
-    case daily
+/// On-disk form of one `StockChartStorePart`: raw OHLCV series and fetch
+/// metadata only. Everything derived is rebuilt in memory on load.
+struct StockChartStoredPart: Codable, Equatable, Sendable {
+    let version: Int
+    let market: StockMarket
+    let symbol: String
+    let part: StockChartStorePart
+    var series: [String: [StockChartPoint]]
+    var rangeMetadata: [String: StockChartStoredRangeMetadata]
+
+    /// Changes that may wait for the next checkpoint: any minute refresh, or a
+    /// daily refresh that only touched the latest bar (today's bar while the
+    /// session is open, or the first print of a new day). Historical
+    /// corrections, new history, and newly fetched ranges write immediately.
+    func canDeferWrite(after previous: Self) -> Bool {
+        guard version == previous.version, market == previous.market,
+              symbol == previous.symbol, part == previous.part,
+              Set(rangeMetadata.keys) == Set(previous.rangeMetadata.keys) else { return false }
+        guard part == .daily else { return true }
+        let dailyKey = StockChartSeriesKind.daily.rawValue
+        var others = series
+        var previousOthers = previous.series
+        let daily = others.removeValue(forKey: dailyKey) ?? []
+        let previousDaily = previousOthers.removeValue(forKey: dailyKey) ?? []
+        guard others == previousOthers else { return false }
+        switch daily.count - previousDaily.count {
+        case 0: return daily.dropLast() == previousDaily.dropLast()
+        case 1: return daily.prefix(previousDaily.count) == previousDaily[...]
+        default: return false
+        }
+    }
+}
+
+extension StockChartStorePart {
+    /// How long a deferrable change may stay memory-only. Minute data is
+    /// re-fetchable within one request; today's daily bar changes every
+    /// refresh but is only needed after relaunch, and `flushPendingWrites`
+    /// writes both before the app is suspended.
+    var coalescingWindow: TimeInterval {
+        switch self {
+        case .minute: return 600
+        case .daily: return 1_800
+        }
+    }
+}
+
+/// Single-file layout used by versions 6...8. Only raw series and metadata
+/// are read; the persisted derived bars and indicators are rebuilt anyway.
+private struct StockChartLegacySingleFile: Decodable {
+    let version: Int
+    let market: StockMarket
+    let symbol: String
+    let series: [String: [StockChartPoint]]
+    let rangeMetadata: [String: StockChartStoredRangeMetadata]
 }
 
 struct StockChartDiskStore {
@@ -178,17 +261,25 @@ struct StockChartDiskStore {
     private let persistentStoreDirectory: URL
     private var memoryStores: [StockChartStoreKey: StockChartPersistedStore] = [:]
     private var recentKeys: [StockChartStoreKey] = []
-    private var lastSuccessfulWriteAt: [StockChartStoreKey: Date] = [:]
+    /// Successful write time of each part, seeded from the file modification
+    /// date on load so a relaunch does not immediately rewrite fresh files.
+    private var lastSuccessfulWriteAt: [StockChartStoreKey: [StockChartStorePart: Date]] = [:]
+    /// Parts whose in-memory content is newer than the file.
+    private var dirtyParts: [StockChartStoreKey: Set<StockChartStorePart>] = [:]
     // Keep unreadable/unsupported files intact, including when fresh network
     // data becomes available. Only an explicit cache clear removes this block.
     private var blockedWrites: Set<StockChartStoreKey> = []
+    private var isDirectoryPrepared = false
     private let memoryCapacity: Int
     var cachedStockCount: Int { memoryStores.count }
+    var pendingWriteCount: Int { dirtyParts.values.reduce(0) { $0 + $1.count } }
 
     init(
         fileManager: FileManager = .default,
         persistentStoreDirectory: URL? = nil,
-        memoryCapacity: Int = 32
+        // Every refresh round touches each holding once; a capacity below the
+        // holding count turns each round into full reloads (decode + rebuild).
+        memoryCapacity: Int = 48
     ) {
         self.fileManager = fileManager
         self.memoryCapacity = max(1, memoryCapacity)
@@ -205,60 +296,97 @@ struct StockChartDiskStore {
 
     mutating func load(for key: StockChartStoreKey) -> StockChartPersistedStore? {
         if var stored = memoryStores[key],
-           (7...StockChartPersistedStore.currentVersion).contains(stored.version),
+           stored.version == StockChartPersistedStore.currentVersion,
            stored.market == key.market,
            stored.symbol == key.symbol {
+            // Stores handed straight to `save` may not have been through `merge`.
+            refreshTechnicalIndicatorCachesIfNeeded(in: &stored)
             remember(stored, for: key)
-            if migrateExtendedMinuteCacheIfNeeded(in: &stored) {
-                save(stored, for: key, validatingWrite: true)
-            }
-            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) {
-                save(stored, for: key)
-            }
             return stored
         }
         memoryStores[key] = nil
-        let url = persistentStoreURL(for: key)
-        if let data = try? Data(contentsOf: url) {
-            guard var stored = try? JSONDecoder().decode(
-                StockChartPersistedStore.self,
-                from: data
-            ),
-            (6...StockChartPersistedStore.currentVersion).contains(stored.version),
-            stored.market == key.market,
-            stored.symbol == key.symbol else {
+        let existingParts = StockChartStorePart.allCases.filter {
+            fileManager.fileExists(atPath: partURL(for: key, part: $0).path)
+        }
+        guard !existingParts.isEmpty else { return loadLegacySingleFile(for: key) }
+        let started = Date()
+        var store = emptyStore(for: key)
+        var bytes = 0
+        for part in existingParts {
+            let url = partURL(for: key, part: part)
+            guard let data = try? Data(contentsOf: url) else {
                 blockedWrites.insert(key)
-                DiagnosticLogger.shared.log(.stockQuote,
-                    "离线行情无法读取或版本不支持，保留原文件并阻断覆盖 symbol=\(key.symbol)", level: .warning)
+                DiagnosticLogger.shared.log(.stockQuote, "离线行情文件暂不可读，保留原文件 symbol=\(key.symbol) part=\(part.rawValue)", level: .warning)
                 return nil
             }
-            let originalVersion = stored.version
-            if originalVersion < StockChartPersistedStore.currentVersion {
-                do {
-                    let recoveryURL = url.appendingPathExtension("v\(originalVersion).recovery")
-                    if !fileManager.fileExists(atPath: recoveryURL.path) {
-                        try data.write(to: recoveryURL, options: .atomic)
-                    }
-                } catch {
-                    blockedWrites.insert(key)
-                    DiagnosticLogger.logError(.stockQuote, operation: "行情迁移快照", error: error)
-                    return nil
-                }
+            guard let file = try? JSONDecoder().decode(StockChartStoredPart.self, from: data),
+                  file.version == StockChartPersistedStore.currentVersion,
+                  file.market == key.market, file.symbol == key.symbol, file.part == part else {
+                blockedWrites.insert(key)
+                DiagnosticLogger.shared.log(.stockQuote,
+                    "离线行情无法读取或版本不支持，保留原文件并阻断覆盖 symbol=\(key.symbol) part=\(part.rawValue)", level: .warning)
+                return nil
             }
-            let didMigrate = migrateExtendedMinuteCacheIfNeeded(in: &stored)
-            if refreshTechnicalIndicatorCachesIfNeeded(in: &stored) || didMigrate {
-                save(stored, for: key, validatingWrite: didMigrate)
-                return stored
+            bytes += data.count
+            store.series.merge(file.series.filter { part.ownsSeries($0.key) }) { current, _ in current }
+            store.rangeMetadata.merge(file.rangeMetadata.filter { part.ownsRange($0.key) }) { current, _ in current }
+            if let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
+                lastSuccessfulWriteAt[key, default: [:]][part] = modified
             }
-            remember(stored, for: key)
-            return stored
         }
+        rebuildDerivedCaches(in: &store)
+        remember(store, for: key)
+        DiagnosticLogger.shared.log(.stockQuote, "离线行情载入 symbol=\(key.symbol) bytes=\(bytes) daily=\(store.series[StockChartSeriesKind.daily.rawValue]?.count ?? 0) minute=\(store.series[StockChartSeriesKind.intraday.rawValue]?.count ?? 0) ms=\(Int(Date().timeIntervalSince(started) * 1000)) resident=\(memoryStores.count)")
+        return store
+    }
 
-        if fileManager.fileExists(atPath: url.path) {
-            blockedWrites.insert(key)
-            DiagnosticLogger.shared.log(.stockQuote, "离线行情文件暂不可读，保留原文件 symbol=\(key.symbol)", level: .warning)
+    /// Splits a version 6...8 single file into the two part files. Versions
+    /// 6 and 7 changed minute content during migration, so their original is
+    /// kept as `.v{N}.recovery`; version 8 is a pure re-layout and the old
+    /// file (up to tens of MB per stock) is removed once both parts verify.
+    private mutating func loadLegacySingleFile(for key: StockChartStoreKey) -> StockChartPersistedStore? {
+        let url = legacyStoreURL(for: key)
+        guard let data = try? Data(contentsOf: url) else {
+            if fileManager.fileExists(atPath: url.path) {
+                blockedWrites.insert(key)
+                DiagnosticLogger.shared.log(.stockQuote, "离线行情文件暂不可读，保留原文件 symbol=\(key.symbol)", level: .warning)
+            }
+            return nil
         }
-        return nil
+        guard let legacy = try? JSONDecoder().decode(StockChartLegacySingleFile.self, from: data),
+              StockChartPersistedStore.legacySingleFileVersions.contains(legacy.version),
+              legacy.market == key.market,
+              legacy.symbol == key.symbol else {
+            blockedWrites.insert(key)
+            DiagnosticLogger.shared.log(.stockQuote,
+                "离线行情无法读取或版本不支持，保留原文件并阻断覆盖 symbol=\(key.symbol)", level: .warning)
+            return nil
+        }
+        let started = Date()
+        var store = StockChartPersistedStore(
+            version: legacy.version,
+            market: legacy.market,
+            symbol: legacy.symbol,
+            series: legacy.series,
+            rangeMetadata: legacy.rangeMetadata
+        )
+        migrateExtendedMinuteCacheIfNeeded(in: &store)
+        store.version = StockChartPersistedStore.currentVersion
+        rebuildDerivedCaches(in: &store)
+        // A failed verification blocks writes; the legacy file stays intact.
+        guard save(store, for: key, validatingWrite: true) else { return store }
+        do {
+            let recoveryURL = url.appendingPathExtension("v\(legacy.version).recovery")
+            if legacy.version < 8, !fileManager.fileExists(atPath: recoveryURL.path) {
+                try fileManager.moveItem(at: url, to: recoveryURL)
+            } else {
+                try fileManager.removeItem(at: url)
+            }
+        } catch {
+            DiagnosticLogger.logError(.stockQuote, operation: "行情迁移清理旧文件", error: error)
+        }
+        DiagnosticLogger.shared.log(.stockQuote, "离线行情已拆分存储 symbol=\(key.symbol) from=v\(legacy.version) legacyBytes=\(data.count) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+        return store
     }
 
     func emptyStore(for key: StockChartStoreKey) -> StockChartPersistedStore {
@@ -300,49 +428,100 @@ struct StockChartDiskStore {
             return false
         }
         let previous = memoryStores[key]
-        let lastWrite = lastSuccessfulWriteAt[key]
         remember(store, for: key)
         guard !blockedWrites.contains(key) else { return false }
-        if !validatingWrite, let previous, let lastWrite,
-           (0..<300).contains(now.timeIntervalSince(lastWrite)),
-           previous.hasSameContent(as: store),
-           fileManager.fileExists(atPath: persistentStoreURL(for: key).path) {
-            return true
+        var succeeded = true
+        for part in StockChartStorePart.allCases {
+            let file = part.file(of: store)
+            let previousFile = previous.map(part.file(of:))
+            let fileExists = fileManager.fileExists(atPath: partURL(for: key, part: part).path)
+            let isDirty = dirtyParts[key]?.contains(part) == true
+            if !validatingWrite, fileExists, !isDirty, previousFile == file { continue }
+            // 内存中始终是最新数据。分钟刷新和只动最新一根日线的刷新在窗口内只记待写，
+            // 到期或进入后台时落盘；历史修正、新增区间、迁移和失败重试立即写入。
+            // 进程被杀最多丢失一个窗口内可重新拉取的数据（AUDIT-057）。
+            if !validatingWrite, fileExists, let previousFile,
+               file.canDeferWrite(after: previousFile),
+               let lastWrite = lastSuccessfulWriteAt[key]?[part],
+               (0..<part.coalescingWindow).contains(now.timeIntervalSince(lastWrite)) {
+                dirtyParts[key, default: []].insert(part)
+                continue
+            }
+            succeeded = write(file, for: key, validating: validatingWrite, at: now) && succeeded
+            if blockedWrites.contains(key) { return false }
         }
+        return succeeded
+    }
+
+    /// Writes every deferred part; called before the app is suspended.
+    @discardableResult
+    mutating func flushPendingWrites(at now: Date = Date()) -> Int {
+        var written = 0
+        for (key, parts) in dirtyParts {
+            guard let store = memoryStores[key], !blockedWrites.contains(key) else {
+                dirtyParts[key] = nil
+                continue
+            }
+            for part in parts where write(part.file(of: store), for: key, validating: false, at: now) {
+                written += 1
+            }
+        }
+        return written
+    }
+
+    /// Releases every resident store after flushing deferred parts.
+    mutating func trimMemory() {
+        flushPendingWrites()
+        memoryStores.removeAll()
+        recentKeys.removeAll()
+        dirtyParts.removeAll()
+    }
+
+    private mutating func write(
+        _ file: StockChartStoredPart,
+        for key: StockChartStoreKey,
+        validating: Bool,
+        at now: Date
+    ) -> Bool {
         do {
-            try fileManager.createDirectory(
-                at: persistentStoreDirectory,
-                withIntermediateDirectories: true
-            )
-            var directory = persistentStoreDirectory
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            try? directory.setResourceValues(resourceValues)
-            let data = try JSONEncoder().encode(store)
-            if validatingWrite {
+            if !isDirectoryPrepared {
+                try fileManager.createDirectory(at: persistentStoreDirectory, withIntermediateDirectories: true)
+                var directory = persistentStoreDirectory
+                var resourceValues = URLResourceValues()
+                resourceValues.isExcludedFromBackup = true
+                try? directory.setResourceValues(resourceValues)
+                isDirectoryPrepared = true
+            }
+            let started = Date()
+            let data = try JSONEncoder().encode(file)
+            if validating {
                 let stagingURL = persistentStoreDirectory.appendingPathComponent("migration-\(UUID().uuidString).tmp")
                 defer { try? fileManager.removeItem(at: stagingURL) }
                 try data.write(to: stagingURL, options: .atomic)
                 let verifiedData = try Data(contentsOf: stagingURL)
-                let verified = try JSONDecoder().decode(StockChartPersistedStore.self, from: verifiedData)
-                guard verifiedData == data, verified.series == store.series,
-                      verified.version == store.version, verified.market == key.market,
-                      verified.symbol == key.symbol else {
+                let verified = try JSONDecoder().decode(StockChartStoredPart.self, from: verifiedData)
+                guard verifiedData == data, verified == file else {
                     blockedWrites.insert(key)
                     return false
                 }
             }
-            try data.write(to: persistentStoreURL(for: key), options: .atomic)
-            lastSuccessfulWriteAt[key] = now
+            try data.write(to: partURL(for: key, part: file.part), options: .atomic)
+            lastSuccessfulWriteAt[key, default: [:]][file.part] = now
+            dirtyParts[key]?.remove(file.part)
+            if dirtyParts[key]?.isEmpty == true { dirtyParts[key] = nil }
             DiagnosticLogger.shared.log(.stockQuote,
-                "离线行情写入 symbol=\(key.symbol) bytes=\(data.count) daily=\(store.series[StockChartSeriesKind.daily.rawValue]?.count ?? 0) minute=\(store.series[StockChartSeriesKind.intraday.rawValue]?.count ?? 0) post=\(store.series[StockChartSeriesKind.postMarketMinute.rawValue]?.count ?? 0)")
+                "离线行情写入 symbol=\(key.symbol) part=\(file.part.rawValue) bytes=\(data.count) daily=\(file.series[StockChartSeriesKind.daily.rawValue]?.count ?? 0) minute=\(file.series[StockChartSeriesKind.intraday.rawValue]?.count ?? 0) post=\(file.series[StockChartSeriesKind.postMarketMinute.rawValue]?.count ?? 0) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
             return true
         } catch {
-            lastSuccessfulWriteAt[key] = nil
-            if validatingWrite { blockedWrites.insert(key) }
+            // Retry on the next save even if the content is identical, and
+            // recreate the directory in case it was removed underneath us.
+            lastSuccessfulWriteAt[key]?[file.part] = nil
+            dirtyParts[key, default: []].insert(file.part)
+            isDirectoryPrepared = false
+            if validating { blockedWrites.insert(key) }
             DiagnosticLogger.shared.log(
                 .stockQuote,
-                "离线行情文件写入失败：\(error.localizedDescription)",
+                "离线行情文件写入失败 part=\(file.part.rawValue)：\(error.localizedDescription)",
                 level: .warning
             )
             return false
@@ -351,9 +530,11 @@ struct StockChartDiskStore {
 
     mutating func removeAll() {
         lastSuccessfulWriteAt.removeAll()
+        dirtyParts.removeAll()
         blockedWrites.removeAll()
         recentKeys.removeAll()
         memoryStores.removeAll()
+        isDirectoryPrepared = false
         guard fileManager.fileExists(atPath: persistentStoreDirectory.path) else { return }
         do {
             try fileManager.removeItem(at: persistentStoreDirectory)
@@ -368,20 +549,24 @@ struct StockChartDiskStore {
 
     mutating func remove(for key: StockChartStoreKey) {
         lastSuccessfulWriteAt[key] = nil
+        dirtyParts[key] = nil
         blockedWrites.remove(key)
         memoryStores.removeValue(forKey: key)
-        let url = persistentStoreURL(for: key)
-        guard fileManager.fileExists(atPath: url.path) else { return }
-        do {
-            try fileManager.removeItem(at: url)
-        } catch {
-            DiagnosticLogger.shared.log(
-                .stockQuote,
-                "离线行情缓存删除失败（\(key.symbol)）：\(error.localizedDescription)",
-                level: .warning
-            )
+        recentKeys.removeAll { $0 == key }
+        let urls = StockChartStorePart.allCases.map { partURL(for: key, part: $0) } + [legacyStoreURL(for: key)]
+        for url in urls where fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                DiagnosticLogger.shared.log(
+                    .stockQuote,
+                    "离线行情缓存删除失败（\(key.symbol)）：\(error.localizedDescription)",
+                    level: .warning
+                )
+            }
         }
     }
+
 
     func renderedSnapshot(
         from store: StockChartPersistedStore,
@@ -499,10 +684,17 @@ struct StockChartDiskStore {
         }
     }
 
-    func persistentStoreURL(for key: StockChartStoreKey) -> URL {
-        let identifier = "\(key.market.rawValue)|\(key.symbol)"
-        return persistentStoreDirectory
-            .appendingPathComponent(fileName(for: identifier), isDirectory: false)
+    func partURL(for key: StockChartStoreKey, part: StockChartStorePart) -> URL {
+        persistentStoreDirectory
+            .appendingPathComponent(fileName(for: key), isDirectory: false)
+            .appendingPathExtension(part.rawValue)
+            .appendingPathExtension("json")
+    }
+
+    /// Single-file location used by versions 6...8.
+    func legacyStoreURL(for key: StockChartStoreKey) -> URL {
+        persistentStoreDirectory
+            .appendingPathComponent(fileName(for: key), isDirectory: false)
             .appendingPathExtension("json")
     }
 
@@ -573,10 +765,24 @@ struct StockChartDiskStore {
         )
     }
 
+    /// Derived K-lines, the five-day viewport and technical indicators are
+    /// memory-only since version 9; rebuild them from the raw series.
+    private func rebuildDerivedCaches(in store: inout StockChartPersistedStore) {
+        let minuteDate = store.rangeMetadata
+            .filter { StockChartStorePart.minute.ownsRange($0.key) }
+            .values.map(\.fetchedAt).max()
+            ?? store.series[StockChartSeriesKind.intraday.rawValue]?.last?.date
+            ?? Date()
+        rebuildMinuteDerivedCaches(in: &store, at: minuteDate)
+        rebuildDailyDerivedCaches(in: &store)
+        store.technicalIndicatorCacheVersion = StockChartPersistedStore.currentTechnicalIndicatorCacheVersion
+    }
+
     /// Version 8 added dedicated pre/post-market minute series. Version 7's
     /// regular and daily sources are still valid, so upgrade them locally
     /// instead of deleting every chart and forcing the user to wait for all
     /// ranges to download again after installing the update.
+    @discardableResult
     private func migrateExtendedMinuteCacheIfNeeded(
         in store: inout StockChartPersistedStore
     ) -> Bool {
@@ -684,8 +890,8 @@ struct StockChartDiskStore {
             StockTechnicalIndicators.calculate(dailyPoints)
     }
 
-    /// Rebuilds advanced indicator fields from the canonical local OHLCV
-    /// series. Returning `true` lets `load` persist the migration exactly once.
+    /// Rebuilds indicators whose count no longer matches the raw series, e.g.
+    /// for stores built by hand rather than through `merge`.
     @discardableResult
     private func refreshTechnicalIndicatorCachesIfNeeded(
         in store: inout StockChartPersistedStore
@@ -718,8 +924,8 @@ struct StockChartDiskStore {
         return true
     }
 
-    private func fileName(for identifier: String) -> String {
-        Data(identifier.utf8)
+    private func fileName(for key: StockChartStoreKey) -> String {
+        Data("\(key.market.rawValue)|\(key.symbol)".utf8)
             .base64EncodedString()
             .replacingOccurrences(of: "/", with: "_")
     }
@@ -730,6 +936,14 @@ struct StockChartDiskStore {
         recentKeys.append(key)
         while recentKeys.count > memoryCapacity {
             let evicted = recentKeys.removeFirst()
+            // Deferred parts exist only in memory; write them before dropping.
+            if let parts = dirtyParts[evicted], let evictedStore = memoryStores[evicted],
+               !blockedWrites.contains(evicted) {
+                for part in parts {
+                    _ = write(part.file(of: evictedStore), for: evicted, validating: false, at: Date())
+                }
+            }
+            dirtyParts[evicted] = nil
             memoryStores[evicted] = nil
             lastSuccessfulWriteAt[evicted] = nil
         }

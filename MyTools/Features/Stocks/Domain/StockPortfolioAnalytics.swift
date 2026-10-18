@@ -174,8 +174,8 @@ enum StockHoldingsXLSXExport {
     private static func businessDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .autoupdatingCurrent
+        formatter.calendar = StockMarketClock.beijingCalendar
+        formatter.timeZone = StockMarketClock.beijingTimeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }
@@ -369,16 +369,16 @@ struct StockPerformanceCache {
     private var entries: [UUID: Entry] = [:]
     private(set) var replayCount = 0
 
-    mutating func performance(for stock: StockHolding, at now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> StockHolding.Performance {
+    mutating func performance(for stock: StockHolding, at now: Date = Date(), calendar: Calendar = StockMarketClock.beijingCalendar) -> StockHolding.Performance {
         if let entry = entries[stock.id],
            entry.transactions == stock.transactions, entry.dividends == stock.dividends,
            entry.calendar == calendar, now >= entry.computedAt, now < entry.validUntil {
             return entry.performance
         }
         let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now
-        let nextTransaction = stock.transactions.lazy.map {
-            $0.executedAt ?? calendar.startOfDay(for: $0.tradedAt)
-        }.filter { $0 > now }.min() ?? nextDay
+        let nextTransaction = stock.transactions.lazy
+            .map(StockHolding.effectiveInstant(of:))
+            .filter { $0 > now }.min() ?? nextDay
         let performance = stock.performance(asOf: now, calendar: calendar)
         entries[stock.id] = Entry(transactions: stock.transactions, dividends: stock.dividends,
                                   calendar: calendar, computedAt: now, validUntil: min(nextDay, nextTransaction),
@@ -664,8 +664,11 @@ struct StockConvertedPortfolioSummary {
             guard performance.hasPurchaseRecord else { continue }
             guard let multiplier = multipliers[stock.market] else {
                 canConvertCurrencies = false
-                canCalculateValue = false
-                canCalculateDaily = false
+                // 已清仓的股票只影响已实现收益，不应让市值与当日盈亏一起不可用。
+                if performance.shares > 0 {
+                    canCalculateValue = false
+                    canCalculateDaily = false
+                }
                 continue
             }
             realized += performance.realizedProfitLoss * multiplier
@@ -700,7 +703,7 @@ struct StockConvertedPortfolioSummary {
         previousMarketValue = canCalculateDaily ? previousValue : nil
         holdingProfitLoss = canCalculateValue ? holding : nil
         realizedProfitLoss = canConvertCurrencies ? realized : nil
-        totalProfitLoss = canCalculateValue ? holding + realized : nil
+        totalProfitLoss = canCalculateValue && canConvertCurrencies ? holding + realized : nil
     }
 }
 

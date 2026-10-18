@@ -3,7 +3,7 @@ import Testing
 @testable import MyTools
 
 struct AppStoreBackupMergerTests {
-    @Test func oldFinanceBackupRestoresInstitutionAndCardsTogether() {
+    @Test func oldFinanceBackupRestoresInstitutionAndCardsTogether() throws {
         var old = FinancialInstitution()
         old.bankName = "Old institution"
         var local = old
@@ -15,7 +15,7 @@ struct AppStoreBackupMergerTests {
         oldCard.cardType = "Old card"
         var localCard = oldCard
         localCard.cardType = "New card"
-        let merged = AppStoreBackupMerger.merge(
+        let merged = try AppStoreBackupMerger.merge(
             localVault: VaultData(accounts: [local], cards: [localCard]), localSecrets: [],
             imported: VaultBackupPayload(vault: VaultData(accounts: [old], cards: [oldCard]), includedModules: [.personalFinance])
         )
@@ -23,13 +23,13 @@ struct AppStoreBackupMergerTests {
         #expect(merged.vault.financialInstitutions[0].financialProfile != nil)
         #expect(merged.vault.cards[0].cardType == "Old card")
     }
-    @Test func stockCashFlowsAreMergedOnlyWithStocksModule() {
+    @Test func stockCashFlowsAreMergedOnlyWithStocksModule() throws {
         var local = StockCashFlowRecord()
         local.amount = 100
         var imported = local
         imported.amount = 200
 
-        let excluded = AppStoreBackupMerger.merge(
+        let excluded = try AppStoreBackupMerger.merge(
             localVault: VaultData(stockCashFlowRecords: [local]),
             localSecrets: [],
             imported: VaultBackupPayload(
@@ -39,7 +39,7 @@ struct AppStoreBackupMergerTests {
         )
         #expect(excluded.vault.stockCashFlowRecords == [local])
 
-        let included = AppStoreBackupMerger.merge(
+        let included = try AppStoreBackupMerger.merge(
             localVault: VaultData(stockCashFlowRecords: [local]),
             localSecrets: [],
             imported: VaultBackupPayload(
@@ -50,7 +50,7 @@ struct AppStoreBackupMergerTests {
         #expect(included.vault.stockCashFlowRecords == [imported])
     }
 
-    @Test func onlyIncludedModulesAreMerged() {
+    @Test func onlyIncludedModulesAreMerged() throws {
         let accountID = UUID()
         let stockID = UUID()
         let recordID = UUID()
@@ -87,14 +87,14 @@ struct AppStoreBackupMergerTests {
         let importedSecret = SecretItem(id: secretID, title: "Imported secret")
 
         let localVault = VaultData(
-            accounts: [localAccount],
+            financialInstitutions: [localAccount],
             stocks: [localStock],
             medicalRecords: [localRecord],
             currencyRateAlerts: [localCurrencyAlert]
         )
         let imported = VaultBackupPayload(
             vault: VaultData(
-                accounts: [importedAccount],
+                financialInstitutions: [importedAccount],
                 stocks: [importedStock],
                 medicalRecords: [importedRecord],
                 currencyRateAlerts: [importedCurrencyAlert]
@@ -103,7 +103,7 @@ struct AppStoreBackupMergerTests {
             includedModules: [.currencyExchange]
         )
 
-        let merged = AppStoreBackupMerger.merge(
+        let merged = try AppStoreBackupMerger.merge(
             localVault: localVault,
             localSecrets: [localSecret],
             imported: imported
@@ -114,10 +114,12 @@ struct AppStoreBackupMergerTests {
         #expect(merged.vault.medicalRecords == [localRecord])
         #expect(merged.vault.currencyRateAlerts == [importedCurrencyAlert])
         #expect(merged.secrets == [localSecret])
-        #expect(merged.includedModules == [.currencyExchange])
+        #expect(merged.includedModules == [ToolModule.currencyExchange])
     }
 
-    @Test func selectedModuleReplacesMatchingIDsAndAppendsNewIDs() {
+    /// Backup import replaces every included module as a whole: local-only
+    /// records of that module are dropped, omitted modules stay untouched.
+    @Test func selectedModuleIsReplacedAsAWhole() throws {
         let existingID = UUID()
         let retainedID = UUID()
         let appendedID = UUID()
@@ -130,7 +132,7 @@ struct AppStoreBackupMergerTests {
             StockPriceAlert(id: appendedID, threshold: 40)
         ]
 
-        let merged = AppStoreBackupMerger.merge(
+        let merged = try AppStoreBackupMerger.merge(
             localVault: VaultData(stockPriceAlerts: local),
             localSecrets: [],
             imported: VaultBackupPayload(
@@ -139,16 +141,17 @@ struct AppStoreBackupMergerTests {
             )
         )
 
-        #expect(merged.vault.stockPriceAlerts.map(\.id) == [existingID, retainedID, appendedID])
-        #expect(merged.vault.stockPriceAlerts.map(\.threshold) == [30, 20, 40])
+        #expect(merged.vault.stockPriceAlerts.map(\.id) == [existingID, appendedID])
+        #expect(merged.vault.stockPriceAlerts.map(\.threshold) == [30, 40])
+        #expect(!merged.vault.stockPriceAlerts.contains { $0.id == retainedID })
     }
 
-    @Test func selectedSecretsReplaceMatchingIDsAndAppendNewIDs() {
+    @Test func selectedSecretsAreReplacedAsAWhole() throws {
         let existingID = UUID()
         let appendedID = UUID()
-        let merged = AppStoreBackupMerger.merge(
+        let merged = try AppStoreBackupMerger.merge(
             localVault: VaultData(),
-            localSecrets: [SecretItem(id: existingID, title: "Local")],
+            localSecrets: [SecretItem(id: existingID, title: "Local"), SecretItem(title: "Local only")],
             imported: VaultBackupPayload(
                 vault: VaultData(),
                 secrets: [
@@ -163,7 +166,7 @@ struct AppStoreBackupMergerTests {
         #expect(merged.secrets.map(\.title) == ["Imported", "New"])
     }
 
-    @Test func disabledModulesAreExcludedFromImportedPayload() {
+    @Test func disabledModulesAreExcludedFromImportedPayload() throws {
         var localHealth = MedicalRecord()
         localHealth.hospital = "Local"
         var importedHealth = localHealth
@@ -171,7 +174,7 @@ struct AppStoreBackupMergerTests {
         var importedAccount = FinancialInstitution()
         importedAccount.bankName = "Imported account"
 
-        let merged = AppStoreBackupMerger.merge(
+        let merged = try AppStoreBackupMerger.merge(
             localVault: VaultData(medicalRecords: [localHealth]),
             localSecrets: [],
             imported: VaultBackupPayload(
@@ -188,4 +191,55 @@ struct AppStoreBackupMergerTests {
         #expect(merged.vault.medicalRecords == [localHealth])
         #expect(merged.includedModules == [.personalFinance])
     }
+
+    // AUDIT-027：恢复被隔离的模块时清除隔离状态与原始载荷，并恢复模板。
+    @Test func restoringQuarantinedModuleClearsPreservedPayloadAndRestoresTemplates() throws {
+        var local = VaultData()
+        local.unavailableModules = ["healthRecords", "documents", "myStocks"]
+        local.preservedModulePayloads = [
+            "medicalRecords": .array([]),
+            "credentialFieldTemplates": .array([]),
+            "stocks": .array([])
+        ]
+        var record = MedicalRecord()
+        record.hospital = "备份"
+        let template = CredentialFieldTemplate(documentType: .passport, fields: [])
+        var importedVault = VaultData(medicalRecords: [record])
+        importedVault.credentialFieldTemplates = [template]
+        importedVault.domesticBankLoginFieldTemplates = []
+
+        let merged = try AppStoreBackupMerger.merge(
+            localVault: local,
+            localSecrets: [],
+            imported: VaultBackupPayload(
+                vault: importedVault,
+                includedModules: [.healthRecords, .documents, .personalFinance]
+            )
+        )
+
+        #expect(merged.vault.unavailableModules == ["myStocks"])
+        #expect(merged.vault.preservedModulePayloads.keys.sorted() == ["stocks"])
+        #expect(merged.vault.medicalRecords.map(\.id) == [record.id])
+        #expect(merged.vault.credentialFieldTemplates == [template])
+        #expect(merged.vault.domesticBankLoginFieldTemplates.isEmpty)
+    }
+
+#if MYTOOLS_FEATURE_STOCKS
+    // AUDIT-028：备份中有非法持仓时整体报错，而不是静默返回本地数据。
+    @Test func invalidImportedStockFailsTheRestore() {
+        var stock = StockHolding(market: .aShare, symbol: "600000")
+        var sell = StockTransaction()
+        sell.type = .sell
+        sell.quantity = 10
+        sell.unitPrice = 1
+        stock.transactions = [sell]
+        #expect(throws: VaultBackupError.self) {
+            try AppStoreBackupMerger.merge(
+                localVault: VaultData(),
+                localSecrets: [],
+                imported: VaultBackupPayload(vault: VaultData(stocks: [stock]), includedModules: [.myStocks])
+            )
+        }
+    }
+#endif
 }

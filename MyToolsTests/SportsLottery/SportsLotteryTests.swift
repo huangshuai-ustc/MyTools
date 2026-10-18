@@ -264,6 +264,102 @@ struct SportsLotteryTests {
         #expect(try await service.findLeague(named: "不存在的赛事") == nil)
     }
 
+    @Test func hiddenModuleStopsAutomaticRefresh() {
+        let coordinator = SportsLotteryRefreshCoordinator.shared
+        defer { coordinator.updateModuleVisibility(true) }
+        coordinator.updateModuleVisibility(false)
+        #expect(!coordinator.isModuleVisible)
+        coordinator.updateModuleVisibility(true)
+        #expect(coordinator.isModuleVisible)
+    }
+
+    @Test func failedEnrichmentKeepsCachedFieldsAndOutcomes() async throws {
+        let cacheURL = Self.temporaryCacheURL()
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let first = SportsLotteryHTTPClientStub { request in
+            let url = try #require(request.url)
+            if url.path.contains("getUniformMatchResultV1") {
+                return try Self.response(url, Self.resultBody(score: "-1:-1"))
+            } else if url.path.contains("getMatchHeadV1") {
+                return try Self.response(url, Self.headBody)
+            }
+            return try Self.response(url, #"{"value":{"matchResultList":[{"code":"HAD","combinationDesc":"胜","odds":"1.27"}]}}"#)
+        }
+        _ = try await SportsLotteryService(httpClient: first, cacheFileURL: cacheURL)
+            .fetchSnapshot(leagues: [.championsLeague], forceRefresh: true)
+
+        // 第二次刷新：补全接口全部失败，但赛果列表给出了最终比分。
+        let second = SportsLotteryHTTPClientStub { request in
+            let url = try #require(request.url)
+            guard url.path.contains("getUniformMatchResultV1") else { throw URLError(.timedOut) }
+            return try Self.response(url, Self.resultBody(score: "3:0"))
+        }
+        let snapshot = try await SportsLotteryService(httpClient: second, cacheFileURL: cacheURL)
+            .fetchSnapshot(leagues: [.championsLeague], forceRefresh: true)
+        let match = try #require(snapshot.matches.first)
+        #expect(match.outcome(for: .had)?.value == "胜")
+        #expect(match.displayScore == "3:0")
+        #expect(Self.shanghaiString(match.date) == "2026-08-12 21:00:00")
+    }
+
+    @Test func oneLeagueFailureDoesNotBlockLaterLeagues() async throws {
+        let cacheURL = Self.temporaryCacheURL()
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let client = SportsLotteryHTTPClientStub { request in
+            let url = try #require(request.url)
+            if url.path.contains("getUniformMatchResultV1") {
+                let leagueID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "leagueId" }?.value
+                guard leagueID == "69" else { throw URLError(.timedOut) }
+                return try Self.response(url, Self.resultBody(score: "3:0"))
+            }
+            throw URLError(.timedOut)
+        }
+        let service = SportsLotteryService(httpClient: client, cacheFileURL: cacheURL)
+
+        await #expect(throws: URLError.self) {
+            _ = try await service.fetchSnapshot(leagues: [.premierLeague, .championsLeague], forceRefresh: true)
+        }
+        let cached = try #require(await service.cachedSnapshot(leagues: [.championsLeague]))
+        #expect(cached.matches.map(\.id) == [2040817])
+    }
+
+    @Test func malformedResultRowsAreSkippedIndividually() async throws {
+        let cacheURL = Self.temporaryCacheURL()
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+        let client = SportsLotteryHTTPClientStub { request in
+            let url = try #require(request.url)
+            if url.path.contains("getUniformMatchResultV1") {
+                return try Self.response(url, """
+                {"errorCode":"0","value":{"pages":1,"leagueList":[{"leagueId":null}],"matchResult":[{"matchId":null,"leagueId":69},{"awayTeam":"布斯巴达","homeTeam":"里昂","leagueId":69,"leagueName":null,"leagueNameAbbr":"欧冠","matchDate":"2026-08-12","matchId":2040817,"matchNumStr":null,"sectionsNo999":"3:0"}]}}
+                """)
+            }
+            return try Self.response(url, #"{"errorCode":"0","value":{"matchResultList":[{"code":null},{"code":"HAD","combinationDesc":"胜"}]}}"#)
+        }
+        let snapshot = try await SportsLotteryService(httpClient: client, cacheFileURL: cacheURL)
+            .fetchSnapshot(leagues: [.championsLeague], forceRefresh: true)
+
+        let match = try #require(snapshot.matches.first)
+        #expect(snapshot.matches.count == 1)
+        #expect(match.leagueName == "欧洲冠军联赛")
+        #expect(match.outcomes.map(\.code) == [.had])
+    }
+
+    nonisolated private static let headBody = """
+    {"errorCode":"0","value":{"tournamentCnName":"欧洲冠军联赛","homeTeamShortName":"里昂","awayTeamShortName":"布斯巴达","matchNum":"周二009","matchDateTime":"2026-08-12 21:00:00","fullCourtGoal":"-1:-1"}}
+    """
+
+    nonisolated private static func resultBody(score: String) -> String {
+        """
+        {"errorCode":"0","value":{"pages":1,"leagueList":[],"matchResult":[{"awayTeam":"布斯巴达","homeTeam":"里昂","leagueId":69,"leagueName":"欧洲冠军联赛","leagueNameAbbr":"欧冠","matchDate":"2026-08-12","matchId":2040817,"matchNumStr":"周二009","sectionsNo999":"\(score)"}]}}
+        """
+    }
+
+    nonisolated private static func response(_ url: URL, _ body: String) throws -> (Data, URLResponse) {
+        let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        return (Data(body.utf8), response)
+    }
+
     private static func temporaryCacheURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("sports-lottery-\(UUID().uuidString).json")

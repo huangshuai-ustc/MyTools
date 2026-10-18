@@ -117,6 +117,23 @@ final class DiagnosticLogger: @unchecked Sendable {
         }
     }
 
+    private let onceLock = NSLock()
+    private var loggedOnceKeys: Set<String> = []
+
+    /// 同一会话内同一 `key` 只记第一次，用于锁屏后台启动时反复出现的预期内状态。
+    func logOncePerSession(
+        _ key: String,
+        _ category: DiagnosticLogCategory,
+        _ message: @autoclosure () -> String,
+        level: DiagnosticLogLevel = .info
+    ) {
+        onceLock.lock()
+        let isFirst = loggedOnceKeys.insert(key).inserted
+        onceLock.unlock()
+        guard isFirst else { return }
+        log(category, message() + "（本会话仅记一次）", level: level)
+    }
+
     // MARK: - 页面栈
 
     func markScreenAppeared(_ name: String) {
@@ -270,12 +287,24 @@ final class DiagnosticLogger: @unchecked Sendable {
         return "\(value.domain)(\(value.code))"
     }
 
+    /// Swift task cancellation or `NSURLErrorCancelled` (-999): the caller
+    /// stopped the work on purpose (page closed, race lost, budget reached).
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let value = error as NSError
+        return value.domain == NSURLErrorDomain && value.code == NSURLErrorCancelled
+    }
+
     static func logError(
         _ category: DiagnosticLogCategory,
         operation: String,
         error: Error
     ) {
         let code = errorCode(error)
+        guard !isCancellation(error) else {
+            shared.log(category, "\(operation) 已取消 error=\(code)")
+            return
+        }
         shared.log(category, "\(operation) error=\(code)", level: .error)
     }
 

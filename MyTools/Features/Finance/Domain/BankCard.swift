@@ -414,8 +414,6 @@ struct BankBranchLocation: Codable, Equatable, Sendable {
     var isValid: Bool {
         (-90...90).contains(latitude) && (-180...180).contains(longitude)
     }
-
-    static let defaultLocation = BankBranchLocation(latitude: 39.9087, longitude: 116.3975)
 }
 
 struct BankBranchReference: Equatable, Sendable {

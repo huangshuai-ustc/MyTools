@@ -102,11 +102,7 @@ enum OpaqueModuleValue: Codable, Equatable, Sendable {
   typealias HospitalProfileVaultValue = OpaqueModuleValue
 #endif
 
-#if MYTOOLS_FEATURE_FOOD_MAP
-  typealias FoodPlaceVaultValue = FoodPlace
-#else
   typealias FoodPlaceVaultValue = OpaqueModuleValue
-#endif
 
 #if MYTOOLS_FEATURE_SECRETS
   typealias SecretVaultValue = SecretItem
@@ -130,11 +126,7 @@ enum OpaqueModuleValue: Codable, Equatable, Sendable {
   typealias BillRecordVaultValue = OpaqueModuleValue
 #endif
 
-#if MYTOOLS_FEATURE_PARTNERSHIP
-  typealias PartnershipBookVaultValue = PartnershipBook
-#else
   typealias PartnershipBookVaultValue = OpaqueModuleValue
-#endif
 
 extension CodingUserInfoKey {
   static let isolateVaultModules = CodingUserInfoKey(rawValue: "isolateVaultModules")!
@@ -493,7 +485,7 @@ struct VaultData: Codable, @unchecked Sendable {
     var container = encoder.container(keyedBy: CodingKeys.self)
     if let raw = preservedModulePayloads["financialInstitutions"] {
       try container.encode(raw, forKey: .financialInstitutions)
-    } else {
+    } else if !unavailableModules.contains("personalFinance") {
       try container.encode(financialInstitutions, forKey: .financialInstitutions)
     }
     if let raw = preservedModulePayloads["domesticBankLoginFieldTemplates"] {
@@ -639,9 +631,7 @@ struct VaultData: Codable, @unchecked Sendable {
       result.formUnion(medicalRecords.flatMap(\.attachmentStoredFileNames))
       result.formUnion(hospitalProfiles.flatMap(\.attachmentStoredFileNames))
     #endif
-    #if !MYTOOLS_FEATURE_FOOD_MAP
       result.formUnion(foodPlaces.flatMap(\.attachmentStoredFileNames))
-    #endif
     #if !MYTOOLS_FEATURE_DOCUMENTS
       result.formUnion(credentialDocuments.flatMap(\.attachmentStoredFileNames))
     #endif

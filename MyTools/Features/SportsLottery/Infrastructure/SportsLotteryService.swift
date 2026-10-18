@@ -106,11 +106,12 @@ actor SportsLotteryService: SportsLotteryProviding {
         } else {
             let range = Self.initialDateRange()
             let page = try await fetchResultPage(leagueID: nil, range: range, pageNumber: 1)
-            directory = page.leagues.map {
-                SportsLotteryLeague(
+            directory = page.leagues.compactMap {
+                guard let title = $0.leagueAbbreviation ?? $0.leagueFullName else { return nil }
+                return SportsLotteryLeague(
                     leagueID: $0.leagueID,
-                    title: $0.leagueAbbreviation,
-                    officialName: $0.leagueFullName
+                    title: title,
+                    officialName: $0.leagueFullName ?? title
                 )
             }
             cachedLeagueDirectory = directory
@@ -127,19 +128,29 @@ actor SportsLotteryService: SportsLotteryProviding {
         automaticSlot: Date?,
         generation: Int
     ) async throws {
+        // 每个联赛单独处理：某个联赛失败不影响排在后面的联赛，全部处理完再抛出首个错误。
+        var firstError: (any Error)?
         for league in leagues {
             let oldCache = persistedLeagues[league.leagueID]
             let range = Self.refreshDateRange(for: oldCache)
-            let candidates = try await fetchResultCandidates(league: league, range: range)
+            let candidates: [MatchCandidate]
+            do {
+                candidates = try await fetchResultCandidates(league: league, range: range)
+            } catch {
+                guard generation == cacheGeneration else { return }
+                DiagnosticLogger.logError(.data, operation: "获取体彩\(league.title)赛果失败", error: error)
+                firstError = firstError ?? error
+                continue
+            }
             guard generation == cacheGeneration else { return }
             let uniqueCandidates = candidates.reduce(into: [Int: MatchCandidate]()) { result, candidate in
                 result[candidate.id] = candidate
             }
             var merged = Dictionary(uniqueKeysWithValues: (oldCache?.matches ?? []).map { ($0.id, $0) })
-            let candidatesNeedingEnrichment = uniqueCandidates.values.filter { candidate in
-                merged[candidate.id]?.hasCompleteResult != true
-            }
-            let matches = await enrich(Array(candidatesNeedingEnrichment)).sorted(by: SportsLotteryMatch.isNewer)
+            let candidatesNeedingEnrichment = uniqueCandidates.values
+                .filter { merged[$0.id]?.hasCompleteResult != true }
+                .map { EnrichmentRequest(candidate: $0, previous: merged[$0.id]) }
+            let matches = await enrich(candidatesNeedingEnrichment)
             guard generation == cacheGeneration else { return }
             for match in matches {
                 merged[match.id] = match
@@ -151,8 +162,13 @@ actor SportsLotteryService: SportsLotteryProviding {
                 lastRefreshAt: Date(),
                 lastAutomaticRefreshSlot: automaticSlot ?? oldCache?.lastAutomaticRefreshSlot
             )
-            try savePersistence()
+            do {
+                try savePersistence()
+            } catch {
+                firstError = firstError ?? error
+            }
         }
+        if let firstError { throw firstError }
     }
 
     func clearCache() {
@@ -190,22 +206,22 @@ actor SportsLotteryService: SportsLotteryProviding {
         return candidates
     }
 
-    private func enrich(_ candidates: [MatchCandidate]) async -> [SportsLotteryMatch] {
+    private func enrich(_ candidates: [EnrichmentRequest]) async -> [SportsLotteryMatch] {
         await withTaskGroup(of: SportsLotteryMatch.self) { group in
             var iterator = candidates.makeIterator()
             for _ in 0..<min(Self.enrichmentConcurrency, candidates.count) {
-                guard let candidate = iterator.next() else { break }
+                guard let request = iterator.next() else { break }
                 group.addTask { [httpClient] in
-                    await Self.enrich(candidate, client: httpClient)
+                    await Self.enrich(request, client: httpClient)
                 }
             }
 
             var matches: [SportsLotteryMatch] = []
             while let match = await group.next() {
                 matches.append(match)
-                guard let candidate = iterator.next() else { continue }
+                guard let request = iterator.next() else { continue }
                 group.addTask { [httpClient] in
-                    await Self.enrich(candidate, client: httpClient)
+                    await Self.enrich(request, client: httpClient)
                 }
             }
             return matches
@@ -240,17 +256,18 @@ actor SportsLotteryService: SportsLotteryProviding {
         }
         return ResultPage(
             pageCount: max(value.pages ?? 1, 1),
-            leagues: value.leagueList ?? [],
-            matches: value.matchResult ?? []
+            leagues: (value.leagueList ?? []).compactMap(\.value),
+            matches: (value.matchResult ?? []).compactMap(\.value)
         )
     }
 
     private static func enrich(
-        _ candidate: MatchCandidate,
+        _ enrichment: EnrichmentRequest,
         client: any SportsLotteryHTTPClient
     ) async -> SportsLotteryMatch {
+        let candidate = enrichment.candidate
         async let head = fetchHead(matchID: candidate.id, client: client)
-        let outcomes: [SportsLotteryOutcome]
+        let outcomes: [SportsLotteryOutcome]?
         if let url = URL(
             string: "/gateway/uniform/football/getFixedBonusV1.qry?clientCode=3001&matchId=\(candidate.id)",
             relativeTo: apiBase
@@ -260,30 +277,63 @@ actor SportsLotteryService: SportsLotteryProviding {
                 try validate(response)
                 let envelope = try JSONDecoder().decode(FixedBonusEnvelope.self, from: data)
                 outcomes = (envelope.value?.matchResultList ?? []).compactMap { item in
-                    guard let code = SportsLotteryOutcomeCode(rawValue: item.code.uppercased()),
-                          !item.combinationDesc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    guard let rawCode = item.value?.code,
+                          let code = SportsLotteryOutcomeCode(rawValue: rawCode.uppercased()),
+                          let value = item.value?.combinationDesc,
+                          !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                         return nil
                     }
-                    return SportsLotteryOutcome(code: code, value: item.combinationDesc, odds: item.odds)
+                    return SportsLotteryOutcome(code: code, value: value, odds: item.value?.odds)
                 }
             } catch {
-                outcomes = []
+                outcomes = nil
             }
         } else {
-            outcomes = []
+            outcomes = nil
         }
 
         let matchHead = await head
+        return merged(
+            candidate: candidate,
+            head: matchHead,
+            outcomes: outcomes,
+            previous: enrichment.previous
+        )
+    }
+
+    /// 补全接口失败或缺字段时保留上次已得到的数据：玩法结果按 code 并集（新值优先），
+    /// 只有日期的候选时间不会覆盖同一天已知的开赛时刻。
+    private static func merged(
+        candidate: MatchCandidate,
+        head: MatchHead?,
+        outcomes: [SportsLotteryOutcome]?,
+        previous: SportsLotteryMatch?
+    ) -> SportsLotteryMatch {
+        let fresh = outcomes ?? []
+        let freshCodes = Set(fresh.map(\.code))
+        let kept = (previous?.outcomes ?? []).filter { !freshCodes.contains($0.code) }
+        let order = SportsLotteryOutcomeCode.allCases
+        let combined = (fresh + kept).sorted {
+            (order.firstIndex(of: $0.code) ?? 0) < (order.firstIndex(of: $1.code) ?? 0)
+        }
+        let date: Date
+        if let headDate = parseDateTime(head?.matchDateTime) {
+            date = headDate
+        } else if let previous, shanghaiCalendar.isDate(previous.date, inSameDayAs: candidate.date) {
+            date = previous.date
+        } else {
+            date = candidate.date
+        }
         return SportsLotteryMatch(
             id: candidate.id,
             league: candidate.league,
-            leagueName: matchHead?.tournamentName ?? candidate.leagueName,
-            homeTeam: matchHead?.homeTeam ?? candidate.homeTeam,
-            awayTeam: matchHead?.awayTeam ?? candidate.awayTeam,
-            matchNumber: matchHead?.matchNumber ?? candidate.matchNumber,
-            date: parseDateTime(matchHead?.matchDateTime) ?? candidate.date,
-            score: matchHead?.score ?? candidate.score,
-            outcomes: outcomes
+            leagueName: head?.tournamentName ?? previous?.leagueName ?? candidate.leagueName,
+            homeTeam: head?.homeTeam ?? previous?.homeTeam ?? candidate.homeTeam,
+            awayTeam: head?.awayTeam ?? previous?.awayTeam ?? candidate.awayTeam,
+            matchNumber: head?.matchNumber ?? previous?.matchNumber ?? candidate.matchNumber,
+            date: date,
+            score: head?.score ?? candidate.score ?? previous?.score,
+            outcomes: combined
         )
     }
 
@@ -311,24 +361,30 @@ actor SportsLotteryService: SportsLotteryProviding {
         selectedLeague: SportsLotteryLeague
     ) -> MatchCandidate? {
         guard dto.leagueID == selectedLeague.leagueID,
-              let date = dayFormatter.date(from: dto.matchDate) else {
+              let matchDate = dto.matchDate,
+              let date = dayFormatter.date(from: matchDate) else {
             return nil
         }
         let league = SportsLotteryLeague(
             leagueID: dto.leagueID,
-            title: dto.leagueNameAbbreviation.isEmpty ? selectedLeague.title : dto.leagueNameAbbreviation,
-            officialName: dto.leagueName.isEmpty ? selectedLeague.officialName : dto.leagueName
+            title: nonEmpty(dto.leagueNameAbbreviation) ?? selectedLeague.title,
+            officialName: nonEmpty(dto.leagueName) ?? selectedLeague.officialName
         )
         return MatchCandidate(
             id: dto.matchID,
             league: league,
             leagueName: league.officialName,
-            homeTeam: dto.homeTeam,
-            awayTeam: dto.awayTeam,
-            matchNumber: dto.matchNumber,
+            homeTeam: dto.homeTeam ?? "",
+            awayTeam: dto.awayTeam ?? "",
+            matchNumber: dto.matchNumber ?? "",
             date: date,
             score: dto.fullTimeScore
         )
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 
     private static func initialDateRange(now: Date = Date()) -> ClosedRange<Date> {
@@ -484,6 +540,21 @@ private struct MatchCandidate: Sendable {
     let score: String?
 }
 
+private struct EnrichmentRequest: Sendable {
+    let candidate: MatchCandidate
+    /// 缓存中同一场比赛的上次结果；补全失败时用它保留已得到的字段。
+    let previous: SportsLotteryMatch?
+}
+
+/// 逐行容错解码：单行字段缺失或类型不符时只丢弃该行，不让整页失败。
+private struct LossyDecoded<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: any Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}
+
 private struct ResultPage {
     let pageCount: Int
     let leagues: [ResultLeagueDTO]
@@ -498,14 +569,14 @@ private struct ResultEnvelope: Decodable {
 
 private struct ResultValue: Decodable {
     let pages: Int?
-    let leagueList: [ResultLeagueDTO]?
-    let matchResult: [ResultMatchDTO]?
+    let leagueList: [LossyDecoded<ResultLeagueDTO>]?
+    let matchResult: [LossyDecoded<ResultMatchDTO>]?
 }
 
 private struct ResultLeagueDTO: Decodable {
     let leagueID: Int
-    let leagueAbbreviation: String
-    let leagueFullName: String
+    let leagueAbbreviation: String?
+    let leagueFullName: String?
 
     private enum CodingKeys: String, CodingKey {
         case leagueID = "leagueId"
@@ -517,12 +588,12 @@ private struct ResultLeagueDTO: Decodable {
 private struct ResultMatchDTO: Decodable {
     let matchID: Int
     let leagueID: Int
-    let leagueName: String
-    let leagueNameAbbreviation: String
-    let homeTeam: String
-    let awayTeam: String
-    let matchDate: String
-    let matchNumber: String
+    let leagueName: String?
+    let leagueNameAbbreviation: String?
+    let homeTeam: String?
+    let awayTeam: String?
+    let matchDate: String?
+    let matchNumber: String?
     let fullTimeScore: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -543,12 +614,12 @@ private struct FixedBonusEnvelope: Decodable {
 }
 
 private struct FixedBonusValue: Decodable {
-    let matchResultList: [MatchResultDTO]?
+    let matchResultList: [LossyDecoded<MatchResultDTO>]?
 }
 
 private struct MatchResultDTO: Decodable {
-    let code: String
-    let combinationDesc: String
+    let code: String?
+    let combinationDesc: String?
     let odds: String?
 }
 
