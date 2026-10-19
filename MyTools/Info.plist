@@ -42,6 +42,8 @@
 	<string>用于临时验证身份后查看敏感信息</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用于对用户的定位</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

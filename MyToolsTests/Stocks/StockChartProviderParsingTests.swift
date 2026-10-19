@@ -327,6 +327,37 @@ struct StockChartProviderParsingTests {
         #expect(snapshot.points.last?.volume == 20_000)
     }
 
+    /// query2 握手卡住时不能串行等满 8 秒超时：对冲延迟一到就并行请求 query1。
+    @Test func yahooProviderHedgesStalledPrimaryHost() async throws {
+        let dates = dailyDates()
+        let payload: [String: Any] = ["chart": ["result": [[
+            "meta": ["currency": "USD", "symbol": "VOO"],
+            "timestamp": dates.map(\.timeIntervalSince1970),
+            "indicators": ["quote": [["close": dates.indices.map { Double(100 + $0) }]]]
+        ]]]]
+        let provider = YahooStockChartProvider(
+            httpClient: HostRoutingHTTPClient(stalledHost: "query2.finance.yahoo.com", data: try json(payload))
+        )
+
+        let started = ContinuousClock.now
+        let snapshot = try await provider.fetchChart(for: request(market: .unitedStates, range: .dayK))
+
+        #expect(snapshot.points.count == 20)
+        #expect(started.duration(to: .now) < .seconds(5))
+    }
+
+    private struct HostRoutingHTTPClient: StockChartHTTPClient {
+        let stalledHost: String
+        let data: Data
+
+        func data(for url: URL, referer: String) async throws -> Data {
+            if url.host == stalledHost {
+                try await Task.sleep(for: .seconds(30))
+            }
+            return data
+        }
+    }
+
     private func request(
         market: StockMarket,
         range: StockChartRange

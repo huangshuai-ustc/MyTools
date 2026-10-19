@@ -14,6 +14,31 @@ import Testing
 /// `latestCompletedFinalSessionEnd` 全部复用同一份，所以下面这些入口不可能出现
 /// 「一个认得调休、另一个不认得」的分叉。
 struct StockTradingCalendarTests {
+    /// 港交所全年休市表必须与官方通告逐日一致（CT/075/25、2025 年通告）。
+    /// 2026-10-19 是本条的来由：重阳 10-18 落在周日顺延到周一，旧规则只给公历
+    /// 节日顺延，于是把这天判成交易日，09:30 起所有港股都按「开市」去拉分时，
+    /// 而数据源整天没有新数据，页面看起来就是港股行情图不更新。
+    @Test(arguments: [
+        (2025, [101, 129, 130, 131, 404, 418, 421, 501, 505, 701, 1001, 1007, 1029, 1225, 1226]),
+        (2026, [101, 217, 218, 219, 403, 406, 407, 501, 525, 619, 701, 1001, 1019, 1225])
+    ])
+    func hongKongClosedWeekdaysMatchHKEXSchedule(year: Int, expected: [Int]) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Hong_Kong")!
+        var closed: [Int] = []
+        var day = calendar.date(from: DateComponents(year: year, month: 1, day: 1))!
+        while calendar.component(.year, from: day) == year {
+            let weekday = calendar.component(.weekday, from: day)
+            if (2...6).contains(weekday),
+               !StockMarketTradingCalendar.isTradingDay(.hongKong, on: day) {
+                let components = calendar.dateComponents([.month, .day], from: day)
+                closed.append(components.month! * 100 + components.day!)
+            }
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+        }
+        #expect(closed == expected)
+    }
+
     @Test func eachMarketOwnsItsSessionBoundaries() {
         let aShareLunch = StockChartFixtures.date(
             2026, 9, 18, hour: 12, timeZone: "Asia/Shanghai"

@@ -33,13 +33,13 @@ struct CloudSyncStoredEntry: Codable, Sendable {
     /// Highest record schema this build can decode.
     static let supportedSchemaVersion: Int64 = 1
 
-    /// LWW 时间：优先用实体编辑时间（不晚于现在），但不早于上次记录的时间，
-    /// 避免未更新编辑时间的改动倒退（AUDIT-086(4)）。
+    /// LWW 时间：有实体编辑时间时只使用该业务时间（不晚于现在）。旧同步状态里的
+    /// `modifiedAt` 可能只是旧版客户端执行 reconcile 的时刻，并不代表内容真的在那时
+    /// 编辑；把它当下限会让旧设备凭一个较晚的缓存时间覆盖云端新内容。
+    /// 没有业务编辑时间的旧实体仍以本次实际内容变更的时间参与 LWW。
     static func modifiedAt(editedAt: Date?, previous: CloudSyncStoredEntry?, now: Date) -> Date {
         guard let editedAt else { return now }
-        let edited = min(editedAt, now)
-        guard let previous, !previous.isDeleted else { return edited }
-        return max(edited, previous.modifiedAt)
+        return min(editedAt, now)
     }
 
     /// A record from a newer client is kept verbatim (payload plus
@@ -153,7 +153,10 @@ enum CloudSyncDeletionPlanner {
 }
 
 struct CloudSyncStoredDocument: Codable, Sendable {
-    static let currentReconciliationVersion = 3
+    /// v4 discards cached v3 timestamps once so every device fetches the current
+    /// CloudKit records before reconciling its local vault. This is required
+    /// because v3 could promote a stale timestamped entity to its cache time.
+    static let currentReconciliationVersion = 4
 
     var engineState: CKSyncEngine.State.Serialization?
     var entries: [String: CloudSyncStoredEntry]

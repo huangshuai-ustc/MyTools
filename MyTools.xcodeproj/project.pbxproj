@@ -226,6 +226,11 @@
 		QA0000000000000000000A01 /* AuditReproTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = QA0000000000000000000A02 /* AuditReproTests.swift */; };
 		AU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = BU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift */; };
 		AH0000000000000000000010 /* AShareHolidayService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BH0000000000000000000010 /* AShareHolidayService.swift */; };
+		LA0000000000000000000001 /* StockMarketLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = LB0000000000000000000001 /* StockMarketLiveActivityController.swift */; };
+		LA0000000000000000000002 /* StockMarketActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = LB0000000000000000000002 /* StockMarketActivityAttributes.swift */; };
+		LA0000000000000000000003 /* StockMarketActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = LB0000000000000000000002 /* StockMarketActivityAttributes.swift */; };
+		LA0000000000000000000004 /* StockMarketLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = LB0000000000000000000003 /* StockMarketLiveActivityWidget.swift */; };
+		LA0000000000000000000005 /* StockMarketWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = LB0000000000000000000005 /* StockMarketWidget.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -236,7 +241,28 @@
 			remoteGlobalIDString = E00000000000000000000001;
 			remoteInfo = MyTools;
 		};
+		LC0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E00000000000000000000003 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = LE0000000000000000000001;
+			remoteInfo = StockMarketWidget;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		LC0000000000000000000002 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				LA0000000000000000000005 /* StockMarketWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F1B000000000000000000001 /* FinancialArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinancialArchive.swift; sourceTree = "<group>"; };
@@ -467,6 +493,11 @@
 		ZS0000000000000000000001 /* SecretsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretsTests.swift; sourceTree = "<group>"; };
 		QA0000000000000000000A02 /* AuditReproTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditReproTests.swift; sourceTree = "<group>"; };
 		BU0000000000000000000001 /* ModuleAttachmentReferenceIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleAttachmentReferenceIndex.swift; sourceTree = "<group>"; };
+		LB0000000000000000000001 /* StockMarketLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockMarketLiveActivityController.swift; sourceTree = "<group>"; };
+		LB0000000000000000000002 /* StockMarketActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockMarketActivityAttributes.swift; sourceTree = "<group>"; };
+		LB0000000000000000000003 /* StockMarketLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StockMarketLiveActivityWidget.swift; sourceTree = "<group>"; };
+		LB0000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		LB0000000000000000000005 /* StockMarketWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = StockMarketWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -496,10 +527,12 @@
 			isa = PBXGroup;
 			children = (
 				D00000000000000000000006 /* MyTools */,
+				LD0000000000000000000001 /* StockMarketWidget */,
 				DD0000000000000000000001 /* MyToolsTests */,
 				DA0000000000000000000001 /* Config */,
 				TF2000000000000000000001 /* TestFlight */,
 				E19E9F2D301499DA0018B621 /* Fangcun.app */,
+				LB0000000000000000000005 /* StockMarketWidget.appex */,
 				BD0000000000000000000002 /* MyToolsTests.xctest */,
 			);
 			sourceTree = "<group>";
@@ -917,6 +950,7 @@
 				BC0000000000000000000012 /* StockQuoteRefreshReducer.swift */,
 				B0000000000000000000000F /* StockQuoteService.swift */,
 				B80000000000000000000004 /* StockRefreshCoordinator.swift */,
+				LB0000000000000000000001 /* StockMarketLiveActivityController.swift */,
 				BC0000000000000000000001 /* StockChartService.swift */,
 				BT0000000000000000000001 /* StockFundamentalService.swift */,
 				B10000000000000000000004 /* StockAppearanceSettings.swift */,
@@ -1313,6 +1347,16 @@
 			path = Secrets;
 			sourceTree = "<group>";
 		};
+		LD0000000000000000000001 /* StockMarketWidget */ = {
+			isa = PBXGroup;
+			children = (
+				LB0000000000000000000002 /* StockMarketActivityAttributes.swift */,
+				LB0000000000000000000003 /* StockMarketLiveActivityWidget.swift */,
+				LB0000000000000000000004 /* Info.plist */,
+			);
+			path = StockMarketWidget;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -1322,15 +1366,32 @@
 			buildPhases = (
 				E00000000000000000000002 /* Sources */,
 				C63564063010DCFC00EBCA46 /* Resources */,
+				LC0000000000000000000002 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				LC0000000000000000000003 /* PBXTargetDependency */,
 			);
 			name = MyTools;
 			productName = MyTools;
 			productReference = E19E9F2D301499DA0018B621 /* Fangcun.app */;
 			productType = "com.apple.product-type.application";
+		};
+		LE0000000000000000000001 /* StockMarketWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = LF0000000000000000000001 /* Build configuration list for PBXNativeTarget "StockMarketWidget" */;
+			buildPhases = (
+				LE0000000000000000000002 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = StockMarketWidget;
+			productName = StockMarketWidget;
+			productReference = LB0000000000000000000005 /* StockMarketWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		ED0000000000000000000001 /* MyToolsTests */ = {
 			isa = PBXNativeTarget;
@@ -1375,6 +1436,9 @@
 							};
 						};
 					};
+					LE0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = F00000000000000000000001 /* Build configuration list for PBXProject "MyTools" */;
@@ -1392,6 +1456,7 @@
 			projectRoot = "";
 			targets = (
 				E00000000000000000000001 /* MyTools */,
+				LE0000000000000000000001 /* StockMarketWidget */,
 				ED0000000000000000000001 /* MyToolsTests */,
 			);
 		};
@@ -1492,6 +1557,8 @@
 				A80000000000000000000002 /* AppNotificationService.swift in Sources */,
 				A80000000000000000000003 /* NotificationSettingsView.swift in Sources */,
 				A80000000000000000000004 /* StockRefreshCoordinator.swift in Sources */,
+				LA0000000000000000000001 /* StockMarketLiveActivityController.swift in Sources */,
+				LA0000000000000000000002 /* StockMarketActivityAttributes.swift in Sources */,
 				A90000000000000000000001 /* StorageUsageService.swift in Sources */,
 				AB0000000000000000000001 /* CurrencyCode.swift in Sources */,
 				AB0000000000000000000007 /* AppCurrencyFormatter.swift in Sources */,
@@ -1597,6 +1664,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		LE0000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				LA0000000000000000000003 /* StockMarketActivityAttributes.swift in Sources */,
+				LA0000000000000000000004 /* StockMarketLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ED0000000000000000000003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1648,6 +1724,12 @@
 			isa = PBXTargetDependency;
 			target = E00000000000000000000001 /* MyTools */;
 			targetProxy = CD0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		LC0000000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = LE0000000000000000000001 /* StockMarketWidget */;
+			targetProxy = LC0000000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1843,6 +1925,58 @@
 			};
 			name = Release;
 		};
+		LF0000000000000000000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = BA0000000000000000000001 /* Shared.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6Y8DN35HLK;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = StockMarketWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).StockMarketWidget";
+				PRODUCT_BUNDLE_PACKAGE_TYPE = "XPC!";
+				PRODUCT_MODULE_NAME = StockMarketWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		LF0000000000000000000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = BA0000000000000000000001 /* Shared.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6Y8DN35HLK;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = StockMarketWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).StockMarketWidget";
+				PRODUCT_BUNDLE_PACKAGE_TYPE = "XPC!";
+				PRODUCT_MODULE_NAME = StockMarketWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1869,6 +2003,15 @@
 			buildConfigurations = (
 				FD0000000000000000000003 /* Debug */,
 				FD0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		LF0000000000000000000001 /* Build configuration list for PBXNativeTarget "StockMarketWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				LF0000000000000000000002 /* Debug */,
+				LF0000000000000000000003 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

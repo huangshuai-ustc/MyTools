@@ -333,7 +333,8 @@ struct CloudSyncMergerTests {
         #expect(restoredEntry.systemFields == document.entries.values.first?.systemFields)
     }
 
-    /// AUDIT-086(4)：LWW 用编辑时间；未来时间截到现在，且不早于上次记录。
+    /// LWW 对带更新时间的实体只使用真实编辑时间；旧同步缓存的对账时间不能把旧内容
+    /// 冒充成新编辑，否则恢复出来的旧设备会覆盖云端的新版本。
     @Test func lastWriterTimestampUsesEditTimeWithinBounds() throws {
         let now = Date(timeIntervalSince1970: 2_000)
         let previous = CloudSyncStoredEntry(
@@ -344,7 +345,7 @@ struct CloudSyncMergerTests {
         #expect(CloudSyncStoredEntry.modifiedAt(editedAt: nil, previous: previous, now: now) == now)
         #expect(CloudSyncStoredEntry.modifiedAt(editedAt: edited, previous: nil, now: now) == edited)
         #expect(CloudSyncStoredEntry.modifiedAt(editedAt: edited, previous: previous, now: now) == edited)
-        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: Date(timeIntervalSince1970: 1_000), previous: previous, now: now) == previous.modifiedAt)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: Date(timeIntervalSince1970: 1_000), previous: previous, now: now) == Date(timeIntervalSince1970: 1_000))
         #expect(CloudSyncStoredEntry.modifiedAt(editedAt: Date(timeIntervalSince1970: 9_000), previous: nil, now: now) == now)
 
         var secret = SecretItem()

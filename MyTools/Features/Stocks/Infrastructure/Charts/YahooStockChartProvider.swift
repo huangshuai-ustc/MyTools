@@ -195,31 +195,67 @@ struct YahooStockChartProvider: StockChartProvider {
         )
     }
 
+    /// 备用主机的对冲延迟。query2 偶尔握手卡到 8 秒超时才失败，原先串行重试时单只
+    /// 股票刷新要等满 8 秒以上；现在主机迟迟不回就并行请求 query1，谁先成功用谁。
+    static let hedgeDelay: Duration = .milliseconds(1_500)
+
     private func chartData(
         path: String,
         queryItems: [URLQueryItem]
     ) async throws -> Data {
-        var lastError: Error = StockChartError.serviceUnavailable
-        for host in ["query2.finance.yahoo.com", "query1.finance.yahoo.com"] {
+        let urls = try ["query2.finance.yahoo.com", "query1.finance.yahoo.com"].map { host in
             var components = URLComponents()
             components.scheme = "https"
             components.host = host
             components.path = path
             components.queryItems = queryItems
             guard let url = components.url else { throw StockChartError.invalidSymbol }
-
+            return url
+        }
+        let httpClient = httpClient
+        @Sendable func fetch(_ index: Int) async -> (Int, Swift.Result<Data, any Error>) {
             do {
-                return try await httpClient.data(
-                    for: url,
+                return (index, .success(try await httpClient.data(
+                    for: urls[index],
                     referer: "https://finance.yahoo.com/"
-                )
-            } catch is CancellationError {
-                throw CancellationError()
+                )))
             } catch {
-                lastError = error
+                return (index, .failure(error))
             }
         }
-        throw lastError
+        // 先请求 query2；它失败或超过对冲延迟仍未返回时再启动 query1，谁先成功用谁。
+        return try await withThrowingTaskGroup(of: (Int, Swift.Result<Data, any Error>).self) { group in
+            defer { group.cancelAll() }
+            group.addTask { await fetch(0) }
+            group.addTask {
+                try await Task.sleep(for: Self.hedgeDelay)
+                return (-1, .failure(StockChartError.serviceUnavailable))
+            }
+            var started = 1
+            var pending = 1
+            var lastError: any Error = StockChartError.serviceUnavailable
+            while let (index, result) = try await group.next() {
+                try Task.checkCancellation()
+                if index >= 0 { pending -= 1 }
+                switch result {
+                case .success(let data) where index >= 0:
+                    return data
+                case .failure(let error) where index >= 0:
+                    lastError = error
+                default:
+                    break
+                }
+                if started < urls.count {
+                    let next = started
+                    group.addTask { await fetch(next) }
+                    started += 1
+                    pending += 1
+                } else if pending == 0 {
+                    break
+                }
+            }
+            throw lastError
+        }
     }
 
     private func identifier(_ symbol: String, market: StockMarket) -> String {

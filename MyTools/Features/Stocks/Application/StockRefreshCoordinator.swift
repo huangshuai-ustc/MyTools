@@ -66,11 +66,13 @@ final class StockRefreshCoordinator: ObservableObject {
     func attach(store: StockStore, isModuleVisible: Bool = true) {
         self.store = store
         self.isStockModuleVisible = isModuleVisible
+        reconcileLiveActivity()
         reconcileForegroundPolling()
     }
 
     func updateModuleVisibility(_ isVisible: Bool) {
         isStockModuleVisible = isVisible
+        reconcileLiveActivity()
         reconcileForegroundPolling()
     }
 
@@ -78,11 +80,13 @@ final class StockRefreshCoordinator: ObservableObject {
         currentScenePhase = scenePhase
         switch scenePhase {
         case .active:
+            reconcileLiveActivity()
             reconcileForegroundPolling()
 #if os(iOS)
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
 #endif
         case .background:
+            reconcileLiveActivity()
             stopForegroundPolling()
             scheduleBackgroundRefresh()
         case .inactive:
@@ -123,6 +127,7 @@ final class StockRefreshCoordinator: ObservableObject {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
 #endif
         }
+        reconcileLiveActivity()
         reconcileForegroundPolling()
     }
 
@@ -237,6 +242,10 @@ final class StockRefreshCoordinator: ObservableObject {
         DiagnosticLogger.shared.log(.stockQuote, "手动刷新 targets=\(targets.count) closed=\(closedTargets.count) charts=\(chartIDs.count) quotes=\(earlyQuoteIDs.count + lateQuoteIDs.count) fiveDays=\(fiveDayIDs.count)")
         guard !Task.isCancelled else { return }
         lastRefreshCompletedAt = Date()
+        await StockMarketLiveActivityController.shared.reconcile(
+            store: store,
+            isEnabled: isStockModuleVisible
+        )
     }
 
     private static func refreshQuotes(_ stockIDs: Set<UUID>, in store: StockStore) async {
@@ -291,6 +300,10 @@ final class StockRefreshCoordinator: ObservableObject {
               hasRefreshableStocks(in: store) else { return false }
         return !visibleScreenTokens.isEmpty
             || hasEnabledRefreshableAlert(in: store)
+            || StockMarketLiveActivityController.shared.shouldKeepUpdated(
+                store: store,
+                isEnabled: isStockModuleVisible
+            )
     }
 
     private func hasRefreshableStocks(in store: StockStore) -> Bool {
@@ -326,6 +339,8 @@ final class StockRefreshCoordinator: ObservableObject {
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 guard self.shouldPollInForeground else {
+                    // 收市后轮询随之停止，这里补一次对账，让实时活动及时结束。
+                    self.reconcileLiveActivity()
                     self.stopForegroundPolling()
                     return
                 }
@@ -377,6 +392,12 @@ final class StockRefreshCoordinator: ObservableObject {
             }
         }
         await minuteRefresh
+        // 报价一到就更新实时活动，并且要 await：后台刷新任务返回后系统随时挂起 App，
+        // 不等待的 Task 往往来不及把更新发出去。
+        await StockMarketLiveActivityController.shared.reconcile(
+            store: store,
+            isEnabled: isStockModuleVisible
+        )
         guard !Task.isCancelled else { return }
 
         guard closingTask == nil else { return }
@@ -551,6 +572,16 @@ final class StockRefreshCoordinator: ObservableObject {
         foregroundTask?.cancel()
         foregroundTask = nil
         DiagnosticLogger.shared.log(.lifecycle, "股票前台轮询停止")
+    }
+
+    private func reconcileLiveActivity() {
+        guard let store else { return }
+        Task { @MainActor in
+            await StockMarketLiveActivityController.shared.reconcile(
+                store: store,
+                isEnabled: isStockModuleVisible
+            )
+        }
     }
 
     private func scheduleBackgroundRefresh() {

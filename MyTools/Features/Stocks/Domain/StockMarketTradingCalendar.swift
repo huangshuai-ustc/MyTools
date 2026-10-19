@@ -1,5 +1,6 @@
 #if MYTOOLS_FEATURE_STOCKS
 import Foundation
+import Synchronization
 
 enum StockMarketSession: String, Sendable {
     case preMarket
@@ -450,39 +451,72 @@ enum StockMarketTradingCalendar {
         return false
     }
 
+    /// 按年缓存的港股休市日，值为 `month * 100 + day`。整年推算要逐日换算农历，
+    /// 而 `isTradingDay` 在 K 线分组等循环里被高频调用。
+    private static let hongKongHolidayCache = Mutex<[Int: Set<Int>]>([:])
+
     private static func isHongKongHoliday(_ date: Date, _ calendar: Calendar) -> Bool {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = components.year,
               let month = components.month,
               let day = components.day else { return true }
+        let holidays = hongKongHolidayCache.withLock { cache in
+            if let cached = cache[year] { return cached }
+            let computed = makeHongKongHolidays(year: year, calendar: calendar)
+            cache[year] = computed
+            return computed
+        }
+        return holidays.contains(month * 100 + day)
+    }
 
-        for fixedDate in [(1, 1), (5, 1), (7, 1), (10, 1), (12, 25), (12, 26)] {
-            // 港交所的周六假日不补休，周日假日顺延到周一（AUDIT-013）。
-            if isObservedFixedHoliday(
-                date,
-                month: fixedDate.0,
-                day: fixedDate.1,
-                saturdayObservedOnFriday: false,
-                calendar: calendar
-            ) {
-                return true
+    /// 《公众假期条例》：假日落在周日、或与另一假日同日时，顺延到其后第一个
+    /// 既非周日、也非假日的日子；落在周六不补假（AUDIT-013）。顺延对农历假日
+    /// 同样适用——2026 年重阳（10-18 周日）休 10-19；清明（04-05 周日）顺延
+    /// 撞上复活节星期一，再顺延到 04-07。
+    private static func makeHongKongHolidays(year: Int, calendar: Calendar) -> Set<Int> {
+        func key(_ date: Date) -> Int {
+            let components = calendar.dateComponents([.month, .day], from: date)
+            return (components.month ?? 0) * 100 + (components.day ?? 0)
+        }
+
+        var base: [Date] = [(1, 1), (5, 1), (7, 1), (10, 1), (12, 25), (12, 26)].compactMap {
+            makeDate(year: year, month: $0.0, day: $0.1, calendar: calendar)
+        }
+        if let qingming = makeDate(year: year, month: 4, day: qingmingDay(in: year), calendar: calendar) {
+            base.append(qingming)
+        }
+        if let easter = easterSunday(year: year, calendar: calendar) {
+            // 耶稣受难节、复活节星期一；受难节翌日恒为周六、复活节恒为周日，无需列出。
+            base += [-2, 1].compactMap { calendar.date(byAdding: .day, value: $0, to: easter) }
+        }
+        if var day = makeDate(year: year, month: 1, day: 1, calendar: calendar) {
+            while calendar.component(.year, from: day) == year {
+                let lunar = lunarComponents(for: day, timeZone: calendar.timeZone)
+                if !lunar.isLeapMonth, isHongKongLunarHoliday(lunar) {
+                    base.append(day)
+                }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
             }
         }
-        if day == qingmingDay(in: year), month == 4 {
-            return true
-        }
-        let lunar = lunarComponents(for: date, timeZone: calendar.timeZone)
-        if !lunar.isLeapMonth, isHongKongLunarHoliday(lunar) {
-            return true
-        }
 
-        guard let easter = easterSunday(year: year, calendar: calendar) else { return false }
-        let goodFriday = calendar.date(byAdding: .day, value: -2, to: easter)
-        let easterMonday = calendar.date(byAdding: .day, value: 1, to: easter)
-        return [goodFriday, easterMonday].contains {
-            guard let holiday = $0 else { return false }
-            return sameDay(date, holiday, calendar: calendar)
+        base.sort()
+        let baseKeys = Set(base.map(key))
+        var holidays = Set<Int>()
+        for holiday in base {
+            let weekday = calendar.component(.weekday, from: holiday)
+            if weekday == 7 { continue }
+            if weekday != 1, holidays.insert(key(holiday)).inserted { continue }
+            var candidate = holiday
+            repeat {
+                guard let next = calendar.date(byAdding: .day, value: 1, to: candidate) else { break }
+                candidate = next
+            } while calendar.component(.weekday, from: candidate) == 1
+                || holidays.contains(key(candidate))
+                || baseKeys.contains(key(candidate))
+            holidays.insert(key(candidate))
         }
+        return holidays
     }
 
     private static func isHongKongLunarHoliday(_ lunar: (month: Int, day: Int, isLeapMonth: Bool)) -> Bool {
