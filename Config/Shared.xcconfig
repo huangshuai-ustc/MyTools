@@ -3,6 +3,12 @@ PRODUCT_BUNDLE_IDENTIFIER = $(APP_BUNDLE_IDENTIFIER)
 APP_DISPLAY_NAME = Fangcun
 DEVELOPMENT_TEAM =
 
+// App version, shared by the main app and the StockMarketWidget extension
+// (App Store requires both bundles to match). Edit only here; do not set
+// Version/Build in Xcode's General tab, which writes a target-level override.
+MARKETING_VERSION = 1.0.1
+CURRENT_PROJECT_VERSION = 1
+
 // Comment out one MYTOOLS_ENABLE_* line to omit only that feature module.
 MYTOOLS_ENABLE_FINANCE = MYTOOLS_FEATURE_FINANCE
 MYTOOLS_ENABLE_STOCKS = MYTOOLS_FEATURE_STOCKS
