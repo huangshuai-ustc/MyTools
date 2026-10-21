@@ -4,6 +4,10 @@ import UniformTypeIdentifiers
 struct ProfileSettingsView: View {
     @EnvironmentObject private var moduleSettings: ToolModuleSettings
     @EnvironmentObject private var store: AppStore
+#if MYTOOLS_FEATURE_STOCKS && os(iOS)
+    @AppStorage(AppStorageKey.stockMarketLiveActivityEnabled)
+    private var stockMarketLiveActivityEnabled = true
+#endif
     @State private var backupPasswordMode: BackupPasswordMode?
     @State private var exportDocument: VaultBackupDocument?
     @State private var pendingImportData: Data?
@@ -39,6 +43,19 @@ struct ProfileSettingsView: View {
                 } label: {
                     Label("iCloud 同步", systemImage: "icloud")
                 }
+#if MYTOOLS_FEATURE_STOCKS && os(iOS)
+                Toggle(isOn: $stockMarketLiveActivityEnabled) {
+                    Label("实时活动", systemImage: "rectangle.on.rectangle")
+                }
+                .onChange(of: stockMarketLiveActivityEnabled) { _, isEnabled in
+                    Task { @MainActor in
+                        await StockMarketLiveActivityController.shared.reconcile(
+                            store: store.stockStore,
+                            isEnabled: isEnabled && moduleSettings.isVisible(.myStocks)
+                        )
+                    }
+                }
+#endif
             }
 
             if !orderedModuleSettings.isEmpty {

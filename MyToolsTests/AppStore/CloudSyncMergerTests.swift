@@ -797,6 +797,58 @@ struct CloudSyncDeletionSafetyTests {
         #expect(Set(manyPlan.keys) == manyMissing)
     }
 
+    @Test func remoteHardDeletionKeepsOnlyUnsentLocalChanges() {
+        let local = CloudSyncStoredEntry(
+            kind: .credentialDocument, id: UUID(), module: .documents, modifiedAt: Date(),
+            deviceID: "this-device", isDeleted: false, payload: Data([1])
+        )
+        func keeps(_ entry: CloudSyncStoredEntry, pending: Bool) -> Bool {
+            CloudSyncDeletionPlanner.keepsLocalCopy(
+                against: entry, deviceID: "this-device", hasPendingSave: pending
+            )
+        }
+        #expect(keeps(local, pending: true))
+        var retrying = local
+        retrying.needsRetry = true
+        #expect(keeps(retrying, pending: false))
+
+        // Already uploaded (payload dropped), written elsewhere, or deleted here.
+        #expect(!keeps(local, pending: false))
+        var uploaded = local
+        uploaded.payload = nil
+        #expect(!keeps(uploaded, pending: true))
+        var remote = local
+        remote.deviceID = "other-device"
+        #expect(!keeps(remote, pending: true))
+        var deleted = local
+        deleted.isDeleted = true
+        #expect(!keeps(deleted, pending: true))
+    }
+
+    @Test func restoredRecordOutranksTheDeletionThatRemovedIt() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let deletion = CloudSyncStoredEntry(
+            kind: .credentialDocument, id: UUID(), modifiedAt: Date(timeIntervalSince1970: 1_500),
+            deviceID: "server", isDeleted: true
+        )
+        let edited = Date(timeIntervalSince1970: 1_000)
+        #expect(CloudSyncStoredEntry.modifiedAt(editedAt: edited, previous: deletion, now: now) == now)
+    }
+
+    @Test func deletionSummaryGroupsByKindWithMaskedIDs() {
+        let id = UUID(uuidString: "ABCDEF00-0000-0000-0000-000000000000")!
+        let keys = [
+            CloudSyncItem.key(kind: .medicalRecord, id: id),
+            CloudSyncItem.key(kind: .medicalRecord, id: UUID()),
+            CloudSyncItem.key(kind: .credentialDocument, id: id)
+        ]
+        let summary = CloudSyncDeletionPlanner.summary(of: keys)
+        #expect(summary.hasPrefix("共 3 条："))
+        #expect(summary.contains("credentialDocument×1 eg="))
+        #expect(summary.contains("medicalRecord×2 eg="))
+        #expect(!summary.contains(id.uuidString) && !summary.contains(id.uuidString.lowercased()))
+    }
+
     private func makeEntries(count: Int, pendingLocalApply: Bool = false) -> [String: CloudSyncStoredEntry] {
         Dictionary(uniqueKeysWithValues: (0..<count).map { _ in
             let id = UUID()

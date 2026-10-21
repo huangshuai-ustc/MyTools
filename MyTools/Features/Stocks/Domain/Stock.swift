@@ -11,6 +11,34 @@ enum StockCodeOrdering {
     }
 }
 
+/// 单只股票选择入口：A 股、港股显示名称，美股显示代码；当前有持仓的排在已清仓之前，
+/// 组内按 `AppAlphabeticalSort` 对显示文字排序。
+enum StockSelectionOrdering {
+    static func title(for stock: StockHolding) -> String {
+        stock.market == .unitedStates ? stock.symbol : stock.displayName
+    }
+
+    static func groups(
+        _ stocks: [StockHolding]
+    ) -> (holding: [StockHolding], closed: [StockHolding]) {
+        let sorted = stocks.map { (stock: $0, title: title(for: $0)) }
+            .sorted {
+                AppAlphabeticalSort.isOrderedBefore(
+                    $0.title, $1.title,
+                    lhsTieBreaker: $0.stock.id.uuidString,
+                    rhsTieBreaker: $1.stock.id.uuidString
+                )
+            }
+            .map(\.stock)
+        var holding: [StockHolding] = []
+        var closed: [StockHolding] = []
+        for stock in sorted {
+            if stock.currentShares > 0 { holding.append(stock) } else { closed.append(stock) }
+        }
+        return (holding, closed)
+    }
+}
+
 enum StockMarket: String, Codable, CaseIterable, Identifiable, Sendable {
     case aShare
     case hongKong

@@ -14,6 +14,41 @@ struct StockPortfolioEditorTests {
         #expect(StocksHomePage.positions.chartStockIDs(stocks: stocks, market: nil).isEmpty)
     }
 
+    @Test func stockSelectionPutsHoldingsFirstAndUsesMarketSpecificTitles() {
+        func stock(_ market: StockMarket, _ symbol: String, _ name: String, closed: Bool) -> StockHolding {
+            var buy = StockTransaction()
+            buy.tradedAt = Date(timeIntervalSince1970: 1_700_000_000)
+            buy.quantity = 10
+            buy.unitPrice = 10
+            var holding = StockHolding(market: market, symbol: symbol)
+            holding.name = name
+            holding.transactions = [buy]
+            if closed {
+                var sell = buy
+                sell.id = UUID()
+                sell.type = .sell
+                sell.tradedAt = buy.tradedAt.addingTimeInterval(86_400)
+                holding.transactions.append(sell)
+            }
+            return holding
+        }
+        let hk = StockSelectionOrdering.groups([
+            stock(.hongKong, "00700", "腾讯控股", closed: false),
+            stock(.hongKong, "09988", "阿里巴巴", closed: true),
+            stock(.hongKong, "03690", "美团", closed: false),
+            stock(.hongKong, "01810", "Bilibili", closed: true)
+        ])
+        #expect(hk.holding.map(StockSelectionOrdering.title(for:)) == ["美团", "腾讯控股"])
+        #expect(hk.closed.map(StockSelectionOrdering.title(for:)) == ["阿里巴巴", "Bilibili"])
+        let us = StockSelectionOrdering.groups([
+            stock(.unitedStates, "NVDA", "Apple Inc", closed: false),
+            stock(.unitedStates, "AAPL", "Zeta", closed: false),
+            stock(.unitedStates, "TSLA", "Tesla", closed: true)
+        ])
+        #expect(us.holding.map(StockSelectionOrdering.title(for:)) == ["AAPL", "NVDA"])
+        #expect(us.closed.map(StockSelectionOrdering.title(for:)) == ["TSLA"])
+    }
+
     @Test func closedPositionRetainsHistoricalOverviewWithoutQuote() {
         var buy = StockTransaction()
         buy.tradedAt = Date(timeIntervalSince1970: 1_700_000_000)

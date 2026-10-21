@@ -650,6 +650,7 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
         }
 
+        var keptKeys: [String] = []
         for recordID in deletions {
             guard recordID.zoneID == zoneID,
                   let (kind, id) = parse(recordID: recordID) else { continue }
@@ -673,6 +674,17 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
             }
             let key = recordID.recordName
             let previous = document.entries[key]
+            if let previous, CloudSyncDeletionPlanner.keepsLocalCopy(
+                against: previous,
+                deviceID: document.deviceID,
+                hasPendingSave: pendingRecordKeys().contains(key)
+            ) {
+                // The server copy is gone; upload this one as a new record.
+                document.entries[key]?.systemFields = nil
+                syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                keptKeys.append(key)
+                continue
+            }
             if kind == .attachment,
                let payload = previous?.payload,
                let attachment = try? CloudSyncCoding.decoder().decode(FileAttachment.self, from: payload) {
@@ -697,6 +709,23 @@ actor CloudKitSyncWorker: CKSyncEngineDelegate {
         }
 
         saveDocument()
+        if !keptKeys.isEmpty {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "iCloud 删除了本机尚未上传的记录，已保留本机版本并重新上传 \(CloudSyncDeletionPlanner.summary(of: keptKeys))",
+                level: .warning
+            )
+        }
+        let deletedKeys = changes.compactMap { change -> String? in
+            guard case .delete = change else { return nil }
+            return change.key
+        }
+        if !deletedKeys.isEmpty {
+            DiagnosticLogger.shared.log(
+                .cloudSync,
+                "应用其他设备的删除 \(CloudSyncDeletionPlanner.summary(of: deletedKeys))"
+            )
+        }
         await applyLocally(changes, operation: "合并 iCloud 数据")
     }
 

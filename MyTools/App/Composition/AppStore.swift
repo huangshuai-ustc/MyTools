@@ -72,6 +72,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
     private var attachmentRemovalTask: Task<Void, Never>?
     private var persistenceRequestRevision: UInt64 = 0
     private var isApplyingCloudChanges = false
+    private var isCompressingStoredImages = false
     /// Modules the user explicitly cleared or replaced, with the confirmation
     /// time. Snapshots taken shortly afterwards let their CloudKit deletions
     /// skip the bulk-deletion breaker; several snapshots may be taken per sync.
@@ -397,6 +398,7 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         isInitialDataLoaded = true
         if snapshot.canPersist {
             cloudSync.localDataDidLoad()
+            Task { await compressStoredImages() }
         } else {
             DiagnosticLogger.shared.log(
                 .cloudSync,
@@ -1241,6 +1243,69 @@ final class AppStore: ObservableObject, VaultMutationNotifying {
         var attachment = FileAttachment()
         attachment.storedFileName = storedFileName
         return attachmentStore.url(for: attachment)
+    }
+
+    /// Shrinks large photos stored before compression on import existed (or
+    /// synced from older builds). Each file is rewritten in place under its
+    /// stored name, so only `fileSize` changes in the metadata: CloudKit then
+    /// re-uploads the smaller asset and other devices overwrite their copy.
+    func compressStoredImages() async {
+        guard !isCompressingStoredImages, !isRestoringBackup else { return }
+        isCompressingStoredImages = true
+        defer { isCompressingStoredImages = false }
+        var modules = Set(CompiledToolModules.ordered).subtracting(unavailableModules)
+        if let pendingModuleLocalDataDeletion { modules.remove(pendingModuleLocalDataDeletion.module) }
+        let vaultSnapshot = currentVaultData()
+        let secretsSnapshot = currentSecrets
+        let candidates = modules.flatMap {
+            attachments(for: $0, vault: vaultSnapshot, secrets: secretsSnapshot)
+        }.filter {
+            $0.contentType.conforms(to: .image) && $0.fileSize > AttachmentImageCompressor.byteThreshold
+        }
+        var newSizes: [String: Int64] = [:]
+        var savedBytes: Int64 = 0
+        let store = attachmentStore
+        for attachment in Dictionary(candidates.map { ($0.storedFileName, $0) }, uniquingKeysWith: { first, _ in first }).values {
+            let result = await Task.detached(priority: .utility) {
+                try? store.compressedStoredImage(attachment)
+            }.value
+            // The record may have been deleted or replaced while encoding;
+            // writing then would recreate a file that is due for removal.
+            guard let result, isInitialDataLoaded, canPersistVault,
+                  !isRestoringBackup, pendingModuleLocalDataDeletion == nil,
+                  referencedAttachmentStoredFileNames.contains(attachment.storedFileName) else { continue }
+            guard let data = result.data else {
+                // Already compressed elsewhere (another device or an open
+                // draft saved stale metadata): only correct the size.
+                if result.storedSize != attachment.fileSize {
+                    newSizes[attachment.storedFileName] = result.storedSize
+                }
+                continue
+            }
+            do {
+                try store.write(data, to: attachment)
+                newSizes[attachment.storedFileName] = Int64(data.count)
+                savedBytes += result.storedSize - Int64(data.count)
+            } catch {
+                DiagnosticLogger.logError(.attachment, operation: "压缩已有照片", error: error)
+            }
+        }
+        guard !newSizes.isEmpty, isInitialDataLoaded, canPersistVault, !isRestoringBackup else { return }
+        var vault = currentVaultData()
+        var secrets = currentSecrets
+        ModuleAttachmentReferenceIndex.updateAttachments(of: modules, vault: &vault, secrets: &secrets) { attachment in
+            if let size = newSizes[attachment.storedFileName] { attachment.fileSize = size }
+        }
+        applyVault(vault)
+        retainedSecrets = secrets
+#if MYTOOLS_FEATURE_SECRETS
+        secretStore.replace(secretItems: secrets)
+#endif
+        DiagnosticLogger.shared.log(
+            .attachment,
+            "已压缩已有照片 count=\(newSizes.count) saved=\(savedBytes / 1_024)KB"
+        )
+        moduleStoreDidMutate()
     }
 
     var referencedAttachmentStoredFileNames: Set<String> {

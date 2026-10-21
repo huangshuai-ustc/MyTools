@@ -37,7 +37,10 @@ struct CloudSyncStoredEntry: Codable, Sendable {
     /// `modifiedAt` 可能只是旧版客户端执行 reconcile 的时刻，并不代表内容真的在那时
     /// 编辑；把它当下限会让旧设备凭一个较晚的缓存时间覆盖云端新内容。
     /// 没有业务编辑时间的旧实体仍以本次实际内容变更的时间参与 LWW。
+    /// 已删除的记录重新出现在本机（导入备份）是一次新的本地变更：沿用旧的编辑时间
+    /// 会输给其他设备记下的删除时间，在那台设备上被再次删除。
     static func modifiedAt(editedAt: Date?, previous: CloudSyncStoredEntry?, now: Date) -> Date {
+        if previous?.isDeleted == true { return now }
         guard let editedAt else { return now }
         return min(editedAt, now)
     }
@@ -149,6 +152,35 @@ enum CloudSyncDeletionPlanner {
             keys: candidates.keys.filter { !unconfirmed.contains($0) }.sorted(),
             pausedCount: unconfirmed.count
         )
+    }
+
+    /// A CloudKit hard deletion carries no timestamp, so it cannot take part in
+    /// LWW. A local change from this device that has not reached CloudKit yet
+    /// is kept and re-uploaded instead of being silently discarded.
+    static func keepsLocalCopy(
+        against remoteDeletion: CloudSyncStoredEntry,
+        deviceID: String,
+        hasPendingSave: Bool
+    ) -> Bool {
+        !remoteDeletion.isDeleted
+            && remoteDeletion.payload != nil
+            && remoteDeletion.deviceID == deviceID
+            && (hasPendingSave || remoteDeletion.needsRetry)
+    }
+
+    /// Diagnostic summary grouped by kind with masked ids, e.g.
+    /// `共 3 条：medicalRecord×2 eg=1a2b…；credentialDocument×1 eg=9f8e…`.
+    static func summary(of keys: some Collection<String>) -> String {
+        var groups: [String: (count: Int, sample: String)] = [:]
+        for key in keys {
+            let components = key.split(separator: ".", maxSplits: 1)
+            let kind = components.count == 2 ? String(components[0]) : "unknown"
+            groups[kind, default: (0, String(components.last?.prefix(4) ?? "") + "…")].count += 1
+        }
+        let lines = groups.sorted { $0.key < $1.key }.map {
+            "\($0.key)×\($0.value.count) eg=\($0.value.sample)"
+        }
+        return "共 \(keys.count) 条：" + lines.joined(separator: "；")
     }
 }
 

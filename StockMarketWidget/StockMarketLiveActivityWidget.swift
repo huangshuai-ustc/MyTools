@@ -48,19 +48,32 @@ struct StockMarketLiveActivityWidget: Widget {
     }
 }
 
-/// 锁屏背景跟随系统外观：文字用系统前景色，背景若写死黑色，浅色模式下就是
-/// 深色字压在黑底上。
+/// The extension has its own environment and therefore cannot see the color scheme
+/// forced by the main app. Prefer the appearance carried by the activity state; when
+/// the app follows the system, retain the lock screen's current system appearance.
 private struct StockMarketLockScreenView: View {
     let context: ActivityViewContext<StockMarketActivityAttributes>
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorScheme) private var systemColorScheme
 
-    private var isDark: Bool { colorScheme == .dark }
+    private var colorScheme: ColorScheme {
+        switch context.state.appearanceMode {
+        case "dark": return .dark
+        case "light": return .light
+        default: return systemColorScheme
+        }
+    }
+
+    private var backgroundColor: Color {
+        colorScheme == .dark
+            ? Color(red: 0.08, green: 0.08, blue: 0.09)
+            : Color(red: 0.97, green: 0.97, blue: 0.98)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
-                    .foregroundStyle(isDark ? Color.cyan : Color.blue)
+                    .foregroundStyle(.blue)
                 Text(context.attributes.title)
                     .font(.headline)
                 Spacer(minLength: 8)
@@ -76,8 +89,12 @@ private struct StockMarketLockScreenView: View {
             MarketOverviewRows(markets: context.state.markets, compact: false)
         }
         .padding(16)
-        .activityBackgroundTint(isDark ? Color.black.opacity(0.6) : Color.white.opacity(0.88))
-        .activitySystemActionForegroundColor(isDark ? .white : .black)
+        // iOS can render activityBackgroundTint as a translucent system material.
+        // Paint the content surface as well so detailed wallpapers never bleed through.
+        .background(backgroundColor)
+        .environment(\.colorScheme, colorScheme)
+        .activityBackgroundTint(backgroundColor)
+        .activitySystemActionForegroundColor(colorScheme == .dark ? .white : .black)
     }
 }
 

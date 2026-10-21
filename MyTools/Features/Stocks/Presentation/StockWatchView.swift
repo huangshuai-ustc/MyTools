@@ -768,7 +768,7 @@ private struct StockWatchContent: View {
             scene.requestGeometryUpdate(
                 UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: .landscape)
             ) { error in
-                print("[StockWatch] 横屏切换失败：\(error.localizedDescription)")
+                DiagnosticLogger.logError(.navigation, operation: "股票图表横屏切换", error: error)
             }
         }
 #endif
@@ -797,7 +797,7 @@ private struct StockWatchContent: View {
         scene.requestGeometryUpdate(
             UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: mask)
         ) { error in
-            print("[StockWatch] 恢复屏幕方向失败：\(error.localizedDescription)")
+            DiagnosticLogger.logError(.navigation, operation: "股票图表恢复屏幕方向", error: error)
         }
         orientationBeforeExpansion = nil
 #endif

@@ -22,7 +22,7 @@ enum VaultBackupError: LocalizedError, Equatable {
         case .invalidFile:
             return "文件不是有效的“\(AppMetadata.appName)”备份。"
         case .unsupportedVersion:
-            return "此备份版本不是当前支持的 1.0 或 2.0，无法导入。"
+            return "此备份版本不是当前支持的 1.0、2.0 或 3.0，无法导入。"
         case .wrongPassword:
             return "备份密码错误，无法解密文件。"
         case .moduleUnavailable:
@@ -67,24 +67,40 @@ struct VaultBackupPayload: Codable, @unchecked Sendable {
     var vault: VaultData
     var secrets: [SecretVaultValue]
     var includedModules: Set<ToolModule>
+    /// Attachment bytes by attachment id. Since 3.0 they are stored as raw
+    /// blobs after the JSON payload instead of base64 `backupData` inside it.
+    var attachmentData: [UUID: Data] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case vault, secrets, includedModules
+    }
 
     init(
         vault: VaultData,
         secrets: [SecretVaultValue] = [],
-        includedModules: Set<ToolModule> = ToolModuleCatalog.backupModules
+        includedModules: Set<ToolModule> = ToolModuleCatalog.backupModules,
+        attachmentData: [UUID: Data] = [:]
     ) {
         self.vault = vault
         self.secrets = secrets
         self.includedModules = includedModules
+        self.attachmentData = attachmentData
     }
 }
 
 enum VaultBackupCrypto {
     private static let format = "mytools-vault"
-    /// 2.0 records the PBKDF2 rounds in the envelope and binds the header as AES-GCM AAD.
-    /// 1.0 backups (fixed 210,000 rounds, no AAD) remain importable.
-    static let version = "2.0"
+    /// 3.0 is binary, so neither the ciphertext nor the attachments are base64
+    /// encoded: a header (magic, version, PBKDF2 rounds, salt) bound as AES-GCM
+    /// AAD, followed by the combined box. Its plaintext is the JSON payload
+    /// followed by raw attachment blobs.
+    /// 2.0 (JSON envelope, rounds bound as AAD) and 1.0 (fixed 210,000 rounds,
+    /// no AAD) backups remain importable.
+    static let version = "3.0"
+    private static let jsonVersion = "2.0"
     private static let legacyVersion = "1.0"
+    private static let magic = Data("MTVB".utf8)
+    private static let binaryVersion: UInt8 = 3
     private static let saltLength = 16
     private static let keyLength = 32
     static let rounds: UInt32 = 600_000
@@ -108,6 +124,7 @@ enum VaultBackupCrypto {
         from vault: VaultData,
         secrets: [SecretVaultValue] = [],
         includedModules: Set<ToolModule> = ToolModuleCatalog.backupModules,
+        attachmentData: [UUID: Data] = [:],
         password: String
     ) throws -> Data {
         guard password.count >= 8 else { throw VaultBackupError.invalidPassword }
@@ -117,19 +134,30 @@ enum VaultBackupCrypto {
         let payload = try JSONEncoder().encode(
             VaultBackupPayload(vault: vault, secrets: secrets, includedModules: includedModules)
         )
-        let sealed = try AES.GCM.seal(
-            payload, using: key, authenticating: authenticatedData(version: version, rounds: rounds)
-        )
-        guard let combined = sealed.combined else { throw VaultBackupError.invalidFile }
+        var plaintext = Data()
+        plaintext.appendBigEndian(UInt64(payload.count))
+        plaintext.append(payload)
+        plaintext.appendBigEndian(UInt32(attachmentData.count))
+        for (id, data) in attachmentData.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            plaintext.append(withUnsafeBytes(of: id.uuid) { Data($0) })
+            plaintext.appendBigEndian(UInt64(data.count))
+            plaintext.append(data)
+        }
 
-        let envelope = Envelope(
-            format: format, version: version, rounds: rounds, salt: salt, combined: combined
-        )
-        return try JSONEncoder().encode(envelope)
+        var header = magic
+        header.append(binaryVersion)
+        header.appendBigEndian(rounds)
+        header.append(salt)
+        let sealed = try AES.GCM.seal(plaintext, using: key, authenticating: header)
+        guard let combined = sealed.combined else { throw VaultBackupError.invalidFile }
+        return header + combined
     }
 
     static func restorePayload(from data: Data, password: String) throws -> VaultBackupPayload {
         guard password.count >= 8 else { throw VaultBackupError.invalidPassword }
+        if data.starts(with: magic) {
+            return try restoreBinaryPayload(from: data, password: password)
+        }
 
         let envelope: Envelope
         do {
@@ -144,12 +172,12 @@ enum VaultBackupCrypto {
         case legacyVersion:
             rounds = legacyRounds
             aad = nil
-        case version:
+        case jsonVersion:
             guard let stored = envelope.rounds, acceptedRounds.contains(stored) else {
                 throw VaultBackupError.invalidFile
             }
             rounds = stored
-            aad = authenticatedData(version: version, rounds: stored)
+            aad = authenticatedData(version: jsonVersion, rounds: stored)
         default:
             throw VaultBackupError.unsupportedVersion
         }
@@ -177,6 +205,57 @@ enum VaultBackupCrypto {
         }
     }
 
+    private static func restoreBinaryPayload(from data: Data, password: String) throws -> VaultBackupPayload {
+        var reader = BackupBinaryReader(data: data)
+        guard reader.read(count: magic.count) != nil, let fileVersion = reader.readByte() else {
+            throw VaultBackupError.invalidFile
+        }
+        guard fileVersion == binaryVersion else { throw VaultBackupError.unsupportedVersion }
+        guard let rounds = reader.readUInt32(), acceptedRounds.contains(rounds),
+              let salt = reader.read(count: saltLength) else {
+            throw VaultBackupError.invalidFile
+        }
+        let header = data.prefix(reader.offset)
+        let key = try deriveKey(password: password, salt: salt, rounds: rounds)
+        let sealed: AES.GCM.SealedBox
+        do {
+            sealed = try AES.GCM.SealedBox(combined: reader.remaining())
+        } catch {
+            throw VaultBackupError.invalidFile
+        }
+        let plaintext: Data
+        do {
+            plaintext = try AES.GCM.open(sealed, using: key, authenticating: header)
+        } catch {
+            throw VaultBackupError.wrongPassword
+        }
+
+        var content = BackupBinaryReader(data: plaintext)
+        guard let payloadLength = content.readUInt64(),
+              let payloadData = content.read(count: payloadLength),
+              let blobCount = content.readUInt32() else {
+            throw VaultBackupError.invalidFile
+        }
+        var attachmentData: [UUID: Data] = [:]
+        for _ in 0..<blobCount {
+            guard let idBytes = content.read(count: 16),
+                  let length = content.readUInt64(),
+                  let blob = content.read(count: length) else {
+                throw VaultBackupError.invalidFile
+            }
+            let id = idBytes.withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
+            attachmentData[id] = blob
+        }
+        guard content.isAtEnd else { throw VaultBackupError.invalidFile }
+        do {
+            var payload = try JSONDecoder().decode(VaultBackupPayload.self, from: payloadData)
+            payload.attachmentData = attachmentData
+            return payload
+        } catch {
+            throw VaultBackupError.invalidFile
+        }
+    }
+
     private static func randomBytes(count: Int) -> Data {
         Data((0..<count).map { _ in UInt8.random(in: 0...255) })
     }
@@ -193,5 +272,52 @@ enum VaultBackupCrypto {
         } catch {
             throw VaultBackupError.invalidFile
         }
+    }
+}
+
+private extension Data {
+    mutating func appendBigEndian<Value: FixedWidthInteger>(_ value: Value) {
+        Swift.withUnsafeBytes(of: value.bigEndian) { append(contentsOf: $0) }
+    }
+}
+
+/// Bounds-checked reader for the 3.0 binary layout; every read returns nil
+/// instead of trapping when a crafted file declares more bytes than it has.
+private struct BackupBinaryReader {
+    let data: Data
+    private(set) var offset = 0
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    var isAtEnd: Bool { offset == data.count }
+
+    mutating func read<Length: FixedWidthInteger>(count: Length) -> Data? {
+        guard count >= 0, UInt64(count) <= UInt64(data.count - offset) else { return nil }
+        let start = data.startIndex + offset
+        offset += Int(count)
+        return Data(data[start..<(start + Int(count))])
+    }
+
+    mutating func readByte() -> UInt8? {
+        read(count: 1)?.first
+    }
+
+    mutating func readUInt32() -> UInt32? {
+        readInteger()
+    }
+
+    mutating func readUInt64() -> UInt64? {
+        readInteger()
+    }
+
+    mutating func remaining() -> Data {
+        read(count: data.count - offset) ?? Data()
+    }
+
+    private mutating func readInteger<Value: FixedWidthInteger>() -> Value? {
+        guard let bytes = read(count: MemoryLayout<Value>.size) else { return nil }
+        return bytes.reduce(Value.zero) { ($0 << 8) | Value($1) }
     }
 }

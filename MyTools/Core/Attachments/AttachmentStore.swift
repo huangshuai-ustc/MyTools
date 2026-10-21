@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 enum AttachmentStoreError: LocalizedError {
@@ -46,8 +47,42 @@ final class AttachmentStore: @unchecked Sendable {
         )
     }
 
+    /// Large photos are stored as a downscaled JPEG instead of the original;
+    /// images with transparency are downscaled in their own format.
     func save(data: Data, originalFileName: String, contentType: UTType) throws -> FileAttachment {
         guard !data.isEmpty else { throw AttachmentStoreError.invalidFile }
+        if let jpeg = AttachmentImageCompressor.compressed(data, contentType: contentType, as: .jpeg) {
+            return try saveFile(
+                data: jpeg,
+                originalFileName: AttachmentImageCompressor.jpegFileName(for: originalFileName),
+                contentType: .jpeg
+            )
+        }
+        let stored = AttachmentImageCompressor.compressed(data, contentType: contentType, as: contentType) ?? data
+        return try saveFile(data: stored, originalFileName: originalFileName, contentType: contentType)
+    }
+
+    /// Reads a stored image and re-encodes it smaller in its own format, so it
+    /// can be written back under the same stored name and every copy of the
+    /// metadata (open editor drafts, other devices) keeps pointing at it.
+    /// - Returns: nil for a missing file; otherwise the current size on disk
+    ///   and the smaller bytes, if re-encoding saves enough.
+    func compressedStoredImage(_ attachment: FileAttachment) throws -> (data: Data?, storedSize: Int64)? {
+        let original: Data
+        do {
+            original = try data(for: attachment)
+        } catch AttachmentStoreError.fileMissing {
+            return nil
+        }
+        let compressed = AttachmentImageCompressor.compressed(
+            original,
+            contentType: attachment.contentType,
+            as: attachment.contentType
+        )
+        return (compressed, Int64(original.count))
+    }
+
+    private func saveFile(data: Data, originalFileName: String, contentType: UTType) throws -> FileAttachment {
         try ensureDirectory()
 
         let id = UUID()
@@ -261,5 +296,77 @@ extension AttachmentManaging {
         to original: FileAttachment
     ) throws {
         try attachmentStore.restoreLocation(of: attachment, to: original)
+    }
+}
+
+// MARK: - Image compression
+
+/// Downscales photos so a single attachment is no longer a multi-megabyte
+/// original. EXIF orientation is applied to the pixels and the metadata
+/// (including location) is dropped.
+enum AttachmentImageCompressor {
+    static let maxPixelSize = 2560
+    static let compressionQuality = 0.8
+    /// Images whose longest side fits are only re-encoded above this size and
+    /// above `bytesPerPixelThreshold`. A JPEG already written at
+    /// `compressionQuality` stays below that density, so it is never
+    /// re-encoded again and does not lose quality on every pass.
+    static let byteThreshold = 1_000_000
+    static let bytesPerPixelThreshold = 0.4
+
+    /// - Returns: The re-encoded image, or nil when the input is not a still
+    ///   image worth compressing or re-encoding would not save at least 10%.
+    static func compressed(_ data: Data, contentType: UTType, as outputType: UTType) -> Data? {
+        guard contentType.conforms(to: .image), !contentType.conforms(to: .gif),
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+            return nil
+        }
+        // JPEG has no alpha channel; transparent pixels would turn black.
+        if outputType.conforms(to: .jpeg), properties[kCGImagePropertyHasAlpha] as? Bool == true {
+            return nil
+        }
+        let longestSide = max(width, height)
+        let bytesPerPixel = Double(data.count) / Double(max(width * height, 1))
+        // Re-encoding a PNG at the same size cannot gain much, so only lossy
+        // outputs are re-encoded purely for their byte density.
+        let isLossyOutput = outputType.conforms(to: .jpeg) || outputType.conforms(to: .heic)
+        guard longestSide > maxPixelSize
+                || (isLossyOutput && data.count > byteThreshold && bytesPerPixel > bytesPerPixelThreshold) else {
+            return nil
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: min(longestSide, maxPixelSize)
+        ]
+        let output = NSMutableData()
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary),
+              let destination = CGImageDestinationCreateWithData(
+                  output as CFMutableData, outputType.identifier as CFString, 1, nil
+              ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(
+            destination,
+            image,
+            [kCGImageDestinationLossyCompressionQuality: compressionQuality] as CFDictionary
+        )
+        guard CGImageDestinationFinalize(destination), output.length < data.count * 9 / 10 else {
+            return nil
+        }
+        return output as Data
+    }
+
+    static func jpegFileName(for fileName: String) -> String {
+        let fileExtension = (fileName as NSString).pathExtension.lowercased()
+        guard fileExtension != "jpg", fileExtension != "jpeg" else { return fileName }
+        let base = (fileName as NSString).deletingPathExtension
+        return (base.isEmpty ? fileName : base) + ".jpg"
     }
 }

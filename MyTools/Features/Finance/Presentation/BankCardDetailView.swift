@@ -230,7 +230,8 @@ struct CardDetailView: View {
                     }
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
                 .copyableText(branch.name)
             }
         }

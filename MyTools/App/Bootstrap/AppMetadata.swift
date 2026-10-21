@@ -41,6 +41,7 @@ enum AppStorageKey {
     static let accountSortOrder = "account-sort-order-v2"
     static let stockSortCriterion = "stock-sort-criterion-v2"
     static let stockSortDirection = "stock-sort-direction-v2"
+    static let stockMarketLiveActivityEnabled = "stock-market-live-activity-enabled-v1"
     static let secretSortOrder = "secret-sort-order-v1"
     static let sportsLotteryLeagues = "sports-lottery-leagues-v2"
     static let sportsLotteryMatchOrder = "sports-lottery-match-order-v1"

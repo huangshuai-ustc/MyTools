@@ -103,7 +103,7 @@ struct AttachmentPreviewSheet: View {
                     }
                 }
         }
-        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackgroundVisibility(.visible, for: .navigationBar)
         .interactiveDismissDisabled(false)
         .iOSLargeSheet()
     }

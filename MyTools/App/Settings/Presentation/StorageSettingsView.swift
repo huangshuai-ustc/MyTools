@@ -354,15 +354,20 @@ struct StorageDataView: View {
             )
         }
 #endif
-        .alert(item: $cacheCleanupModule) { module in
-            Alert(
-                title: Text("清理\(module.title)本地缓存？"),
-                message: Text("\(module.localCacheDescription)。清理后下次使用时会重新下载，业务数据和 iCloud 数据不会受到影响。"),
-                primaryButton: .destructive(Text("清理")) {
-                    clearLocalCache(for: module)
-                },
-                secondaryButton: .cancel(Text("取消"))
-            )
+        .alert(
+            "清理\(cacheCleanupModule?.title ?? "")本地缓存？",
+            isPresented: Binding(
+                get: { cacheCleanupModule != nil },
+                set: { if !$0 { cacheCleanupModule = nil } }
+            ),
+            presenting: cacheCleanupModule
+        ) { module in
+            Button("清理", role: .destructive) {
+                clearLocalCache(for: module)
+            }
+            Button("取消", role: .cancel) {}
+        } message: { module in
+            Text("\(module.localCacheDescription)。清理后下次使用时会重新下载，业务数据和 iCloud 数据不会受到影响。")
         }
         .alert("存储与数据", isPresented: $showingMessage) {
             Button("确定", role: .cancel) {}

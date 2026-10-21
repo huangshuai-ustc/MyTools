@@ -219,16 +219,21 @@ struct PortfolioValueHistoryView: View {
         Divider()
     }
 
-    private var availableStocks: [StockHolding] {
-        store.stocks.filter { $0.hasPurchaseRecord && $0.market == selectedMarket }
-            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    private var availableStockGroups: (holding: [StockHolding], closed: [StockHolding]) {
+        StockSelectionOrdering.groups(
+            store.stocks.filter { $0.hasPurchaseRecord && $0.market == selectedMarket }
+        )
     }
 
     private var stockSelectionBar: some View {
-        Picker("持仓范围", selection: $selectedStockID) {
+        let groups = availableStockGroups
+        return Picker("持仓范围", selection: $selectedStockID) {
             Text("全部持仓").tag(UUID?.none)
-            ForEach(availableStocks) { stock in
-                Text(stock.displayName).tag(Optional(stock.id))
+            if !groups.holding.isEmpty {
+                Section("当前持仓") { stockOptions(groups.holding) }
+            }
+            if !groups.closed.isEmpty {
+                Section("已清仓") { stockOptions(groups.closed) }
             }
         }
         .pickerStyle(.menu)
@@ -237,6 +242,12 @@ struct PortfolioValueHistoryView: View {
         .onChange(of: selectedStockID) { _, _ in requestLoadSeries() }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+    }
+
+    private func stockOptions(_ stocks: [StockHolding]) -> some View {
+        ForEach(stocks) { stock in
+            Text(StockSelectionOrdering.title(for: stock)).tag(Optional(stock.id))
+        }
     }
 
     // MARK: - Data

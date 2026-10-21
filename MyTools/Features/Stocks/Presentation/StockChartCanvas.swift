@@ -745,12 +745,12 @@ struct StockChartCanvas: View {
             .allowsHitTesting(false)
         }
         .simultaneousGesture(
-            MagnificationGesture()
+            MagnifyGesture()
                 .onChanged { value in
                     guard range.isKLineRange else { return }
                     selectedDate = nil
-                    let scale = value / max(lastMagnification, 0.01)
-                    lastMagnification = value
+                    let scale = value.magnification / max(lastMagnification, 0.01)
+                    lastMagnification = value.magnification
                     zoomViewport(
                         by: 1 / Double(scale),
                         presentation: presentation,

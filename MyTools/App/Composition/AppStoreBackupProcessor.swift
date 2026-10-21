@@ -39,6 +39,7 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
                 from: snapshot,
                 secrets: embeddedSecrets,
                 includedModules: includedModules,
+                attachmentData: attachments.attachmentData,
                 password: password
             )
         }.value
@@ -50,10 +51,13 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
         enabledModules: Set<ToolModule> = ToolModuleCatalog.allModules
     ) async throws -> VaultBackupPayload {
         try await Task.detached(priority: .userInitiated) {
-            let attachments = BackupAttachmentMapper(store: AttachmentStore())
             var payload = try VaultBackupCrypto.restorePayload(
                 from: data,
                 password: password
+            )
+            let attachments = BackupAttachmentMapper(
+                store: AttachmentStore(),
+                attachmentData: payload.attachmentData
             )
             let modules = payload.includedModules.intersection(
                 CompiledToolModules.available(from: enabledModules)
@@ -157,8 +161,16 @@ struct AppStoreBackupProcessor: VaultBackupProcessing {
     }
 }
 
-private struct BackupAttachmentMapper {
+/// Collects attachment bytes as raw backup blobs keyed by attachment id, and
+/// writes them back on restore. Pre-3.0 backups carry the bytes in `backupData`.
+private final class BackupAttachmentMapper {
     let store: AttachmentStore
+    private(set) var attachmentData: [UUID: Data]
+
+    init(store: AttachmentStore, attachmentData: [UUID: Data] = [:]) {
+        self.store = store
+        self.attachmentData = attachmentData
+    }
 
 #if MYTOOLS_FEATURE_HEALTH
     func recordsForBackup(_ records: [MedicalRecord]) throws -> [MedicalRecord] {
@@ -277,13 +289,16 @@ private struct BackupAttachmentMapper {
 #endif
 
     private func attachmentForBackup(_ attachment: FileAttachment) throws -> FileAttachment {
+        attachmentData[attachment.id] = try store.data(for: attachment)
         var copy = attachment
-        copy.backupData = try store.data(for: attachment)
+        copy.backupData = nil
         return copy
     }
 
     private func restoredAttachment(_ attachment: FileAttachment) throws -> FileAttachment {
-        guard let payload = attachment.backupData else { return attachment }
+        guard let payload = attachmentData[attachment.id] ?? attachment.backupData else {
+            return attachment
+        }
         try store.write(payload, to: attachment)
         var copy = attachment
         copy.fileSize = Int64(payload.count)

@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Synchronization
 
 /// 把本进程的统一日志（unified logging）增量抄到磁盘。
 ///
@@ -43,8 +44,9 @@ final class SystemLogCollector: @unchecked Sendable {
     private var didReportStoreFailure = false
     /// 游标：上一次抄到的最后一条的时间。下次从这个时间之后接着抄。
     private var lastEntryDate: Date?
-    private var totalEntryCount = 0
-    private var lastDrainedAt: Date?
+    /// 页面展示用的统计放在锁里而不是 `queue` 上：一次抄写可能要十几秒，
+    /// 查看和导出不该排在它后面等。
+    private let stats = Mutex<(totalEntryCount: Int, lastDrainedAt: Date?)>((0, nil))
 
     private init() {}
 
@@ -81,7 +83,7 @@ final class SystemLogCollector: @unchecked Sendable {
             timer = nil
             DiagnosticLogger.shared.log(
                 .systemLog,
-                "系统日志抄写已停止 本会话累计=\(totalEntryCount)条"
+                "系统日志抄写已停止 本会话累计=\(stats.withLock { $0.totalEntryCount })条"
             )
         }
     }
@@ -112,8 +114,18 @@ final class SystemLogCollector: @unchecked Sendable {
         var isTruncated = false
 
         do {
-            let entries = try store.getEntries(at: store.position(date: since))
-            var iterator = entries.makeIterator()
+            // `position(date:)` 并不跳过更早的条目，每轮都会从进程启动扫起；过滤条件交给
+            // 统一日志在内部执行，比逐条取出 Objective-C 对象再判断快约 3 倍。
+            // messageType：0 = default（notice）、16 = error、17 = fault。
+            let entries = try store.getEntries(
+                at: store.position(date: since),
+                matching: NSPredicate(
+                    format: "date > %@ AND (subsystem == %@ OR messageType == 0 OR messageType == 16 OR messageType == 17)",
+                    since as NSDate,
+                    appSubsystem
+                )
+            )
+            let iterator = entries.makeIterator()
             while true {
                 // `OSLogEntry` 是 Objective-C 对象，逐块排空自动释放池，避免整轮条目一起常驻。
                 let reachedEnd: Bool = autoreleasepool {
@@ -146,9 +158,11 @@ final class SystemLogCollector: @unchecked Sendable {
         }
 
         lastEntryDate = newestDate
-        lastDrainedAt = Date()
+        stats.withLock {
+            $0.lastDrainedAt = Date()
+            $0.totalEntryCount += drainedCount
+        }
         guard drainedCount > 0 else { return }
-        totalEntryCount += drainedCount
         trimFileIfNeeded()
 
         let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
@@ -284,23 +298,22 @@ final class SystemLogCollector: @unchecked Sendable {
 
     // MARK: - 查看与导出
 
+    /// 查看与导出直接读文件，不经过 `queue`：追加写只会让末尾多出半行，裁剪是原子替换，
+    /// 读到的总是一份完整的旧文件或新文件。
     func overview(recentByteLimit: Int = 16 * 1_024) -> SystemLogOverview {
-        queue.sync {
-            let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path)
-            return SystemLogOverview(
-                byteCount: (attributes?[.size] as? NSNumber)?.int64Value ?? 0,
-                modifiedAt: attributes?[.modificationDate] as? Date,
-                lastDrainedAt: lastDrainedAt,
-                sessionEntryCount: totalEntryCount,
-                recentText: (try? readTail(maximumByteCount: recentByteLimit)) ?? ""
-            )
-        }
+        let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path)
+        let current = stats.withLock { $0 }
+        return SystemLogOverview(
+            byteCount: (attributes?[.size] as? NSNumber)?.int64Value ?? 0,
+            modifiedAt: attributes?[.modificationDate] as? Date,
+            lastDrainedAt: current.lastDrainedAt,
+            sessionEntryCount: current.totalEntryCount,
+            recentText: (try? readTail(maximumByteCount: recentByteLimit)) ?? ""
+        )
     }
 
     func exportData() -> Data {
-        queue.sync {
-            (try? Data(contentsOf: fileURL)) ?? Data()
-        }
+        (try? Data(contentsOf: fileURL)) ?? Data()
     }
 
     func clear() throws {
@@ -308,8 +321,7 @@ final class SystemLogCollector: @unchecked Sendable {
             if fileManager.fileExists(atPath: fileURL.path) {
                 try fileManager.removeItem(at: fileURL)
             }
-            totalEntryCount = 0
-            lastDrainedAt = nil
+            stats.withLock { $0 = (0, nil) }
             // 游标留着：清空的是历史抄本，不该把已经抄过的条目再抄一遍。
         }
     }

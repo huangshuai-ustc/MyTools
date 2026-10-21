@@ -6,6 +6,7 @@ import UIKit
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @Binding private var desktopSelection: RootDestination?
 
     init(desktopSelection: Binding<RootDestination?>) {
@@ -52,8 +53,16 @@ struct RootView: View {
         }
 #if MYTOOLS_FEATURE_STOCKS
         .onAppear {
+#if os(iOS)
+            updateLiveActivityAppearance()
+#endif
             StockRefreshCoordinator.shared.update(scenePhase: scenePhase)
         }
+#if os(iOS)
+        .onChange(of: colorScheme) { _, _ in
+            updateLiveActivityAppearance()
+        }
+#endif
 #endif
 #if MYTOOLS_FEATURE_SPORTS_LOTTERY
         .onAppear {
@@ -133,6 +142,20 @@ struct RootView: View {
             }
         }
     }
+
+#if MYTOOLS_FEATURE_STOCKS && os(iOS)
+    private func updateLiveActivityAppearance() {
+        let mode = colorScheme == .dark ? "dark" : "light"
+        Task {
+            await StockMarketLiveActivityController.shared.updateAppearance(mode)
+#if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--preview-stock-activity") {
+                await StockMarketLiveActivityController.shared.previewActivity(appearance: mode)
+            }
+#endif
+        }
+    }
+#endif
 
     private func retryInitialVaultLoadIfPossible() {
 #if os(iOS)

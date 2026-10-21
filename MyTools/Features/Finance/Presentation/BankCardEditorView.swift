@@ -441,7 +441,8 @@ struct CardStatusDisclosurePicker: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
         }
     }
 

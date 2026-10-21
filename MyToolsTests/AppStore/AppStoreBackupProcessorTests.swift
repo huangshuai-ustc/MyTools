@@ -39,30 +39,70 @@ struct AppStoreBackupProcessorTests {
         #expect(payload.secrets.map(\.title) == ["Example Secret"])
     }
 
-    @Test func backupEnvelopeRecordsRoundsAndRejectsTamperedHeader() throws {
+    @Test func binaryBackupHasNoBase64AndRejectsTamperedHeader() throws {
         var stock = StockHolding()
         stock.symbol = "TEST"
+        let attachmentID = UUID()
+        let blob = Data((0..<4_096).map { UInt8($0 % 251) })
         let data = try VaultBackupCrypto.makeBackup(
             from: VaultData(stocks: [stock]), includedModules: [.myStocks],
-            password: "test-password"
+            attachmentData: [attachmentID: blob], password: "test-password"
         )
-        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(object["version"] as? String == "2.0")
-        #expect(object["rounds"] as? Int == 600_000)
+        let withoutAttachment = try VaultBackupCrypto.makeBackup(
+            from: VaultData(stocks: [stock]), includedModules: [.myStocks], password: "test-password"
+        )
+        #expect(data.starts(with: Data("MTVB".utf8)))
+        #expect(data[4] == 3)
+        // Each attachment costs its raw bytes plus id and length, not base64.
+        #expect(data.count - withoutAttachment.count == 16 + 8 + blob.count)
         let restored = try VaultBackupCrypto.restorePayload(from: data, password: "test-password")
         #expect(restored.vault.stocks.map(\.symbol) == ["TEST"])
+        #expect(restored.attachmentData == [attachmentID: blob])
 
-        // The header is authenticated: downgrading it to 1.0 fails like a wrong password.
-        object["version"] = "1.0"
-        let downgraded = try JSONSerialization.data(withJSONObject: object)
+        // The header is authenticated: lowering the rounds fails like a wrong password.
+        var weakened = data
+        weakened[8] ^= 0x01
         #expect(throws: VaultBackupError.wrongPassword) {
-            try VaultBackupCrypto.restorePayload(from: downgraded, password: "test-password")
-        }
-        object["version"] = "2.0"
-        object["rounds"] = 1
-        let weakened = try JSONSerialization.data(withJSONObject: object)
-        #expect(throws: VaultBackupError.invalidFile) {
             try VaultBackupCrypto.restorePayload(from: weakened, password: "test-password")
+        }
+        var unknown = data
+        unknown[4] = 9
+        #expect(throws: VaultBackupError.unsupportedVersion) {
+            try VaultBackupCrypto.restorePayload(from: unknown, password: "test-password")
+        }
+        #expect(throws: VaultBackupError.invalidFile) {
+            try VaultBackupCrypto.restorePayload(from: data.prefix(30), password: "test-password")
+        }
+    }
+
+    @Test func jsonVersionTwoBackupStillRestores() throws {
+        let password = "test-password"
+        let salt = Data(repeating: 5, count: 16)
+        let rounds = 100_000
+        let key = SymmetricKey(data: try VaultCrypto.pbkdf2SHA256(
+            password: Data(password.utf8), salt: salt, rounds: UInt32(rounds), keyLength: 32
+        ))
+        var stock = StockHolding()
+        stock.symbol = "V2"
+        let payload = try JSONEncoder().encode(
+            VaultBackupPayload(vault: VaultData(stocks: [stock]), includedModules: [.myStocks])
+        )
+        let aad = Data("mytools-vault|2.0|\(rounds)".utf8)
+        let combined = try #require(try AES.GCM.seal(payload, using: key, authenticating: aad).combined)
+        var object: [String: Any] = [
+            "format": "mytools-vault", "version": "2.0", "rounds": rounds,
+            "salt": salt.base64EncodedString(), "combined": combined.base64EncodedString(),
+        ]
+        let envelope = try JSONSerialization.data(withJSONObject: object)
+
+        let restored = try VaultBackupCrypto.restorePayload(from: envelope, password: password)
+        #expect(restored.vault.stocks.map(\.symbol) == ["V2"])
+
+        object["rounds"] = 1
+        #expect(throws: VaultBackupError.invalidFile) {
+            try VaultBackupCrypto.restorePayload(
+                from: JSONSerialization.data(withJSONObject: object), password: password
+            )
         }
     }
 

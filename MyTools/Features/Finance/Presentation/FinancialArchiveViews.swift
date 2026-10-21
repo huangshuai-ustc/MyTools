@@ -568,7 +568,8 @@
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
         .copyableText(
           institution.branchName.isEmpty
             ? nil : institution.branchName)

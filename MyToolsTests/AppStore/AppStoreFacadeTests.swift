@@ -1,5 +1,7 @@
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 @testable import MyTools
 
 struct DiagnosticMaintenanceTests {
@@ -887,6 +889,85 @@ struct AppStoreFacadeTests {
         #expect(store.pendingModuleLocalDataDeletion == nil)
         let committedCloudSnapshot = try await store.makeCloudSyncSnapshot()
         #expect(committedCloudSnapshot.participatingModules.contains(.myStocks))
+    }
+
+    @Test func addedPhotoIsDownscaledToJPEG() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoCompress-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = AttachmentStore(directoryURL: root)
+        let original = try Self.noiseImage(width: 2_800, height: 400, type: .png)
+
+        let saved = try attachments.save(data: original, originalFileName: "scan.png", contentType: .png)
+
+        #expect(saved.contentType == .jpeg)
+        #expect(saved.fileName == "scan.jpg")
+        #expect(saved.storedFileName.hasSuffix(".jpeg"))
+        #expect(saved.fileSize < Int64(original.count) / 2)
+        let source = try #require(CGImageSourceCreateWithData(try attachments.data(for: saved) as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect(properties[kCGImagePropertyPixelWidth] as? Int == AttachmentImageCompressor.maxPixelSize)
+        // A small photo and a PDF are stored unchanged.
+        let small = try Self.noiseImage(width: 200, height: 100, type: .jpeg)
+        #expect(try attachments.save(data: small, originalFileName: "a.jpg", contentType: .jpeg).fileSize == Int64(small.count))
+        let pdf = Data(repeating: 1, count: 2_000_000)
+        #expect(try attachments.save(data: pdf, originalFileName: "a.pdf", contentType: .pdf).fileSize == Int64(pdf.count))
+    }
+
+    @Test func storedLargePhotoIsCompressedInPlaceAndPersisted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoredCompress-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = AttachmentStore(directoryURL: root)
+        let original = try Self.noiseImage(width: 2_800, height: 400, type: .jpeg)
+        var photo = FileAttachment()
+        photo.fileName = "old.jpg"
+        photo.storedFileName = "\(photo.id.uuidString.lowercased()).jpeg"
+        photo.contentTypeIdentifier = UTType.jpeg.identifier
+        photo.fileSize = Int64(original.count)
+        try attachments.write(original, to: photo)
+        let editedAt = Date(timeIntervalSince1970: 1_000)
+        var record = MedicalRecord()
+        record.attachments = [photo]
+        record.updatedAt = editedAt
+        var document = CredentialDocument(type: .passport)
+        document.attachments = [CredentialAttachment(file: photo)]
+        document.updatedAt = editedAt
+        let persistence = RecordingVaultPersistence()
+        let store = AppStore(initialVault: VaultData(medicalRecords: [record], credentialDocuments: [document]), dependencies:
+            Self.dependencies(defaults: Self.makeDefaults(), persistence: persistence, attachmentStore: attachments))
+
+        await store.compressStoredImages()
+
+        let updated = try #require(store.healthStore.medicalRecords.first?.attachments.first)
+        // Every copy of the metadata is updated, and the records get a new
+        // edit time so iCloud does not keep the other devices' old size.
+        let updatedDocument = try #require(store.documentsStore.documents.first)
+        #expect(updatedDocument.attachments.first?.file.fileSize == updated.fileSize)
+        #expect(updatedDocument.updatedAt > editedAt)
+        #expect(try #require(store.healthStore.medicalRecords.first).updatedAt > editedAt)
+        let stored = try attachments.data(for: updated)
+        #expect(updated.storedFileName == photo.storedFileName)
+        #expect(updated.fileSize == Int64(stored.count))
+        #expect(stored.count < original.count * 9 / 10)
+        #expect(persistence.scheduleCount == 1)
+        // A second pass finds nothing left to shrink.
+        await store.compressStoredImages()
+        #expect(persistence.scheduleCount == 1)
+    }
+
+    private static func noiseImage(width: Int, height: Int, type: UTType) throws -> Data {
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { arc4random_buf($0.baseAddress, $0.count) }
+        for index in stride(from: 3, to: pixels.count, by: 4) { pixels[index] = 255 }
+        let context = try #require(CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        let image = try #require(context.makeImage())
+        let output = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        return output as Data
     }
 
     @Test func quoteRefreshPublishesAndPersistsThroughStockStore() async {

@@ -8,6 +8,36 @@ final class StockMarketLiveActivityController {
 
     private init() {}
 
+    private var resolvedAppearance: String?
+
+#if DEBUG && targetEnvironment(simulator)
+    func previewActivity(appearance: String) async {
+        let state = StockMarketActivityAttributes.ContentState(markets: [
+            .init(id: "US", name: "美股", currencyCode: "USD", marketValue: "$11,591.32",
+                  todayChange: "+$466.86", todayChangeRate: "+4.20%", trend: 1)
+        ], updatedAt: Date(), appearanceMode: appearance)
+        do {
+            _ = try Activity.request(attributes: StockMarketActivityAttributes(title: "开市市场总览"),
+                                     content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+        } catch { DiagnosticLogger.logError(.stockQuote, operation: "实时活动预览", error: error) }
+    }
+#endif
+
+    func updateAppearance(_ mode: String) async {
+        resolvedAppearance = mode
+        for activity in Activity<StockMarketActivityAttributes>.activities {
+            let old = activity.content
+            let state = StockMarketActivityAttributes.ContentState(
+                markets: old.state.markets,
+                updatedAt: old.state.updatedAt,
+                appearanceMode: mode
+            )
+            await activity.update(ActivityContent(
+                state: state, staleDate: old.staleDate, relevanceScore: old.relevanceScore
+            ))
+        }
+    }
+
     func shouldKeepUpdated(
         store: StockStore,
         isEnabled: Bool = true,
@@ -15,8 +45,17 @@ final class StockMarketLiveActivityController {
     ) -> Bool {
         guard ActivityAuthorizationInfo().areActivitiesEnabled,
               store.isDataLoaded,
-              isEnabled else { return false }
+              isEnabled,
+              Self.isEnabledByUser else { return false }
         return openMarketsWithPositions(in: store, at: now).isEmpty == false
+    }
+
+    private static var isEnabledByUser: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: AppStorageKey.stockMarketLiveActivityEnabled) != nil else {
+            return true
+        }
+        return defaults.bool(forKey: AppStorageKey.stockMarketLiveActivityEnabled)
     }
 
     func reconcile(
@@ -24,6 +63,9 @@ final class StockMarketLiveActivityController {
         isEnabled: Bool = true,
         at now: Date = Date()
     ) async {
+#if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--preview-stock-activity") { return }
+#endif
         let existing = Activity<StockMarketActivityAttributes>.activities
         guard shouldKeepUpdated(store: store, isEnabled: isEnabled, at: now) else {
             for activity in existing {
@@ -101,7 +143,12 @@ final class StockMarketLiveActivityController {
                 trend: change.map { $0 > 0 ? 1 : ($0 < 0 ? -1 : 0) } ?? 0
             )
         }
-        return .init(markets: rows, updatedAt: now)
+        return .init(
+            markets: rows,
+            updatedAt: now,
+            appearanceMode: resolvedAppearance
+                ?? UserDefaults.standard.string(forKey: AppStorageKey.appearanceMode)
+        )
     }
 }
 #elseif MYTOOLS_FEATURE_STOCKS

@@ -17,6 +17,10 @@ struct StockMarketActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable, Sendable {
         let markets: [MarketOverview]
         let updatedAt: Date
+        /// The main app can override the system appearance independently. The widget
+        /// extension does not share that UserDefaults domain, so carry the choice in
+        /// the activity state. Optional keeps activities created by older builds valid.
+        let appearanceMode: String?
     }
 
     let title: String

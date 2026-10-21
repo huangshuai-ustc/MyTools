@@ -210,7 +210,8 @@ struct AccountDetailView: View {
                 } label: {
                     branchLocationValueLabel(for: account)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
                 .copyableText(account.branchName.isEmpty ? nil : account.branchName)
             }
         }
@@ -481,7 +482,8 @@ private struct AccountStatusDisclosurePicker: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
         }
     }
 
